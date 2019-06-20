@@ -1,5 +1,5 @@
 [submodule "seastar"]
-	path = seastar
+	path = subprojects/seastar
 	url = ../seastar
 	ignore = dirty
 [submodule "swagger-ui"]
