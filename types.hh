@@ -618,6 +618,71 @@ data_value::make_new(data_type type, T&& v) {
     return data_value(type->native_value_clone(&value), type);
 }
 
+namespace internal {
+    // std::type_info comparisons involve a string comparison. While
+    // the comparison is only used if the pointers are different, it
+    // still expands quite a bit of code. This does a static dispatch
+    // on the type that is statically known and is a lot more compact.
+    template<typename T>
+    static inline bool compatible_kind(abstract_type::kind);
+
+    template <> inline bool compatible_kind<maybe_empty<cql_duration>>(abstract_type::kind k) {
+        return k == abstract_type::kind::duration;
+    }
+    template <> inline bool compatible_kind<maybe_empty<seastar::net::inet_address>>(abstract_type::kind k) {
+        return k == abstract_type::kind::inet;
+    }
+    template <> inline bool compatible_kind<maybe_empty<bytes>>(abstract_type::kind k) {
+        return k == abstract_type::kind::bytes;
+    }
+    template <> inline bool compatible_kind<maybe_empty<sstring>>(abstract_type::kind k) {
+        return k == abstract_type::kind::ascii || k == abstract_type::kind::utf8;
+    }
+    template <> inline bool compatible_kind<maybe_empty<bool>>(abstract_type::kind k) {
+        return k == abstract_type::kind::boolean;
+    }
+    template <> inline bool compatible_kind<maybe_empty<int8_t>>(abstract_type::kind k) {
+        return k == abstract_type::kind::byte;
+    }
+    template <> inline bool compatible_kind<maybe_empty<int16_t>>(abstract_type::kind k) {
+        return k == abstract_type::kind::short_kind;
+    }
+    template <> inline bool compatible_kind<maybe_empty<int32_t>>(abstract_type::kind k) {
+        return k == abstract_type::kind::int32;
+    }
+    template <> inline bool compatible_kind<maybe_empty<int64_t>>(abstract_type::kind k) {
+        return k == abstract_type::kind::long_kind || k == abstract_type::kind::time;
+    }
+    template <> inline bool compatible_kind<maybe_empty<uint32_t>>(abstract_type::kind k) {
+        return k == abstract_type::kind::simple_date;
+    }
+    template <> inline bool compatible_kind<std::vector<data_value>>(abstract_type::kind k) {
+        return k == abstract_type::kind::list || k == abstract_type::kind::set ||
+            k == abstract_type::kind::tuple || k == abstract_type::kind::user;
+    }
+    template <> inline bool compatible_kind<std::vector<std::pair<data_value, data_value>>>(abstract_type::kind k) {
+        return k == abstract_type::kind::map;
+    }
+    template <> inline bool compatible_kind<maybe_empty<utils::UUID>>(abstract_type::kind k) {
+        return k == abstract_type::kind::timeuuid || k == abstract_type::kind::uuid;
+    }
+    template <> inline bool compatible_kind<maybe_empty<big_decimal>>(abstract_type::kind k) {
+        return k == abstract_type::kind::decimal;
+    }
+    template <> inline bool compatible_kind<maybe_empty<float>>(abstract_type::kind k) {
+        return k == abstract_type::kind::float_kind;
+    }
+    template <> inline bool compatible_kind<maybe_empty<double>>(abstract_type::kind k) {
+        return k == abstract_type::kind::double_kind;
+    }
+    template <> inline bool compatible_kind<maybe_empty<utils::multiprecision_int>>(abstract_type::kind k) {
+        return k == abstract_type::kind::varint;
+    }
+    template <> inline bool compatible_kind<maybe_empty<db_clock::time_point>>(abstract_type::kind k) {
+        return k == abstract_type::kind::date || k == abstract_type::kind::timestamp;
+    }
+}
+
 template <typename T>
 const T& value_cast(const data_value& value) {
     return value_cast<T>(const_cast<data_value&&>(value));
@@ -625,7 +690,7 @@ const T& value_cast(const data_value& value) {
 
 template <typename T>
 T&& value_cast(data_value&& value) {
-    if (typeid(maybe_empty<T>) != value.type()->native_typeid()) {
+    if (!::internal::compatible_kind<maybe_empty<std::remove_cv_t<T>>>((value.type()->underlying_type()->get_kind()))) {
         throw std::bad_cast();
     }
     if (value.is_null()) {
