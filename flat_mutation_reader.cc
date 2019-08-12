@@ -27,6 +27,9 @@
 
 #include <boost/range/adaptor/transformed.hpp>
 #include <seastar/util/defer.hh>
+#include "utils/exceptions.hh"
+
+logging::logger fmr_logger("flat_mutation_reader");
 
 static size_t compute_buffer_size(const schema& s, circular_buffer<mutation_fragment>& buffer)
 {
@@ -911,4 +914,48 @@ public:
 
 flat_mutation_reader make_generating_reader(schema_ptr s, std::function<future<mutation_fragment_opt> ()> get_next_fragment) {
     return make_flat_mutation_reader<generating_reader>(std::move(s), std::move(get_next_fragment));
+}
+
+bool mutation_fragment_stream_validator::operator()(const dht::decorated_key& dk) {
+    // FIXME: Validate fragment position monotonicity
+    //        https://github.com/scylladb/scylla/issues/4804
+    return true;
+}
+
+template<typename T>
+sstring position_desc(mutation_fragment::kind kind, const T& pos) {
+    return format("{}{}", kind == mutation_fragment::kind::range_tombstone ? "range_tombstone: " : "", pos);
+};
+
+mutation_fragment_stream_validator::~mutation_fragment_stream_validator() {
+    if (!_prev_pos.is_partition_end()) {
+        on_internal_error(fmr_logger, format("Stream ended with unclosed partition: {}", position_desc(_prev_kind, _prev_pos)));
+    }
+}
+
+bool mutation_fragment_stream_validator::operator()(const mutation_fragment& mv) {
+    auto kind = mv.mutation_fragment_kind();
+    auto pos = mv.position();
+    bool valid;
+
+    fmr_logger.debug("{} -> {}", position_desc(_prev_kind, _prev_pos), position_desc(kind, pos));
+
+    if (mv.is_partition_start()) {
+        valid = _prev_pos.is_partition_end();
+    } else {
+        auto less = position_in_partition::less_compare(_schema);
+        if (_prev_kind != mutation_fragment::kind::range_tombstone) {
+            valid = less(_prev_pos, pos);
+        } else {
+            valid = !less(pos, _prev_pos);
+        }
+    }
+
+    if (__builtin_expect(!valid, false)) {
+        on_internal_error(fmr_logger, format("Unexpected mutation fragment: previous: {}, got: {}", position_desc(_prev_kind, _prev_pos), position_desc(kind, pos)));
+    }
+
+    _prev_kind = mv.mutation_fragment_kind();
+    _prev_pos = pos;
+    return true;
 }

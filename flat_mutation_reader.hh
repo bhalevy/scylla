@@ -710,3 +710,21 @@ future<> consume_partitions(flat_mutation_reader& reader, Consumer consumer, db:
 
 flat_mutation_reader
 make_generating_reader(schema_ptr s, std::function<future<mutation_fragment_opt> ()> get_next_fragment);
+
+// Track position_in_partition transitions and validate monotonicity.
+class mutation_fragment_stream_validator {
+    const schema& _schema;
+    mutation_fragment::kind _prev_kind;
+    position_in_partition _prev_pos;
+public:
+    mutation_fragment_stream_validator(const schema& s)
+        : _schema(s)
+        , _prev_kind(mutation_fragment::kind::partition_end)
+        , _prev_pos(position_in_partition::end_of_partition_tag_t{})
+    { }
+
+    ~mutation_fragment_stream_validator();
+
+    bool operator()(const dht::decorated_key& dk);
+    bool operator()(const mutation_fragment& mv);
+};
