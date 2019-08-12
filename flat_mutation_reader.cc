@@ -28,6 +28,9 @@
 
 #include <boost/range/adaptor/transformed.hpp>
 #include <seastar/util/defer.hh>
+#include "utils/exceptions.hh"
+
+logging::logger fmr_logger("flat_mutation_reader");
 
 static size_t compute_buffer_size(const schema& s, circular_buffer<mutation_fragment>& buffer)
 {
@@ -912,4 +915,49 @@ flat_mutation_reader make_generating_reader(schema_ptr s, std::function<future<m
 
 void flat_mutation_reader::do_upgrade_schema(const schema_ptr& s) {
     *this = transform(std::move(*this), schema_upgrader(s));
+}
+
+bool mutation_fragment_stream_validator::operator()(const dht::decorated_key& dk) {
+    // FIXME: Validate partition key monotonicity
+    //        https://github.com/scylladb/scylla/issues/4804
+    return true;
+}
+
+mutation_fragment_stream_validator::mutation_fragment_stream_validator(const schema& s)
+    : _schema(s)
+    , _prev_kind(mutation_fragment::kind::partition_end)
+    , _prev_pos(position_in_partition::end_of_partition_tag_t{})
+{ }
+
+mutation_fragment_stream_validator::~mutation_fragment_stream_validator() {
+    if (_prev_kind != mutation_fragment::kind::partition_end) {
+        on_internal_error(fmr_logger, format("[validator {}] Stream ended with unclosed partition: {}", static_cast<void*>(this), _prev_kind));
+    }
+}
+
+bool mutation_fragment_stream_validator::operator()(const mutation_fragment& mv) {
+    auto kind = mv.mutation_fragment_kind();
+    auto pos = mv.position();
+    bool valid = false;
+
+    fmr_logger.debug("[validator {}] {}:{}", static_cast<void*>(this), kind, pos);
+
+    if (mv.is_partition_start()) {
+        valid = (_prev_kind == mutation_fragment::kind::partition_end);
+    } else {
+        auto less = position_in_partition::less_compare(_schema);
+        if (_prev_kind != mutation_fragment::kind::range_tombstone) {
+            valid = less(_prev_pos, pos);
+        } else {
+            valid = !less(pos, _prev_pos);
+        }
+    }
+
+    if (__builtin_expect(!valid, false)) {
+        on_internal_error(fmr_logger, format("[validator {}] Unexpected mutation fragment: previous {}:{}, current {}:{}", static_cast<void*>(this), _prev_kind, _prev_pos, kind, pos));
+    }
+
+    _prev_kind = mv.mutation_fragment_kind();
+    _prev_pos = pos;
+    return true;
 }
