@@ -1140,9 +1140,9 @@ SEASTAR_TEST_CASE(compact) {
 
     return test_setup::do_with_tmp_directory([s, generation, cf, cm] (test_env& env, sstring tmpdir_path) {
         return open_sstables(env, s, "tests/sstables/compaction", {1,2,3}).then([&env, tmpdir_path, s, cf, cm, generation] (auto sstables) {
-            auto new_sstable = [&env, generation, s, tmpdir_path] {
+            auto new_sstable = [&env, gen = make_lw_shared<unsigned>(generation), s, tmpdir_path] {
                 return env.make_sstable(s, tmpdir_path,
-                        generation, sstables::sstable::version_types::la, sstables::sstable::format_types::big);
+                        (*gen)++, sstables::sstable::version_types::la, sstables::sstable::format_types::big);
             };
             return sstables::compact_sstables(sstables::compaction_descriptor(std::move(sstables)), *cf, new_sstable, replacer_fn_no_op()).then([&env, s, generation, cf, cm, tmpdir_path] (auto) {
                 // Verify that the compacted sstable has the right content. We expect to see:
@@ -2912,7 +2912,7 @@ SEASTAR_TEST_CASE(test_sstable_max_local_deletion_time_2) {
                 auto sst2 = get_usable_sst(*mt, 55).get0();
                 BOOST_REQUIRE(now.time_since_epoch().count() == sst2->get_stats_metadata().max_local_deletion_time);
 
-                auto creator = [&env, s, tmpdir_path, version] { return env.make_sstable(s, tmpdir_path, 56, version, big); };
+                auto creator = [&env, s, tmpdir_path, version, gen = make_lw_shared<unsigned>(56)] { return env.make_sstable(s, tmpdir_path, (*gen)++, version, big); };
                 auto info = sstables::compact_sstables(sstables::compaction_descriptor({sst1, sst2}), *cf,
                                                        creator, replacer_fn_no_op()).get0();
                 BOOST_REQUIRE(info.new_sstables.size() == 1);
@@ -4103,8 +4103,8 @@ SEASTAR_TEST_CASE(sstable_expired_data_ratio) {
         BOOST_REQUIRE(std::fabs(sst->estimate_droppable_tombstone_ratio(gc_before) - expired) <= 0.1);
 
         column_family_for_tests cf(s);
-        auto creator = [&] {
-            auto sst = env.make_sstable(s, tmp.path().string(), 2, la, big);
+        auto creator = [&, gen = make_lw_shared<unsigned>(2)] {
+            auto sst = env.make_sstable(s, tmp.path().string(), (*gen)++, la, big);
             sst->set_unshared();
             return sst;
         };
