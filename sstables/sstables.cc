@@ -2322,6 +2322,7 @@ sstable_writer::sstable_writer(sstable& sst, const schema& s, uint64_t estimated
 }
 
 void sstable_writer::consume_new_partition(const dht::decorated_key& dk) {
+    _impl->_pip_tracker.on_partition_start();
     _impl->_sst.get_stats().on_partition_write();
     return _impl->consume_new_partition(dk);
 }
@@ -2332,6 +2333,7 @@ void sstable_writer::consume(tombstone t) {
 }
 
 stop_iteration sstable_writer::consume(static_row&& sr) {
+    _impl->_pip_tracker.on_static_row();
     if (!sr.empty()) {
         _impl->_sst.get_stats().on_static_row_write();
     }
@@ -2339,6 +2341,7 @@ stop_iteration sstable_writer::consume(static_row&& sr) {
 }
 
 stop_iteration sstable_writer::consume(clustering_row&& cr) {
+    _impl->_pip_tracker.on_clustering_row();
     _impl->_sst.get_stats().on_row_write();
     return _impl->consume(std::move(cr));
 }
@@ -2349,6 +2352,7 @@ stop_iteration sstable_writer::consume(range_tombstone&& rt) {
 }
 
 stop_iteration sstable_writer::consume_end_of_partition() {
+    _impl->_pip_tracker.on_partition_end();
     return _impl->consume_end_of_partition();
 }
 

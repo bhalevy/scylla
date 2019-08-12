@@ -24,6 +24,7 @@
 #include "sstables.hh"
 #include "schema.hh"
 #include "mutation_fragment.hh"
+#include "position_in_partition.hh"
 
 namespace sstables {
 
@@ -32,12 +33,14 @@ struct sstable_writer::writer_impl {
     const schema& _schema;
     const io_priority_class& _pc;
     const sstable_writer_config _cfg;
+    position_in_partition_tracker _pip_tracker;
 
     writer_impl(sstable& sst, const schema& schema, const io_priority_class& pc, const sstable_writer_config& cfg)
         : _sst(sst)
         , _schema(schema)
         , _pc(pc)
         , _cfg(cfg)
+        , _pip_tracker()
     {}
 
     virtual void consume_new_partition(const dht::decorated_key& dk) = 0;

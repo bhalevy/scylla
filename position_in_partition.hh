@@ -676,3 +676,41 @@ bool position_range::overlaps(const schema& s, position_in_partition_view start,
     position_in_partition::less_compare less(s);
     return !less(end, _start) && less(start, _end);
 }
+
+// Track position_in_partittion transitions
+// and validate monotonicity.
+class position_in_partition_tracker {
+    bool _in_stream = false;
+    partition_region _pos = partition_region::partition_start;
+public:
+    void on_partition_start();
+    void on_static_row();
+    void on_clustering_row();
+    void on_partition_end();
+    void on_end_of_stream();
+
+    bool in_stream() {
+        return _in_stream;
+    }
+    bool is_beginning_of_stream() {
+        return !_in_stream && _pos == partition_region::partition_start;
+    }
+    bool is_partition_start() {
+        return _in_stream && _pos == partition_region::partition_start;
+    }
+    bool is_static_row() {
+        return _in_stream && _pos == partition_region::static_row;
+    }
+    bool is_clustering_row() {
+        return _in_stream && _pos == partition_region::clustered;
+    }
+    bool is_partition_end() {
+        return _in_stream && _pos == partition_region::partition_end;
+    }
+    bool is_end_of_stream() {
+        return !_in_stream && _pos == partition_region::partition_end;
+    }
+
+private:
+    const sstring current_position_string();
+};
