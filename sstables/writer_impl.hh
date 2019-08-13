@@ -35,13 +35,7 @@ struct sstable_writer::writer_impl {
     const sstable_writer_config _cfg;
     position_in_partition_tracker _pip_tracker;
 
-    writer_impl(sstable& sst, const schema& schema, const io_priority_class& pc, const sstable_writer_config& cfg)
-        : _sst(sst)
-        , _schema(schema)
-        , _pc(pc)
-        , _cfg(cfg)
-        , _pip_tracker()
-    {}
+    writer_impl(sstable& sst, const schema& schema, const io_priority_class& pc, const sstable_writer_config& cfg);
 
     virtual void consume_new_partition(const dht::decorated_key& dk) = 0;
     virtual void consume(tombstone t) = 0;

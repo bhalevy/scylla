@@ -68,12 +68,25 @@ void position_in_partition_tracker::on_static_row() {
     }
 }
 
-void position_in_partition_tracker::on_clustering_row() {
+void position_in_partition_tracker::on_clustering_row(const clustering_key_prefix& ck) {
     plogger.trace("clustering row");
     if (is_clustering_row()) {
-        return;
+        if (!_validate_clustering_key) {
+            return;
+        }
+        auto res = _cmp(*_ck, int32_t(bound_weight::equal), ck, int32_t(bound_weight::equal));
+        if (res < 0) {
+            _ck = ck;
+        } else if (res == 0) {
+            on_internal_error(plogger, format("Duplicate clustering key: '{}'", ck));
+        } else {
+            on_internal_error(plogger, format("Clustering key out of order: prev='{}' new='{}'", *_ck, ck));
+        }
     } else if (is_partition_start() || is_static_row()) {
         _pos = partition_region::clustered;
+        if (_validate_clustering_key) {
+            _ck = ck;
+        }
     } else {
         on_internal_error(plogger, format("Clustering row must not start after {}", current_position_string()));
     }

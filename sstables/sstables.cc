@@ -2309,6 +2309,14 @@ void sstable_writer_k_l::consume_end_of_stream()
     _monitor->on_flush_completed();
 }
 
+sstable_writer::writer_impl::writer_impl(sstable& sst, const schema& schema, const io_priority_class& pc, const sstable_writer_config& cfg)
+    : _sst(sst)
+    , _schema(schema)
+    , _pc(pc)
+    , _cfg(cfg)
+    , _pip_tracker(schema, get_config().enable_sstable_key_validation())
+{}
+
 sstable_writer::sstable_writer(sstable& sst, const schema& s, uint64_t estimated_partitions,
         const sstable_writer_config& cfg, encoding_stats enc_stats, const io_priority_class& pc, shard_id shard) {
     if (sst.get_version() == sstable_version_types::mc) {
@@ -2338,7 +2346,7 @@ stop_iteration sstable_writer::consume(static_row&& sr) {
 }
 
 stop_iteration sstable_writer::consume(clustering_row&& cr) {
-    _impl->_pip_tracker.on_clustering_row();
+    _impl->_pip_tracker.on_clustering_row(cr.key());
     _impl->_sst.get_stats().on_row_write();
     return _impl->consume(std::move(cr));
 }

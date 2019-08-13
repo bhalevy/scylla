@@ -682,10 +682,18 @@ bool position_range::overlaps(const schema& s, position_in_partition_view start,
 class position_in_partition_tracker {
     bool _in_stream = false;
     partition_region _pos = partition_region::partition_start;
+    bound_view::tri_compare _cmp;
+    bool _validate_clustering_key;
+    std::optional<clustering_key_prefix> _ck;
 public:
+    position_in_partition_tracker(const schema& s, bool validate_clustering_key)
+        : _cmp(s)
+        , _validate_clustering_key(validate_clustering_key)
+    { }
+
     void on_partition_start();
     void on_static_row();
-    void on_clustering_row();
+    void on_clustering_row(const clustering_key_prefix& ck);
     void on_partition_end();
     void on_end_of_stream();
 
