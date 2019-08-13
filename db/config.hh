@@ -750,6 +750,8 @@ public:
     val(enable_keyspace_column_family_metrics, bool, false, Used, "Enable per keyspace and per column family metrics reporting") \
     val(enable_sstable_data_integrity_check, bool, false, Used, "Enable interposer which checks for integrity of every sstable write." \
         " Performance is affected to some extent as a result. Useful to help debugging problems that may arise at another layers.") \
+    val(enable_sstable_key_validation, bool, false, Used, "Enable validation of partition and clustering keys monotonicity" \
+        " Performance is affected to some extent as a result. Useful to help debugging problems that may arise at another layers.") \
     val(cpu_scheduler, bool, true, Used, "Enable cpu scheduling") \
     val(view_building, bool, true, Used, "Enable view building; should only be set to false when the node is experience issues due to view building") \
     val(enable_sstables_mc_format, bool, true, Used, "Enable SSTables 'mc' format to be used as the default file format") \
