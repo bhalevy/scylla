@@ -2118,9 +2118,6 @@ stop_iteration components_writer::consume_end_of_partition() {
 }
 
 void components_writer::consume_end_of_stream() {
-    if (_partition_key) {
-        on_internal_error(sstlog, "Mutation stream ends with unclosed partition during write");
-    }
     // what if there is only one partition? what if it is empty?
     seal_summary(_sst._components->summary, std::move(_first_key), std::move(_last_key), _index_sampling_state);
 
@@ -2357,6 +2354,7 @@ stop_iteration sstable_writer::consume_end_of_partition() {
 }
 
 void sstable_writer::consume_end_of_stream() {
+    _impl->_pip_tracker.on_end_of_stream();
     _impl->_sst.update_stats_on_end_of_stream();
     return _impl->consume_end_of_stream();
 }
