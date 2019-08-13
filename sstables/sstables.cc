@@ -1987,7 +1987,16 @@ void components_writer::consume_new_partition(const dht::decorated_key& dk) {
     // Set current index of data to later compute row size.
     _sst._c_stats.start_offset = _out.offset();
 
-    _partition_key = key::from_partition_key(_schema, dk.key());
+    auto key = key::from_partition_key(_schema, dk.key());
+    if (get_config().enable_sstable_key_validation()) {
+        int cmp = _last_key ? _last_key->tri_compare(key) : -1;
+        if (!cmp) {
+            on_internal_error(sstlog, "Duplicate partition key");
+        } else if (cmp > 0) {
+            on_internal_error(sstlog, "Partition key out of order");
+        }
+    }
+    _partition_key = std::move(key);
 
     maybe_add_summary_entry(dk.token(), bytes_view(*_partition_key));
     _sst._components->filter->add(bytes_view(*_partition_key));
