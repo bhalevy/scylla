@@ -462,7 +462,7 @@ private:
         };
     }
 
-    virtual std::function<bool(const dht::decorated_key&)> filter_func() const {
+    virtual flat_mutation_reader::filter filter_func() const {
         return [] (const dht::decorated_key&) {
             return true;
         };
@@ -586,7 +586,7 @@ public:
         };
     }
 
-    virtual std::function<bool(const dht::decorated_key&)> filter_func() const override {
+    virtual flat_mutation_reader::filter filter_func() const override {
         return [] (const dht::decorated_key& dk){
             return dht::shard_of(dk.token()) == engine().cpu_id();
         };
@@ -725,7 +725,7 @@ public:
         clogger.info("Cleaned {}", formatted_msg);
     }
 
-    std::function<bool(const dht::decorated_key&)> filter_func() const override {
+    flat_mutation_reader::filter filter_func() const override {
         dht::token_range_vector owned_ranges = service::get_local_storage_service().get_local_ranges(_schema->ks_name());
 
         return [this, owned_ranges = std::move(owned_ranges)] (const dht::decorated_key& dk) {
