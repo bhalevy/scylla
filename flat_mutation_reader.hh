@@ -360,6 +360,24 @@ public:
         return _impl->consume(std::move(consumer), timeout);
     }
 
+    class filter {
+    private:
+        std::function<bool (const dht::decorated_key&)> partition_filter;
+    public:
+        filter(std::function<bool (const dht::decorated_key&)>&& pf = [] (const dht::decorated_key&) { return true; })
+            : partition_filter(std::move(pf))
+        { }
+
+        template <typename Functor>
+        filter(Functor&& f)
+            : partition_filter(std::forward<Functor>(f))
+        { }
+
+        bool operator()(const dht::decorated_key& dk) const {
+            return partition_filter(dk);
+        }
+    };
+
     template<typename Consumer, typename Filter>
     GCC6_CONCEPT(
         requires FlattenedConsumer<Consumer>() && PartitionFilter<Filter>
@@ -373,7 +391,7 @@ public:
         requires FlattenedConsumer<Consumer>()
     )
     auto consume_in_thread(Consumer consumer, db::timeout_clock::time_point timeout) {
-        return consume_in_thread(std::move(consumer), [] (const dht::decorated_key&) { return true; }, timeout);
+        return consume_in_thread(std::move(consumer), filter(), timeout);
     }
 
     // Skips to the next partition.
