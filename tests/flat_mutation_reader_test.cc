@@ -629,7 +629,7 @@ void test_flat_stream(schema_ptr s, std::vector<mutation> muts, reversed_partiti
         };
         BOOST_TEST_MESSAGE("Consume all, filtered");
         fmr = flat_mutation_reader_from_mutations(muts);
-        muts2 = fmr.consume_in_thread(flat_stream_consumer(s, reversed), std::move(filter), db::no_timeout);
+        muts2 = fmr.consume_in_thread(flat_stream_consumer(s, reversed), flat_mutation_reader::filter(std::move(filter)), db::no_timeout);
         BOOST_REQUIRE_EQUAL(muts.size() / 2, muts2.size());
         for (auto j = size_t(1); j < muts.size(); j += 2) {
             BOOST_REQUIRE_EQUAL(muts[j], muts2[j / 2]);
