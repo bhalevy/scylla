@@ -462,10 +462,14 @@ private:
         };
     }
 
-    virtual std::function<bool(const dht::decorated_key&)> filter_func() const {
-        return [] (const dht::decorated_key&) {
-            return true;
-        };
+    virtual bool filter_func(const dht::decorated_key&) const {
+        return true;
+    }
+
+    flat_mutation_reader::filter filter() const {
+        return flat_mutation_reader::filter([this] (const dht::decorated_key& dk) {
+            return filter_func(dk);
+        });
     }
 
     // select a sstable writer based on decorated key.
@@ -586,10 +590,8 @@ public:
         };
     }
 
-    virtual std::function<bool(const dht::decorated_key&)> filter_func() const override {
-        return [] (const dht::decorated_key& dk){
-            return dht::shard_of(dk.token()) == engine().cpu_id();
-        };
+    virtual bool filter_func(const dht::decorated_key& dk) const override {
+        return dht::shard_of(dk.token()) == engine().cpu_id();
     }
 
     virtual sstable_writer* select_sstable_writer(const dht::decorated_key& dk) override {
@@ -725,21 +727,19 @@ public:
         clogger.info("Cleaned {}", formatted_msg);
     }
 
-    std::function<bool(const dht::decorated_key&)> filter_func() const override {
+    virtual bool filter_func(const dht::decorated_key& dk) const override {
         dht::token_range_vector owned_ranges = service::get_local_storage_service().get_local_ranges(_schema->ks_name());
 
-        return [this, owned_ranges = std::move(owned_ranges)] (const dht::decorated_key& dk) {
-            if (dht::shard_of(dk.token()) != engine().cpu_id()) {
-                clogger.trace("Token {} does not belong to CPU {}, skipping", dk.token(), engine().cpu_id());
-                return false;
-            }
+        if (dht::shard_of(dk.token()) != engine().cpu_id()) {
+            clogger.trace("Token {} does not belong to CPU {}, skipping", dk.token(), engine().cpu_id());
+            return false;
+        }
 
-            if (!belongs_to_current_node(dk.token(), owned_ranges)) {
-                clogger.trace("Token {} does not belong to this node, skipping", dk.token());
-                return false;
-            }
-            return true;
-        };
+        if (!belongs_to_current_node(dk.token(), owned_ranges)) {
+            clogger.trace("Token {} does not belong to this node, skipping", dk.token());
+            return false;
+        }
+        return true;
     }
 };
 
@@ -877,7 +877,7 @@ future<compaction_info> compaction::run(std::unique_ptr<compaction> c) {
             // leave this block either successfully or exceptionally with the reader object
             // destroyed.
             auto r = std::move(reader);
-            r.consume_in_thread(std::move(cfc), c->filter_func(), db::no_timeout);
+            r.consume_in_thread(std::move(cfc), c->filter(), db::no_timeout);
         } catch (...) {
             c->delete_sstables_for_interrupted_compaction();
             c = nullptr; // make sure writers are stopped while running in thread context
