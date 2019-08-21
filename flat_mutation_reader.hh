@@ -716,11 +716,13 @@ class mutation_fragment_stream_validator {
     const schema& _schema;
     mutation_fragment::kind _prev_kind;
     position_in_partition _prev_pos;
+    bool _compare_keys;
 public:
-    mutation_fragment_stream_validator(const schema& s)
+    mutation_fragment_stream_validator(const schema& s, bool compare_keys = false)
         : _schema(s)
         , _prev_kind(mutation_fragment::kind::partition_end)
         , _prev_pos(position_in_partition::end_of_partition_tag_t{})
+        , _compare_keys(compare_keys)
     { }
 
     ~mutation_fragment_stream_validator();

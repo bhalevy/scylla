@@ -936,19 +936,24 @@ mutation_fragment_stream_validator::~mutation_fragment_stream_validator() {
 bool mutation_fragment_stream_validator::operator()(const mutation_fragment& mv) {
     auto kind = mv.mutation_fragment_kind();
     auto pos = mv.position();
+    auto region = pos.region();
     bool valid;
 
     fmr_logger.debug("{} -> {}", position_desc(_prev_kind, _prev_pos), position_desc(kind, pos));
 
     if (mv.is_partition_start()) {
         valid = _prev_pos.is_partition_end();
-    } else {
+    } else if (_compare_keys) {
         auto less = position_in_partition::less_compare(_schema);
         if (_prev_kind != mutation_fragment::kind::range_tombstone) {
             valid = less(_prev_pos, pos);
         } else {
             valid = !less(pos, _prev_pos);
         }
+    } else if (region != partition_region::clustered) {
+        valid = _prev_pos.region() < region;
+    } else {
+        valid = _prev_pos.region() <= region;
     }
 
     if (__builtin_expect(!valid, false)) {
@@ -956,6 +961,10 @@ bool mutation_fragment_stream_validator::operator()(const mutation_fragment& mv)
     }
 
     _prev_kind = mv.mutation_fragment_kind();
-    _prev_pos = pos;
+    if (_compare_keys) {
+        _prev_pos = pos;
+    } else {
+        _prev_pos = position_in_partition(region, pos.get_bound_weight(), std::optional<clustering_key_prefix>());
+    }
     return true;
 }
