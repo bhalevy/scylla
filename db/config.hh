@@ -34,6 +34,12 @@
 #include "seastarx.hh"
 #include "utils/config_file.hh"
 
+#if defined(DEBUG)
+#define ENABLE_SSTABLE_KEY_VALIDATION true
+#else
+#define ENABLE_SSTABLE_KEY_VALIDATION false
+#endif
+
 namespace seastar { class file; struct logging_settings; }
 
 namespace db {
@@ -748,7 +754,7 @@ public:
     val(large_memory_allocation_warning_threshold, size_t, size_t(1) << 20, Used, "Warn about memory allocations above this size; set to zero to disable") \
     val(enable_deprecated_partitioners, bool, false, Used, "Enable the byteordered and murmurs partitioners. These partitioners are deprecated and will be removed in a future version.") \
     val(enable_keyspace_column_family_metrics, bool, false, Used, "Enable per keyspace and per column family metrics reporting") \
-    val(enable_sstable_data_integrity_check, bool, false, Used, "Enable interposer which checks for integrity of every sstable write." \
+    val(enable_sstable_data_integrity_check, bool, ENABLE_SSTABLE_KEY_VALIDATION, Used, "Enable interposer which checks for integrity of every sstable write." \
         " Performance is affected to some extent as a result. Useful to help debugging problems that may arise at another layers.") \
     val(enable_sstable_key_validation, bool, false, Used, "Enable validation of partition and clustering keys monotonicity" \
         " Performance is affected to some extent as a result. Useful to help debugging problems that may arise at another layers.") \
