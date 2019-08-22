@@ -90,7 +90,7 @@ GCC6_CONCEPT(
 class filtering_reader : public flat_mutation_reader::impl {
     flat_mutation_reader _rd;
     Filter _filter;
-    static_assert(std::is_same<bool, std::result_of_t<Filter(const dht::decorated_key&)>>::value, "bad MutationFilter signature");
+    static_assert(std::is_same<bool, std::result_of_t<Filter(const dht::decorated_key&)>>::value, "bad Filter signature");
 public:
     filtering_reader(flat_mutation_reader rd, Filter&& filter)
         : impl(rd.schema())
@@ -139,12 +139,12 @@ public:
 
 // Creates a mutation_reader wrapper which creates a new stream of mutations
 // with some mutations removed from the original stream.
-// MutationFilter is a callable which decides which mutations are dropped. It
+// Filter is a callable which decides which mutations are dropped. It
 // accepts mutation const& and returns a bool. The mutation stays in the
 // stream if and only if the filter returns true.
-template <typename MutationFilter>
-flat_mutation_reader make_filtering_reader(flat_mutation_reader rd, MutationFilter&& filter) {
-    return make_flat_mutation_reader<filtering_reader<MutationFilter>>(std::move(rd), std::forward<MutationFilter>(filter));
+template <typename Filter>
+flat_mutation_reader make_filtering_reader(flat_mutation_reader rd, Filter&& filter) {
+    return make_flat_mutation_reader<filtering_reader<Filter>>(std::move(rd), std::forward<Filter>(filter));
 }
 
 /// A partition_presence_checker quickly returns whether a key is known not to exist
