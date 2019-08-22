@@ -83,21 +83,19 @@ flat_mutation_reader make_combined_reader(schema_ptr schema,
         streamed_mutation::forwarding fwd_sm = streamed_mutation::forwarding::no,
         mutation_reader::forwarding fwd_mr = mutation_reader::forwarding::yes);
 
-template <typename MutationFilter>
+template <typename Filter>
 GCC6_CONCEPT(
-    requires requires(MutationFilter mf, const dht::decorated_key& dk) {
-        { mf(dk) } -> bool;
-    }
+    requires PartitionFilter<Filter>
 )
 class filtering_reader : public flat_mutation_reader::impl {
     flat_mutation_reader _rd;
-    MutationFilter _filter;
-    static_assert(std::is_same<bool, std::result_of_t<MutationFilter(const dht::decorated_key&)>>::value, "bad MutationFilter signature");
+    Filter _filter;
+    static_assert(std::is_same<bool, std::result_of_t<Filter(const dht::decorated_key&)>>::value, "bad MutationFilter signature");
 public:
-    filtering_reader(flat_mutation_reader rd, MutationFilter&& filter)
+    filtering_reader(flat_mutation_reader rd, Filter&& filter)
         : impl(rd.schema())
         , _rd(std::move(rd))
-        , _filter(std::forward<MutationFilter>(filter)) {
+        , _filter(std::forward<Filter>(filter)) {
     }
     virtual future<> fill_buffer(db::timeout_clock::time_point timeout) override {
         return do_until([this] { return is_buffer_full() || is_end_of_stream(); }, [this, timeout] {
