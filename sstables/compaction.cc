@@ -463,7 +463,7 @@ private:
     }
 
     virtual bool filter_func(const dht::decorated_key&) const {
-            return true;
+        return true;
     }
 
     flat_mutation_reader::filter filter() const {
@@ -591,7 +591,7 @@ public:
     }
 
     virtual bool filter_func(const dht::decorated_key& dk) const override {
-            return dht::shard_of(dk.token()) == engine().cpu_id();
+        return dht::shard_of(dk.token()) == engine().cpu_id();
     }
 
     virtual sstable_writer* select_sstable_writer(const dht::decorated_key& dk) override {
@@ -730,16 +730,16 @@ public:
     virtual bool filter_func(const dht::decorated_key& dk) const override {
         dht::token_range_vector owned_ranges = service::get_local_storage_service().get_local_ranges(_schema->ks_name());
 
-            if (dht::shard_of(dk.token()) != engine().cpu_id()) {
-                clogger.trace("Token {} does not belong to CPU {}, skipping", dk.token(), engine().cpu_id());
-                return false;
-            }
+        if (dht::shard_of(dk.token()) != engine().cpu_id()) {
+            clogger.trace("Token {} does not belong to CPU {}, skipping", dk.token(), engine().cpu_id());
+            return false;
+        }
 
-            if (!belongs_to_current_node(dk.token(), owned_ranges)) {
-                clogger.trace("Token {} does not belong to this node, skipping", dk.token());
-                return false;
-            }
-            return true;
+        if (!belongs_to_current_node(dk.token(), owned_ranges)) {
+            clogger.trace("Token {} does not belong to this node, skipping", dk.token());
+            return false;
+        }
+        return true;
     }
 };
 
