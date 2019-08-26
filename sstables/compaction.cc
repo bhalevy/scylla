@@ -898,10 +898,11 @@ static std::unique_ptr<compaction> make_compaction(bool cleanup, Params&&... par
 }
 
 future<compaction_info>
-compact_sstables(sstables::compaction_descriptor descriptor, column_family& cf, std::function<shared_sstable()> creator, replacer_fn replacer, bool cleanup) {
+compact_sstables(sstables::compaction_descriptor descriptor, column_family& cf, std::function<shared_sstable()> creator, replacer_fn replacer) {
     if (descriptor.sstables.empty()) {
         throw std::runtime_error(format("Called compaction with empty set on behalf of {}.{}", cf.schema()->ks_name(), cf.schema()->cf_name()));
     }
+    bool cleanup = (descriptor.flags & compaction_flags::cleanup) != compaction_flags::none;
     auto c = make_compaction(cleanup, cf, std::move(descriptor), std::move(creator), std::move(replacer));
     return compaction::run(std::move(c));
 }

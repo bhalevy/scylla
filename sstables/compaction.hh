@@ -32,6 +32,19 @@
 
 namespace sstables {
 
+    enum class compaction_flags {
+        none = 0,
+        cleanup = 1,
+    };
+
+    inline compaction_flags operator&(compaction_flags a, compaction_flags b) {
+        return compaction_flags(std::underlying_type_t<compaction_flags>(a) & std::underlying_type_t<compaction_flags>(b));
+    }
+
+    inline compaction_flags operator|(compaction_flags a, compaction_flags b) {
+        return compaction_flags(std::underlying_type_t<compaction_flags>(a) | std::underlying_type_t<compaction_flags>(b));
+    }
+
     struct compaction_descriptor {
         // List of sstables to be compacted.
         std::vector<sstables::shared_sstable> sstables;
@@ -45,6 +58,7 @@ namespace sstables {
         std::optional<compaction_weight_registration> weight_registration;
         // Calls compaction manager's task for this compaction to release reference to exhausted sstables.
         std::function<void(const std::vector<shared_sstable>& exhausted_sstables)> release_exhausted;
+        sstables::compaction_flags flags;
 
         compaction_descriptor() = default;
 
@@ -53,11 +67,14 @@ namespace sstables {
 
         explicit compaction_descriptor(std::vector<sstables::shared_sstable> sstables, int level = default_level,
                                        uint64_t max_sstable_bytes = default_max_sstable_bytes,
-                                       utils::UUID run_identifier = utils::make_random_uuid())
+                                       utils::UUID run_identifier = utils::make_random_uuid(),
+                                       sstables::compaction_flags flags = sstables::compaction_flags::none)
             : sstables(std::move(sstables))
             , level(level)
             , max_sstable_bytes(max_sstable_bytes)
-            , run_identifier(run_identifier) {}
+            , run_identifier(run_identifier)
+            , flags(flags)
+        {}
     };
 
     struct resharding_descriptor {
@@ -145,7 +162,7 @@ namespace sstables {
     // cleaned up, log messages will inform the user that compact_sstables runs for
     // cleaning operation, and compaction history will not be updated.
     future<compaction_info> compact_sstables(sstables::compaction_descriptor descriptor, column_family& cf,
-        std::function<shared_sstable()> creator, replacer_fn replacer, bool cleanup = false);
+        std::function<shared_sstable()> creator, replacer_fn replacer);
 
     // Compacts a set of N shared sstables into M sstables. For every shard involved,
     // i.e. which owns any of the sstables, a new unshared sstable is created.
