@@ -1194,9 +1194,10 @@ table::on_compaction_completion(const std::vector<sstables::shared_sstable>& new
     _sstables_compacted_but_not_deleted = std::move(new_compacted_but_not_deleted);
 
     rebuild_statistics();
+}
 
-    // This is done in the background, so we can consider this compaction completed.
-    (void)seastar::with_gate(_sstable_deletion_gate, [this, sstables_to_remove] {
+future<> table::delete_compacted_sstables(const std::vector<sstables::shared_sstable>& sstables_to_remove) {
+    return seastar::with_gate(_sstable_deletion_gate, [this, sstables_to_remove] {
        return with_semaphore(_sstable_deletion_sem, 1, [this, sstables_to_remove = std::move(sstables_to_remove)] {
         return sstables::delete_atomically(sstables_to_remove).then_wrapped([this, sstables_to_remove] (future<> f) {
             std::exception_ptr eptr;
@@ -1287,6 +1288,8 @@ table::compact_sstables(sstables::compaction_descriptor descriptor, bool cleanup
             if (release_exhausted) {
                 release_exhausted(old_ssts);
             }
+            // This is done in the background, so we can consider this compaction completed.
+            (void)this->delete_compacted_sstables(old_ssts);
         };
 
         return sstables::compact_sstables(std::move(descriptor), *this, create_sstable, replace_sstables, cleanup);

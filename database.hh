@@ -574,6 +574,8 @@ private:
     void on_compaction_completion(const std::vector<sstables::shared_sstable>& new_sstables,
         const std::vector<sstables::shared_sstable>& sstables_to_remove);
 
+    future<> delete_compacted_sstables(const std::vector<sstables::shared_sstable>& sstables_to_remove);
+
     void rebuild_statistics();
 
     // This function replaces new sstables by their ancestors, which are sstables that needed resharding.
