@@ -35,6 +35,7 @@ namespace sstables {
     enum class compaction_flags {
         none = 0,
         cleanup = 1,
+        wait_for_deletion = 2,
     };
 
     inline compaction_flags operator&(compaction_flags a, compaction_flags b) {

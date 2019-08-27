@@ -276,6 +276,7 @@ future<> compaction_manager::submit_major_compaction(column_family* cf) {
             // those are eligible for major compaction.
             sstables::compaction_strategy cs = cf->get_compaction_strategy();
             sstables::compaction_descriptor descriptor = cs.get_major_compaction_job(*cf, get_candidates(*cf));
+            descriptor.flags = sstables::compaction_flags::wait_for_deletion;
             auto compacting = compacting_sstable_registration(this, descriptor.sstables);
 
             cmlog.info0("User initiated compaction started on behalf of {}.{}", cf->schema()->ks_name(), cf->schema()->cf_name());

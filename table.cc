@@ -1280,19 +1280,36 @@ table::compact_sstables(sstables::compaction_descriptor descriptor) {
                 sst->set_unshared();
                 return sst;
         };
-        auto replace_sstables = [this, release_exhausted = descriptor.release_exhausted] (std::vector<sstables::shared_sstable> old_ssts,
-                std::vector<sstables::shared_sstable> new_ssts) {
+        bool wait_for_deletion = (descriptor.flags & sstables::compaction_flags::wait_for_deletion) != sstables::compaction_flags::none;
+        auto deletion_promise = wait_for_deletion ? make_lw_shared<promise<>>() : lw_shared_ptr<promise<>>(nullptr);
+        auto replace_sstables = [this, release_exhausted = descriptor.release_exhausted, deletion_promise] (
+                std::vector<sstables::shared_sstable> old_ssts,
+                std::vector<sstables::shared_sstable> new_ssts) mutable {
             _compaction_strategy.notify_completion(old_ssts, new_ssts);
             _compaction_manager.propagate_replacement(this, old_ssts, new_ssts);
             this->on_compaction_completion(new_ssts, old_ssts);
             if (release_exhausted) {
                 release_exhausted(old_ssts);
             }
-            // This is done in the background, so we can consider this compaction completed.
-            (void)this->delete_compacted_sstables(old_ssts);
+            (void)this->delete_compacted_sstables(old_ssts).then_wrapped([deletion_promise = std::move(deletion_promise)] (future<> f) mutable {
+                if (f.failed()) {
+                    if (deletion_promise) {
+                        deletion_promise->set_exception(f.get_exception());
+                    } else {
+                        tlogger.error("Compacted SSTables background deletion failed: {}. Ignored.", f.get_exception());
+                    }
+                } else if (deletion_promise) {
+                    deletion_promise->set_value();
+                }
+            });
         };
 
-        return sstables::compact_sstables(std::move(descriptor), *this, create_sstable, replace_sstables);
+        return sstables::compact_sstables(std::move(descriptor), *this, create_sstable, replace_sstables).finally([deletion_promise] {
+            if (deletion_promise) {
+                return deletion_promise->get_future();
+            }
+            return make_ready_future<>();
+        });
     }).then([this] (auto info) {
         if (info.type != sstables::compaction_type::Compaction) {
             return make_ready_future<>();
