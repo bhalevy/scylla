@@ -1101,7 +1101,9 @@ db::commitlog::segment_manager::list_descriptors(sstring dirname) {
         }
 
         future<> done() {
-            return _list.done();
+            return _list.done().finally([this] {
+                return _file.close();
+            });
         }
 
         static bool is_cassandra_segment(sstring name) {
