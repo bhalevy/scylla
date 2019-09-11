@@ -2983,6 +2983,7 @@ remove_by_toc_name(sstring sstable_toc_name, const io_error_handler& error_handl
         auto size = toc_file.size().get0();
         auto text = in.read_exactly(size).get0();
         in.close().get();
+        toc_file.close().get();
         std::vector<sstring> components;
         sstring all(text.begin(), text.end());
         boost::split(components, all, boost::is_any_of("\n"));
