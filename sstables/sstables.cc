@@ -2900,14 +2900,14 @@ int sstable::compare_by_max_timestamp(const sstable& other) const {
 sstable::~sstable() {
     if (_index_file) {
         // Registered as background job.
-        (void)_index_file.close().handle_exception([save = _index_file, op = background_jobs().start()] (auto ep) {
+        (void)_index_file.close().handle_exception([save = std::move(_index_file), op = background_jobs().start()] (auto ep) {
             sstlog.warn("sstable close index_file failed: {}", ep);
             general_disk_error();
         });
     }
     if (_data_file) {
         // Registered as background job.
-        (void)_data_file.close().handle_exception([save = _data_file, op = background_jobs().start()] (auto ep) {
+        (void)_data_file.close().handle_exception([save = std::move(_data_file), op = background_jobs().start()] (auto ep) {
             sstlog.warn("sstable close data_file failed: {}", ep);
             general_disk_error();
         });
