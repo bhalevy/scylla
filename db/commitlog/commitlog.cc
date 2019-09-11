@@ -2067,6 +2067,8 @@ db::commitlog::read_log_file(const sstring& filename, const sstring& pfx, seasta
             }
         }).handle_exception([w](auto ep) {
             w->s.set_exception(ep);
+        }).finally([w] {
+            return w->f.close();
         });
 
         return std::make_unique<subscription<fragmented_temporary_buffer, db::replay_position>>(std::move(ret));
