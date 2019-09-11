@@ -2989,10 +2989,15 @@ remove_by_toc_name(sstring sstable_toc_name, const io_error_handler& error_handl
         }
 
         auto toc_file = open_checked_file_dma(error_handler, new_toc_name, open_flags::ro).get0();
+        auto close_toc_file = defer([&toc_file] {
+            toc_file.close().get();
+        });
         auto in = make_file_input_stream(toc_file);
+        auto close_in = defer([&in] {
+            in.close().get();
+        });
         auto size = toc_file.size().get0();
         auto text = in.read_exactly(size).get0();
-        in.close().get();
         std::vector<sstring> components;
         sstring all(text.begin(), text.end());
         boost::split(components, all, boost::is_any_of("\n"));
