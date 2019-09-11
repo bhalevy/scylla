@@ -851,7 +851,9 @@ test_sstable_exists(sstring dir, unsigned long generation, bool exists) {
     auto file_path = sstable::filename(dir, "ks", "cf", la, generation, big, component_type::Data);
     return open_file_dma(file_path, open_flags::ro).then_wrapped([exists] (future<file> f) {
         if (exists) {
-            BOOST_CHECK_NO_THROW(f.get0());
+            file v;
+            BOOST_CHECK_NO_THROW(v = f.get0());
+            BOOST_CHECK_NO_THROW(v.close());
         } else {
             BOOST_REQUIRE_THROW(f.get0(), std::system_error);
         }
