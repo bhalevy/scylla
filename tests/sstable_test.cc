@@ -1255,9 +1255,6 @@ SEASTAR_TEST_CASE(test_skipping_in_compressed_stream) {
         uncompressed_size += buf2.size();
         out.close().get();
 
-        auto compressed_size = f.size().get0();
-        c.update(compressed_size);
-
         auto make_is = [&] {
             f = open_file_dma(file_path, open_flags::ro).get0();
             return make_compressed_file_k_l_format_input_stream(f, &c, 0, uncompressed_size, opts);
