@@ -849,12 +849,8 @@ SEASTAR_TEST_CASE(wrong_range) {
 static future<>
 test_sstable_exists(sstring dir, unsigned long generation, bool exists) {
     auto file_path = sstable::filename(dir, "ks", "cf", la, generation, big, component_type::Data);
-    return open_file_dma(file_path, open_flags::ro).then_wrapped([exists] (future<file> f) {
-        if (exists) {
-            BOOST_CHECK_NO_THROW(f.get0());
-        } else {
-            BOOST_REQUIRE_THROW(f.get0(), std::system_error);
-        }
+    return file_exists(file_path).then([should_exist = exists] (bool does_exist) {
+        BOOST_REQUIRE_EQUAL(does_exist, should_exist);
         return make_ready_future<>();
     });
 }
