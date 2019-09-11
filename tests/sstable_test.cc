@@ -1274,38 +1274,28 @@ SEASTAR_TEST_CASE(test_skipping_in_compressed_stream) {
         expect(in, buf1);
         expect(in, buf2);
         expect_eof(in);
-        f.close().get();
 
-        f = open_file_dma(file_path, open_flags::ro).get0();
         in = make_is(f);
         in.skip(0).get();
         expect(in, buf1);
         expect(in, buf2);
         expect_eof(in);
-        f.close().get();
 
-        f = open_file_dma(file_path, open_flags::ro).get0();
         in = make_is(f);
         expect(in, buf1);
         in.skip(0).get();
         expect(in, buf2);
         expect_eof(in);
-        f.close().get();
 
-        f = open_file_dma(file_path, open_flags::ro).get0();
         in = make_is(f);
         expect(in, buf1);
         in.skip(opts.buffer_size).get();
         expect_eof(in);
-        f.close().get();
 
-        f = open_file_dma(file_path, open_flags::ro).get0();
         in = make_is(f);
         in.skip(opts.buffer_size * 2).get();
         expect_eof(in);
-        f.close().get();
 
-        f = open_file_dma(file_path, open_flags::ro).get0();
         in = make_is(f);
         in.skip(opts.buffer_size).get();
         in.skip(opts.buffer_size).get();
