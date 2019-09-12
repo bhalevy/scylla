@@ -865,11 +865,12 @@ future<> sstable::read_toc() {
     sstlog.debug("Reading TOC file {} ", file_path);
 
     return new_sstable_component_file(_read_error_handler, component_type::TOC, open_flags::ro).then([this, file_path] (file f) {
+      auto fut = futurize_invoke([this, file_path, f] () mutable {
         auto bufptr = allocate_aligned_buffer<char>(4096, 4096);
         auto buf = bufptr.get();
 
         auto fut = f.dma_read(0, buf, 4096);
-        return std::move(fut).then([this, f = std::move(f), bufptr = std::move(bufptr), file_path] (size_t size) mutable {
+        return std::move(fut).then([this, bufptr = std::move(bufptr), file_path] (size_t size) mutable {
             // This file is supposed to be very small. Theoretically we should check its size,
             // but if we so much as read a whole page from it, there is definitely something fishy
             // going on - and this simplifies the code.
@@ -897,6 +898,9 @@ future<> sstable::read_toc() {
             if (!_recognized_components.size()) {
                 throw malformed_sstable_exception("Empty TOC", file_path);
             }
+        });
+      });
+        return fut.finally([f = std::move(f)] () mutable {
             return f.close().finally([f] {});
         });
     }).then_wrapped([file_path] (future<> f) {
