@@ -1054,13 +1054,11 @@ future<> sstable::read_simple(T& component, const io_priority_class& pc) {
         try {
             f.get();
         } catch (std::system_error& e) {
-            if (e.code() == std::error_code(ENOENT, std::system_category())) {
-                throw malformed_sstable_exception(file_path + ": file not found");
-            }
-            throw;
-        } catch (malformed_sstable_exception &e) {
-            throw malformed_sstable_exception(e.what(), file_path);
+            return make_exception_future<>(malformed_sstable_exception(format("{}: {}", file_path, e.code().message())));
+        } catch (const std::exception& e) {
+            return make_exception_future<>(malformed_sstable_exception(e.what(), file_path));
         }
+        return make_ready_future<>();
     });
 }
 
