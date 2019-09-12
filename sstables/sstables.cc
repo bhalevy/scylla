@@ -1277,13 +1277,10 @@ future<file> sstable::open_file(component_type type, open_flags flags, file_open
 }
 
 future<> sstable::open_data() {
-    return when_all(open_file(component_type::Index, open_flags::ro),
-                    open_file(component_type::Data, open_flags::ro))
-                    .then([this] (auto files) {
-
-        _index_file = std::get<file>(std::get<0>(files).get());
-        _data_file = std::get<file>(std::get<1>(files).get());
-
+    return when_all_succeed(
+            open_file(component_type::Index, open_flags::ro).then([this] (file f) { _index_file = std::move(f); }),
+            open_file(component_type::Data, open_flags::ro).then([this] (file f) { _data_file = std::move(f); })
+    ).then([this] {
         return this->update_info_for_opened_data();
     }).then([this] {
         if (_shards.empty()) {
@@ -1355,16 +1352,10 @@ future<> sstable::create_data() {
     file_open_options opt;
     opt.extent_allocation_size_hint = 32 << 20;
     opt.sloppy_size = true;
-    return when_all(open_file(component_type::Index, oflags, opt),
-                    open_file(component_type::Data, oflags, opt)).then([this] (auto files) {
-        // FIXME: If both files could not be created, the first get below will
-        // throw an exception, and second get() will not be attempted, and
-        // we'll get a warning about the second future being destructed
-        // without its exception being examined.
-
-        _index_file = std::get<file>(std::get<0>(files).get());
-        _data_file = std::get<file>(std::get<1>(files).get());
-    });
+    return when_all_succeed(
+        open_file(component_type::Index, oflags, opt).then([this] (file f) { _index_file = std::move(f); }),
+        open_file(component_type::Data, oflags, opt).then([this] (file f) { _data_file = std::move(f); })
+    );
 }
 
 future<> sstable::read_filter(const io_priority_class& pc) {
