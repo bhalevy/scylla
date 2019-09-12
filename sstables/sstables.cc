@@ -612,7 +612,7 @@ inline void write(sstable_version_types v, file_writer& out, const summary& s) {
 future<summary_entry&> sstable::read_summary_entry(size_t i) {
     // The last one is the boundary marker
     if (i >= (_components->summary.entries.size())) {
-        throw std::out_of_range(format("Invalid Summary index: {:d}", i));
+        return make_exception_future<summary_entry&>(std::out_of_range(format("Invalid Summary index: {:d}", i)));
     }
 
     return make_ready_future<summary_entry&>(_components->summary.entries[i]);
