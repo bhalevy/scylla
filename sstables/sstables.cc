@@ -876,7 +876,7 @@ future<> sstable::read_toc() {
 
     sstlog.debug("Reading TOC file {} ", filename(component_type::TOC));
 
-    return new_sstable_component_file(_read_error_handler, component_type::TOC, open_flags::ro).then([this] (file f) {
+    return with_file(new_sstable_component_file(_read_error_handler, component_type::TOC, open_flags::ro), [this] (file f) {
         auto bufptr = allocate_aligned_buffer<char>(4096, 4096);
         auto buf = bufptr.get();
 
@@ -909,7 +909,6 @@ future<> sstable::read_toc() {
             if (!_recognized_components.size()) {
                 throw malformed_sstable_exception("Empty TOC", filename(component_type::TOC));
             }
-            return f.close().finally([f] {});
         });
     }).then_wrapped([this] (future<> f) {
         try {
