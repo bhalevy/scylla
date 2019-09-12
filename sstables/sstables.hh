@@ -671,6 +671,8 @@ private:
         serialization_header& s = *static_cast<serialization_header *>(p.get());
         return s;
     }
+
+    future<> open_or_create_data(std::function<future<file>(component_type)> func);
 public:
     future<> read_toc();
 
