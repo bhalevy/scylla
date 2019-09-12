@@ -221,12 +221,12 @@ SEASTAR_THREAD_TEST_CASE(empty_toc) {
 
 SEASTAR_THREAD_TEST_CASE(alien_toc) {
     broken_sst("tests/sstables/badtoc", 2,
-               "tests/sstables/badtoc/la-2-big-Statistics.db: file not found");
+               "tests/sstables/badtoc/la-2-big-Statistics.db: No such file or directory");
 }
 
 SEASTAR_THREAD_TEST_CASE(truncated_toc) {
     broken_sst("tests/sstables/badtoc", 3,
-               "tests/sstables/badtoc/la-3-big-Statistics.db: file not found");
+               "tests/sstables/badtoc/la-3-big-Statistics.db: No such file or directory");
 }
 
 SEASTAR_THREAD_TEST_CASE(wrong_format_toc) {
@@ -236,10 +236,10 @@ SEASTAR_THREAD_TEST_CASE(wrong_format_toc) {
 
 SEASTAR_THREAD_TEST_CASE(compression_truncated) {
     broken_sst("tests/sstables/badcompression", 1,
-               "tests/sstables/badcompression/la-1-big-Statistics.db: file not found");
+               "tests/sstables/badcompression/la-1-big-Statistics.db: No such file or directory");
 }
 
 SEASTAR_THREAD_TEST_CASE(compression_bytes_flipped) {
     broken_sst("tests/sstables/badcompression", 2,
-               "tests/sstables/badcompression/la-2-big-Statistics.db: file not found");
+               "tests/sstables/badcompression/la-2-big-Statistics.db: No such file or directory");
 }
