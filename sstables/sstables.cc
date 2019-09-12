@@ -865,12 +865,12 @@ future<> sstable::read_toc() {
         auto buf = bufptr.get();
 
         auto fut = f.dma_read(0, buf, 4096);
-        return std::move(fut).then([this, f = std::move(f), bufptr = std::move(bufptr), file_path] (size_t size) mutable {
+        return std::move(fut).then([this, bufptr = std::move(bufptr), file_path] (size_t size) mutable {
             // This file is supposed to be very small. Theoretically we should check its size,
             // but if we so much as read a whole page from it, there is definitely something fishy
             // going on - and this simplifies the code.
             if (size >= 4096) {
-                throw malformed_sstable_exception("SSTable too big: " + to_sstring(size) + " bytes", file_path);
+                return make_exception_future<>(malformed_sstable_exception("SSTable too big: " + to_sstring(size) + " bytes", file_path));
             }
 
             std::string_view buf(bufptr.get(), size);
@@ -891,19 +891,23 @@ future<> sstable::read_toc() {
                 }
             }
             if (!_recognized_components.size()) {
-                throw malformed_sstable_exception("Empty TOC", file_path);
+                return make_exception_future<>(malformed_sstable_exception("Empty TOC", file_path));
             }
+            return make_ready_future<>();
+        }).finally([f = std::move(f)] () mutable {
             return f.close().finally([f] {});
         });
     }).then_wrapped([file_path] (future<> f) {
         try {
             f.get();
-        } catch (std::system_error& e) {
-            if (e.code() == std::error_code(ENOENT, std::system_category())) {
-                throw malformed_sstable_exception(file_path + ": file not found");
-            }
-            throw;
+        } catch (const malformed_sstable_exception& e) {
+            return make_exception_future<>(e);
+        } catch (const std::system_error& e) {
+            return make_exception_future<>(malformed_sstable_exception(format("{}: {}", file_path, e.code().message())));
+        } catch (const std::exception& e) {
+            return make_exception_future<>(malformed_sstable_exception(e.what(), file_path));
         }
+        return make_ready_future<>();
     });
 
 }

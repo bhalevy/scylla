@@ -231,7 +231,7 @@ SEASTAR_THREAD_TEST_CASE(truncated_toc) {
 
 SEASTAR_THREAD_TEST_CASE(wrong_format_toc) {
     broken_sst("test/resource/sstables/badtoc", 4,
-               "test/resource/sstables/badtoc/la-4-big-TOC.txt: file not found");
+               "test/resource/sstables/badtoc/la-4-big-TOC.txt: No such file or directory");
 }
 
 SEASTAR_THREAD_TEST_CASE(compression_truncated) {
