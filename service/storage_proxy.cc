@@ -3749,6 +3749,10 @@ void storage_proxy::on_down(const gms::inet_address& endpoint) {
     while (it != _view_update_handlers_list->end()) {
         auto guard = it->shared_from_this();
         if (it->get_targets().count(endpoint) > 0) {
+            if (_response_handlers.find(it->id()) == _response_handlers.end()) {
+                slogger.warn("storage_proxy::on_down write_handler {} is no longer registered.", it->id());
+                continue;
+            }
             it->timeout_cb();
         }
         ++it;
@@ -3761,7 +3765,11 @@ void storage_proxy::on_down(const gms::inet_address& endpoint) {
 
 future<> storage_proxy::drain_on_shutdown() {
     return do_with(::shared_ptr<abstract_write_response_handler>(), [this] (::shared_ptr<abstract_write_response_handler>& intrusive_list_guard) {
-        return do_for_each(*_view_update_handlers_list, [&intrusive_list_guard] (abstract_write_response_handler& handler) {
+        return do_for_each(*_view_update_handlers_list, [this, &intrusive_list_guard] (abstract_write_response_handler& handler) {
+            if (_response_handlers.find(handler.id()) == _response_handlers.end()) {
+                slogger.warn("storage_proxy::drain_on_shutdown write_handler {} is no longer registered.", handler.id());
+                return;
+            }
             intrusive_list_guard = handler.shared_from_this();
             handler.timeout_cb();
         });
