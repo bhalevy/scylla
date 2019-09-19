@@ -353,8 +353,8 @@ public:
         _expire_timer.cancel();
         _mutation_holder->release_mutation();
     }
-    void timeout_cb() {
-        if (_cl_achieved || _cl == db::consistency_level::ANY) {
+    void timeout_cb(bool shutdown = false) {
+        if ((_cl_achieved || _cl == db::consistency_level::ANY) && !shutdown) {
             // we are here because either cl was achieved, but targets left in the handler are not
             // responding, so a hint should be written for them, or cl == any in which case
             // hints are counted towards consistency, so we need to write hints and count how much was written
@@ -3743,7 +3743,7 @@ void storage_proxy::on_down(const gms::inet_address& endpoint) {
     while (it != _view_update_handlers_list->end()) {
         auto guard = it->shared_from_this();
         if (it->get_targets().count(endpoint) > 0) {
-            it->timeout_cb();
+            it->timeout_cb(true);
         }
         ++it;
         if (seastar::thread::should_yield()) {
