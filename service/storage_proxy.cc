@@ -353,7 +353,7 @@ public:
         _expire_timer.cancel();
         _mutation_holder->release_mutation();
     }
-    void timeout_cb() {
+    void timeout_cb(bool remove_handler = true) {
         if (_cl_achieved || _cl == db::consistency_level::ANY) {
             // we are here because either cl was achieved, but targets left in the handler are not
             // responding, so a hint should be written for them, or cl == any in which case
@@ -372,7 +372,9 @@ public:
         }
 
         on_timeout();
-        _proxy->remove_response_handler(_id);
+        if (remove_handler) {
+            _proxy->remove_response_handler(_id);
+        }
     }
     db::view::update_backlog max_backlog() {
         return boost::accumulate(
@@ -3743,7 +3745,14 @@ void storage_proxy::on_down(const gms::inet_address& endpoint) {
     while (it != _view_update_handlers_list->end()) {
         auto guard = it->shared_from_this();
         if (it->get_targets().count(endpoint) > 0) {
-            it->timeout_cb();
+            auto entry = _response_handlers.find(it->id());
+            if (entry == _response_handlers.end()) {
+                slogger.warn("storage_proxy::on_down write_handler {} is no longer registered.", it->id());
+                it = _view_update_handlers_list->erase(it);
+                continue;
+            }
+            it->timeout_cb(false);
+            remove_response_handler_entry(std::move(entry));
         }
         ++it;
         if (seastar::thread::should_yield()) {
@@ -3755,9 +3764,15 @@ void storage_proxy::on_down(const gms::inet_address& endpoint) {
 
 future<> storage_proxy::drain_on_shutdown() {
     return do_with(::shared_ptr<abstract_write_response_handler>(), [this] (::shared_ptr<abstract_write_response_handler>& intrusive_list_guard) {
-        return do_for_each(*_view_update_handlers_list, [&intrusive_list_guard] (abstract_write_response_handler& handler) {
+        return do_for_each(*_view_update_handlers_list, [this, &intrusive_list_guard] (abstract_write_response_handler& handler) {
+            auto entry = _response_handlers.find(handler.id());
+            if (entry == _response_handlers.end()) {
+                slogger.warn("storage_proxy::drain_on_shutdown write_handler {} is no longer registered.", handler.id());
+                return;
+            }
             intrusive_list_guard = handler.shared_from_this();
-            handler.timeout_cb();
+            handler.timeout_cb(false);
+            remove_response_handler_entry(std::move(entry));
         });
     }).then([this] {
         return _hints_resource_manager.stop();
