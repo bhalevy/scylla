@@ -372,7 +372,13 @@ public:
         }
 
         on_timeout();
-        _proxy->remove_response_handler(_id);
+
+        auto entry = _proxy->_response_handlers.find(_id);
+        if (entry != _proxy->_response_handlers.end()) {
+            _proxy->remove_response_handler_entry(std::move(entry));
+        } else if (!shutdown) {
+            slogger.error("abstract_write_response_handler {} timed out but it is already unregistered.", _id);
+        }
     }
     db::view::update_backlog max_backlog() {
         return boost::accumulate(
