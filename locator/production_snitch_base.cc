@@ -145,6 +145,8 @@ future<> production_snitch_base::load_property_file() {
                 _prop_file_size = s;
 
                 return f.dma_read_exactly<char>(0, s);
+            }).finally([f] () mutable {
+                return f.close().finally([f] {});
             });
         }).then([this] (temporary_buffer<char> tb) {
             _prop_file_contents = std::move(std::string(tb.get(), _prop_file_size));
