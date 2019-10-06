@@ -5175,11 +5175,6 @@ SEASTAR_TEST_CASE(purged_tombstone_consumer_sstable_test) {
             auto max_purgeable_func = [max_purgeable_ts] (const dht::decorated_key& dk) {
                 return max_purgeable_ts;
             };
-            auto make_partition_filter = [] () -> flat_mutation_reader::filter {
-                return [] (const dht::decorated_key& dk) {
-                    return true;
-                };
-            };
 
             auto non_purged = sst_gen();
             auto purged_only = sst_gen();
@@ -5209,7 +5204,7 @@ SEASTAR_TEST_CASE(purged_tombstone_consumer_sstable_test) {
                 ::mutation_reader::forwarding::no);
 
             auto r = std::move(reader);
-            r.consume_in_thread(std::move(cfc), make_partition_filter(), db::no_timeout);
+            r.consume_in_thread(std::move(cfc), db::no_timeout);
 
             return {std::move(non_purged), std::move(purged_only)};
         };
