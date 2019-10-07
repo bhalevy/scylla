@@ -988,6 +988,21 @@ SEASTAR_TEST_CASE(test_user_function) {
     });
 }
 
+SEASTAR_TEST_CASE(test_drop_used_function) {
+    return with_udf_enabled([] (cql_test_env& e) {
+        e.execute_cql("CREATE FUNCTION my_func1(a int, b float) CALLED ON NULL INPUT RETURNS int LANGUAGE Lua AS 'return 2';").get();
+        e.execute_cql("CREATE FUNCTION my_func2(a int) CALLED ON NULL INPUT RETURNS double LANGUAGE Lua AS 'return 2';").get();
+        e.execute_cql("CREATE AGGREGATE my_agg(float) SFUNC my_func1 STYPE int FINALFUNC my_func2;").get();
+
+        BOOST_REQUIRE_EXCEPTION(e.execute_cql("DROP FUNCTION my_func1;").get(), ire, message_equals("'ks.my_func1 : (int, float) -> int' is still used by {ks.my_agg : (float) -> double}"));
+        BOOST_REQUIRE_EXCEPTION(e.execute_cql("DROP FUNCTION my_func2;").get(), ire, message_equals("'ks.my_func2 : (int) -> double' is still used by {ks.my_agg : (float) -> double}"));
+
+        e.execute_cql("DROP AGGREGATE my_agg;").get();
+        e.execute_cql("DROP FUNCTION my_func1;").get();
+        e.execute_cql("DROP FUNCTION my_func2;").get();
+    });
+}
+
 SEASTAR_THREAD_TEST_CASE(test_user_function_db_init) {
     tmpdir data_dir;
     auto db_cfg_ptr = make_shared<db::config>();
@@ -999,9 +1014,11 @@ SEASTAR_THREAD_TEST_CASE(test_user_function_db_init) {
 
     do_with_cql_env_thread([] (cql_test_env& e) {
         e.execute_cql("CREATE FUNCTION my_func(a int, b float) CALLED ON NULL INPUT RETURNS int LANGUAGE Lua AS 'return 2';").get();
+        e.execute_cql("CREATE AGGREGATE my_agg(float) SFUNC my_func STYPE int;").get();
     }, db_cfg_ptr).get();
 
     do_with_cql_env_thread([] (cql_test_env& e) {
+        e.execute_cql("DROP AGGREGATE my_agg;").get();
         e.execute_cql("DROP FUNCTION my_func;").get();
     }, db_cfg_ptr).get();
 }
@@ -1010,11 +1027,20 @@ SEASTAR_TEST_CASE(test_user_function_mixups) {
     return with_udf_enabled([] (cql_test_env& e) {
         BOOST_REQUIRE_EXCEPTION(e.execute_cql("DROP FUNCTION system.now;").get(), ire, message_equals("'system.now : () -> timeuuid' is not a user defined function"));
         BOOST_REQUIRE_EXCEPTION(e.execute_cql("DROP FUNCTION system.now();").get(), ire, message_equals("'system.now : () -> timeuuid' is not a user defined function"));
+        BOOST_REQUIRE_EXCEPTION(e.execute_cql("DROP AGGREGATE system.now;").get(), ire, message_equals("'system.now : () -> timeuuid' is not a user defined aggregate"));
         BOOST_REQUIRE_EXCEPTION(e.execute_cql("CREATE OR REPLACE FUNCTION system.now() RETURNS NULL ON NULL INPUT RETURNS int LANGUAGE Lua AS 'return 2';").get(),
                                 ire, message_equals("Cannot replace 'system.now : () -> timeuuid' which is not a user defined function"));
 
         e.execute_cql("CREATE FUNCTION my_func1(a int) CALLED ON NULL INPUT RETURNS int LANGUAGE Lua AS 'return 2';").get();
         e.execute_cql("CREATE FUNCTION my_func2() CALLED ON NULL INPUT RETURNS int LANGUAGE Lua AS 'return 2';").get();
+
+        BOOST_REQUIRE_EXCEPTION(e.execute_cql("CREATE OR REPLACE AGGREGATE my_func2() SFUNC my_func1 STYPE int;").get(), ire, message_equals("Cannot replace 'ks.my_func2 : () -> int' which is not a user defined aggregate"));
+
+        e.execute_cql("CREATE OR REPLACE AGGREGATE my_agg() SFUNC my_func1 STYPE int;").get();
+
+        BOOST_REQUIRE_EXCEPTION(e.execute_cql("DROP AGGREGATE my_func2;").get(), ire, message_equals("'ks.my_func2 : () -> int' is not a user defined aggregate"));
+
+        BOOST_REQUIRE_EXCEPTION(e.execute_cql("DROP FUNCTION my_agg;").get(), ire, message_equals("'ks.my_agg : () -> int' is not a user defined function"));
     });
 }
 
@@ -1048,6 +1074,130 @@ SEASTAR_TEST_CASE(test_user_function_errors) {
 
         BOOST_REQUIRE_EXCEPTION(e.execute_cql("DROP FUNCTION my_func").get(), ire, message_equals("There are multiple functions named ks.my_func"));
     });
+}
+
+SEASTAR_TEST_CASE(test_user_aggregate) {
+    return with_udf_enabled([] (cql_test_env& e) {
+        auto str_list = list_type_impl::get_instance(utf8_type, false);
+        e.execute_cql("CREATE FUNCTION my_func1(a int, b float) CALLED ON NULL INPUT RETURNS int LANGUAGE Lua AS 'return 2 * a';").get();
+        e.execute_cql("CREATE FUNCTION my_func2(a int) CALLED ON NULL INPUT RETURNS double LANGUAGE Lua AS 'return 2 * a';").get();
+        e.execute_cql("CREATE FUNCTION my_func3(a double, b float) CALLED ON NULL INPUT RETURNS double LANGUAGE Lua AS 'return 2 * a';").get();
+
+        using sc = cql_transport::event::schema_change;
+        e.execute_cql("CREATE AGGREGATE my_agg1(float) SFUNC my_func1 STYPE int;").get();
+        auto msg = e.execute_cql("CREATE AGGREGATE IF NOT EXISTS my_agg1(float) SFUNC my_func1 STYPE int;").get0();
+        BOOST_REQUIRE(dynamic_pointer_cast<cql_transport::messages::result_message::void_message>(msg));
+        msg = e.execute_cql("CREATE OR REPLACE AGGREGATE my_agg1(float) SFUNC my_func1 STYPE int;").get0();
+        auto change = get_schema_change(msg);
+        BOOST_REQUIRE(change->change == sc::change_type::CREATED);
+        BOOST_REQUIRE(change->target == sc::target_type::AGGREGATE);
+        BOOST_REQUIRE_EQUAL(change->keyspace, "ks");
+        std::vector<sstring> args{"my_agg1", "float"};
+        BOOST_REQUIRE_EQUAL(change->arguments, args);
+
+        msg = e.execute_cql("SELECT * FROM system_schema.aggregates WHERE keyspace_name = 'ks' AND aggregate_name = 'my_agg1';").get0();
+        assert_that(msg).is_rows()
+          .with_rows({
+                {
+                  serialized("ks"),
+                  serialized("my_agg1"),
+                  make_list_value(str_list, {"float"}).serialize(),
+                  std::nullopt,
+                  std::nullopt,
+                  serialized("int"),
+                  serialized("my_func1"),
+                  serialized("int"),
+                }
+              });
+
+        e.execute_cql("CREATE AGGREGATE my_agg2(float) SFUNC my_func1 STYPE int FINALFUNC my_func2 INITCOND 42;").get();
+        msg = e.execute_cql("SELECT * FROM system_schema.aggregates WHERE keyspace_name = 'ks' AND aggregate_name = 'my_agg2';").get0();
+        assert_that(msg).is_rows()
+          .with_rows({
+                {
+                  serialized("ks"),
+                  serialized("my_agg2"),
+                  make_list_value(str_list, {"float"}).serialize(),
+                  serialized("my_func2"),
+                  serialized("42"),
+                  serialized("double"),
+                  serialized("my_func1"),
+                  serialized("int"),
+                }
+              });
+
+
+        e.execute_cql("CREATE AGGREGATE my_agg3(float) SFUNC my_func3 STYPE double INITCOND 42.1;").get();
+        msg = e.execute_cql("SELECT * FROM system_schema.aggregates WHERE keyspace_name = 'ks' AND aggregate_name = 'my_agg3';").get0();
+        assert_that(msg).is_rows()
+          .with_rows({
+                {
+                  serialized("ks"),
+                  serialized("my_agg3"),
+                  make_list_value(str_list, {"float"}).serialize(),
+                  std::nullopt,
+                  serialized("42.1"),
+                  serialized("double"),
+                  serialized("my_func3"),
+                  serialized("double"),
+                }
+              });
+
+        e.execute_cql("CREATE FUNCTION my_func4(a tuple<int, double>, b float) CALLED ON NULL INPUT RETURNS tuple<int, double> LANGUAGE Lua AS 'return 2 * a';").get();
+        // FIXME: looks like cassandra accepts just "STYPE tuple"
+        e.execute_cql("CREATE AGGREGATE my_agg4(float) SFUNC my_func4 STYPE tuple<int,double> INITCOND (1, 2.3);").get();
+        msg = e.execute_cql("SELECT * FROM system_schema.aggregates WHERE keyspace_name = 'ks' AND aggregate_name = 'my_agg4';").get0();
+        assert_that(msg).is_rows()
+          .with_rows({
+                {
+                  serialized("ks"),
+                  serialized("my_agg4"),
+                  make_list_value(str_list, {"float"}).serialize(),
+                  std::nullopt,
+                  serialized("1:2.3"), // FIXME: is this correct?
+                  serialized("frozen<tuple<int, double>>"),  // FIXME: is this correct?
+                  serialized("my_func4"),
+                  serialized("frozen<tuple<int, double>>"),
+                }
+              });
+
+
+        msg = e.execute_cql("SELECT * FROM system_schema.aggregates;").get0();
+        assert_that(msg).is_rows().with_size(4);
+
+        msg = e.execute_cql("DROP AGGREGATE my_agg3(float);").get0();
+        change = get_schema_change(msg);
+        using sc = cql_transport::event::schema_change;
+        BOOST_REQUIRE(change->change == sc::change_type::DROPPED);
+        BOOST_REQUIRE(change->target == sc::target_type::AGGREGATE);
+        BOOST_REQUIRE_EQUAL(change->keyspace, "ks");
+        std::vector<sstring> drop_args{"my_agg3", "float"};
+        BOOST_REQUIRE_EQUAL(change->arguments, drop_args);
+
+        msg = e.execute_cql("SELECT * FROM system_schema.aggregates;").get0();
+        assert_that(msg).is_rows().with_size(3);
+    });
+}
+
+SEASTAR_TEST_CASE(test_user_aggregates_errors) {
+    return with_udf_enabled([] (cql_test_env& e) {
+        e.execute_cql("CREATE FUNCTION my_func1(a int, b float) CALLED ON NULL INPUT RETURNS int LANGUAGE Lua AS 'return 2 * a';").get();
+        BOOST_REQUIRE_EXCEPTION(e.execute_cql("CREATE OR REPLACE AGGREGATE IF NOT EXISTS my_agg(int) SFUNC my_func1 STYPE int;").get(), exceptions::syntax_exception, message_equals("line 1:28 no viable alternative at input 'IF'"));
+        BOOST_REQUIRE_EXCEPTION(e.execute_cql("CREATE AGGREGATE my_agg(float) SFUNC no_such_func STYPE int;").get(), ire, message_equals("SFUNC ks.no_such_func(int, float) was not found"));
+        BOOST_REQUIRE_EXCEPTION(e.execute_cql("CREATE AGGREGATE my_agg(float) SFUNC my_func1 STYPE int FINALFUNC no_such_func;").get(), ire, message_equals("FINALFUNC ks.no_such_func(int) was not found"));
+
+        e.execute_cql("CREATE FUNCTION my_func2(a int, b float) RETURNS NULL ON NULL INPUT RETURNS int LANGUAGE Lua AS 'return 2 * a';").get();
+
+        BOOST_REQUIRE_EXCEPTION(e.execute_cql("CREATE AGGREGATE my_agg2(float) SFUNC my_func2 STYPE int;").get(), ire, message_equals("INITCOND is required since 'ks.my_func2 : (int, float) -> int' cannot be called on null"));
+
+        e.execute_cql("CREATE FUNCTION my_func3(a int, b float) CALLED ON NULL INPUT RETURNS double LANGUAGE Lua AS 'return 2.0';").get();
+
+        BOOST_REQUIRE_EXCEPTION(e.execute_cql("CREATE AGGREGATE my_agg3(float) SFUNC my_func3 STYPE int;").get(), ire, message_equals("SFUNC 'ks.my_func3 : (int, float) -> double' should return S_TYPE(int)"));
+
+        e.execute_cql("CREATE AGGREGATE my_agg(float) SFUNC my_func1 STYPE int;").get();
+
+        BOOST_REQUIRE_EXCEPTION(e.execute_cql("CREATE AGGREGATE my_agg(float) SFUNC my_func1 STYPE int;").get(), ire, message_equals("The function 'ks.my_agg : (float) -> int' already exists"));
+   });
 }
 
 SEASTAR_TEST_CASE(test_user_function_invalid_type) {

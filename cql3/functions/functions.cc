@@ -21,6 +21,7 @@
 
 #include "functions.hh"
 
+#include "user_aggregate.hh"
 #include "function_call.hh"
 #include "token_fct.hh"
 #include "cql3/maps.hh"
@@ -135,6 +136,13 @@ void functions::add_function(shared_ptr<function> func) {
         throw std::logic_error(format("duplicated function {}", func));
     }
     _declared.emplace(func->name(), func);
+
+    if (auto agg = dynamic_pointer_cast<user_aggregate>(func)) {
+        ++agg->state_update_func()->num_users();
+        if (auto&& final_func = agg->final_func()) {
+            ++final_func->num_users();
+        }
+    }
 }
 
 template <typename F>
@@ -153,8 +161,21 @@ void functions::replace_function(shared_ptr<function> func) {
     });
 }
 
+static void decrement_use(user_function& func) {
+    assert(func.num_users() > 0);
+    --func.num_users();
+}
+
 void functions::remove_function(const function_name& name, const std::vector<data_type>& arg_types) {
-    with_udf_iter(name, arg_types, [] (functions::declared_t::iterator i) { _declared.erase(i); });
+    with_udf_iter(name, arg_types, [] (functions::declared_t::iterator i) {
+        if (auto agg = dynamic_pointer_cast<user_aggregate>(i->second)) {
+            decrement_use(*agg->state_update_func());
+            if (auto&& final_func = agg->final_func()) {
+                decrement_use(*final_func);
+            }
+        }
+        _declared.erase(i);
+    });
 }
 
 lw_shared_ptr<column_specification>
@@ -354,6 +375,20 @@ functions::find(const function_name& name, const std::vector<data_type>& arg_typ
         return i->second;
     }
     return {};
+}
+
+std::vector<shared_ptr<user_aggregate>>
+functions::find_users_of(const shared_ptr<user_function> &func) {
+    // This is very inefficient, but only used for printing error messages.
+    std::vector<shared_ptr<user_aggregate>> ret;
+    for (const auto &p : _declared) {
+        if (auto agg = dynamic_pointer_cast<user_aggregate>(p.second)) {
+            if (agg->state_update_func() == func || agg->final_func() == func) {
+                ret.push_back(std::move(agg));
+            }
+        }
+    }
+    return ret;
 }
 
 // This method and matchArguments are somewhat duplicate, but this method allows us to provide more precise errors in the common

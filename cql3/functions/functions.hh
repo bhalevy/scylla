@@ -51,6 +51,7 @@
 #include "cql3/assignment_testable.hh"
 #include "cql3/cql3_type.hh"
 #include "cql3/column_identifier.hh"
+#include "cql3/functions/user_aggregate.hh"
 #include "to_string.hh"
 #include <unordered_map>
 #include <boost/lexical_cast.hpp>
@@ -91,6 +92,7 @@ public:
     static boost::iterator_range<declared_t::iterator> find(const function_name& name);
     static declared_t::iterator find_iter(const function_name& name, const std::vector<data_type>& arg_types);
     static shared_ptr<function> find(const function_name& name, const std::vector<data_type>& arg_types);
+    static std::vector<shared_ptr<user_aggregate>> find_users_of(const shared_ptr<user_function> &func);
     static void clear_functions() noexcept;
     static void add_function(shared_ptr<function>);
     static void replace_function(shared_ptr<function>);

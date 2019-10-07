@@ -56,7 +56,11 @@
 
 class canonical_mutation;
 class frozen_mutation;
-namespace cql3 { namespace functions { class user_function; }}
+namespace cql3 { namespace functions {
+class user_function;
+class user_aggregate;
+}
+}
 namespace netw { class messaging_service; }
 
 namespace service {
@@ -133,6 +137,10 @@ public:
     future<> announce_new_function(shared_ptr<cql3::functions::user_function> func, bool announce_locally);
 
     future<> announce_function_drop(shared_ptr<cql3::functions::user_function> func, bool announce_locally);
+
+    future<> announce_new_aggregate(shared_ptr<cql3::functions::user_aggregate> agg, bool announce_locally);
+
+    future<> announce_aggregate_drop(shared_ptr<cql3::functions::user_aggregate> agg, bool announce_locally);
 
     future<> announce_type_update(user_type updated_type, bool announce_locally = false);
 

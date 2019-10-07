@@ -46,10 +46,15 @@ class user_function final : public abstract_function, public scalar_function {
     // global.
     lua::runtime_config _cfg;
 
+    // The number of aggregates that use this function.
+    unsigned _num_users = 0;
+
 public:
     user_function(function_name name, std::vector<data_type> arg_types, std::vector<sstring> arg_names, sstring body,
             sstring language, data_type return_type, bool called_on_null_input, sstring bitcode,
             lua::runtime_config cfg);
+
+    unsigned& num_users() { return _num_users; }
 
     const std::vector<sstring>& arg_names() const { return _arg_names; }
 

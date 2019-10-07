@@ -732,14 +732,21 @@ future<> migration_manager::announce_function_drop(
     return include_keyspace_and_announce(*keyspace.metadata(), std::move(mutations), announce_locally);
 }
 
-#if 0
-public static void announceNewAggregate(UDAggregate udf, boolean announceLocally)
-{
-    mlogger.info(String.format("Create aggregate function '%s'", udf.name()));
-    KSMetaData ksm = Schema.instance.getKSMetaData(udf.name().keyspace);
-    announce(LegacySchemaTables.makeCreateAggregateMutation(ksm, udf, FBUtilities.timestampMicros()), announceLocally);
+future<> migration_manager::announce_new_aggregate(shared_ptr<cql3::functions::user_aggregate> agg, bool announce_locally) {
+    auto& db = get_local_storage_proxy().get_db().local();
+    auto&& keyspace = db.find_keyspace(agg->name().keyspace);
+    auto mutations = db::schema_tables::make_create_aggregate_mutations(agg, api::new_timestamp());
+    return include_keyspace_and_announce(*keyspace.metadata(), std::move(mutations), announce_locally);
 }
 
+future<> migration_manager::announce_aggregate_drop(shared_ptr<cql3::functions::user_aggregate> agg, bool announce_locally) {
+    auto& db = get_local_storage_proxy().get_db().local();
+    auto&& keyspace = db.find_keyspace(agg->name().keyspace);
+    auto mutations = db::schema_tables::make_drop_aggregate_mutations(agg, api::new_timestamp());
+    return include_keyspace_and_announce(*keyspace.metadata(), std::move(mutations), announce_locally);
+}
+
+#if 0
 public static void announceKeyspaceUpdate(KSMetaData ksm) throws ConfigurationException
 {
     announceKeyspaceUpdate(ksm, false);
@@ -920,15 +927,6 @@ future<> migration_manager::announce_view_drop(const sstring& ks_name,
                                                          cf_name, ks_name));
     }
 }
-
-#if 0
-public static void announceAggregateDrop(UDAggregate udf, boolean announceLocally)
-{
-    mlogger.info(String.format("Drop aggregate function overload '%s' args '%s'", udf.name(), udf.argTypes()));
-    KSMetaData ksm = Schema.instance.getKSMetaData(udf.name().keyspace);
-    announce(LegacySchemaTables.makeDropAggregateMutation(ksm, udf, FBUtilities.timestampMicros()), announceLocally);
-}
-#endif
 
 /**
  * actively announce a new version to active hosts via rpc

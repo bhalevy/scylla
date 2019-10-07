@@ -58,6 +58,7 @@
 #include "schema_registry.hh"
 #include "mutation_query.hh"
 #include "system_keyspace.hh"
+#include "cql3/statements/create_aggregate_statement.hh"
 #include "cql3/cql3_type.hh"
 #include "cql3/functions/functions.hh"
 #include "cql3/util.hh"
@@ -165,6 +166,8 @@ struct user_types_to_drop final {
     schema_result after);
 
 static void merge_functions(distributed<service::storage_proxy>& proxy, schema_result before, schema_result after);
+
+static void merge_aggregates(distributed<service::storage_proxy>& proxy, schema_result before, schema_result after);
 
 static future<> do_merge_schema(distributed<service::storage_proxy>&, std::vector<mutation>, bool do_flush);
 
@@ -944,9 +947,7 @@ static future<> do_merge_schema(distributed<service::storage_proxy>& proxy, std:
        auto&& old_types = read_schema_for_keyspaces(proxy, TYPES, keyspaces).get0();
        auto&& old_views = read_tables_for_keyspaces(proxy, keyspaces, views());
        auto old_functions = read_schema_for_keyspaces(proxy, FUNCTIONS, keyspaces).get0();
-#if 0 // not in 2.1.8
-       /*auto& old_aggregates = */read_schema_for_keyspaces(proxy, AGGREGATES, keyspaces).get0();
-#endif
+       auto old_aggregates = read_schema_for_keyspaces(proxy, AGGREGATES, keyspaces).get0();
 
        proxy.local().mutate_locally(std::move(mutations), tracing::trace_state_ptr()).get0();
 
@@ -965,9 +966,7 @@ static future<> do_merge_schema(distributed<service::storage_proxy>& proxy, std:
        auto&& new_types = read_schema_for_keyspaces(proxy, TYPES, keyspaces).get0();
        auto&& new_views = read_tables_for_keyspaces(proxy, keyspaces, views());
        auto new_functions = read_schema_for_keyspaces(proxy, FUNCTIONS, keyspaces).get0();
-#if 0 // not in 2.1.8
-       /*auto& new_aggregates = */read_schema_for_keyspaces(proxy, AGGREGATES, keyspaces).get0();
-#endif
+       auto new_aggregates = read_schema_for_keyspaces(proxy, AGGREGATES, keyspaces).get0();
 
        std::set<sstring> keyspaces_to_drop = merge_keyspaces(proxy, std::move(old_keyspaces), std::move(new_keyspaces)).get0();
        auto types_to_drop = merge_types(proxy, std::move(old_types), std::move(new_types));
@@ -975,9 +974,7 @@ static future<> do_merge_schema(distributed<service::storage_proxy>& proxy, std:
             std::move(old_column_families), std::move(new_column_families),
             std::move(old_views), std::move(new_views));
        merge_functions(proxy, std::move(old_functions), std::move(new_functions));
-#if 0
-       mergeAggregates(oldAggregates, newAggregates);
-#endif
+       merge_aggregates(proxy, std::move(old_aggregates), std::move(new_aggregates));
        types_to_drop.drop();
 
        proxy.local().get_db().invoke_on_all([keyspaces_to_drop = std::move(keyspaces_to_drop)] (database& db) {
@@ -1316,61 +1313,6 @@ static std::vector<data_type> read_arg_types(const query::result_set_row& row, c
     return arg_types;
 }
 
-#if 0
-    // see the comments for mergeKeyspaces()
-    private static void mergeAggregates(Map<DecoratedKey, ColumnFamily> before, Map<DecoratedKey, ColumnFamily> after)
-    {
-        List<UDAggregate> created = new ArrayList<>();
-        List<UDAggregate> altered = new ArrayList<>();
-        List<UDAggregate> dropped = new ArrayList<>();
-
-        MapDifference<DecoratedKey, ColumnFamily> diff = Maps.difference(before, after);
-
-        // New keyspace with functions
-        for (Map.Entry<DecoratedKey, ColumnFamily> entry : diff.entriesOnlyOnRight().entrySet())
-            if (entry.getValue().hasColumns())
-                created.addAll(createAggregatesFromAggregatesPartition(new Row(entry.getKey(), entry.getValue())).values());
-
-        for (Map.Entry<DecoratedKey, MapDifference.ValueDifference<ColumnFamily>> entry : diff.entriesDiffering().entrySet())
-        {
-            ColumnFamily pre = entry.getValue().leftValue();
-            ColumnFamily post = entry.getValue().rightValue();
-
-            if (pre.hasColumns() && post.hasColumns())
-            {
-                MapDifference<ByteBuffer, UDAggregate> delta =
-                    Maps.difference(createAggregatesFromAggregatesPartition(new Row(entry.getKey(), pre)),
-                                    createAggregatesFromAggregatesPartition(new Row(entry.getKey(), post)));
-
-                dropped.addAll(delta.entriesOnlyOnLeft().values());
-                created.addAll(delta.entriesOnlyOnRight().values());
-                Iterables.addAll(altered, Iterables.transform(delta.entriesDiffering().values(), new Function<MapDifference.ValueDifference<UDAggregate>, UDAggregate>()
-                {
-                    public UDAggregate apply(MapDifference.ValueDifference<UDAggregate> pair)
-                    {
-                        return pair.rightValue();
-                    }
-                }));
-            }
-            else if (pre.hasColumns())
-            {
-                dropped.addAll(createAggregatesFromAggregatesPartition(new Row(entry.getKey(), pre)).values());
-            }
-            else if (post.hasColumns())
-            {
-                created.addAll(createAggregatesFromAggregatesPartition(new Row(entry.getKey(), post)).values());
-            }
-        }
-
-        for (UDAggregate udf : created)
-            Schema.instance.addAggregate(udf);
-        for (UDAggregate udf : altered)
-            Schema.instance.updateAggregate(udf);
-        for (UDAggregate udf : dropped)
-            Schema.instance.dropAggregate(udf);
-    }
-#endif
-
 static shared_ptr<cql3::functions::user_function> create_func(database& db, const query::result_set_row& row) {
     cql3::functions::function_name name{
             row.get_nonnull<sstring>("keyspace_name"), row.get_nonnull<sstring>("function_name")};
@@ -1415,6 +1357,35 @@ static void merge_functions(distributed<service::storage_proxy>& proxy, schema_r
 
 static void merge_functions(distributed<service::storage_proxy>& proxy, schema_result before, schema_result after) {
     return merge_functions(proxy, before, after, create_func);
+}
+
+// The initcond value is stored as a cql literal. Cassandra will parse any term. It is not clear how a constant function
+// call or a type cast would end up in there, so we accept only values.
+// Even 'value' is probably more than what we want since we should never get a K_NULL or a variable bind, but we don't
+// want to refactor the parse just for this.
+static ::shared_ptr<cql3::term::raw> parse_value(const sstring_view& str) {
+    return cql3::util::do_with_parser(str, [] (cql3_parser::CqlParser& parser) { return parser.value(); });
+}
+
+static shared_ptr<cql3::functions::user_aggregate> create_aggregate(database& db, const query::result_set_row& row) {
+    sstring final_func;
+    if (auto val = row.get<sstring>("final_func")) {
+        final_func = *val;
+    }
+    shared_ptr<cql3::term::raw> initial_value;
+    if (auto val = row.get<sstring>("initcond")) {
+        initial_value = parse_value(*val);
+    }
+    auto keyspace = row.get_nonnull<sstring>("keyspace_name");
+    auto arg_types = read_arg_types(row, keyspace);
+    data_type state_type = db::cql_type_parser::parse(keyspace, row.get_nonnull<sstring>("state_type"));
+    return cql3::statements::create_aggregate_statement::create(db, keyspace,
+            row.get_nonnull<sstring>("aggregate_name"), arg_types, row.get_nonnull<sstring>("state_func"),
+            std::move(state_type), std::move(final_func), std::move(initial_value));
+}
+
+static void merge_aggregates(distributed<service::storage_proxy>& proxy, schema_result before, schema_result after) {
+    return merge_functions(proxy, before, after, create_aggregate);
 }
 
 template<typename... Args>
@@ -1568,6 +1539,15 @@ std::vector<user_type> create_types_from_schema_partition(
     return create_types(ks, result->rows());
 }
 
+std::vector<shared_ptr<cql3::functions::user_aggregate>> create_aggregates_from_schema_partition(
+        database& db, lw_shared_ptr<query::result_set> result) {
+    std::vector<shared_ptr<cql3::functions::user_aggregate>> ret;
+    for (const auto& row : result->rows()) {
+        ret.emplace_back(create_aggregate(db, row));
+    }
+    return ret;
+}
+
 std::vector<shared_ptr<cql3::functions::user_function>> create_functions_from_schema_partition(
         database& db, lw_shared_ptr<query::result_set> result) {
     std::vector<shared_ptr<cql3::functions::user_function>> ret;
@@ -1704,6 +1684,34 @@ std::vector<mutation> make_drop_function_mutations(schema_ptr s, const cql3::fun
 
 std::vector<mutation> make_drop_function_mutations(shared_ptr<cql3::functions::user_function> func, api::timestamp_type timestamp) {
     return make_drop_function_mutations(functions(), *func, timestamp);
+}
+
+std::vector<mutation> make_create_aggregate_mutations(shared_ptr<cql3::functions::user_aggregate> agg,
+        api::timestamp_type timestamp) {
+    schema_ptr s = aggregates();
+    auto p = get_mutation(s, *agg);
+    mutation& m = p.first;
+    clustering_key& ckey = p.second;
+    auto final_func = agg->final_func();
+    auto initial_value = agg->initial_value();
+    auto s_type = agg->state_type();
+
+    if (final_func) {
+        m.set_clustered_cell(ckey, "final_func", final_func->name().name, timestamp);
+    }
+    if (!initial_value.is_null()) {
+        sstring cql_literal_string = s_type->to_string(initial_value.serialize_nonnull());
+        m.set_clustered_cell(ckey, "initcond", cql_literal_string, timestamp);
+    }
+    m.set_clustered_cell(ckey, "return_type", agg->return_type()->as_cql3_type().to_string(), timestamp);
+    m.set_clustered_cell(ckey, "state_func", agg->state_update_func()->name().name, timestamp);
+    m.set_clustered_cell(ckey, "state_type", s_type->as_cql3_type().to_string(), timestamp);
+    return {m};
+}
+
+std::vector<mutation> make_drop_aggregate_mutations(shared_ptr<cql3::functions::user_aggregate> agg,
+        api::timestamp_type timestamp) {
+    return make_drop_function_mutations(aggregates(), *agg, timestamp);
 }
 
 /*
@@ -2793,100 +2801,6 @@ std::vector<mutation> make_drop_view_mutations(lw_shared_ptr<keyspace_metadata> 
         return triggers;
     }
 
-    /*
-     * Aggregate UDF metadata serialization/deserialization.
-     */
-
-    public static Mutation makeCreateAggregateMutation(KSMetaData keyspace, UDAggregate aggregate, long timestamp)
-    {
-        // Include the serialized keyspace in case the target node missed a CREATE KEYSPACE migration (see CASSANDRA-5631).
-        Mutation mutation = makeCreateKeyspaceMutation(keyspace, timestamp, false);
-        addAggregateToSchemaMutation(aggregate, timestamp, mutation);
-        return mutation;
-    }
-
-    private static void addAggregateToSchemaMutation(UDAggregate aggregate, long timestamp, Mutation mutation)
-    {
-        ColumnFamily cells = mutation.addOrGet(Aggregates);
-        Composite prefix = Aggregates.comparator.make(aggregate.name().name, UDHelper.calculateSignature(aggregate));
-        CFRowAdder adder = new CFRowAdder(cells, prefix, timestamp);
-
-        adder.resetCollection("argument_types");
-        adder.add("return_type", aggregate.returnType().toString());
-        adder.add("state_func", aggregate.stateFunction().name().name);
-        if (aggregate.stateType() != null)
-            adder.add("state_type", aggregate.stateType().toString());
-        if (aggregate.finalFunction() != null)
-            adder.add("final_func", aggregate.finalFunction().name().name);
-        if (aggregate.initialCondition() != null)
-            adder.add("initcond", aggregate.initialCondition());
-
-        for (AbstractType<?> argType : aggregate.argTypes())
-            adder.addListEntry("argument_types", argType.toString());
-    }
-
-    private static Map<ByteBuffer, UDAggregate> createAggregatesFromAggregatesPartition(Row partition)
-    {
-        Map<ByteBuffer, UDAggregate> aggregates = new HashMap<>();
-        String query = String.format("SELECT * FROM %s.%s", SystemKeyspace.NAME, AGGREGATES);
-        for (UntypedResultSet.Row row : QueryProcessor.resultify(query, partition))
-        {
-            UDAggregate aggregate = createAggregateFromAggregateRow(row);
-            aggregates.put(UDHelper.calculateSignature(aggregate), aggregate);
-        }
-        return aggregates;
-    }
-
-    private static UDAggregate createAggregateFromAggregateRow(UntypedResultSet.Row row)
-    {
-        String ksName = row.getString("keyspace_name");
-        String functionName = row.getString("aggregate_name");
-        FunctionName name = new FunctionName(ksName, functionName);
-
-        List<String> types = row.getList("argument_types", UTF8Type.instance);
-
-        List<AbstractType<?>> argTypes;
-        if (types == null)
-        {
-            argTypes = Collections.emptyList();
-        }
-        else
-        {
-            argTypes = new ArrayList<>(types.size());
-            for (String type : types)
-                argTypes.add(parseType(type));
-        }
-
-        AbstractType<?> returnType = parseType(row.getString("return_type"));
-
-        FunctionName stateFunc = new FunctionName(ksName, row.getString("state_func"));
-        FunctionName finalFunc = row.has("final_func") ? new FunctionName(ksName, row.getString("final_func")) : null;
-        AbstractType<?> stateType = row.has("state_type") ? parseType(row.getString("state_type")) : null;
-        ByteBuffer initcond = row.has("initcond") ? row.getBytes("initcond") : null;
-
-        try
-        {
-            return UDAggregate.create(name, argTypes, returnType, stateFunc, finalFunc, stateType, initcond);
-        }
-        catch (InvalidRequestException reason)
-        {
-            return UDAggregate.createBroken(name, argTypes, returnType, initcond, reason);
-        }
-    }
-
-    public static Mutation makeDropAggregateMutation(KSMetaData keyspace, UDAggregate aggregate, long timestamp)
-    {
-        // Include the serialized keyspace in case the target node missed a CREATE KEYSPACE migration (see CASSANDRA-5631).
-        Mutation mutation = makeCreateKeyspaceMutation(keyspace, timestamp, false);
-
-        ColumnFamily cells = mutation.addOrGet(Aggregates);
-        int ldt = (int) (System.currentTimeMillis() / 1000);
-
-        Composite prefix = Aggregates.comparator.make(aggregate.name().name, UDHelper.calculateSignature(aggregate));
-        cells.addAtom(new RangeTombstone(prefix, prefix.end(), timestamp, ldt));
-
-        return mutation;
-    }
 #endif
 
 data_type parse_type(sstring str)

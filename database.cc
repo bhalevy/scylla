@@ -643,6 +643,14 @@ future<> database::parse_system_tables(distributed<service::storage_proxy>& prox
             return make_ready_future<>();
         });
     }).then([&proxy, this] {
+        return do_parse_schema_tables(proxy, db::schema_tables::AGGREGATES, [this, &proxy] (schema_result_value_type& v) {
+            auto&& user_aggregates = create_aggregates_from_schema_partition(*this, v.second);
+            for (auto&& agg : user_aggregates) {
+                cql3::functions::functions::add_function(agg);
+            }
+            return make_ready_future<>();
+        });
+    }).then([&proxy, this] {
         return do_parse_schema_tables(proxy, db::schema_tables::TABLES, [this, &proxy] (schema_result_value_type &v) {
             return create_tables_from_tables_partition(proxy, v.second).then([this] (std::map<sstring, schema_ptr> tables) {
                 return parallel_for_each(tables.begin(), tables.end(), [this] (auto& t) {
