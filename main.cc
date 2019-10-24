@@ -1166,6 +1166,12 @@ int main(int ac, char** av) {
                     return db.get_compaction_manager().stop();
                 }).get();
             });
+
+            auto abort_on_shutdown = defer([] {
+                startlog.info("aborting shutdown: {}");
+                abort();
+            });
+
             startlog.info("Scylla version {} initialization completed.", scylla_version());
             stop_signal.wait().get();
             startlog.info("Signal received; shutting down");
