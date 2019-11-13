@@ -838,7 +838,15 @@ def find_single_sstable_readers():
         types = [_lookup_type('sstables::sstable_mutation_reader<sstables::data_consume_rows_context_m, sstables::mp_row_consumer_m>'),
                  _lookup_type('sstables::sstable_mutation_reader<sstables::data_consume_rows_context, sstables::mp_row_consumer_k_l>')]
 
-    def _lookup_obj(obj_addr, vtable_addr):
+    def _lookup_obj(obj_addr, vtable_addr, vtable_addr_to_ptr_type):
+        try:
+            # lookup cache
+            return vtable_addr_to_ptr_type[vtable_addr]
+        except KeyError:
+            pass
+        # insert negative entry in cache in case
+        # vtable_addr is not found or not matching any reader type
+        vtable_addr_to_ptr_type[vtable_addr] = None
         vtable_pfx = 'vtable for '
         name = resolve(vtable_addr)
         if name and name.startswith(vtable_pfx):
@@ -846,10 +854,13 @@ def find_single_sstable_readers():
             for t in types:
                 if name.startswith(t['name']):
                     ptr_type = t['ptr_type']
+                    # insert entry to cache
+                    vtable_addr_to_ptr_type[vtable_addr] = ptr_type
                     return obj_addr.reinterpret_cast(ptr_type)
 
+    vtable_addr_to_ptr_type = dict()
     for obj_addr, vtable_addr in find_vptrs():
-        obj = _lookup_obj(obj_addr, vtable_addr)
+        obj = _lookup_obj(obj_addr, vtable_addr, vtable_addr_to_ptr_type)
         if obj:
             yield obj
 
