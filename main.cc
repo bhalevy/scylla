@@ -19,7 +19,6 @@
  * along with Scylla.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#include "build_id.hh"
 #include "supervisor.hh"
 #include "database.hh"
 #include <seastar/core/app-template.hh>
@@ -73,6 +72,7 @@
 #include "alternator/server.hh"
 #include "redis/service.hh"
 #include "cdc/cdc.hh"
+#include "utils/build_id.hh"
 
 namespace fs = std::filesystem;
 
