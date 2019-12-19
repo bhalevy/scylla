@@ -18,7 +18,7 @@ static const Elf64_Phdr* get_pt_note(dl_phdr_info* info) {
             return h;
         }
     }
-    assert(0 && "no PT_NOTE programe header");
+    throw std::runtime_error("no PT_NOTE program header");
 }
 
 static const Elf64_Nhdr* get_nt_build_id(dl_phdr_info* info) {
@@ -41,7 +41,7 @@ static const Elf64_Nhdr* get_nt_build_id(dl_phdr_info* info) {
         p += n->n_descsz;
         p = align_up(p, 4);
     }
-    assert(0 && "no NT_GNU_BUILD_ID note");
+    throw std::runtime_error("no NT_GNU_BUILD_ID note");
 }
 
 static int callback(dl_phdr_info* info, size_t size, void* data) {
@@ -49,7 +49,11 @@ static int callback(dl_phdr_info* info, size_t size, void* data) {
     std::ostringstream os;
 
     // The first DSO is always the main program, which has an empty name.
-    assert(strlen(info->dlpi_name) == 0);
+    if (strlen(info->dlpi_name) != 0) {
+        std::string err = "Expected empty DSO name, but got: ";
+        err += info->dlpi_name;
+        throw std::runtime_error(err);
+    }
 
     auto* n = get_nt_build_id(info);
     auto* p = reinterpret_cast<const char*>(n);

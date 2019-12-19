@@ -449,7 +449,12 @@ int main(int ac, char** av) {
         return 0;
     }
 
-    build_id = get_build_id();
+    try {
+        build_id = get_build_id();
+    } catch (...) {
+        fmt::print("Could not get build_id: {}\n", std::current_exception());
+        build_id = "<unknown>";
+    }
 
     if (vm["build-id"].as<bool>()) {
         fmt::print("{}\n", build_id);
