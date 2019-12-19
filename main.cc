@@ -356,9 +356,10 @@ std::string format_parsed_options(const std::vector<bpo::option>& opts) {
 }
 
 static constexpr char startup_msg[] = "Scylla version {} with build-id {} starting ...\n";
+static std::string build_id;
 
 void print_starting_message(int ac, char** av, const bpo::parsed_options& opts) {
-    fmt::print(startup_msg, scylla_version(), get_build_id());
+    fmt::print(startup_msg, scylla_version(), build_id);
     if (ac) {
         fmt::print("command used: \"{}", av[0]);
         for (int i = 1; i < ac; ++i) {
@@ -424,6 +425,7 @@ int main(int ac, char** av) {
     auto init = app.get_options_description().add_options();
 
     init("version", bpo::bool_switch(), "print version number and exit");
+    init("build-id", bpo::bool_switch(), "print build-id and exit");
 
     bpo::options_description deprecated("Deprecated options - ignored");
     deprecated.add_options()
@@ -444,6 +446,13 @@ int main(int ac, char** av) {
     bpo::store(parsed_opts, vm);
     if (vm["version"].as<bool>()) {
         fmt::print("{}\n", scylla_version());
+        return 0;
+    }
+
+    build_id = get_build_id();
+
+    if (vm["build-id"].as<bool>()) {
+        fmt::print("{}\n", build_id);
         return 0;
     }
 
@@ -508,7 +517,7 @@ int main(int ac, char** av) {
             logalloc::prime_segment_pool(memory::stats().total_memory(), memory::min_free_memory()).get();
             logging::apply_settings(cfg->logging_settings(opts));
 
-            startlog.info(startup_msg, scylla_version(), get_build_id());
+            startlog.info(startup_msg, scylla_version(), build_id);
 
             verify_rlimit(cfg->developer_mode());
             verify_adequate_memory_per_shard(cfg->developer_mode());
