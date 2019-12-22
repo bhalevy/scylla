@@ -41,9 +41,17 @@ class metadata_collector;
 class file_writer {
     output_stream<char> _out;
     writer_offset_tracker _offset;
+    std::optional<sstring> _filename;
 public:
-    file_writer(file f, file_output_stream_options options)
-        : _out(make_file_output_stream(std::move(f), std::move(options))) {}
+    file_writer(file f, file_output_stream_options options, sstring filename)
+        : _out(make_file_output_stream(std::move(f), std::move(options)))
+        , _filename(std::move(filename))
+    {}
+
+    file_writer(output_stream<char>&& out, sstring filename)
+        : _out(std::move(out))
+        , _filename(std::move(filename))
+    {}
 
     file_writer(output_stream<char>&& out)
         : _out(std::move(out)) {}
@@ -74,6 +82,10 @@ public:
 
     const writer_offset_tracker& offset_tracker() const {
         return _offset;
+    }
+
+    sstring get_filename() const {
+        return _filename.value_or("output_stream");
     }
 };
 
@@ -193,8 +205,8 @@ class checksummed_file_writer : public file_writer {
     checksum _c;
     uint32_t _full_checksum;
 public:
-    checksummed_file_writer(file f, file_output_stream_options options)
-            : file_writer(make_checksummed_file_output_stream<ChecksumType>(std::move(f), _c, _full_checksum, options))
+    checksummed_file_writer(file f, file_output_stream_options options, sstring filename)
+            : file_writer(make_checksummed_file_output_stream<ChecksumType>(std::move(f), _c, _full_checksum, options), std::move(filename))
             , _c({uint32_t(std::min(size_t(DEFAULT_CHUNK_SIZE), size_t(options.buffer_size)))})
             , _full_checksum(ChecksumType::init_checksum()) {}
 
