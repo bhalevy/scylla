@@ -43,11 +43,15 @@ class file_writer {
     writer_offset_tracker _offset;
     std::optional<sstring> _filename;
 public:
+    // It is the responsiblity of the caller to close file f
+    // if the constructor throws
     file_writer(file f, file_output_stream_options options, sstring filename)
         : _out(make_file_output_stream(std::move(f), std::move(options)))
         , _filename(std::move(filename))
     {}
 
+    // It is the responsiblity of the caller to close output_stream out
+    // if the constructor throws
     file_writer(output_stream<char>&& out, sstring filename)
         : _out(std::move(out))
         , _filename(std::move(filename))
