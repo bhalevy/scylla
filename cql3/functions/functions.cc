@@ -596,7 +596,6 @@ function_call::raw::to_string() const {
     return format("{}({})", _name, join(", ", _terms));
 }
 
-
 }
 }
 

@@ -65,6 +65,7 @@ enum class exception_code : int32_t {
     WRITE_FAILURE   = 0x1500,
     READ_TIMEOUT    = 0x1200,
     READ_FAILURE    = 0x1300,
+    OVERFLOW_ERROR  = 0x1600,
 
     // 2xx: problem validating the request
     SYNTAX_ERROR    = 0x2000,
@@ -201,6 +202,12 @@ struct read_failure_exception : public request_failure_exception {
         : request_failure_exception{exception_code::READ_FAILURE, ks, cf, consistency_, received_, failures_, block_for_}
         , data_present{data_present_}
     { }
+};
+
+class overflow_error_exception: public cassandra_exception {
+public:
+    overflow_error_exception(sstring msg) noexcept
+        : cassandra_exception(exception_code::UNAUTHORIZED, std::move(msg)) {}
 };
 
 struct overloaded_exception : public cassandra_exception {
