@@ -47,22 +47,6 @@ value_to_json(const T& value) {
 
 static
 json::json_return_type
-log_level_to_json(const log_level& ll) {
-    return value_to_json(format("{}", ll));
-}
-
-static
-json::json_return_type
-log_level_map_to_json(const std::unordered_map<sstring, log_level>& llm) {
-    std::unordered_map<sstring, sstring> converted;
-    for (auto&& [k, v] : llm) {
-        converted[k] = format("{}", v);
-    }
-    return value_to_json(converted);
-}
-
-static
-json::json_return_type
 seed_provider_to_json(const db::seed_provider_type& spt) {
     return value_to_json("seed_provider_type");
 }
@@ -86,9 +70,6 @@ template <>
 const config_type config_type_for<double> = config_type("double", value_to_json<double>);
 
 template <>
-const config_type config_type_for<log_level> = config_type("string", log_level_to_json);
-
-template <>
 const config_type config_type_for<sstring> = config_type("string", value_to_json<sstring>);
 
 template <>
@@ -96,9 +77,6 @@ const config_type config_type_for<std::vector<sstring>> = config_type("string li
 
 template <>
 const config_type config_type_for<std::unordered_map<sstring, sstring>> = config_type("string map", value_to_json<std::unordered_map<sstring, sstring>>);
-
-template <>
-const config_type config_type_for<std::unordered_map<sstring, log_level>> = config_type("string map", log_level_map_to_json);
 
 template <>
 const config_type config_type_for<int64_t> = config_type("integer", value_to_json<int64_t>);
@@ -119,18 +97,6 @@ namespace YAML {
 
 // yaml-cpp conversion would do well to have some enable_if-stuff to make it possible
 // to do more broad spectrum converters.
-template<>
-struct convert<seastar::log_level> {
-    static bool decode(const Node& node, seastar::log_level& rhs) {
-        std::string tmp;
-        if (!convert<std::string>::decode(node, tmp)) {
-            return false;
-        }
-        rhs = boost::lexical_cast<seastar::log_level>(tmp);
-        return true;
-    }
-};
-
 template<>
 struct convert<db::config::seed_provider_type> {
     static bool decode(const Node& node, db::config::seed_provider_type& rhs) {
@@ -882,27 +848,12 @@ std::unordered_map<sstring, db::experimental_features_t::feature> db::experiment
     return {{"lwt", LWT}, {"udf", UDF}, {"cdc", CDC}};
 }
 
-template struct utils::config_file::named_value<seastar::log_level>;
-
 namespace utils {
 
 sstring
 config_value_as_json(const db::seed_provider_type& v) {
     // We don't support converting this to json yet
     return "seed_provider_type";
-}
-
-sstring
-config_value_as_json(const log_level& v) {
-    // We don't support converting this to json yet; and because the log_level config items
-    // aren't part of config_file::value(), it won't be converted to json in REST
-    throw std::runtime_error("config_value_as_json(log_level) is not implemented");
-}
-
-sstring config_value_as_json(const std::unordered_map<sstring, log_level>& v) {
-    // We don't support converting this to json yet; and because the log_level config items
-    // aren't part of config_file::value(), it won't be listed
-    throw std::runtime_error("config_value_as_json(const std::unordered_map<sstring, log_level>& v) is not implemented");
 }
 
 }
