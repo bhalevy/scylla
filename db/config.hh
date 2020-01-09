@@ -33,6 +33,7 @@
 #include "seastarx.hh"
 #include "utils/config_file.hh"
 #include "utils/enum_option.hh"
+#include "utils/config_file_impl.hh"
 
 namespace seastar { class file; struct logging_settings; }
 
@@ -325,22 +326,34 @@ public:
     static const sstring default_tls_priority;
 private:
     template<typename T>
-    struct log_legacy_value : public named_value<T> {
-        using MyBase = named_value<T>;
+    struct log_legacy_value : public named_value<sstring> {
+        using MyBase = named_value<sstring>;
 
         using MyBase::MyBase;
 
-        T value_or(T&& t) const {
-            return this->is_set() ? (*this)() : t;
+        sstring value_or(const boost::program_options::variables_map& map) const {
+            auto name = utils::hyphenate(this->name());
+            const boost::program_options::variable_value& opt = map[name];
+
+            if (opt.defaulted() && this->is_set()) {
+                return (*this)();
+            }
+
+            std::ostringstream ret;
+            ret << opt.as<T>();
+            return ret.str();
         }
+
         // do not add to boost::options. We only care about yaml config
         void add_command_line_option(boost::program_options::options_description_easy_init&,
                         const std::string_view&, const std::string_view&) override {}
     };
 
-    log_legacy_value<seastar::log_level> default_log_level;
-    log_legacy_value<std::unordered_map<sstring, seastar::log_level>> logger_log_level;
-    log_legacy_value<bool> log_to_stdout, log_to_syslog;
+    log_legacy_value<sstring> default_log_level;
+    log_legacy_value<program_options::string_map> logger_log_level;
+    log_legacy_value<bool> log_to_stdout;
+    log_legacy_value<bool> log_to_syslog;
+    log_legacy_value<seastar::logger_ostream_type> logger_ostream_type;
 
     void maybe_in_workdir(named_value<sstring>&, const char*);
     void maybe_in_workdir(named_value<string_list>&, const char*);

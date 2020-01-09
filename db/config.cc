@@ -30,11 +30,11 @@
 
 #include <seastar/core/print.hh>
 #include <seastar/util/log.hh>
+#include <seastar/util/log-cli.hh>
 
 #include "config.hh"
 #include "extensions.hh"
 #include "log.hh"
-#include "utils/config_file_impl.hh"
 
 namespace utils {
 
@@ -757,6 +757,7 @@ db::config::config(std::shared_ptr<db::extensions> exts)
     , logger_log_level(this, "logger_log_level", value_status::Used)
     , log_to_stdout(this, "log_to_stdout", value_status::Used)
     , log_to_syslog(this, "log_to_syslog", value_status::Used)
+    , logger_ostream_type(this, "logger_ostream_type", value_status::Used)
     , _extensions(std::move(exts))
 {}
 
@@ -861,39 +862,14 @@ bool db::config::check_experimental(experimental_features_t::feature f) const {
 namespace bpo = boost::program_options;
 
 logging::settings db::config::logging_settings(const bpo::variables_map& map) const {
-    struct convert {
-        std::unordered_map<sstring, seastar::log_level> operator()(const seastar::program_options::string_map& map) const {
-            std::unordered_map<sstring, seastar::log_level> res;
-            for (auto& p : map) {
-                res.emplace(p.first, (*this)(p.second));
-            };
-            return res;
-        }
-        seastar::log_level operator()(const sstring& s) const {
-            return boost::lexical_cast<seastar::log_level>(s);
-        }
-        bool operator()(bool b) const {
-            return b;
-        }
-    };
+    std::unordered_map<sstring, sstring> opts;
 
-    auto value = [&map](auto& v, auto dummy) {
-        auto name = utils::hyphenate(v.name());
-        const bpo::variable_value& opt = map[name];
-
-        if (opt.defaulted() && v.is_set()) {
-            return v();
-        }
-        using expected = std::decay_t<decltype(dummy)>;
-
-        return convert()(opt.as<expected>());
-    };
-
-    return logging::settings{ value(logger_log_level, seastar::program_options::string_map())
-        , value(default_log_level, sstring())
-        , value(log_to_stdout, bool())
-        , value(log_to_syslog, bool())
-    };
+    opts["logger-log-level"] = logger_log_level.value_or(map);
+    opts["default-log-level"] = default_log_level.value_or(map);
+    opts["log-to-stdout"] = log_to_stdout.value_or(map);
+    opts["log-to-syslog"] = log_to_syslog.value_or(map);
+    opts["logger-ostream-type"] = logger_ostream_type.value_or(map);
+    return seastar::log_cli::extract_settings(opts);
 }
 
 const db::extensions& db::config::extensions() const {
