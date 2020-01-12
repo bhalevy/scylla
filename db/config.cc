@@ -724,6 +724,7 @@ db::config::config(std::shared_ptr<db::extensions> exts)
     , logger_log_level(this, "logger_log_level", value_status::Used)
     , log_to_stdout(this, "log_to_stdout", value_status::Used)
     , log_to_syslog(this, "log_to_syslog", value_status::Used)
+    , logger_ostream_type(this, "logger_ostream_type", value_status::Used)
     , _extensions(std::move(exts))
 {}
 
@@ -838,8 +839,16 @@ logging::settings db::config::logging_settings(const bpo::variables_map& map) co
         settings.set_default_level(default_log_level());
     }
 
-    if (map["log-to-stdout"].defaulted() && log_to_stdout.is_set()) {
-        settings.set_stdout_enabled(log_to_stdout());
+    if (!map["logger-ostream-type"].defaulted() || logger_ostream_type.is_set()) {
+        if (map["logger-ostream-type"].defaulted() && logger_ostream_type.is_set()) {
+            settings.set_logger_ostream(logger_ostream_type());
+        }
+    } else if (!map["log-to-stdout"].defaulted() || log_to_stdout.is_set()) {
+        std::cerr << "Warning: --log-to-stdout is deprecated. Use --logger-ostream-type instead." << std::endl;
+
+        if (map["log-to-stdout"].defaulted() && log_to_stdout.is_set()) {
+            settings.set_stdout_enabled(log_to_stdout());
+        }
     }
 
     if (!map["log-to-syslog"].defaulted() && log_to_syslog.is_set()) {
