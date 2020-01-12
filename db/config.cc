@@ -861,35 +861,26 @@ bool db::config::check_experimental(experimental_features_t::feature f) const {
 
 namespace bpo = boost::program_options;
 
-template <typename T, typename Func>
-static T get_value(const bpo::variables_map& map, const db::config::log_legacy_value<T>& v, Func&& convert) {
-    auto name = utils::hyphenate(v.name());
-    const bpo::variable_value& opt = map[name];
+logging::settings db::config::logging_settings(const bpo::variables_map& map) const {
+    auto settings = seastar::log_cli::extract_settings(map);
 
-    if (opt.defaulted() && v.is_set()) {
-        return v();
+    if (map["logger-log-level"].defaulted() && logger_log_level.is_set()) {
+        settings.set_logger_levels(logger_log_level());
     }
 
-    return convert(opt);
-};
+    if (map["default-log-level"].defaulted() && default_log_level.is_set()) {
+        settings.set_default_level(default_log_level());
+    }
 
-logging::settings db::config::logging_settings(const bpo::variables_map& map) const {
-    return logging::settings{
-        get_value(map, logger_log_level, [] (const bpo::variable_value& opt) {
-            std::unordered_map<sstring, seastar::log_level> res;
-            seastar::log_cli::parse_logger_levels(opt.as<program_options::string_map>(), std::inserter(res, res.begin()));
-            return res;
-        }),
-        get_value(map, default_log_level, [] (const bpo::variable_value& opt) {
-            return seastar::log_cli::parse_log_level(opt.as<sstring>());
-        }),
-        get_value(map, log_to_stdout, [] (const bpo::variable_value& opt) {
-            return opt.as<bool>();
-        }),
-        get_value(map, log_to_syslog, [] (const bpo::variable_value& opt) {
-            return opt.as<bool>();
-        }),
-    };
+    if (map["log-to-stdout"].defaulted() && log_to_stdout.is_set()) {
+        settings.set_stdout_enabled(log_to_stdout());
+    }
+
+    if (!map["log-to-syslog"].defaulted() && log_to_syslog.is_set()) {
+        settings.set_syslog_enabled(log_to_syslog());
+    }
+
+    return settings;
 }
 
 const db::extensions& db::config::extensions() const {
