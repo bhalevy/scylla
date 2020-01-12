@@ -30,6 +30,7 @@
 
 #include <seastar/core/print.hh>
 #include <seastar/util/log.hh>
+#include <seastar/util/log-cli.hh>
 
 #include "config.hh"
 #include "extensions.hh"
@@ -860,39 +861,34 @@ bool db::config::check_experimental(experimental_features_t::feature f) const {
 
 namespace bpo = boost::program_options;
 
+template <typename T, typename Func>
+static T get_value(const bpo::variables_map& map, const db::config::log_legacy_value<T>& v, Func&& convert) {
+    auto name = utils::hyphenate(v.name());
+    const bpo::variable_value& opt = map[name];
+
+    if (opt.defaulted() && v.is_set()) {
+        return v();
+    }
+
+    return convert(opt);
+};
+
 logging::settings db::config::logging_settings(const bpo::variables_map& map) const {
-    struct convert {
-        std::unordered_map<sstring, seastar::log_level> operator()(const seastar::program_options::string_map& map) const {
+    return logging::settings{
+        get_value(map, logger_log_level, [] (const bpo::variable_value& opt) {
             std::unordered_map<sstring, seastar::log_level> res;
-            for (auto& p : map) {
-                res.emplace(p.first, (*this)(p.second));
-            };
+            seastar::log_cli::parse_logger_levels(opt.as<program_options::string_map>(), std::inserter(res, res.begin()));
             return res;
-        }
-        seastar::log_level operator()(const sstring& s) const {
-            return boost::lexical_cast<seastar::log_level>(s);
-        }
-        bool operator()(bool b) const {
-            return b;
-        }
-    };
-
-    auto value = [&map](auto& v, auto dummy) {
-        auto name = utils::hyphenate(v.name());
-        const bpo::variable_value& opt = map[name];
-
-        if (opt.defaulted() && v.is_set()) {
-            return v();
-        }
-        using expected = std::decay_t<decltype(dummy)>;
-
-        return convert()(opt.as<expected>());
-    };
-
-    return logging::settings{ value(logger_log_level, seastar::program_options::string_map())
-        , value(default_log_level, sstring())
-        , value(log_to_stdout, bool())
-        , value(log_to_syslog, bool())
+        }),
+        get_value(map, default_log_level, [] (const bpo::variable_value& opt) {
+            return seastar::log_cli::parse_log_level(opt.as<sstring>());
+        }),
+        get_value(map, log_to_stdout, [] (const bpo::variable_value& opt) {
+            return opt.as<bool>();
+        }),
+        get_value(map, log_to_syslog, [] (const bpo::variable_value& opt) {
+            return opt.as<bool>();
+        }),
     };
 }
 
