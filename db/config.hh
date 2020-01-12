@@ -330,9 +330,6 @@ private:
 
         using MyBase::MyBase;
 
-        T value_or(T&& t) const {
-            return this->is_set() ? (*this)() : t;
-        }
         // do not add to boost::options. We only care about yaml config
         void add_command_line_option(boost::program_options::options_description_easy_init&,
                         const std::string_view&, const std::string_view&) override {}
