@@ -335,8 +335,8 @@ private:
                         const std::string_view&, const std::string_view&) override {}
     };
 
-    log_legacy_value<seastar::log_level> default_log_level;
-    log_legacy_value<std::unordered_map<sstring, seastar::log_level>> logger_log_level;
+    log_legacy_value<sstring> default_log_level;
+    log_legacy_value<sstring> logger_log_level;
     log_legacy_value<bool> log_to_stdout, log_to_syslog;
 
     void maybe_in_workdir(named_value<sstring>&, const char*);
