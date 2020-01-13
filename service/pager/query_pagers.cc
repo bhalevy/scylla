@@ -287,15 +287,15 @@ public:
         last_partition_row_count = row_count;
         visitor::accept_new_partition(key, row_count);
     }
-    void accept_new_row(const clustering_key& key,
+    future<> accept_new_row(const clustering_key& key,
             const query::result_row_view& static_row,
             const query::result_row_view& row) {
         last_ckey = key;
-        visitor::accept_new_row(key, static_row, row);
+        return visitor::accept_new_row(key, static_row, row);
     }
     void accept_new_row(const query::result_row_view& static_row,
             const query::result_row_view& row) {
-        visitor::accept_new_row(static_row, row);
+        visitor::accept_new_row(static_row, row).get0();
     }
     void accept_partition_end(const query::result_row_view& static_row) {
         const uint32_t dropped = visitor::accept_partition_end(static_row);
@@ -325,7 +325,7 @@ public:
         uint32_t row_count;
         if constexpr(!std::is_same_v<std::decay_t<Visitor>, noop_visitor>) {
             query_result_visitor<Visitor> v(std::forward<Visitor>(visitor));
-            view.consume(_cmd->slice, v);
+            view.consume(_cmd->slice, v).get0();
 
             if (_last_pkey) {
                 update_slice(*_last_pkey);

@@ -129,10 +129,13 @@ public:
     { }
 
     template<typename Visitor>
-    void visit(Visitor&& visitor) const {
-        query_result_visitor<Visitor> v(*_schema, visitor, *_selection);
-        query::result_view::consume(*_result, _command->slice, v);
-        _stats->rows_read += v.rows_read();
+    future<> visit(Visitor&& visitor) const {
+        return do_with(
+            query_result_visitor<Visitor>(*_schema, visitor, *_selection), [this](query_result_visitor<Visitor>& v) {
+                return query::result_view::consume(*_result, _command->slice, v).then([this, &v] {
+                    _stats->rows_read += v.rows_read();
+                });
+            });
     }
 };
 

@@ -77,10 +77,10 @@ public:
         assert(false);
     }
 
-    virtual void visit(const cql_transport::messages::result_message::rows& m) override {
+    virtual future<> visit(const cql_transport::messages::result_message::rows& m) override {
         Json::Value& output_rows = _root["rows"];
-        const auto input_rows = m.rs().result_set().rows();
-        const auto& meta = m.rs().result_set().get_metadata().get_names();
+        const auto input_rows = m.rs().result_set().get0().rows();
+        const auto& meta = m.rs().result_set().get0().get_metadata().get_names();
         for (auto&& in_row: input_rows) {
             Json::Value out_row;
             for (unsigned i = 0; i < meta.size(); ++i) {
@@ -92,6 +92,7 @@ public:
             }
             output_rows.append(out_row);
         }
+        return make_ready_future<>();
     }
 };
 
@@ -159,7 +160,7 @@ void repl(seastar::app_template& app) {
                         return *msg->move_to_shard();
                     }
                     json_visitor visitor(json);
-                    msg->accept(visitor);
+                    msg->accept(visitor).get0();
                     return std::nullopt;
                 });
             };

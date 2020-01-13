@@ -90,7 +90,7 @@ public:
         , _first(true)
     { }
 
-    virtual void add_input(cql_serialization_format sf, result_set_builder& rs) override {
+    virtual future<> add_input(cql_serialization_format sf, result_set_builder& rs) override {
         // GROUP BY calls add_input() repeatedly without reset() in between, and it expects the
         // output to be the first value encountered:
         // https://cassandra.apache.org/doc/latest/cql/dml.html#grouping-results
@@ -99,10 +99,11 @@ public:
             _current = (*rs.current)[_idx];
             _first = false;
         }
+        return make_ready_future<>();
     }
 
-    virtual bytes_opt get_output(cql_serialization_format sf) override {
-        return std::move(_current);
+    virtual future<bytes_opt> get_output(cql_serialization_format sf) override {
+        return make_ready_future<bytes_opt>(std::move(_current));
     }
 
     virtual void reset() override {

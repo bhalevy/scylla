@@ -294,11 +294,11 @@ public:
                     return query::result_view::do_with(*qr.query_result, [schema, cmd, cell_limit, keys = std::move(keys)](query::result_view v) mutable {
                         if (schema->is_counter()) {
                             counter_column_aggregator aggregator(*schema, cmd->slice, cell_limit, std::move(keys));
-                            v.consume(cmd->slice, aggregator);
+                            v.consume(cmd->slice, aggregator).get0();
                             return aggregator.release();
                         }
                         column_aggregator<query_order::no> aggregator(*schema, cmd->slice, cell_limit, std::move(keys));
-                        v.consume(cmd->slice, aggregator);
+                        v.consume(cmd->slice, aggregator).get0();
                         return aggregator.release();
                     });
                 });
@@ -321,7 +321,7 @@ public:
                         [schema, cmd, cell_limit, keys = std::move(keys)](service::storage_proxy::coordinator_query_result qr) {
                     return query::result_view::do_with(*qr.query_result, [schema, cmd, cell_limit, keys = std::move(keys)](query::result_view v) mutable {
                         column_counter counter(*schema, cmd->slice, cell_limit, std::move(keys));
-                        v.consume(cmd->slice, counter);
+                        v.consume(cmd->slice, counter).get0();
                         return counter.release();
                     });
                 });
@@ -674,7 +674,7 @@ public:
                         [schema, cmd, column_limit](service::storage_proxy::coordinator_query_result qr) {
                     return query::result_view::do_with(*qr.query_result, [schema, cmd, column_limit](query::result_view v) {
                         column_aggregator<query_order::no> aggregator(*schema, cmd->slice, column_limit, { });
-                        v.consume(cmd->slice, aggregator);
+                        v.consume(cmd->slice, aggregator).get0();
                         auto cols = aggregator.release();
                         return !cols.empty() ? std::move(cols.begin()->second) : std::vector<ColumnOrSuperColumn>();
                     });
@@ -957,8 +957,9 @@ public:
         virtual void visit(const cql_transport::messages::result_message::schema_change& m) override {
             _result.__set_type(CqlResultType::VOID);
         }
-        virtual void visit(const cql_transport::messages::result_message::rows& m) override {
+        virtual future<> visit(const cql_transport::messages::result_message::rows& m) override {
             _result = to_thrift_result(m.rs());
+            return make_ready_future<>();
         }
         virtual void visit(const cql_transport::messages::result_message::bounce_to_shard& m) override {
             throw TProtocolException(TProtocolException::TProtocolExceptionType::NOT_IMPLEMENTED, "Thrift does not support executing LWT statements");
@@ -976,7 +977,7 @@ public:
             auto f = qp.execute_direct(query, _query_state, *opts);
             return f.then([cob = std::move(cob), opts = std::move(opts)](auto&& ret) {
                 cql3_result_visitor visitor;
-                ret->accept(visitor);
+                ret->accept(visitor).get0();
                 return cob(visitor.result());
             });
         });
@@ -1018,7 +1019,7 @@ public:
             }
             return _query_processor.local().prepare(query, _query_state).then([cob = std::move(cob)](auto&& stmt) {
                 prepared_result_visitor visitor;
-                stmt->accept(visitor);
+                stmt->accept(visitor).get();
                 cob(visitor.result());
             });
         });
@@ -1056,7 +1057,7 @@ public:
             auto f = qp.execute_prepared(std::move(prepared), std::move(cache_key), _query_state, *opts, needs_authorization);
             return f.then([cob = std::move(cob), opts = std::move(opts)](auto&& ret) {
                 cql3_result_visitor visitor;
-                ret->accept(visitor);
+                ret->accept(visitor).get0();
                 return cob(visitor.result());
             });
         });
@@ -1735,7 +1736,7 @@ private:
     }
     static std::vector<KeySlice> to_key_slices(const schema& s, const query::partition_slice& slice, query::result_view v, uint32_t cell_limit) {
         column_aggregator<query_order::yes> aggregator(s, slice, cell_limit, { });
-        v.consume(slice, aggregator);
+        v.consume(slice, aggregator).get0();
         auto&& cols = aggregator.release();
         std::vector<KeySlice> ret;
         std::transform(

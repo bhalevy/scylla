@@ -83,11 +83,14 @@ std::ostream& operator<<(std::ostream& os, const result_message& msg) {
         void visit(const result_message::prepared::cql& m) override { _os << m; };
         void visit(const result_message::prepared::thrift& m) override { _os << m; };
         void visit(const result_message::schema_change& m) override { _os << m; };
-        void visit(const result_message::rows& m) override { _os << m; };
+        future<> visit(const result_message::rows& m) override {
+            _os << m;
+            return make_ready_future<>();
+        };
         void visit(const result_message::bounce_to_shard& m) override { _os << m; };
     };
     visitor print_visitor{os};
-    msg.accept(print_visitor);
+    msg.accept(print_visitor).get0();
     return os;
 }
 

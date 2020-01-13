@@ -733,7 +733,7 @@ SEASTAR_TEST_CASE(test_limit_is_respected_across_partitions) {
             auto rows = dynamic_pointer_cast<cql_transport::messages::result_message::rows>(msg);
             BOOST_REQUIRE(rows);
             std::vector<bytes> keys;
-            const auto& rs = rows->rs().result_set();
+            const auto& rs = rows->rs().result_set().get0();
             for (auto&& row : rs.rows()) {
                 BOOST_REQUIRE(row[0]);
                 keys.push_back(*row[0]);
@@ -793,7 +793,7 @@ SEASTAR_TEST_CASE(test_partitions_have_consistent_ordering_in_range_query) {
             auto rows = dynamic_pointer_cast<cql_transport::messages::result_message::rows>(msg);
             BOOST_REQUIRE(rows);
             std::vector<bytes> keys;
-            const auto& rs = rows->rs().result_set();
+            const auto& rs = rows->rs().result_set().get0();
             for (auto&& row : rs.rows()) {
                 BOOST_REQUIRE(row[0]);
                 keys.push_back(*row[0]);
@@ -876,7 +876,7 @@ SEASTAR_TEST_CASE(test_partition_range_queries_with_bounds) {
             BOOST_REQUIRE(rows);
             std::vector<bytes> keys;
             std::vector<int64_t> tokens;
-            const auto& rs = rows->rs().result_set();
+            const auto& rs = rows->rs().result_set().get0();
             for (auto&& row : rs.rows()) {
                 BOOST_REQUIRE(row[0]);
                 BOOST_REQUIRE(row[1]);
@@ -1333,6 +1333,7 @@ SEASTAR_TEST_CASE(test_list_insert_update) {
         });
     });
 }
+
 
 static const api::timestamp_type the_timestamp = 123456789;
 SEASTAR_TEST_CASE(test_writetime_and_ttl) {
@@ -3572,7 +3573,7 @@ SEASTAR_TEST_CASE(test_rf_expand) {
             auto msg = e.execute_cql(
                 format("SELECT JSON replication FROM system_schema.keyspaces WHERE keyspace_name = '{}'", ks)).get0();
             auto res = dynamic_pointer_cast<cql_transport::messages::result_message::rows>(msg);
-            auto rows = res->rs().result_set().rows();
+            auto rows = res->rs().result_set().get0().rows();
             BOOST_REQUIRE_EQUAL(rows.size(), 1);
             auto row0 = rows[0];
             BOOST_REQUIRE_EQUAL(row0.size(), 1);

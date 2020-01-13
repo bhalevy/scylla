@@ -37,7 +37,7 @@ rows_assertions::rows_assertions(shared_ptr<cql_transport::messages::result_mess
 
 rows_assertions
 rows_assertions::with_size(size_t size) {
-    const auto& rs = _rows->rs().result_set();
+    const auto& rs = _rows->rs().result_set().get0();
     auto row_count = rs.size();
     if (row_count != size) {
         fail(format("Expected {:d} row(s) but got {:d}", size, row_count));
@@ -47,7 +47,7 @@ rows_assertions::with_size(size_t size) {
 
 rows_assertions
 rows_assertions::is_empty() {
-    const auto& rs = _rows->rs().result_set();
+    const auto& rs = _rows->rs().result_set().get0();
     auto row_count = rs.size();
     if (row_count != 0) {
         auto&& first_row = *rs.rows().begin();
@@ -58,7 +58,7 @@ rows_assertions::is_empty() {
 
 rows_assertions
 rows_assertions::is_not_empty() {
-    const auto& rs = _rows->rs().result_set();
+    const auto& rs = _rows->rs().result_set().get0();
     auto row_count = rs.size();
     if (row_count == 0) {
         fail("Expected some rows, but was result was empty");
@@ -68,7 +68,7 @@ rows_assertions::is_not_empty() {
 
 rows_assertions
 rows_assertions::rows_assertions::is_null() {
-    const auto& rs = _rows->rs().result_set();
+    const auto& rs = _rows->rs().result_set().get0();
     for (auto&& row : rs.rows()) {
         for (const bytes_opt& v : row) {
             if (v) {
@@ -81,7 +81,7 @@ rows_assertions::rows_assertions::is_null() {
 
 rows_assertions
 rows_assertions::rows_assertions::is_not_null() {
-    const auto& rs = _rows->rs().result_set();
+    const auto& rs = _rows->rs().result_set().get0();
     for (auto&& row : rs.rows()) {
         for (const bytes_opt& v : row) {
             if (!v) {
@@ -94,7 +94,7 @@ rows_assertions::rows_assertions::is_not_null() {
 
 rows_assertions
 rows_assertions::with_column_types(std::initializer_list<data_type> column_types) {
-    auto meta = _rows->rs().result_set().get_metadata();
+    auto meta = _rows->rs().result_set().get0().get_metadata();
     const auto& columns = meta.get_names();
     if (column_types.size() != columns.size()) {
         fail(format("Expected {:d} columns, got {:d}", column_types.size(), meta.column_count()));
@@ -113,7 +113,7 @@ rows_assertions::with_column_types(std::initializer_list<data_type> column_types
 
 rows_assertions
 rows_assertions::with_row(std::initializer_list<bytes_opt> values) {
-    const auto& rs = _rows->rs().result_set();
+    const auto& rs = _rows->rs().result_set().get0();
     std::vector<bytes_opt> expected_row(values);
     for (auto&& row : rs.rows()) {
         if (row == expected_row) {
@@ -127,7 +127,7 @@ rows_assertions::with_row(std::initializer_list<bytes_opt> values) {
 // Verifies that the result has the following rows and only that rows, in that order.
 rows_assertions
 rows_assertions::with_rows(std::vector<std::vector<bytes_opt>> rows) {
-    const auto& rs = _rows->rs().result_set();
+    const auto& rs = _rows->rs().result_set().get0();
     auto actual_i = rs.rows().begin();
     auto actual_end = rs.rows().end();
     int row_nr = 0;
@@ -154,7 +154,7 @@ rows_assertions::with_rows(std::vector<std::vector<bytes_opt>> rows) {
 // Verifies that the result has the following rows and only those rows.
 rows_assertions
 rows_assertions::with_rows_ignore_order(std::vector<std::vector<bytes_opt>> rows) {
-    const auto& rs = _rows->rs().result_set();
+    const auto& rs = _rows->rs().result_set().get0();
     auto& actual = rs.rows();
     for (auto&& expected : rows) {
         auto found = std::find_if(std::begin(actual), std::end(actual), [&] (auto&& row) {

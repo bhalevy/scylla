@@ -216,18 +216,18 @@ result_set_builder::deserialize(const result_row_view& row, bool is_static)
     return cells;
 }
 
-result_set
+future<result_set>
 result_set::from_raw_result(schema_ptr s, const partition_slice& slice, const result& r) {
-    result_set_builder builder{std::move(s), slice};
-    result_view::consume(r, slice, builder);
-    return builder.build();
+    return do_with(result_set_builder(std::move(s), slice), [&r, &slice](result_set_builder& builder) {
+        return result_view::consume(r, slice, builder).then([&builder] {
+            return builder.build();
+        });
+    });
 }
 
-result_set::result_set(const mutation& m) : result_set([&m] {
+future<result_set> result_set::build_result_set(const mutation& m) {
     auto slice = partition_slice_builder(*m.schema()).build();
     auto qr = mutation(m).query(slice, result_options::only_result());
     return result_set::from_raw_result(m.schema(), slice, qr);
-}())
-{ }
-
+}
 }

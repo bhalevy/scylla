@@ -63,7 +63,7 @@ void schema_mutations::copy_to(std::vector<mutation>& dst) const {
 
 table_schema_version schema_mutations::digest() const {
     if (_scylla_tables) {
-        auto rs = query::result_set(*_scylla_tables);
+        auto rs = query::result_set::build_result_set(*_scylla_tables).get0();
         if (!rs.empty()) {
             auto&& row = rs.row(0);
             auto val = row.get<utils::UUID>("version");
@@ -107,7 +107,7 @@ table_schema_version schema_mutations::digest() const {
 
 std::optional<sstring> schema_mutations::partitioner() const {
     if (_scylla_tables) {
-        auto rs = query::result_set(*_scylla_tables);
+        auto rs = query::result_set::build_result_set(*_scylla_tables).get0();
         if (!rs.empty()) {
             return rs.row(0).get<sstring>("partitioner");
         }

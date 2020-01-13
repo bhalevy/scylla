@@ -2256,7 +2256,7 @@ static std::optional<rjson::value> describe_single_item(schema_ptr schema,
     rjson::value item = rjson::empty_object();
 
     cql3::selection::result_set_builder builder(selection, gc_clock::now(), cql_serialization_format::latest());
-    query::result_view::consume(query_result, slice, cql3::selection::result_set_builder::visitor(builder, *schema, selection));
+    query::result_view::consume(query_result, slice, cql3::selection::result_set_builder::visitor(builder, *schema, selection)).get0();
 
     auto result_set = builder.build();
     if (result_set->empty()) {

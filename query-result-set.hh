@@ -120,11 +120,11 @@ class result_set {
     schema_ptr _schema;
     std::vector<result_set_row> _rows;
 public:
-    static result_set from_raw_result(schema_ptr, const partition_slice&, const result&);
+    static future<result_set> from_raw_result(schema_ptr, const partition_slice&, const result&);
     result_set(schema_ptr s, std::vector<result_set_row>&& rows)
         : _schema(std::move(s)), _rows{std::move(rows)}
     { }
-    explicit result_set(const mutation&);
+    static future<result_set> build_result_set(const mutation&);
     bool empty() const {
         return _rows.empty();
     }

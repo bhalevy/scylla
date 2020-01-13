@@ -812,7 +812,7 @@ static lw_shared_ptr<service::pager::paging_state> extract_paging_state(::shared
 
 static size_t count_rows_fetched(::shared_ptr<cql_transport::messages::result_message> res) {
     auto rows = dynamic_pointer_cast<cql_transport::messages::result_message::rows>(res);
-    return rows->rs().result_set().size();
+    return rows->rs().result_set().get0().size();
 };
 
 

@@ -38,7 +38,7 @@ public:
 
     virtual ~result_message() {}
 
-    virtual void accept(visitor&) const = 0;
+    virtual future<> accept(visitor&) const = 0;
 
     void add_warning(sstring w) {
         _warnings.push_back(std::move(w));

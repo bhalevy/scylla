@@ -165,14 +165,14 @@ public:
     }
 
     template <typename ResultVisitor>
-    static void consume(const query::result& res, const partition_slice& slice, ResultVisitor&& visitor) {
-        result_view(res).consume(slice, visitor);
+    static future<> consume(const query::result& res, const partition_slice& slice, ResultVisitor&& visitor) {
+        return result_view(res).consume(slice, visitor);
     }
 
     template <typename Visitor>
     GCC6_CONCEPT(requires ResultVisitor<Visitor>)
-    void consume(const partition_slice& slice, Visitor&& visitor) const {
-        for (auto&& p : _v.partitions()) {
+    future<> consume(const partition_slice& slice, Visitor&& visitor) const {
+        return parallel_for_each(_v.partitions(), [&slice, &visitor, this](ser::qr_partition_view& p) {
             auto rows = p.rows();
             auto row_count = rows.size();
             if (slice.options.contains<partition_slice::option::send_partition_key>()) {
@@ -184,17 +184,22 @@ public:
 
             result_row_view static_row(p.static_row());
 
-            for (auto&& row : rows) {
+            return parallel_for_each(rows, [this, &slice, &visitor, &static_row](ser::qr_clustered_row_view& row) {
                 result_row_view view(row.cells());
                 if (slice.options.contains<partition_slice::option::send_clustering_key>()) {
-                    visitor.accept_new_row(*row.key(), static_row, view);
+                    futurize_invoke([&visitor, &row, &static_row, &view] {
+                        return visitor.accept_new_row(*row.key(), static_row, view);
+                    }).get0();
                 } else {
-                    visitor.accept_new_row(static_row, view);
+                    futurize_invoke([&visitor, &static_row, &view] {
+                        return visitor.accept_new_row(static_row, view);
+                    }).get0();
                 }
-            }
-
-            visitor.accept_partition_end(static_row);
-        }
+                return make_ready_future<>();
+            }).then([&visitor, static_row] {
+                visitor.accept_partition_end(static_row);
+            });
+        });
     }
 
     std::tuple<uint32_t, uint32_t> count_partitions_and_rows() const {

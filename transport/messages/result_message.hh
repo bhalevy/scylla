@@ -74,7 +74,7 @@ public:
     virtual void visit(const result_message::prepared::cql&) = 0;
     virtual void visit(const result_message::prepared::thrift&) = 0;
     virtual void visit(const result_message::schema_change&) = 0;
-    virtual void visit(const result_message::rows&) = 0;
+    virtual future<> visit(const result_message::rows&) = 0;
     virtual void visit(const result_message::bounce_to_shard&) = 0;
 };
 
@@ -85,14 +85,17 @@ public:
     void visit(const result_message::prepared::cql&) override {};
     void visit(const result_message::prepared::thrift&) override {};
     void visit(const result_message::schema_change&) override {};
-    void visit(const result_message::rows&) override {};
+    future<> visit(const result_message::rows&) override {
+        return make_ready_future<>();
+    };
     void visit(const result_message::bounce_to_shard&) override { assert(false); };
 };
 
 class result_message::void_message : public result_message {
 public:
-    virtual void accept(result_message::visitor& v) const override {
+    virtual future<> accept(result_message::visitor& v) const override {
         v.visit(*this);
+        return make_ready_future<>();
     }
 };
 
@@ -105,8 +108,9 @@ class result_message::bounce_to_shard : public result_message {
     unsigned _shard;
 public:
     bounce_to_shard(unsigned shard) : _shard(shard) {}
-    virtual void accept(result_message::visitor& v) const override {
+    virtual future<> accept(result_message::visitor& v) const override {
         v.visit(*this);
+        return make_ready_future<>();
     }
     virtual std::optional<unsigned> move_to_shard() const {
         return _shard;
@@ -128,8 +132,9 @@ public:
         return _keyspace;
     }
 
-    virtual void accept(result_message::visitor& v) const override {
+    virtual future<> accept(result_message::visitor& v) const override {
         v.visit(*this);
+        return make_ready_future<>();
     }
 };
 
@@ -155,8 +160,9 @@ public:
         return msg_cql->get_id();
     }
 
-    virtual void accept(result_message::visitor& v) const override {
+    virtual future<> accept(result_message::visitor& v) const override {
         v.visit(*this);
+        return make_ready_future<>();
     }
 };
 
@@ -174,8 +180,9 @@ public:
         return _id;
     }
 
-    virtual void accept(result_message::visitor& v) const override {
+    virtual future<> accept(result_message::visitor& v) const override {
         v.visit(*this);
+        return make_ready_future<>();
     }
 };
 
@@ -193,8 +200,9 @@ public:
         return _change;
     }
 
-    virtual void accept(result_message::visitor& v) const override {
+    virtual future<> accept(result_message::visitor& v) const override {
         v.visit(*this);
+        return make_ready_future<>();
     }
 };
 
@@ -210,8 +218,8 @@ public:
         return _result;
     }
 
-    virtual void accept(result_message::visitor& v) const override {
-        v.visit(*this);
+    virtual future<> accept(result_message::visitor& v) const override {
+        return v.visit(*this);
     }
 };
 

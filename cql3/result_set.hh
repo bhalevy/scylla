@@ -252,15 +252,17 @@ public:
     { }
 
     const cql3::metadata& get_metadata() const { return *_metadata; }
-    const cql3::result_set& result_set() const {
+    future<const cql3::result_set&> result_set() const {
         if (_result_set) {
-            return *_result_set;
+            return make_ready_future<const cql3::result_set&>(*_result_set);
         }
-        auto builder = result_set::builder(make_shared<cql3::metadata>(*_metadata));
-        _result_generator.visit(builder);
-        auto tmp_rs = std::make_unique<cql3::result_set>(std::move(builder).get_result_set());
-        _result_set.swap(tmp_rs);
-        return *_result_set;
+        return do_with(result_set::builder(make_shared<cql3::metadata>(*_metadata)), [this](auto&& builder) {
+            return _result_generator.visit(builder).then([&builder, this] {
+                auto tmp_rs = std::make_unique<cql3::result_set>(std::move(builder).get_result_set());
+                _result_set.swap(tmp_rs);
+                return make_ready_future<const cql3::result_set&>(*_result_set);
+            });
+        });
     }
 
     template<typename Visitor>
@@ -269,7 +271,7 @@ public:
         if (_result_set) {
             _result_set->visit(std::forward<Visitor>(visitor));
         } else {
-            _result_generator.visit(std::forward<Visitor>(visitor));
+            _result_generator.visit(std::forward<Visitor>(visitor)).get0();
         }
     }
 };

@@ -158,7 +158,7 @@ public:
     using const_iterator = rows_type::const_iterator;
     using iterator = rows_type::const_iterator;
 
-    untyped_result_set(::shared_ptr<cql_transport::messages::result_message>);
+    static future<untyped_result_set> make(::shared_ptr<cql_transport::messages::result_message>);
     untyped_result_set(const cql3::result_set&);
     untyped_result_set(untyped_result_set&&) = default;
 
@@ -187,6 +187,7 @@ public:
 private:
     rows_type _rows;
     untyped_result_set() = default;
+    untyped_result_set(rows_type &&rows) noexcept;
 public:
     static untyped_result_set make_empty() {
         return untyped_result_set();

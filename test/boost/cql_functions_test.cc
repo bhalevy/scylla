@@ -67,18 +67,19 @@ SEASTAR_TEST_CASE(test_functions) {
                 virtual void visit(const result_message::prepared::cql&) override { throw "bad"; }
                 virtual void visit(const result_message::prepared::thrift&) override { throw "bad"; }
                 virtual void visit(const result_message::schema_change&) override { throw "bad"; }
-                virtual void visit(const result_message::rows& rows) override {
-                    const auto& rs = rows.rs().result_set();
+                virtual future<> visit(const result_message::rows& rows) override {
+                    const auto& rs = rows.rs().result_set().get0();
                     BOOST_REQUIRE_EQUAL(rs.rows().size(), 3);
                     for (auto&& rw : rs.rows()) {
                         BOOST_REQUIRE_EQUAL(rw.size(), 1);
                         res.push_back(rw[0]);
                     }
+                    return make_ready_future<>();
                 }
                 virtual void visit(const result_message::bounce_to_shard& rows) override { throw "bad"; }
             };
             validator v;
-            msg->accept(v);
+            msg->accept(v).get();
             // No boost::adaptors::sorted
             boost::sort(v.res);
             BOOST_REQUIRE_EQUAL(boost::distance(v.res | boost::adaptors::uniqued), 3);

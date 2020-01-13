@@ -374,7 +374,7 @@ SEASTAR_THREAD_TEST_CASE(test_cdc_log_schema) {
 }
 
 static std::vector<std::vector<bytes_opt>> to_bytes(const cql_transport::messages::result_message::rows& rows) {
-    auto rs = rows.rs().result_set().rows();
+    auto rs = rows.rs().result_set().get0().rows();
     std::vector<std::vector<bytes_opt>> results;
     for (auto it = rs.begin(); it != rs.end(); ++it) {
         results.push_back(*it);

@@ -63,7 +63,7 @@ public:
     virtual bool is_native() const override;
     virtual bool is_aggregate() const override;
     virtual bool requires_thread() const override;
-    virtual bytes_opt execute(cql_serialization_format sf, const std::vector<bytes_opt>& parameters) override;
+    virtual future<bytes_opt> execute(cql_serialization_format sf, const std::vector<bytes_opt>& parameters) override;
 };
 
 }

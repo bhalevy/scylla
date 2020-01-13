@@ -88,21 +88,22 @@ public:
         return false;
     }
 
-    virtual void add_input(cql_serialization_format sf, result_set_builder& rs) override {
-        _selected->add_input(sf, rs);
+    virtual future<> add_input(cql_serialization_format sf, result_set_builder& rs) override {
+        return _selected->add_input(sf, rs);
     }
 
-    virtual bytes_opt get_output(cql_serialization_format sf) override {
-        auto&& value = _selected->get_output(sf);
-        if (!value) {
-            return std::nullopt;
-        }
-        auto&& buffers = _type->split(*value);
-        bytes_opt ret;
-        if (_field < buffers.size() && buffers[_field]) {
-            ret = to_bytes(*buffers[_field]);
-        }
-        return ret;
+    virtual future<bytes_opt> get_output(cql_serialization_format sf) override {
+        return _selected->get_output(sf).then([this, sf] (bytes_opt value) {
+            if (!value) {
+                return make_ready_future<bytes_opt>(std::nullopt);
+            }
+            auto&& buffers = _type->split(*value);
+            bytes_opt ret;
+            if (_field < buffers.size() && buffers[_field]) {
+                ret = to_bytes(*buffers[_field]);
+            }
+            return make_ready_future<bytes_opt>(std::move(ret));
+        });
     }
 
     virtual data_type get_type() const override {

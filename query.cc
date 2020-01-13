@@ -193,7 +193,7 @@ clustering_row_ranges partition_slice::get_all_ranges() const {
 sstring
 result::pretty_print(schema_ptr s, const query::partition_slice& slice) const {
     std::ostringstream out;
-    out << "{ result: " << result_set::from_raw_result(s, slice, *this);
+    out << "{ result: " << result_set::from_raw_result(s, slice, *this).get0();
     out << " digest: ";
     if (_digest) {
         out << std::hex << std::setw(2);

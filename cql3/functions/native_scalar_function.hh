@@ -77,8 +77,8 @@ public:
     virtual bool is_pure() const override {
         return Pure;
     }
-    virtual bytes_opt execute(cql_serialization_format sf, const std::vector<bytes_opt>& parameters) override {
-        return _func(sf, parameters);
+    virtual future<bytes_opt> execute(cql_serialization_format sf, const std::vector<bytes_opt>& parameters) override {
+        return make_ready_future<bytes_opt>(_func(sf, parameters));
     }
 };
 

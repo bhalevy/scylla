@@ -53,20 +53,23 @@ public:
         return true;
     }
 
-    virtual void add_input(cql_serialization_format sf, result_set_builder& rs) override {
+    virtual future<> add_input(cql_serialization_format sf, result_set_builder& rs) override {
         // Aggregation of aggregation is not supported
         size_t m = _arg_selectors.size();
-        for (size_t i = 0; i < m; ++i) {
-            auto&& s = _arg_selectors[i];
-            s->add_input(sf, rs);
-            _args[i] = s->get_output(sf);
-            s->reset();
-        }
-        _aggregate->add_input(sf, _args);
+        return parallel_for_each(boost::irange(size_t(0), m), [this, sf, &rs] (size_t i) {
+            return _arg_selectors[i]->add_input(sf, rs).then([this, i, sf] {
+                return _arg_selectors[i]->get_output(sf);
+            }).then([this, i] (bytes_opt v) {
+                _args[i] = v;
+                _arg_selectors[i]->reset();
+            });
+        }).then([this, sf] {
+            _aggregate->add_input(sf, _args);
+        });
     }
 
-    virtual bytes_opt get_output(cql_serialization_format sf) override {
-        return _aggregate->compute(sf);
+    virtual future<bytes_opt> get_output(cql_serialization_format sf) override {
+        return make_ready_future<bytes_opt>(_aggregate->compute(sf));
     }
 
     virtual void reset() override {

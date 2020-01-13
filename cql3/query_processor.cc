@@ -782,7 +782,7 @@ query_processor::execute_paged_internal(::shared_ptr<internal_query_state> state
             visitor(::shared_ptr<internal_query_state> state, query_processor& qp) : _state(state), _qp(qp) {
             }
             virtual ~visitor() = default;
-            void visit(const result_message::rows& rmrs) override {
+            future<> visit(const result_message::rows& rmrs) override {
                 auto& rs = rmrs.rs();
                 if (rs.get_metadata().paging_state()) {
                     bool done = !rs.get_metadata().flags().contains<cql3::metadata::flag::HAS_MORE_PAGES>();
@@ -798,13 +798,16 @@ query_processor::execute_paged_internal(::shared_ptr<internal_query_state> state
                 } else {
                     _state->more_results = false;
                 }
+                return make_ready_future<>();
             }
         };
         visitor v(state, *this);
         if (msg != nullptr) {
-            msg->accept(v);
+            msg->accept(v).get0();
         }
-        return make_ready_future<::shared_ptr<untyped_result_set>>(::make_shared<untyped_result_set>(msg));
+        return untyped_result_set::make(msg).then([] (untyped_result_set&& x) {
+            return ::make_shared<untyped_result_set>(std::move(x));
+        });
     });
 }
 
@@ -839,7 +842,9 @@ query_processor::execute_with_params(
     auto opts = make_internal_options(p, values, cl, timeout_config);
     return do_with(std::move(opts), [this, p = std::move(p)](auto & opts) {
         return p->statement->execute(_proxy, *_internal_state, opts).then([](auto msg) {
-            return make_ready_future<::shared_ptr<untyped_result_set>>(::make_shared<untyped_result_set>(msg));
+            return untyped_result_set::make(msg).then([](untyped_result_set&& x) {
+                return ::make_shared(std::move(x));
+            });
         });
     });
 }

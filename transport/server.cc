@@ -1262,7 +1262,7 @@ public:
         }
     }
 
-    virtual void visit(const messages::result_message::rows& m) override {
+    virtual future<> visit(const messages::result_message::rows& m) override {
         _response.write_int(0x0002);
         auto& rs = m.rs();
         _response.write(rs.get_metadata(), _skip_metadata);
@@ -1288,6 +1288,7 @@ public:
         auto v = visitor(_response);
         rs.visit(v);
         row_count_plhldr.write(v.row_count());
+        return make_ready_future<>();
     }
 };
 
@@ -1300,7 +1301,7 @@ make_result(int16_t stream, messages::result_message& msg, const tracing::trace_
         response->write_string_list(msg.warnings());
     }
     cql_server::fmt_visitor fmt{version, *response, skip_metadata};
-    msg.accept(fmt);
+    msg.accept(fmt).get0();
     return response;
 }
 

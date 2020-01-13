@@ -130,7 +130,7 @@ protected:
             return std::move(_current);
         }
 
-        virtual void add_input_row(cql_serialization_format sf, result_set_builder& rs) override {
+        virtual future<> add_input_row(cql_serialization_format sf, result_set_builder& rs) override {
             // GROUP BY calls add_input_row() repeatedly without reset() in between, and it expects
             // the output to be the first value encountered:
             // https://cassandra.apache.org/doc/latest/cql/dml.html#grouping-results
@@ -138,6 +138,7 @@ protected:
                 _current = std::move(*rs.current);
                 _first = false;
             }
+            return make_ready_future<>();
         }
 
         virtual bool is_aggregate() const {
@@ -206,15 +207,15 @@ protected:
             std::vector<bytes_opt> output_row;
             output_row.reserve(_selectors.size());
             for (auto&& s : _selectors) {
-                output_row.emplace_back(s->get_output(sf));
+                output_row.emplace_back(s->get_output(sf).get0());
             }
             return output_row;
         }
 
-        virtual void add_input_row(cql_serialization_format sf, result_set_builder& rs) {
-            for (auto&& s : _selectors) {
-                s->add_input(sf, rs);
-            }
+        virtual future<> add_input_row(cql_serialization_format sf, result_set_builder& rs) override {
+            return parallel_for_each(_selectors, [sf, &rs](shared_ptr<selector>& s) {
+                return s->add_input(sf, rs);
+            });
         }
     };
 
@@ -354,32 +355,34 @@ void result_set_builder::flush_selectors() {
     _selectors->reset();
 }
 
-void result_set_builder::process_current_row(bool more_rows_coming) {
+future<> result_set_builder::process_current_row(bool more_rows_coming) {
     if (!current) {
-        return;
+        return make_ready_future<>();
     }
     if (last_group_ended()) {
         flush_selectors();
     }
     update_last_group();
-    _selectors->add_input_row(_cql_serialization_format, *this);
-    if (more_rows_coming) {
-        current->clear();
-    } else {
-        flush_selectors();
-    }
+    return _selectors->add_input_row(_cql_serialization_format, *this).then([more_rows_coming, this] {
+        if (more_rows_coming) {
+            current->clear();
+        } else {
+            flush_selectors();
+        }
+    });
 }
 
-void result_set_builder::new_row() {
-    process_current_row(/*more_rows_coming=*/true);
-    // FIXME: we use optional<> here because we don't have an end_row() signal
-    //        instead, !current means that new_row has never been called, so this
-    //        call to new_row() does not end a previous row.
-    current.emplace();
+future<> result_set_builder::new_row() {
+    return process_current_row(/*more_rows_coming=*/true).then([this] {
+        // FIXME: we use optional<> here because we don't have an end_row() signal
+        //        instead, !current means that new_row has never been called, so this
+        //        call to new_row() does not end a previous row.
+        current.emplace();
+    });
 }
 
 std::unique_ptr<result_set> result_set_builder::build() {
-    process_current_row(/*more_rows_coming=*/false);
+    process_current_row(/*more_rows_coming=*/false).get0();
     if (_result_set->empty() && _selectors->is_aggregate()) {
         _result_set->add_row(_selectors->get_output_row(_cql_serialization_format));
     }

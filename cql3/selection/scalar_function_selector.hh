@@ -57,25 +57,28 @@ public:
         return _arg_selectors[0]->is_aggregate();
     }
 
-    virtual void add_input(cql_serialization_format sf, result_set_builder& rs) override {
+    virtual future<> add_input(cql_serialization_format sf, result_set_builder& rs) override {
         size_t m = _arg_selectors.size();
         for (size_t i = 0; i < m; ++i) {
             auto&& s = _arg_selectors[i];
-            s->add_input(sf, rs);
+            s->add_input(sf, rs).get0();
         }
+        return make_ready_future<>();
     }
 
     virtual void reset() override {
     }
 
-    virtual bytes_opt get_output(cql_serialization_format sf) override {
+    virtual future<bytes_opt> get_output(cql_serialization_format sf) override {
         size_t m = _arg_selectors.size();
-        for (size_t i = 0; i < m; ++i) {
-            auto&& s = _arg_selectors[i];
-            _args[i] = s->get_output(sf);
-            s->reset();
-        }
-        return fun()->execute(sf, _args);
+        return parallel_for_each(boost::irange(size_t(0), m), [this, sf] (size_t i) {
+            return _arg_selectors[i]->get_output(sf).then([this, i] (bytes_opt v) {
+                _args[i] = v;
+                _arg_selectors[i]->reset();
+            });
+        }).then([this, sf] {
+            return fun()->execute(sf, _args);
+        });
     }
 
     virtual bool requires_thread() const override;

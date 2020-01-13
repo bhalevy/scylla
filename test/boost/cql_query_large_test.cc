@@ -92,7 +92,7 @@ SEASTAR_THREAD_TEST_CASE(test_large_data) {
 
         shared_ptr<cql_transport::messages::result_message> msg = e.execute_cql("select partition_key, row_size from system.large_rows where table_name = 'tbl' allow filtering;").get0();
         auto res = dynamic_pointer_cast<cql_transport::messages::result_message::rows>(msg);
-        auto rows = res->rs().result_set().rows();
+        auto rows = res->rs().result_set().get0().rows();
 
         // Check the only the large row is added to system.large_rows.
         BOOST_REQUIRE_EQUAL(rows.size(), 1);

@@ -76,7 +76,7 @@ public:
 
     virtual bool requires_thread() const;
 
-    virtual bytes_opt execute(cql_serialization_format sf, const std::vector<bytes_opt>& parameters) override {
+    virtual future<bytes_opt> execute(cql_serialization_format sf, const std::vector<bytes_opt>& parameters) override {
         bytes_ostream encoded_row;
         encoded_row.write("{", 1);
         for (size_t i = 0; i < _selector_names.size(); ++i) {
@@ -97,7 +97,7 @@ public:
             encoded_row.write(row_sstring.c_str(), row_sstring.size());
         }
         encoded_row.write("}", 1);
-        return bytes(encoded_row.linearize());
+        return make_ready_future<bytes_opt>(bytes(encoded_row.linearize()));
     }
 
     virtual const function_name& name() const override {

@@ -78,7 +78,7 @@ public:
     * @param rs the <code>ResultSetBuilder</code>
     * @throws InvalidRequestException
     */
-    virtual void add_input_row(cql_serialization_format sf, result_set_builder& rs) = 0;
+    virtual future<> add_input_row(cql_serialization_format sf, result_set_builder& rs) = 0;
 
     virtual std::vector<bytes_opt> get_output_row(cql_serialization_format sf) = 0;
 
@@ -321,7 +321,7 @@ public:
     void add(bytes_opt value);
     void add(const column_definition& def, const query::result_atomic_cell_view& c);
     void add_collection(const column_definition& def, bytes_view c);
-    void new_row();
+    future<> new_row();
     std::unique_ptr<result_set> build();
     api::timestamp_type timestamp_of(size_t idx);
     int32_t ttl_of(size_t idx);
@@ -377,40 +377,41 @@ public:
             _filter.reset();
         }
 
-        void accept_new_row(const clustering_key& key, const query::result_row_view& static_row, const query::result_row_view& row) {
+        future<> accept_new_row(const clustering_key& key, const query::result_row_view& static_row, const query::result_row_view& row) {
             _clustering_key = key.explode(_schema);
-            accept_new_row(static_row, row);
+            return accept_new_row(static_row, row);
         }
 
-        void accept_new_row(const query::result_row_view& static_row, const query::result_row_view& row) {
+        future<> accept_new_row(const query::result_row_view& static_row, const query::result_row_view& row) {
             auto static_row_iterator = static_row.iterator();
             auto row_iterator = row.iterator();
             if (!_filter(_selection, _partition_key, _clustering_key, static_row, &row)) {
-                return;
+                return make_ready_future<>();
             }
-            _builder.new_row();
-            for (auto&& def : _selection.get_columns()) {
-                switch (def->kind) {
-                case column_kind::partition_key:
-                    _builder.add(_partition_key[def->component_index()]);
-                    break;
-                case column_kind::clustering_key:
-                    if (_clustering_key.size() > def->component_index()) {
-                        _builder.add(_clustering_key[def->component_index()]);
-                    } else {
-                        _builder.add({});
+            return _builder.new_row().then([this, row_iterator, static_row_iterator] () mutable {
+                for (auto&& def : _selection.get_columns()) {
+                    switch (def->kind) {
+                    case column_kind::partition_key:
+                        _builder.add(_partition_key[def->component_index()]);
+                        break;
+                    case column_kind::clustering_key:
+                        if (_clustering_key.size() > def->component_index()) {
+                            _builder.add(_clustering_key[def->component_index()]);
+                        } else {
+                            _builder.add({});
+                        }
+                        break;
+                    case column_kind::regular_column:
+                        add_value(*def, row_iterator);
+                        break;
+                    case column_kind::static_column:
+                        add_value(*def, static_row_iterator);
+                        break;
+                    default:
+                        assert(0);
                     }
-                    break;
-                case column_kind::regular_column:
-                    add_value(*def, row_iterator);
-                    break;
-                case column_kind::static_column:
-                    add_value(*def, static_row_iterator);
-                    break;
-                default:
-                    assert(0);
                 }
-            }
+            });
         }
 
         uint32_t accept_partition_end(const query::result_row_view& static_row) {
@@ -418,7 +419,7 @@ public:
                 if (!_filter(_selection, _partition_key, _clustering_key, static_row, nullptr)) {
                     return _filter.get_rows_dropped();
                 }
-                _builder.new_row();
+                _builder.new_row().get0();
                 auto static_row_iterator = static_row.iterator();
                 for (auto&& def : _selection.get_columns()) {
                     if (def->is_partition_key()) {
@@ -443,7 +444,7 @@ private:
 
     /// If there is a valid row in this->current, process it; if \p more_rows_coming, get ready to
     /// receive another.
-    void process_current_row(bool more_rows_coming);
+    future<> process_current_row(bool more_rows_coming);
 
     /// Gets output row from _selectors and resets them.
     void flush_selectors();

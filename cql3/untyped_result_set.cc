@@ -78,27 +78,34 @@ cql3::untyped_result_set::untyped_result_set(const cql3::result_set& rs) {
     }
 }
 
-cql3::untyped_result_set::untyped_result_set(::shared_ptr<result_message> msg)
-    : _rows([msg]{
+cql3::untyped_result_set::untyped_result_set(rows_type&& rows) noexcept : _rows(std::move(rows)) {
+}
+
+future<cql3::untyped_result_set>
+cql3::untyped_result_set::make(::shared_ptr<result_message> msg) {
     class visitor : public result_message::visitor_base {
     public:
         std::optional<untyped_result_set> res;
-        void visit(const result_message::rows& rmrs) override {
+        future<> visit(const result_message::rows& rmrs) override {
             const auto& rs = rmrs.rs();
-            const auto& set = rs.result_set();
-            res.emplace(set); // construct untyped_result_set by const ref.
+            return rs.result_set().then([this] (const auto& set) {
+                res.emplace(set); // construct untyped_result_set by const ref.
+            });
         }
     };
-    visitor v;
-    if (msg != nullptr) {
-        msg->accept(v);
+    if (msg == nullptr) {
+        return make_ready_future<cql3::untyped_result_set>(cql3::untyped_result_set::make_empty());
     }
-    if (v.res) {
-        return std::move(v.res->_rows);
-    }
-    return rows_type{};
-}())
-{}
+    return do_with(visitor(), [msg](visitor& v) {
+        return msg->accept(v).then([&v, msg] {
+            rows_type rows;
+            if (v.res) {
+                rows = std::move(v.res->_rows);
+            }
+            return cql3::untyped_result_set(std::move(rows));
+        });
+    });
+}
 
 const cql3::untyped_result_set_row& cql3::untyped_result_set::one() const {
     if (_rows.size() != 1) {

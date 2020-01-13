@@ -2000,7 +2000,9 @@ query(distributed<service::storage_proxy>& proxy, const sstring& ks_name, const 
         std::move(slice), std::numeric_limits<uint32_t>::max());
     return proxy.local().query(schema, cmd, {query::full_partition_range}, db::consistency_level::ONE,
             {db::no_timeout, empty_service_permit(), service::client_state::for_internal_calls(), nullptr}).then([schema, cmd] (auto&& qr) {
-        return make_lw_shared(query::result_set::from_raw_result(schema, cmd->slice, *qr.query_result));
+        return query::result_set::from_raw_result(schema, cmd->slice, *qr.query_result).then([] (query::result_set r) {
+            return make_lw_shared(std::move(r));
+        });
     });
 }
 
@@ -2016,7 +2018,9 @@ query(distributed<service::storage_proxy>& proxy, const sstring& ks_name, const 
 
     return proxy.local().query(schema, cmd, {dht::partition_range::make_singular(key)}, db::consistency_level::ONE,
             {db::no_timeout, empty_service_permit(), service::client_state::for_internal_calls(), nullptr}).then([schema, cmd] (auto&& qr) {
-        return make_lw_shared(query::result_set::from_raw_result(schema, cmd->slice, *qr.query_result));
+        return query::result_set::from_raw_result(schema, cmd->slice, *qr.query_result).then([] (query::result_set&& x) {
+            return make_lw_shared(std::move(x));
+        });
     });
 }
 

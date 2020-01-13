@@ -85,7 +85,7 @@ future<lw_shared_ptr<strings_result>> read_strings(service::storage_proxy& proxy
     return proxy.query(schema, make_lw_shared(std::move(cmd)), std::move(partition_ranges), read_consistency_level, {timeout, permit, service::client_state::for_internal_calls()}).then([ps, schema] (auto qr) {
         return query::result_view::do_with(*qr.query_result, [&] (query::result_view v) {
             auto pd = make_lw_shared<strings_result>();
-            v.consume(ps, strings_result_builder(pd, schema, ps));
+            v.consume(ps, strings_result_builder(pd, schema, ps)).get();
             return pd;
         }); 
     }); 

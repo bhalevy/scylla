@@ -844,7 +844,7 @@ static read_table_names_of_keyspace(distributed<service::storage_proxy>& proxy, 
 }
 
 static utils::UUID table_id_from_mutations(const schema_mutations& sm) {
-    auto table_rs = query::result_set(sm.columnfamilies_mutation());
+    auto table_rs = query::result_set::build_result_set(sm.columnfamilies_mutation()).get0();
     query::result_set_row table_row = table_rs.row(0);
     return table_row.get_nonnull<utils::UUID>("id");
 }
@@ -2270,7 +2270,7 @@ schema_ptr create_table_from_mutations(const schema_ctxt& ctxt, schema_mutations
 {
     slogger.trace("create_table_from_mutations: version={}, {}", version, sm);
 
-    auto table_rs = query::result_set(sm.columnfamilies_mutation());
+    auto table_rs = query::result_set::build_result_set(sm.columnfamilies_mutation()).get0();
     query::result_set_row table_row = table_rs.row(0);
 
     auto ks_name = table_row.get_nonnull<sstring>("keyspace_name");
@@ -2301,7 +2301,7 @@ schema_ptr create_table_from_mutations(const schema_ctxt& ctxt, schema_mutations
 
     auto computed_columns = get_computed_columns(sm);
     std::vector<column_definition> column_defs = create_columns_from_column_rows(
-            query::result_set(sm.columns_mutation()),
+            query::result_set::build_result_set(sm.columns_mutation()).get0(),
             ks_name,
             cf_name,/*,
             fullRawComparator, */
@@ -2321,14 +2321,14 @@ schema_ptr create_table_from_mutations(const schema_ctxt& ctxt, schema_mutations
 
     std::vector<index_metadata> index_defs;
     if (sm.indices_mutation()) {
-        index_defs = create_indices_from_index_rows(query::result_set(*sm.indices_mutation()), ks_name, cf_name);
+        index_defs = create_indices_from_index_rows(query::result_set::build_result_set(*sm.indices_mutation()).get0(), ks_name, cf_name);
     }
     for (auto&& index : index_defs) {
         builder.with_index(index);
     }
 
     if (sm.dropped_columns_mutation()) {
-        query::result_set dcr(*sm.dropped_columns_mutation());
+        auto dcr = query::result_set::build_result_set(*sm.dropped_columns_mutation()).get0();
         for (auto& row : dcr.rows()) {
             auto name = row.get_nonnull<sstring>("column_name");
             auto type = cql_type_parser::parse(ks_name, row.get_nonnull<sstring>("type"));
@@ -2489,7 +2489,7 @@ static computed_columns_map get_computed_columns(const schema_mutations& sm) {
     if (!sm.computed_columns_mutation()) {
         return {};
     }
-    query::result_set computed_result(*sm.computed_columns_mutation());
+    auto computed_result = query::result_set::build_result_set(*sm.computed_columns_mutation()).get0();
     return boost::copy_range<computed_columns_map>(
             computed_result.rows() | boost::adaptors::transformed([] (const query::result_set_row& row) {
         return computed_columns_map::value_type{to_bytes(row.get_nonnull<sstring>("column_name")), column_computation::deserialize(row.get_nonnull<bytes>("computation"))};
@@ -2559,7 +2559,7 @@ static index_metadata create_index_from_index_row(const query::result_set_row& r
  */
 
 view_ptr create_view_from_mutations(const schema_ctxt& ctxt, schema_mutations sm, std::optional<table_schema_version> version)  {
-    auto table_rs = query::result_set(sm.columnfamilies_mutation());
+    auto table_rs = query::result_set::build_result_set(sm.columnfamilies_mutation()).get0();
     query::result_set_row row = table_rs.row(0);
 
     auto ks_name = row.get_nonnull<sstring>("keyspace_name");
@@ -2570,12 +2570,12 @@ view_ptr create_view_from_mutations(const schema_ctxt& ctxt, schema_mutations sm
     prepare_builder_from_table_row(ctxt, builder, row);
 
     auto computed_columns = get_computed_columns(sm);
-    auto column_defs = create_columns_from_column_rows(query::result_set(sm.columns_mutation()), ks_name, cf_name, false, column_view_virtual::no, computed_columns);
+    auto column_defs = create_columns_from_column_rows(query::result_set::build_result_set(sm.columns_mutation()).get0(), ks_name, cf_name, false, column_view_virtual::no, computed_columns);
     for (auto&& cdef : column_defs) {
         builder.with_column_ordered(cdef);
     }
     if (sm.view_virtual_columns_mutation()) {
-        column_defs = create_columns_from_column_rows(query::result_set(*sm.view_virtual_columns_mutation()), ks_name, cf_name, false, column_view_virtual::yes, computed_columns);
+        column_defs = create_columns_from_column_rows(query::result_set::build_result_set(*sm.view_virtual_columns_mutation()).get0(), ks_name, cf_name, false, column_view_virtual::yes, computed_columns);
         for (auto&& cdef : column_defs) {
             builder.with_column_ordered(cdef);
         }

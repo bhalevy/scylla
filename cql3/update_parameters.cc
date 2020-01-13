@@ -206,7 +206,7 @@ update_parameters::prefetch_data update_parameters::build_prefetch_data(schema_p
             const query::partition_slice& slice) {
 
     update_parameters::prefetch_data rows(schema);
-    query::result_view::consume(query_result, slice, prefetch_data_builder(schema, rows, slice));
+    query::result_view::consume(query_result, slice, prefetch_data_builder(schema, rows, slice)).get0();
     return rows;
 }
 

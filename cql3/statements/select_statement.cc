@@ -724,11 +724,11 @@ select_statement::process_results(foreign_ptr<lw_shared_ptr<query::result>> resu
                 _stats.filtered_rows_read_total += *results->row_count();
                 query::result_view::consume(*results, cmd->slice,
                         cql3::selection::result_set_builder::visitor(builder, *_schema,
-                                *_selection, cql3::selection::result_set_builder::restrictions_filter(_restrictions, options, cmd->row_limit, _schema, cmd->slice.partition_row_limit())));
+                                *_selection, cql3::selection::result_set_builder::restrictions_filter(_restrictions, options, cmd->row_limit, _schema, cmd->slice.partition_row_limit()))).get0();
             } else {
                 query::result_view::consume(*results, cmd->slice,
                         cql3::selection::result_set_builder::visitor(builder, *_schema,
-                                *_selection));
+                                *_selection)).get0();
             }
             auto rs = builder.build();
 
@@ -984,9 +984,9 @@ indexed_table_select_statement::do_execute(service::storage_proxy& proxy,
                 auto consume_results = [this, &builder, &options, &internal_options, restrictions_need_filtering] (foreign_ptr<lw_shared_ptr<query::result>> results, lw_shared_ptr<query::read_command> cmd) {
                     if (restrictions_need_filtering) {
                         query::result_view::consume(*results, cmd->slice, cql3::selection::result_set_builder::visitor(builder, *_schema, *_selection,
-                                cql3::selection::result_set_builder::restrictions_filter(_restrictions, options, cmd->row_limit, _schema, cmd->slice.partition_row_limit())));
+                                cql3::selection::result_set_builder::restrictions_filter(_restrictions, options, cmd->row_limit, _schema, cmd->slice.partition_row_limit()))).get0();
                     } else {
-                        query::result_view::consume(*results, cmd->slice, cql3::selection::result_set_builder::visitor(builder, *_schema, *_selection));
+                        query::result_view::consume(*results, cmd->slice, cql3::selection::result_set_builder::visitor(builder, *_schema, *_selection)).get0();
                     }
                 };
 
@@ -1166,7 +1166,7 @@ indexed_table_select_statement::read_posting_list(service::storage_proxy& proxy,
             cql3::selection::result_set_builder builder(*selection, now, options.get_cql_serialization_format());
             query::result_view::consume(*qr.query_result,
                                         std::move(partition_slice),
-                                        cql3::selection::result_set_builder::visitor(builder, *_view_schema, *selection));
+                                        cql3::selection::result_set_builder::visitor(builder, *_view_schema, *selection)).get0();
             return ::make_shared<cql_transport::messages::result_message::rows>(std::move(result(builder.build())));
         });
     }
@@ -1190,7 +1190,7 @@ indexed_table_select_statement::find_index_partition_ranges(service::storage_pro
     auto timeout = db::timeout_clock::now() + options.get_timeout_config().*get_timeout_config_selector();
     return read_posting_list(proxy, options, get_limit(options), state, now, timeout, false).then(
             [this, now, &options] (::shared_ptr<cql_transport::messages::result_message::rows> rows) {
-        auto rs = cql3::untyped_result_set(rows);
+        auto rs = cql3::untyped_result_set::make(rows).get0();
         dht::partition_range_vector partition_ranges;
         partition_ranges.reserve(rs.size());
         // We are reading the list of primary keys as rows of a single
@@ -1231,7 +1231,7 @@ indexed_table_select_statement::find_index_clustering_rows(service::storage_prox
     return read_posting_list(proxy, options, get_limit(options), state, now, timeout, true).then(
             [this, now, &options] (::shared_ptr<cql_transport::messages::result_message::rows> rows) {
 
-        auto rs = cql3::untyped_result_set(rows);
+        auto rs = cql3::untyped_result_set::make(rows).get0();
         std::vector<primary_key> primary_keys;
         primary_keys.reserve(rs.size());
         for (size_t i = 0; i < rs.size(); i++) {

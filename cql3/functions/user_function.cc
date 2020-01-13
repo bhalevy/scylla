@@ -40,7 +40,7 @@ bool user_function::is_aggregate() const { return false; }
 
 bool user_function::requires_thread() const { return true; }
 
-bytes_opt user_function::execute(cql_serialization_format sf, const std::vector<bytes_opt>& parameters) {
+future<bytes_opt> user_function::execute(cql_serialization_format sf, const std::vector<bytes_opt>& parameters) {
     const auto& types = arg_types();
     if (parameters.size() != types.size()) {
         throw std::logic_error("Wrong number of parameters");
@@ -52,12 +52,12 @@ bytes_opt user_function::execute(cql_serialization_format sf, const std::vector<
         const data_type& type = types[i];
         const bytes_opt& bytes = parameters[i];
         if (!bytes && !_called_on_null_input) {
-            return std::nullopt;
+            return make_ready_future<bytes_opt>(std::nullopt);
         }
         values.push_back(bytes ? type->deserialize(*bytes) : data_value::make_null(type));
     }
 
-    return lua::run_script(lua::bitcode_view{_bitcode}, values, return_type(), _cfg).get0();
+    return lua::run_script(lua::bitcode_view{_bitcode}, values, return_type(), _cfg);
 }
 }
 }

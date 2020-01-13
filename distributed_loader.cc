@@ -833,9 +833,11 @@ future<> distributed_loader::init_system_keyspace(distributed<database>& db) {
         }).get();
 
         db.invoke_on_all([] (database& db) {
-            auto& cfg = db.get_config();
-            bool durable = cfg.data_file_directories().size() > 0;
-            db::system_keyspace::make(db, durable, cfg.volatile_system_keyspace_for_testing());
+            return seastar::async([&db] {
+                auto& cfg = db.get_config();
+                bool durable = cfg.data_file_directories().size() > 0;
+                db::system_keyspace::make(db, durable, cfg.volatile_system_keyspace_for_testing());
+            });
         }).get();
 
         const auto& cfg = db.local().get_config();

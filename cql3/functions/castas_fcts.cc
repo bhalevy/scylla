@@ -48,17 +48,17 @@ public:
     virtual void print(std::ostream& os) const override {
         os << "cast(" << _arg_types[0]->name() << " as " << _return_type->name() << ")";
     }
-    virtual bytes_opt execute(cql_serialization_format sf, const std::vector<bytes_opt>& parameters) override {
+    virtual future<bytes_opt> execute(cql_serialization_format sf, const std::vector<bytes_opt>& parameters) override {
         auto from_type = arg_types()[0];
         auto to_type = return_type();
 
         auto&& val = parameters[0];
         if (!val) {
-            return val;
+            return make_ready_future<bytes_opt>(val);
         }
         auto val_from = from_type->deserialize(*val);
         auto val_to = _func(val_from);
-        return to_type->decompose(val_to);
+        return make_ready_future<bytes_opt>(to_type->decompose(val_to));
     }
 };
 

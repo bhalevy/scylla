@@ -79,7 +79,7 @@ static auto inf32 = std::numeric_limits<unsigned>::max();
 static const uint64_t max_memory_for_reverse_query = 1 << 20;
 
 query::result_set to_result_set(const reconcilable_result& r, schema_ptr s, const query::partition_slice& slice) {
-    return query::result_set::from_raw_result(s, slice, to_data_query_result(r, s, slice, inf32, inf32));
+    return query::result_set::from_raw_result(s, slice, to_data_query_result(r, s, slice, inf32, inf32)).get0();
 }
 
 SEASTAR_TEST_CASE(test_reading_from_single_partition) {

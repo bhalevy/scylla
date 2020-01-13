@@ -449,7 +449,7 @@ function_call::bind_and_get(const query_options& options) {
 
 bytes_opt
 function_call::execute_internal(cql_serialization_format sf, scalar_function& fun, std::vector<bytes_opt> params) {
-    bytes_opt result = fun.execute(sf, params);
+    bytes_opt result = fun.execute(sf, params).get0();
     try {
         // Check the method didn't lied on it's declared return type
         if (result) {
