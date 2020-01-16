@@ -88,6 +88,10 @@ struct int128_accumulator_for {
     static T narrow(type acc) {
         T ret = static_cast<T>(acc);
         if (static_cast<type>(ret) != acc) {
+            cflogger.debug(format("SUM overflow: 0x{:08x}_{:08x}_{:08x}_{:08x} -> {}",
+                    static_cast<uint32_t>(acc >> 96), static_cast<uint32_t>(acc >> 64),
+                    static_cast<uint32_t>(acc >> 32), static_cast<uint32_t>(acc),
+                    ret).c_str());
             throw exceptions::overflow_error_exception("Sum overflow. Values should be casted to a wider type.");
         }
         return ret;

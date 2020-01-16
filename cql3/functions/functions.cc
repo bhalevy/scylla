@@ -52,7 +52,7 @@ std::ostream& operator<<(std::ostream& os, const std::vector<data_type>& arg_typ
 namespace cql3 {
 namespace functions {
 
-static logging::logger log("cql3_fuctions");
+logging::logger cflogger("cql3_fuctions");
 
 bool abstract_function::requires_thread() const { return false; }
 
@@ -125,7 +125,7 @@ template <typename F>
 void functions::with_udf_iter(const function_name& name, const std::vector<data_type>& arg_types, F&& f) {
     auto i = find_iter(name, arg_types);
     if (i == _declared.end() || i->second->is_native()) {
-        log.error("attempted to remove or alter non existent user defined function {}({})", name, arg_types);
+        cflogger.error("attempted to remove or alter non existent user defined function {}({})", name, arg_types);
         return;
     }
     f(i);
