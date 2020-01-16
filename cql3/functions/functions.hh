@@ -61,6 +61,8 @@ namespace functions {
     using declared_t = std::unordered_multimap<function_name, shared_ptr<function>>;
     void add_agg_functions(declared_t& funcs);
 
+    extern logging::logger cflogger;
+
 class functions {
     using declared_t = cql3::functions::declared_t;
     static thread_local declared_t _declared;
