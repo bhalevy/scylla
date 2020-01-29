@@ -32,6 +32,16 @@
 #include "cql3/util.hh"
 
 //
+// Test basic CQL string quoting
+//
+BOOST_AUTO_TEST_CASE(maybe_quote) {
+    std::string s(65536, 'x');
+    BOOST_REQUIRE_EQUAL(cql3::util::maybe_quote(s), s);
+    s += " " + std::string(65536, 'y');
+    BOOST_REQUIRE_EQUAL(cql3::util::maybe_quote(s), "\"" + s + "\"");
+}
+
+//
 // These tests verify that all excepted variations of CQL syntax related to access-control ("auth") functionality are
 // accepted by the parser. They do not verify that invalid syntax is rejected, nor do they verify the correctness of
 // anything other than syntax (valid and invalid options for a particular authenticator, for example).

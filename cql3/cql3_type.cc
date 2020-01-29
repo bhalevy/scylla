@@ -430,8 +430,10 @@ operator<<(std::ostream& os, const cql3_type::raw& r) {
 namespace util {
 
 sstring maybe_quote(const sstring& identifier) {
-    static const std::regex unquoted_identifier_re("[a-z][a-z0-9_]*");
-    if (std::regex_match(identifier.begin(), identifier.end(), unquoted_identifier_re)) {
+    static const std::regex quoted_identifier_re("[^a-z0-9_]");
+    auto begin = identifier.begin();
+    char c = *begin;
+    if (c >= 'a' && c <= 'z' && !std::regex_search(++begin, identifier.end(), quoted_identifier_re)) {
         return identifier;
     }
     static const std::regex double_quote_re("\"");
