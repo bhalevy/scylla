@@ -39,6 +39,27 @@ BOOST_AUTO_TEST_CASE(maybe_quote) {
     BOOST_REQUIRE_EQUAL(cql3::util::maybe_quote(s), s);
     s += " " + std::string(65536, 'y');
     BOOST_REQUIRE_EQUAL(cql3::util::maybe_quote(s), "\"" + s + "\"");
+
+    BOOST_REQUIRE_EQUAL(cql3::util::maybe_quote("a"), "a");
+    BOOST_REQUIRE_EQUAL(cql3::util::maybe_quote("z"), "z");
+    BOOST_REQUIRE_EQUAL(cql3::util::maybe_quote("b0"), "b0");
+    BOOST_REQUIRE_EQUAL(cql3::util::maybe_quote("y9"), "y9");
+    BOOST_REQUIRE_EQUAL(cql3::util::maybe_quote("c_d"), "c_d");
+    BOOST_REQUIRE_EQUAL(cql3::util::maybe_quote("x8_"), "x8_");
+
+    BOOST_REQUIRE_EQUAL(cql3::util::maybe_quote("0"), "\"0\"");
+    BOOST_REQUIRE_EQUAL(cql3::util::maybe_quote("9"), "\"9\"");
+    BOOST_REQUIRE_EQUAL(cql3::util::maybe_quote("_"), "\"_\"");
+    BOOST_REQUIRE_EQUAL(cql3::util::maybe_quote("A"), "\"A\"");
+    BOOST_REQUIRE_EQUAL(cql3::util::maybe_quote("To"), "\"To\"");
+    BOOST_REQUIRE_EQUAL(cql3::util::maybe_quote("zeD"), "\"zeD\"");
+    BOOST_REQUIRE_EQUAL(cql3::util::maybe_quote("hello world"), "\"hello world\"");
+
+    BOOST_REQUIRE_EQUAL(cql3::util::maybe_quote("\""), "\"\"\"\"");
+    BOOST_REQUIRE_EQUAL(cql3::util::maybe_quote("[\"]"), "\"[\"\"]\"");
+    BOOST_REQUIRE_EQUAL(cql3::util::maybe_quote("\"\""), "\"\"\"\"\"\"");
+    BOOST_REQUIRE_EQUAL(cql3::util::maybe_quote("\"hell0\""), "\"\"\"hell0\"\"\"");
+    BOOST_REQUIRE_EQUAL(cql3::util::maybe_quote("hello \"my\" world"), "\"hello \"\"my\"\" world\"");
 }
 
 //

@@ -438,8 +438,7 @@ sstring maybe_quote(const sstring& identifier) {
     }
     static const std::regex double_quote_re("\"");
     std::string result = identifier;
-    std::regex_replace(result, double_quote_re, "\"\"");
-    return '"' + result + '"';
+    return '"' + std::regex_replace(identifier.c_str(), double_quote_re, "\"\"") + '"';
 }
 
 }
