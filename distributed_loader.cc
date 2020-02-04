@@ -798,9 +798,9 @@ future<> distributed_loader::populate_keyspace(distributed<database>& db, sstrin
                 sstring cfname = cf->schema()->cf_name();
                 auto sstdir = ks.column_family_directory(ksdir, cfname, uuid);
                 dblog.info("Keyspace {}: Reading CF {} id={} version={}", ks_name, cfname, uuid, s->version());
-                return ks.make_directory_for_column_family(cfname, uuid).then([&db, sstdir, uuid, ks_name, cfname] {
+                return ks.make_directory_for_column_family(cfname, uuid).then([&db, sstdir, ks_name, cfname] {
                     return distributed_loader::populate_column_family(db, sstdir + "/staging", ks_name, cfname);
-                }).then([&db, sstdir, uuid, ks_name, cfname] {
+                }).then([&db, sstdir, ks_name, cfname] {
                     return distributed_loader::populate_column_family(db, sstdir, ks_name, cfname);
                 }).handle_exception([ks_name, cfname, sstdir](std::exception_ptr eptr) {
                     std::string msg =
