@@ -764,16 +764,17 @@ future<> distributed_loader::do_populate_column_family(distributed<database>& db
 }
 
 // Cleanup temporary sstable directories and sstables pending delete.
+//
+// Note: must be called only on shard 0.
 future<> distributed_loader::cleanup_column_family(distributed<database>& db, sstring sstdir, sstring ks, sstring cf) {
+    assert(this_shard_id() == 0);
     return async([&db, sstdir = std::move(sstdir), ks = std::move(ks), cf = std::move(cf)] {
-        if (this_shard_id() == 0) {
             cleanup_column_family_temp_sst_dirs(sstdir).get();
             auto pending_delete_dir = sstdir + "/" + sstables::sstable::pending_delete_dir_basename();
             auto exists = file_exists(pending_delete_dir).get0();
             if (exists) {
                 handle_sstables_pending_delete(pending_delete_dir).get();
             }
-        }
     });
 }
 
