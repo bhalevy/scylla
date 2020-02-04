@@ -678,7 +678,7 @@ future<> distributed_loader::handle_sstables_pending_delete(sstring pending_dele
     });
 }
 
-future<> distributed_loader::do_populate_column_family(distributed<database>& db, sstring sstdir, sstring ks, sstring cf) {
+future<> distributed_loader::populate_column_family(distributed<database>& db, sstring sstdir, sstring ks, sstring cf) {
     // We can catch most errors when we try to load an sstable. But if the TOC
     // file is the one missing, we won't try to load the sstable at all. This
     // case is still an invalid case, but it is way easier for us to treat it
@@ -778,14 +778,6 @@ future<> distributed_loader::cleanup_column_family(distributed<database>& db, ss
     });
 }
 
-future<> distributed_loader::populate_column_family(distributed<database>& db, sstring sstdir, sstring ks, sstring cf) {
-    return async([&db, sstdir = std::move(sstdir), ks = std::move(ks), cf = std::move(cf)] () mutable {
-        cleanup_column_family(db, sstdir, ks, cf).get();
-        // Second pass, cleanup sstables with temporary TOCs and load the rest.
-        do_populate_column_family(db, std::move(sstdir), std::move(ks), std::move(cf)).get();
-    });
-}
-
 future<> distributed_loader::populate_keyspace(distributed<database>& db, sstring datadir, sstring ks_name) {
     auto ksdir = datadir + "/" + ks_name;
     auto& keyspaces = db.local().get_keyspaces();
@@ -806,6 +798,11 @@ future<> distributed_loader::populate_keyspace(distributed<database>& db, sstrin
                 auto sstdir = ks.column_family_directory(ksdir, cfname, uuid);
                 dblog.info("Keyspace {}: Reading CF {} id={} version={}", ks_name, cfname, uuid, s->version());
                 return ks.make_directory_for_column_family(cfname, uuid).then([&db, sstdir, ks_name, cfname] {
+                }).then([&db, sstdir, ks_name, cfname] {
+                    return distributed_loader::cleanup_column_family(db, sstdir, ks_name, cfname);
+                }).then([&db, sstdir, ks_name, cfname] {
+                    return distributed_loader::cleanup_column_family(db, sstdir + "/staging", ks_name, cfname);
+                }).then([&db, sstdir, ks_name, cfname] {
                     return distributed_loader::populate_column_family(db, sstdir + "/staging", ks_name, cfname);
                 }).then([&db, sstdir, ks_name, cfname] {
                     return distributed_loader::populate_column_family(db, sstdir, ks_name, cfname);
