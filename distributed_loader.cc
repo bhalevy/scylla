@@ -763,9 +763,9 @@ future<> distributed_loader::do_populate_column_family(distributed<database>& db
 
 }
 
-future<> distributed_loader::populate_column_family(distributed<database>& db, sstring sstdir, sstring ks, sstring cf) {
-    return async([&db, sstdir = std::move(sstdir), ks = std::move(ks), cf = std::move(cf)] {
-        // First pass, cleanup temporary sstable directories and sstables pending delete.
+// Cleanup temporary sstable directories and sstables pending delete.
+future<> distributed_loader::cleanup_column_family(distributed<database>& db, sstring sstdir, sstring ks, sstring cf) {
+    return async([&db, sstdir = std::move(sstdir), ks = std::move(ks), cf = std::move(cf)] () mutable {
         if (this_shard_id() == 0) {
             cleanup_column_family_temp_sst_dirs(sstdir).get();
             auto pending_delete_dir = sstdir + "/" + sstables::sstable::pending_delete_dir_basename();
@@ -774,6 +774,12 @@ future<> distributed_loader::populate_column_family(distributed<database>& db, s
                 handle_sstables_pending_delete(pending_delete_dir).get();
             }
         }
+    });
+}
+
+future<> distributed_loader::populate_column_family(distributed<database>& db, sstring sstdir, sstring ks, sstring cf) {
+    return async([&db, sstdir = std::move(sstdir), ks = std::move(ks), cf = std::move(cf)] () mutable {
+        cleanup_column_family(db, sstdir, ks, cf).get();
         // Second pass, cleanup sstables with temporary TOCs and load the rest.
         do_populate_column_family(db, std::move(sstdir), std::move(ks), std::move(cf)).get();
     });
