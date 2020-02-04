@@ -768,13 +768,13 @@ future<> distributed_loader::do_populate_column_family(distributed<database>& db
 // Note: must be called only on shard 0.
 future<> distributed_loader::cleanup_column_family(distributed<database>& db, sstring sstdir, sstring ks, sstring cf) {
     assert(this_shard_id() == 0);
-    return async([&db, sstdir = std::move(sstdir), ks = std::move(ks), cf = std::move(cf)] () mutable {
-            cleanup_column_family_temp_sst_dirs(sstdir).get();
+    return do_with(std::move(sstdir), std::move(ks), std::move(cf), [&db] (sstring& sstdir, sstring& ks, sstring& cf) {
+        return cleanup_column_family_temp_sst_dirs(sstdir).then([&sstdir] {
             auto pending_delete_dir = sstdir + "/" + sstables::sstable::pending_delete_dir_basename();
-            auto exists = file_exists(pending_delete_dir).get0();
-            if (exists) {
-                handle_sstables_pending_delete(pending_delete_dir).get();
-            }
+            return file_exists(pending_delete_dir).then([pending_delete_dir = std::move(pending_delete_dir)] (bool exists) mutable {
+                return exists ? handle_sstables_pending_delete(std::move(pending_delete_dir)) : make_ready_future<>();
+            });
+        });
     });
 }
 
