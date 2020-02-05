@@ -2753,7 +2753,7 @@ future<> sstable::create_links(sstring dir, int64_t generation, bool for_move) c
     // from staging to the base dir, for example, right after create_links completes,
     // and right before deleting the source links.
     // We end up in two valid sstables in this case, so make create_links idempotent.
-    return do_with(std::move(dir), false, all_components(), [this, generation, for_move] (const sstring& dir, bool& any_missing, auto& comps) {
+    return do_with(std::move(dir), false, all_components(), std::vector<sstring>(), [this, generation, for_move] (const sstring& dir, bool& any_missing, auto& comps, auto& names_for_cleanup) {
         return parallel_for_each(comps, [this, &dir, generation, &any_missing] (auto p) mutable {
             auto comp = p.second;
             auto src = sstable::filename(_dir, _schema->ks_name(), _schema->cf_name(), _version, _generation, _format, comp);
@@ -2780,7 +2780,7 @@ future<> sstable::create_links(sstring dir, int64_t generation, bool for_move) c
                     });
                 });
             });
-        }).then([this, &dir, generation, &any_missing, &comps, for_move] {
+        }).then([this, &dir, generation, &any_missing, &comps, &names_for_cleanup, for_move] {
             // fully replayed?
             if (!any_missing) {
                 sstlog.trace("create_links: {} -> {} generation={}: done: none missing", get_filename(), dir, generation);
@@ -2799,12 +2799,27 @@ future<> sstable::create_links(sstring dir, int64_t generation, bool for_move) c
             //   since the source sstable is about to be removed.
             // - Or, we simply remove the TemporaryTOC file, dst_temp_toc, from the destination.
             auto dst_temp_toc = sstable::filename(dir, _schema->ks_name(), _schema->cf_name(), _version, generation, _format, component_type::TemporaryTOC);
-            return sstable_write_io_check(idempotent_link_file, filename(component_type::TOC), std::move(dst_temp_toc)).then([this, &dir, generation, &comps] {
-                // FIXME: Should clean already-created links if we failed midway.
-                return parallel_for_each(comps, [this, &dir, generation] (auto p) {
+            return sstable_write_io_check(idempotent_link_file, filename(component_type::TOC), std::move(dst_temp_toc)).then([this, &dir, generation, &comps, &names_for_cleanup] () mutable {
+                names_for_cleanup.reserve(comps.size());
+                return parallel_for_each(comps, [this, &dir, generation, &names_for_cleanup] (auto p) {
                     auto src = sstable::filename(_dir, _schema->ks_name(), _schema->cf_name(), _version, _generation, _format, p.second);
                     auto dst = sstable::filename(dir, _schema->ks_name(), _schema->cf_name(), _version, generation, _format, p.second);
-                    return sstable_write_io_check(idempotent_link_file, std::move(src), std::move(dst));
+                    auto fut = sstable_write_io_check(idempotent_link_file, std::move(src), dst);
+                    return fut.then([dst = std::move(dst), &names_for_cleanup] () mutable {
+                        names_for_cleanup.emplace_back(std::move(dst));
+                    });
+                }).handle_exception([this, &dir, generation, &names_for_cleanup] (std::exception_ptr eptr) {
+                    sstlog.error("Error while linking SSTable {} to {}: {}. Cleaning up...", get_filename(), dir, eptr);
+                    return parallel_for_each(names_for_cleanup, [this] (auto& dst) {
+                        return sstable_write_io_check(idempotent_remove_file, dst);
+                    }).then([this, &dir, generation] {
+                        auto dst_temp_toc = sstable::filename(dir, _schema->ks_name(), _schema->cf_name(), _version, generation, _format, component_type::TemporaryTOC);
+                        return sstable_write_io_check(idempotent_remove_file, std::move(dst_temp_toc));
+                    }).handle_exception([this, &dir, generation] (std::exception_ptr eptr) {
+                        auto dst_temp_toc = sstable::filename(dir, _schema->ks_name(), _schema->cf_name(), _version, generation, _format, component_type::TemporaryTOC);
+                        sstlog.error("Error while cleaning up failed create_links: {}. {} is left behind", eptr, std::move(dst_temp_toc));
+                        return make_exception_future<>(eptr);
+                    });
                 });
             }).then([this, &dir, for_move, generation] {
                 auto dst_temp_toc = sstable::filename(dir, _schema->ks_name(), _schema->cf_name(), _version, generation, _format, component_type::TemporaryTOC);
