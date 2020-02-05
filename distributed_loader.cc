@@ -567,7 +567,8 @@ future<> distributed_loader::probe_file(distributed<database>& db, sstables::ent
         cf.update_sstables_known_generation(comps.generation);
         if (shared_sstable sst = cf.get_staging_sstable(comps.generation)) {
             dblog.warn("SSTable {} is already present in staging/ directory. Moving from staging will be retried.", sst->get_filename());
-            return sst->move_to_new_dir(comps.sstdir, comps.generation);
+            assert(sst->generation() != comps.generation);
+            return sst->move_to_new_dir(comps.sstdir);
         }
         {
             auto i = boost::range::find_if(*cf._sstables->all(), [gen = comps.generation] (sstables::shared_sstable sst) { return sst->generation() == gen; });
