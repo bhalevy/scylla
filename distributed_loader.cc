@@ -557,18 +557,14 @@ future<> distributed_loader::load_new_sstables(distributed<database>& db, distri
     });
 }
 
-future<sstables::entry_descriptor> distributed_loader::probe_file(distributed<database>& db, sstring sstdir, sstring fname) {
+future<> distributed_loader::probe_file(distributed<database>& db, sstables::entry_descriptor comps, sstring fname) {
     using namespace sstables;
-
-    entry_descriptor comps = entry_descriptor::make_descriptor(sstdir, fname);
 
     // Every table will have a TOC. Using a specific file as a criteria, as
     // opposed to, say verifying _sstables.count() to be zero is more robust
     // against parallel loading of the directory contents.
-    if (comps.component != component_type::TOC) {
-        return make_ready_future<entry_descriptor>(std::move(comps));
-    }
-    auto cf_sstable_open = [sstdir, comps, fname] (column_family& cf, sstables::foreign_sstable_open_info info) {
+    assert(comps.component == component_type::TOC);
+    auto cf_sstable_open = [comps, fname] (column_family& cf, sstables::foreign_sstable_open_info info) {
         cf.update_sstables_known_generation(comps.generation);
         if (shared_sstable sst = cf.get_staging_sstable(comps.generation)) {
             dblog.warn("SSTable {} is already present in staging/ directory. Moving from staging will be retried.", sst->get_filename());
@@ -577,12 +573,12 @@ future<sstables::entry_descriptor> distributed_loader::probe_file(distributed<da
         {
             auto i = boost::range::find_if(*cf._sstables->all(), [gen = comps.generation] (sstables::shared_sstable sst) { return sst->generation() == gen; });
             if (i != cf._sstables->all()->end()) {
-                auto new_toc = sstdir + "/" + fname;
+                auto new_toc = comps.sstdir + "/" + fname;
                 throw std::runtime_error(format("Attempted to add sstable generation {:d} twice: new={} existing={}",
                                                 comps.generation, new_toc, (*i)->toc_filename()));
             }
         }
-        return cf.open_sstable(std::move(info), sstdir, comps.generation, comps.version, comps.format).then([&cf] (sstables::shared_sstable sst) mutable {
+        return cf.open_sstable(std::move(info), comps.sstdir, comps.generation, comps.version, comps.format).then([&cf] (sstables::shared_sstable sst) mutable {
             if (sst) {
                 return cf.get_row_cache().invalidate([&cf, sst = std::move(sst)] () mutable noexcept {
                     // FIXME: this is not really noexcept, but we need to provide strong exception guarantees.
@@ -604,9 +600,6 @@ future<sstables::entry_descriptor> distributed_loader::probe_file(distributed<da
                 fname, std::current_exception());
             throw;
         }
-        return make_ready_future<>();
-    }).then([comps] () mutable {
-        return make_ready_future<entry_descriptor>(std::move(comps));
     });
 }
 
@@ -679,6 +672,28 @@ future<> distributed_loader::handle_sstables_pending_delete(sstring pending_dele
 }
 
 future<> distributed_loader::populate_column_family(distributed<database>& db, sstring sstdir, sstring ks, sstring cf) {
+    return do_with(std::vector<future<>>(), [&db, sstdir = std::move(sstdir)] (std::vector<future<>>& futures) {
+        return lister::scan_dir(sstdir, { directory_entry_type::regular }, [&db, &futures] (fs::path sstdir, directory_entry de) {
+            sstables::entry_descriptor entry = sstables::entry_descriptor::make_descriptor(sstdir.native(), de.name);
+
+            if (entry.component == component_type::TOC) {
+                // push future returned by probe_file into an array of futures,
+                // so that the supplied callback will not block scan_dir() from
+                // reading the next entry in the directory.
+                futures.push_back(probe_file(db, std::move(entry), de.name));
+            }
+
+            return make_ready_future<>();
+        }, &column_family::manifest_json_filter).then([&futures] {
+            return execute_futures(futures);
+        });
+    });
+
+}
+
+future<> distributed_loader::cleanup_column_family_sstables(distributed<database>& db, sstring sstdir, sstring ks, sstring cf) {
+    assert(this_shard_id() == 0); // NOTE: should always run on shard 0!
+
     // We can catch most errors when we try to load an sstable. But if the TOC
     // file is the one missing, we won't try to load the sstable at all. This
     // case is still an invalid case, but it is way easier for us to treat it
@@ -699,66 +714,61 @@ future<> distributed_loader::populate_column_family(distributed<database>& db, s
     using verifier_map = std::unordered_map<unsigned long, sstable_descriptor>;
     return do_with(std::vector<future<>>(), verifier_map(), std::move(sstdir), std::move(ks), std::move(cf),
             [&db] (std::vector<future<>>& futures, verifier_map& verifier, sstring& sstdir, sstring& ks, sstring& cf) {
-        return lister::scan_dir(sstdir, { directory_entry_type::regular }, [&db, &verifier, &futures] (fs::path sstdir, directory_entry de) {
-            // FIXME: The secondary indexes are in this level, but with a directory type, (starting with ".")
+        return lister::scan_dir(sstdir, { directory_entry_type::regular }, [&db, &verifier, &ks, &cf, &futures] (fs::path sstdir, directory_entry de) {
+            sstables::entry_descriptor entry = sstables::entry_descriptor::make_descriptor(sstdir.native(), de.name);
+            const char* error = nullptr;
 
-            // push future returned by probe_file into an array of futures,
+            // push future into an array of futures,
             // so that the supplied callback will not block scan_dir() from
             // reading the next entry in the directory.
-            auto f = distributed_loader::probe_file(db, sstdir.native(), de.name).then([&verifier, sstdir, de] (auto entry) {
-                if (entry.component == component_type::TemporaryStatistics) {
-                    return remove_file(sstables::sstable::filename(sstdir.native(), entry.ks, entry.cf, entry.version, entry.generation,
-                        entry.format, component_type::TemporaryStatistics));
+            switch (entry.component) {
+            case component_type::TemporaryStatistics:
+                futures.push_back(remove_file(sstables::sstable::filename(sstdir.native(), entry.ks, entry.cf, entry.version, entry.generation,
+                    entry.format, component_type::TemporaryStatistics)));
+                break;
+            case component_type::TOC:
+                if (!verifier.count(entry.generation)) {
+                    verifier.emplace(entry.generation, sstable_descriptor{component_status::has_toc_file, entry.version, entry.format});
+                } else if (verifier.at(entry.generation).status == component_status::has_toc_file) {
+                    error = "Invalid State encountered. TOC file already processed";
+                    break;
+                } else if (verifier.at(entry.generation).status != component_status::has_temporary_toc_file) {
+                    verifier.at(entry.generation).status = component_status::has_toc_file;
                 }
-
-                if (verifier.count(entry.generation)) {
-                    if (verifier.at(entry.generation).status == component_status::has_toc_file) {
-                        fs::path file_path(sstdir / de.name);
-                        if (entry.component == component_type::TOC) {
-                            throw sstables::malformed_sstable_exception("Invalid State encountered. TOC file already processed", file_path.native());
-                        } else if (entry.component == component_type::TemporaryTOC) {
-                            throw sstables::malformed_sstable_exception("Invalid State encountered. Temporary TOC file found after TOC file was processed", file_path.native());
-                        }
-                    } else if (entry.component == component_type::TOC) {
-                        verifier.at(entry.generation).status = component_status::has_toc_file;
-                    } else if (entry.component == component_type::TemporaryTOC) {
-                        verifier.at(entry.generation).status = component_status::has_temporary_toc_file;
-                    }
+                break;
+            case component_type::TemporaryTOC:
+                if (!verifier.count(entry.generation)) {
+                    verifier.emplace(entry.generation, sstable_descriptor{component_status::has_temporary_toc_file, entry.version, entry.format});
+                } else if (verifier.at(entry.generation).status == component_status::has_temporary_toc_file) {
+                    error = "Invalid State encountered. Temporary TOC file already processed";
+                    break;
                 } else {
-                    if (entry.component == component_type::TOC) {
-                        verifier.emplace(entry.generation, sstable_descriptor{component_status::has_toc_file, entry.version, entry.format});
-                    } else if (entry.component == component_type::TemporaryTOC) {
-                        verifier.emplace(entry.generation, sstable_descriptor{component_status::has_temporary_toc_file, entry.version, entry.format});
-                    } else {
-                        verifier.emplace(entry.generation, sstable_descriptor{component_status::has_some_file, entry.version, entry.format});
-                    }
+                    verifier.at(entry.generation).status = component_status::has_temporary_toc_file;
                 }
-                return make_ready_future<>();
-            });
+                futures.push_back(sstables::sstable::remove_sstable_with_temp_toc(ks, cf, sstdir.native(), entry.generation, entry.version, entry.format));
+                break;
+            default:
+                if (!verifier.count(entry.generation)) {
+                    verifier.emplace(entry.generation, sstable_descriptor{component_status::has_some_file, entry.version, entry.format});
+                }
+                break;
+            }
 
-            futures.push_back(std::move(f));
+            if (error) {
+                fs::path file_path(sstdir / de.name);
+                throw sstables::malformed_sstable_exception(error, file_path.native());
+            }
 
             return make_ready_future<>();
-        }, &column_family::manifest_json_filter).then([&futures] {
-            return execute_futures(futures);
-        }).then([&verifier, &sstdir, &ks, &cf] {
-            return do_for_each(verifier, [&sstdir, &ks, &cf] (auto v) {
-                if (v.second.status == component_status::has_temporary_toc_file) {
-                    unsigned long gen = v.first;
-                    sstables::sstable::version_types version = v.second.version;
-                    sstables::sstable::format_types format = v.second.format;
-
-                    if (this_shard_id() != 0) {
-                        dblog.debug("At directory: {}, partial SSTable with generation {} not relevant for this shard, ignoring", sstdir, v.first);
-                        return make_ready_future<>();
-                    }
-                    // shard 0 is the responsible for removing a partial sstable.
-                    return sstables::sstable::remove_sstable_with_temp_toc(ks, cf, sstdir, gen, version, format);
-                } else if (v.second.status != component_status::has_toc_file) {
+        }, &column_family::manifest_json_filter).then([&verifier, &sstdir] {
+            return do_for_each(verifier, [&sstdir] (auto v) {
+                if (v.second.status == component_status::has_some_file) {
                     throw sstables::malformed_sstable_exception(format("At directory: {}: no TOC found for SSTable with generation {:d}!. Refusing to boot", sstdir, v.first));
                 }
                 return make_ready_future<>();
             });
+        }).then([&futures] {
+            return execute_futures(futures);
         });
     });
 
@@ -775,6 +785,8 @@ future<> distributed_loader::cleanup_column_family(distributed<database>& db, ss
             return file_exists(pending_delete_dir).then([pending_delete_dir = std::move(pending_delete_dir)] (bool exists) mutable {
                 return exists ? handle_sstables_pending_delete(std::move(pending_delete_dir)) : make_ready_future<>();
             });
+        }).then([&db, &sstdir, &ks, &cf] {
+            return cleanup_column_family_sstables(db, sstdir, ks, cf);
         });
     });
 }
