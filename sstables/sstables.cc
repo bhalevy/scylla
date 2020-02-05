@@ -2754,12 +2754,30 @@ future<> sstable::create_links(sstring dir, int64_t generation, bool for_move) c
         // - Otherwise, we simply remove the TemporaryTOC from the destination.
         sstable_write_io_check(idempotent_link_file, filename(component_type::TOC), dst_temp_toc).get();
         sstable_write_io_check(sync_directory, dir).get();
-        // FIXME: Should clean already-created links if we failed midway.
-        parallel_for_each(comps, [this, &dir, generation] (auto p) {
-            auto src = sstable::filename(_dir, _schema->ks_name(), _schema->cf_name(), _version, _generation, _format, p.second);
-            auto dst = sstable::filename(dir, _schema->ks_name(), _schema->cf_name(), _version, generation, _format, p.second);
-            return sstable_write_io_check(idempotent_link_file, std::move(src), std::move(dst));
-        }).get();
+        std::vector<sstring> names_for_cleanup;
+        names_for_cleanup.reserve(comps.size());
+        try {
+            parallel_for_each(comps, [this, &dir, generation, &names_for_cleanup] (auto p) mutable {
+                auto src = sstable::filename(_dir, _schema->ks_name(), _schema->cf_name(), _version, _generation, _format, p.second);
+                auto dst = sstable::filename(dir, _schema->ks_name(), _schema->cf_name(), _version, generation, _format, p.second);
+                return sstable_write_io_check(idempotent_link_file, std::move(src), dst).then([dst = std::move(dst), &names_for_cleanup] () mutable {
+                    names_for_cleanup.emplace_back(std::move(dst));
+                });
+            }).get();
+        } catch (...) {
+            std::exception_ptr eptr = std::current_exception();
+            sstlog.error("Error while linking SSTable {} to {}: {}. Cleaning up...", get_filename(), dir, eptr);
+            try {
+                parallel_for_each(names_for_cleanup, [this] (auto& dst) {
+                    return sstable_write_io_check(idempotent_remove_file, dst);
+                }).then([this, &dst_temp_toc] {
+                    return sstable_write_io_check(idempotent_remove_file, dst_temp_toc);
+                }).get();
+            } catch (...) {
+                sstlog.error("Error while cleaning up failed create_links: {}. TemporaryTOC is left behind", std::current_exception());
+            }
+            std::rethrow_exception(eptr);
+        }
 
         // Now that the source sstable is linked to new_dir, mark the source links for
         // deletion by leaving a TemporaryTOC file in the source directory.
