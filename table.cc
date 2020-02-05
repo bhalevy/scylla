@@ -2429,7 +2429,7 @@ future<> table::move_sstables_from_staging(std::vector<sstables::shared_sstable>
         return do_with(std::set<sstring>({dir()}), std::move(sstables), [this] (std::set<sstring>& dirs_to_sync, std::vector<sstables::shared_sstable>& sstables) {
             return do_for_each(sstables, [this, &dirs_to_sync] (sstables::shared_sstable sst) {
                 dirs_to_sync.emplace(sst->get_dir());
-                return sst->move_to_new_dir(dir(), sst->generation(), false).then_wrapped([this, sst, &dirs_to_sync] (future<> f) {
+                return sst->move_to_new_dir(dir(), false).then_wrapped([this, sst, &dirs_to_sync] (future<> f) {
                     if (!f.failed()) {
                         _sstables_staging.erase(sst->generation());
                         _compaction_strategy.get_backlog_tracker().add_sstable(sst);
