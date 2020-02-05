@@ -2700,7 +2700,7 @@ future<> sstable::create_links(const sstring& dir, int64_t generation) const {
         auto dst = sstable::filename(dir, _schema->ks_name(), _schema->cf_name(), _version, generation, _format, component_type::TemporaryTOC);
         sstable_write_io_check(idempotent_link_file, filename(component_type::TOC), dst).get();
         sstable_write_io_check(sync_directory, dir).get();
-        // FIXME: Should clean already-created links if we failed midway.
+        try {
         parallel_for_each(all_components(), [this, dir, generation] (auto p) {
             if (p.first == component_type::TOC) {
                 return make_ready_future<>();
@@ -2713,6 +2713,34 @@ future<> sstable::create_links(const sstring& dir, int64_t generation) const {
         auto src = sstable::filename(dir, _schema->ks_name(), _schema->cf_name(), _version, generation, _format, component_type::TemporaryTOC);
              dst = sstable::filename(dir, _schema->ks_name(), _schema->cf_name(), _version, generation, _format, component_type::TOC);
         sstable_write_io_check(rename_file, std::move(src), std::move(dst)).get();
+        } catch (...) {
+            std::exception_ptr ep = std::current_exception();
+            sstlog.error("Error while linking SSTable {} to {}: {}. Cleaning up...", get_filename(), dir, ep);
+            try {
+                parallel_for_each(all_components(), [this, dir, generation] (auto p) {
+                    auto dst = sstable::filename(dir, _schema->ks_name(), _schema->cf_name(), _version, generation, _format, p.second);
+                    try {
+                        return sstable_write_io_check(remove_file, std::move(dst));
+                    } catch (...) {
+                        std::exception_ptr eptr = std::current_exception();
+                        try {
+                            std::rethrow_exception(eptr);
+                        } catch (const std::system_error& e) {
+                            if (e.code().value() == ENOENT) {
+                                return make_ready_future<>();
+                            }
+                        }
+                        std::rethrow_exception(eptr);
+                    }
+                }).then([this, dir, generation] {
+                    auto dst = sstable::filename(dir, _schema->ks_name(), _schema->cf_name(), _version, generation, _format, component_type::TemporaryTOC);
+                    return sstable_write_io_check(remove_file, std::move(dst));
+                }).get();
+            } catch (...) {
+                sstlog.error("Error while cleaning up failed create_links: {}. TemporaryTOC is left behind", std::current_exception());
+            }
+            std::rethrow_exception(ep);
+        }
         sstable_write_io_check(sync_directory, dir).get();
     });
 }
