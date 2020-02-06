@@ -2678,7 +2678,9 @@ future<> sstable::set_generation(int64_t new_generation) {
 future<> sstable::move_to_new_dir(sstring new_dir, bool do_sync_dirs) {
     sstring old_dir = get_dir();
     return create_links(new_dir, generation()).then([this] {
-        return remove_file(filename(component_type::TOC));
+        // Now that the source sstable is linked to new_dir, mark the source links for
+        // deletion by renaming the TOC file to TOC.tmp
+        return sstable_write_io_check(rename_file, filename(component_type::TOC), filename(component_type::TemporaryTOC));
     }).then([this] {
         return sstable_write_io_check(sync_directory, _dir);
     }).then([this, old_dir, new_dir] {
@@ -2689,6 +2691,8 @@ future<> sstable::move_to_new_dir(sstring new_dir, bool do_sync_dirs) {
             }
             return sstable_write_io_check(remove_file, sstable::filename(old_dir, _schema->ks_name(), _schema->cf_name(), _version, generation(), _format, p.second));
         });
+    }).then([this, old_dir, new_dir] {
+        return sstable_write_io_check(remove_file, filename(component_type::TemporaryTOC));
     }).then([this, old_dir, new_dir, do_sync_dirs] {
         if (!do_sync_dirs) {
             return make_ready_future<>();
