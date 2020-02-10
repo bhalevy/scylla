@@ -2701,18 +2701,18 @@ future<> sstable::create_links(const sstring& dir, int64_t generation) const {
         sstable_write_io_check(idempotent_link_file, filename(component_type::TOC), dst).get();
         sstable_write_io_check(sync_directory, dir).get();
         try {
-        parallel_for_each(all_components(), [this, dir, generation] (auto p) {
-            if (p.first == component_type::TOC) {
-                return make_ready_future<>();
-            }
-            auto src = sstable::filename(_dir, _schema->ks_name(), _schema->cf_name(), _version, _generation, _format, p.second);
-            auto dst = sstable::filename(dir, _schema->ks_name(), _schema->cf_name(), _version, generation, _format, p.second);
-            return sstable_write_io_check(idempotent_link_file, std::move(src), std::move(dst));
-        }).get();
-        sstable_write_io_check(sync_directory, dir).get();
-        auto src = sstable::filename(dir, _schema->ks_name(), _schema->cf_name(), _version, generation, _format, component_type::TemporaryTOC);
-             dst = sstable::filename(dir, _schema->ks_name(), _schema->cf_name(), _version, generation, _format, component_type::TOC);
-        sstable_write_io_check(rename_file, std::move(src), std::move(dst)).get();
+            parallel_for_each(all_components(), [this, dir, generation] (auto p) {
+                if (p.first == component_type::TOC) {
+                    return make_ready_future<>();
+                }
+                auto src = sstable::filename(_dir, _schema->ks_name(), _schema->cf_name(), _version, _generation, _format, p.second);
+                auto dst = sstable::filename(dir, _schema->ks_name(), _schema->cf_name(), _version, generation, _format, p.second);
+                return sstable_write_io_check(idempotent_link_file, std::move(src), std::move(dst));
+            }).get();
+            sstable_write_io_check(sync_directory, dir).get();
+            auto src = sstable::filename(dir, _schema->ks_name(), _schema->cf_name(), _version, generation, _format, component_type::TemporaryTOC);
+                 dst = sstable::filename(dir, _schema->ks_name(), _schema->cf_name(), _version, generation, _format, component_type::TOC);
+            sstable_write_io_check(rename_file, std::move(src), std::move(dst)).get();
         } catch (...) {
             std::exception_ptr ep = std::current_exception();
             sstlog.error("Error while linking SSTable {} to {}: {}. Cleaning up...", get_filename(), dir, ep);
