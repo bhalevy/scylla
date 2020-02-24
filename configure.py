@@ -498,7 +498,8 @@ arg_parser.add_argument('--with-antlr3', dest='antlr3_exec', action='store', def
                         help='path to antlr3 executable')
 arg_parser.add_argument('--with-ragel', dest='ragel_exec', action='store', default='ragel',
         help='path to ragel executable')
-add_tristate(arg_parser, name='stack-guards', dest='stack_guards', help='Use stack guards')
+arg_parser.add_argument('--disable-stack-guards', dest='stack_guards', action='store_false', default=True,
+                        help='Disable stack guards')
 arg_parser.add_argument('--verbose', dest='verbose', action='store_true',
                         help='Make configure.py output more verbose (useful for debugging the build process itself)')
 arg_parser.add_argument('--test-repeat', dest='test_repeat', action='store', type=str, default='1',
@@ -1263,9 +1264,8 @@ def configure_seastar(build_dir, mode):
         '-DSeastar_UNUSED_RESULT_ERROR=ON',
     ]
 
-    if args.stack_guards is not None:
-        stack_guards = 'ON' if args.stack_guards else 'OFF'
-        seastar_cmake_args += ['-DSeastar_STACK_GUARDS={}'.format(stack_guards)]
+    stack_guards = 'ON' if args.stack_guards else 'OFF'
+    seastar_cmake_args += ['-DSeastar_STACK_GUARDS={}'.format(stack_guards)]
 
     dpdk = args.dpdk
     if dpdk is None:
