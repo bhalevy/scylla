@@ -2677,18 +2677,30 @@ future<> idempotent_link_file(sstring oldpath, sstring newpath) noexcept {
     });
 }
 
+future<> idempotent_remove_file(sstring path) noexcept {
+    return remove_file(std::move(path)).handle_exception_type([] (std::system_error& e) {
+        if (e.code().value() == ENOENT) {
+            return make_ready_future<>();
+        }
+        return make_exception_future<>(e);
+    });
+}
+
 // create_links links all component files from the sstable directory to
 // the given destination directory, using the provided generation.
 //
 // \param dir - the destination directory.
 // \param generation - the generation of the destination sstable
+// \param for_move - create links for a move operation, atomically creating
+//                   a TemporaryTOC component for the source sstable,
+//                   that is about to be removed.
 //
 // Note: create_links may be called in parallel by multiple threads
 // on the same source and destination (e.g. when taking a snapshot of
 // a shared sstable.
-future<> sstable::create_links(sstring dir, int64_t generation) const {
-    return seastar::async([this, dir = std::move(dir), generation] {
-        sstlog.debug("create_links: {} -> {} generation={}", get_filename(), dir, generation);
+future<> sstable::create_links(sstring dir, int64_t generation, bool for_move) const {
+    return seastar::async([this, dir = std::move(dir), generation, for_move] {
+        sstlog.debug("create_links: {} -> {} generation={} for_move={}: begin", get_filename(), dir, generation, for_move);
         // Check is the operation is replayed, possibly when moving sstables
         // from staging to the base dir, for example, right after create_links completes,
         // and right before deleting the source links.
@@ -2721,30 +2733,41 @@ future<> sstable::create_links(sstring dir, int64_t generation) const {
             });
         }).get();
 
+        auto src_temp_toc = sstable::filename(_dir, _schema->ks_name(), _schema->cf_name(), _version, _generation, _format, component_type::TemporaryTOC);
+        auto dst_temp_toc = sstable::filename(dir, _schema->ks_name(), _schema->cf_name(), _version, generation, _format, component_type::TemporaryTOC);
+
         // fully replayed?
         if (!any_missing) {
+            if (for_move) {
+                sstable_write_io_check(idempotent_link_file, filename(component_type::TOC), src_temp_toc).get();
+                sstable_write_io_check(sync_directory, _dir).get();
+            }
             sstlog.trace("create_links: {} -> {} generation={}: done: none missing", get_filename(), dir, generation);
             return;
         }
 
-        // TemporaryTOC is always first, TOC is always last
-        auto dst = sstable::filename(dir, _schema->ks_name(), _schema->cf_name(), _version, generation, _format, component_type::TemporaryTOC);
-        sstable_write_io_check(idempotent_link_file, filename(component_type::TOC), dst).get();
+        // We link both TemporaryTOC and TOC.
+        // When done linking all components we will either:
+        // - Rename dst_temp_toc to src_temp_toc if we're creating links for move,
+        //   since the source sstable is about to be removed.
+        // - Otherwise, we simply remove the TemporaryTOC from the destination.
+        sstable_write_io_check(idempotent_link_file, filename(component_type::TOC), dst_temp_toc).get();
         sstable_write_io_check(sync_directory, dir).get();
         // FIXME: Should clean already-created links if we failed midway.
         parallel_for_each(comps, [this, &dir, generation] (auto p) {
-            if (p.first == component_type::TOC) {
-                return make_ready_future<>();
-            }
             auto src = sstable::filename(_dir, _schema->ks_name(), _schema->cf_name(), _version, _generation, _format, p.second);
             auto dst = sstable::filename(dir, _schema->ks_name(), _schema->cf_name(), _version, generation, _format, p.second);
             return sstable_write_io_check(idempotent_link_file, std::move(src), std::move(dst));
         }).get();
-        sstable_write_io_check(sync_directory, dir).get();
-        auto src = sstable::filename(dir, _schema->ks_name(), _schema->cf_name(), _version, generation, _format, component_type::TemporaryTOC);
-             dst = sstable::filename(dir, _schema->ks_name(), _schema->cf_name(), _version, generation, _format, component_type::TOC);
-        // This could be running in parallel, e.g. on another thread, so rename might fail to find src
-        sstable_write_io_check(rename_file, std::move(src), std::move(dst)).get();
+
+        // Now that the source sstable is linked to new_dir, mark the source links for
+        // deletion by leaving a TemporaryTOC file in the source directory.
+        if (for_move) {
+            sstable_write_io_check(rename_file, dst_temp_toc, src_temp_toc).get();
+            sstable_write_io_check(sync_directory, _dir).get();
+        } else {
+            sstable_write_io_check(idempotent_remove_file, dst_temp_toc).get();
+        }
         sstable_write_io_check(sync_directory, dir).get();
         sstlog.trace("create_links: {} -> {} generation={}: done", get_filename(), dir, generation);
     });
@@ -2773,22 +2796,13 @@ future<> sstable::set_generation(int64_t new_generation) {
 future<> sstable::move_to_new_dir(sstring new_dir, bool do_sync_dirs) {
     sstring old_dir = get_dir();
     sstlog.trace("move_to_new_dir: {} -> {} do_sync_dirs={}", get_filename(), old_dir, new_dir, do_sync_dirs);
-    return create_links(new_dir, generation()).then([this] {
-        // Now that the source sstable is linked to new_dir, mark the source links for
-        // deletion by renaming the TOC file to TOC.tmp
-        return sstable_write_io_check(rename_file, filename(component_type::TOC), filename(component_type::TemporaryTOC));
-    }).then([this] {
-        return sstable_write_io_check(sync_directory, _dir);
-    }).then([this, old_dir, new_dir] {
+    return create_links(new_dir, generation(), true /* for_move */).then([this, old_dir, new_dir] {
         _dir = new_dir;
         return parallel_for_each(all_components(), [this, old_dir] (auto p) {
-            if (p.first == component_type::TOC) {
-                return make_ready_future<>();
-            }
-            return sstable_write_io_check(remove_file, sstable::filename(old_dir, _schema->ks_name(), _schema->cf_name(), _version, generation(), _format, p.second));
+            return sstable_write_io_check(idempotent_remove_file, sstable::filename(old_dir, _schema->ks_name(), _schema->cf_name(), _version, generation(), _format, p.second));
+        }).then([this, old_dir, new_dir] {
+            return sstable_write_io_check(idempotent_remove_file, filename(component_type::TemporaryTOC));
         });
-    }).then([this, old_dir, new_dir] {
-        return sstable_write_io_check(remove_file, filename(component_type::TemporaryTOC));
     }).then([this, old_dir, new_dir, do_sync_dirs] {
         if (!do_sync_dirs) {
             return make_ready_future<>();
