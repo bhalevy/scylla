@@ -425,7 +425,7 @@ public:
 
     std::vector<std::pair<component_type, sstring>> all_components() const;
 
-    future<> create_links(sstring dir, int64_t generation) const;
+    future<> create_links(sstring dir, int64_t generation, bool for_move = false) const;
 
     future<> create_links(sstring dir) const {
         return create_links(std::move(dir), _generation);
