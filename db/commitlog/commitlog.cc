@@ -1286,6 +1286,14 @@ static auto close_on_failure(future<file> file_fut, Func func) {
     });
 }
 
+static future<file> wrap_file(db::commitlog_file_extension* ext, sstring filename, file f, open_flags flags) noexcept {
+    try {
+        return ext->wrap_file(filename, std::move(f), flags);
+    } catch (...) {
+        return internal::current_exception_as_future<file>();
+    }
+}
+
 future<db::commitlog::segment_manager::sseg_ptr> db::commitlog::segment_manager::allocate_segment_ex(const descriptor& d, sstring filename, open_flags flags) {
     file_open_options opt;
     opt.extent_allocation_size_hint = max_size;
@@ -1293,9 +1301,19 @@ future<db::commitlog::segment_manager::sseg_ptr> db::commitlog::segment_manager:
         auto fut = open_file_dma(filename, flags, opt);
         if (cfg.extensions && !cfg.extensions->commitlog_file_extensions().empty()) {
             for (auto * ext : cfg.extensions->commitlog_file_extensions()) {
-                fut = fut.then([ext, filename, flags](file f) {
-                   return ext->wrap_file(filename, f, flags).then([f](file nf) mutable {
-                       return nf ? nf : std::move(f);
+                fut = fut.then([ext, filename, flags] (file f) mutable {
+                    return wrap_file(ext, std::move(filename), f, flags).then_wrapped([f = std::move(f)] (future<file> fut) mutable {
+                        if (fut.failed()) {
+                           return f.close().then_wrapped([f, eptr = fut.get_exception()] (auto unused_fut) {
+                               return make_exception_future<file>(eptr);
+                           });
+                        }
+                        file nf = fut.get0();
+                        if (nf) {
+                            return make_ready_future<file>(std::move(nf));
+                        } else {
+                            return make_ready_future<file>(std::move(f));
+                        }
                    });
                 });
             }
