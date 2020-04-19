@@ -137,6 +137,7 @@ public:
             cql_server_config config);
     future<> listen(socket_address addr, std::shared_ptr<seastar::tls::credentials_builder> = {}, bool keepalive = false);
     future<> do_accepts(int which, bool keepalive, socket_address server_addr);
+    future<> on_start();
     future<> stop();
 public:
     using response = cql_transport::response;
@@ -268,6 +269,7 @@ class cql_server::event_notifier : public service::migration_listener,
     service::migration_notifier& _mnotifier;
     bool _stopped = false;
 public:
+    future<> start();
     future<> stop();
     event_notifier(service::migration_notifier& mn);
     ~event_notifier();

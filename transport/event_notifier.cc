@@ -31,8 +31,6 @@ static logging::logger elogger("event_notifier");
 
 cql_server::event_notifier::event_notifier(service::migration_notifier& mn) : _mnotifier(mn)
 {
-    // FIXME: temporarily discard returned future
-    (void)_mnotifier.register_listener(this);
     service::get_local_storage_service().register_subscriber(this);
 }
 
@@ -40,6 +38,10 @@ cql_server::event_notifier::~event_notifier()
 {
     service::get_local_storage_service().unregister_subscriber(this);
     assert(_stopped);
+}
+
+future<> cql_server::event_notifier::start() {
+    return _mnotifier.register_listener(this);
 }
 
 future<> cql_server::event_notifier::stop() {

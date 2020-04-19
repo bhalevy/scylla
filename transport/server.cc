@@ -185,6 +185,10 @@ cql_server::cql_server(distributed<cql3::query_processor>& qp, auth::service& au
     });
 }
 
+future<> cql_server::on_start() {
+    return _notifier->start();
+}
+
 future<> cql_server::stop() {
     _stopping = true;
     size_t nr = 0;
