@@ -155,12 +155,14 @@ class cdc::cdc_service::impl : service::migration_listener::empty_listener {
 public:
     impl(db_context ctxt)
         : _ctxt(std::move(ctxt))
-    {
-        // FIXME: temporarily discard returned future
-        (void)_ctxt._migration_notifier.register_listener(this);
-    }
+    { }
+
     ~impl() {
         assert(_stopped);
+    }
+
+    future<> start() {
+        return _ctxt._migration_notifier.register_listener(this);
     }
 
     future<> stop() {
@@ -273,6 +275,10 @@ cdc::cdc_service::cdc_service(db_context ctxt)
     : _impl(std::make_unique<impl>(std::move(ctxt)))
 {
     _impl->_ctxt._proxy.set_cdc_service(this);
+}
+
+future<> cdc::cdc_service::on_start() {
+    return _impl->start();
 }
 
 future<> cdc::cdc_service::stop() {
