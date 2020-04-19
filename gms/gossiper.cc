@@ -141,8 +141,6 @@ gossiper::gossiper(abort_source& as, feature_service& features, locator::token_m
     fat_client_timeout = quarantine_delay() / 2;
     /* register with the Failure Detector for receiving Failure detector events */
     fd().register_failure_detection_event_listener(this);
-    // FIXME: temporarily discard returned future
-    (void)register_(make_shared<feature_enabler>(*this));
     // Register this instance with JMX
     namespace sm = seastar::metrics;
     auto ep = get_broadcast_address();
@@ -1983,6 +1981,10 @@ future<> stop_gossiping() {
         }
         return make_ready_future<>();
     });
+}
+
+future<> gossiper::do_start() {
+    return register_(make_shared<feature_enabler>(*this));
 }
 
 future<> gossiper::stop() {

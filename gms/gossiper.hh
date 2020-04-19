@@ -523,6 +523,7 @@ public:
     future<> add_local_application_state(std::initializer_list<std::pair<application_state, utils::in<versioned_value>>>);
 
     // Needed by seastar::sharded
+    future<> do_start();
     future<> stop();
     future<> do_stop_gossiping();
 
