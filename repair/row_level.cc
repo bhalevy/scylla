@@ -2581,8 +2581,10 @@ repair_service::repair_service(distributed<gms::gossiper>& gossiper, size_t max_
     : _gossiper(gossiper)
     , _gossip_helper(make_shared<row_level_repair_gossip_helper>())
     , _tracker(smp::count, max_repair_memory) {
-    // FIXME: temporarily discard returned future
-    (void)_gossiper.local().register_(_gossip_helper);
+}
+
+future<> repair_service::start() {
+    return _gossiper.local().register_(_gossip_helper);
 }
 
 future<> repair_service::stop() {

@@ -39,6 +39,7 @@ struct repair_service {
     tracker _tracker;
     repair_service(distributed<gms::gossiper>& gossiper, size_t max_repair_memory);
     ~repair_service();
+    future<> start();
     future<> stop();
 private:
     bool _stopped = false;

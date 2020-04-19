@@ -978,6 +978,7 @@ int main(int ac, char** av) {
             }).get();
             auto max_memory_repair = db.local().get_available_memory() * 0.1;
             repair_service rs(gossiper, max_memory_repair);
+            rs.start().get();
             auto stop_repair_service = defer_verbose_shutdown("repair service", [&rs] {
                 rs.stop().get();
             });
