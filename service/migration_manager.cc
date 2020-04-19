@@ -172,7 +172,8 @@ future<> migration_manager::uninit_messaging_service()
 
 void migration_notifier::register_listener(migration_listener* listener)
 {
-    _listeners.add(listener);
+    // FIXME: temporarily discard returned future
+    (void)_listeners.add(listener);
 }
 
 future<> migration_notifier::unregister_listener(migration_listener* listener)

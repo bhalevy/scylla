@@ -883,7 +883,8 @@ bool gossiper::is_seed(const gms::inet_address& endpoint) const {
 }
 
 void gossiper::register_(shared_ptr<i_endpoint_state_change_subscriber> subscriber) {
-    _subscribers.add(subscriber);
+    // FIXME: temporarily discard returned future
+    (void)_subscribers.add(subscriber);
 }
 
 future<> gossiper::unregister_(shared_ptr<i_endpoint_state_change_subscriber> subscriber) {

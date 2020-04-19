@@ -27,17 +27,20 @@
 
 #include <vector>
 
-// This class supports atomic removes (by using a lock and returning a
-// future) and non atomic insert and iteration (by using indexes).
+// This class supports atomic add and remove (by using a lock and returning a
+// future) and non atomic iteration (by using indexes) under a read lock.
 template <typename T>
 class atomic_vector {
     std::vector<T> _vec;
     seastar::rwlock _vec_lock;
 
 public:
-    void add(const T& value) {
-        _vec.push_back(value);
+    seastar::future<> add(const T& value) {
+        return with_lock(_vec_lock.for_write(), [this, value] {
+            _vec.push_back(value);
+        });
     }
+
     seastar::future<> remove(const T& value) {
         return with_lock(_vec_lock.for_write(), [this, value] {
             _vec.erase(std::remove(_vec.begin(), _vec.end(), value), _vec.end());
