@@ -58,8 +58,7 @@ logging::logger llogger("load_broadcaster");
 
 future<> load_meter::init(distributed<database>& db, gms::gossiper& gms) {
     _lb = make_shared<load_broadcaster>(db, gms);
-    _lb->start_broadcasting();
-    return make_ready_future<>();
+    return _lb->start_broadcasting();
 }
 
 future<> load_meter::exit() {
@@ -102,7 +101,7 @@ sstring load_meter::get_load_string() const {
     return format("{:f}", get_load());
 }
 
-void load_broadcaster::start_broadcasting() {
+future<> load_broadcaster::start_broadcasting() {
     _done = make_ready_future<>();
 
     // send the first broadcast "right away" (i.e., in 2 gossip heartbeats, when we should have someone to talk to);
@@ -126,7 +125,9 @@ void load_broadcaster::start_broadcasting() {
         });
     });
 
-    _timer.arm(2 * gms::gossiper::INTERVAL);
+    return _gossiper.register_(shared_from_this()).then([this] {
+        _timer.arm(2 * gms::gossiper::INTERVAL);
+    });
 }
 
 future<> load_broadcaster::stop_broadcasting() {

@@ -60,9 +60,8 @@ private:
 
 public:
     load_broadcaster(distributed<database>& db, gms::gossiper& g) : _db(db), _gossiper(g) {
-        // FIXME: temporarily discard returned future
-        (void)_gossiper.register_(shared_from_this());
     }
+
     ~load_broadcaster() {
         assert(_stopped);
     }
@@ -96,7 +95,7 @@ public:
         return _load_info;
     }
 
-    void start_broadcasting();
+    future<> start_broadcasting();
     future<> stop_broadcasting();
 };
 }
