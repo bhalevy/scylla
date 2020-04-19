@@ -460,7 +460,8 @@ query_processor::query_processor(service::storage_proxy& proxy, database& db, se
 
             });
 
-    _mnotifier.register_listener(_migration_subscriber.get());
+    // FIXME: temporarily discard returned future
+    (void)_mnotifier.register_listener(_migration_subscriber.get());
 }
 
 query_processor::~query_processor() {

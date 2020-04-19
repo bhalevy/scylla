@@ -156,7 +156,8 @@ public:
     impl(db_context ctxt)
         : _ctxt(std::move(ctxt))
     {
-        _ctxt._migration_notifier.register_listener(this);
+        // FIXME: temporarily discard returned future
+        (void)_ctxt._migration_notifier.register_listener(this);
     }
     ~impl() {
         assert(_stopped);

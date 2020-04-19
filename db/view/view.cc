@@ -1222,7 +1222,7 @@ future<> view_builder::start(service::migration_manager& mm) {
         auto built = system_keyspace::load_built_views().get0();
         auto in_progress = system_keyspace::load_view_build_progress().get0();
         calculate_shard_build_step(std::move(built), std::move(in_progress)).get();
-        _mnotifier.register_listener(this);
+        _mnotifier.register_listener(this).get();
         _current_step = _base_to_build_step.begin();
         // Waited on indirectly in stop().
         (void)_build_step.trigger();

@@ -1588,7 +1588,7 @@ future<> storage_service::init_server(int delay, bind_messaging_port do_bind) {
 
         // Register storage_service to migration_notifier so we can update
         // pending ranges when keyspace is chagned
-        _mnotifier.local().register_listener(this);
+        _mnotifier.local().register_listener(this).get();
 
         std::vector<inet_address> loaded_endpoints;
         if (get_property_load_ring_state()) {

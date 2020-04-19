@@ -441,7 +441,7 @@ SEASTAR_TEST_CASE(test_nested_type_mutation_in_update) {
     // show that we can handle that.
     return do_with_cql_env_thread([](cql_test_env& e) {
         counting_migration_listener listener;
-        e.local_mnotifier().register_listener(&listener);
+        e.local_mnotifier().register_listener(&listener).get();
 
         e.execute_cql("CREATE TYPE foo (foo_k int);").get();
         e.execute_cql("CREATE TYPE bar (bar_k frozen<foo>);").get();
@@ -470,8 +470,8 @@ SEASTAR_TEST_CASE(test_notifications) {
     return do_with_cql_env([](cql_test_env& e) {
         return seastar::async([&] {
             counting_migration_listener listener;
-            e.local_mnotifier().register_listener(&listener);
-            auto listener_lease = defer([&e, &listener] { e.local_mnotifier().register_listener(&listener); });
+            e.local_mnotifier().register_listener(&listener).get();
+            auto listener_lease = defer([&e, &listener] { e.local_mnotifier().register_listener(&listener).get(); });
 
             e.execute_cql("create keyspace tests with replication = { 'class' : 'SimpleStrategy', 'replication_factor' : 1 };").get();
 

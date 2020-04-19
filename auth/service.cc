@@ -184,8 +184,7 @@ future<> service::start(::service::migration_manager& mm) {
         _permissions_cache = std::make_unique<permissions_cache>(_permissions_cache_config, *this, log);
     }).then([this] {
         return once_among_shards([this] {
-            _mnotifier.register_listener(_migration_listener.get());
-            return make_ready_future<>();
+            return _mnotifier.register_listener(_migration_listener.get());
         });
     });
 }

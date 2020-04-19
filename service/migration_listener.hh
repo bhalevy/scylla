@@ -138,7 +138,7 @@ private:
 
 public:
     /// Register a migration listener on current shard.
-    void register_listener(migration_listener* listener);
+    future<> register_listener(migration_listener* listener);
 
     /// Unregister a migration listener on current shard.
     future<> unregister_listener(migration_listener* listener);
