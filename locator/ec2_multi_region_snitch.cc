@@ -110,11 +110,12 @@ future<> ec2_multi_region_snitch::gossiper_starting() {
 
     return g.add_local_application_state(application_state::INTERNAL_IP,
         ss.value_factory.internal_ip(_local_private_address)).then([this] {
-        if (!_gossip_started) {
-            // FIXME: temporarily discard returned future
-            (void)gms::get_local_gossiper().register_(::make_shared<reconnectable_snitch_helper>(_my_dc));
-            _gossip_started = true;
+        if (_gossip_started) {
+            return make_ready_future<>();
         }
+        return gms::get_local_gossiper().register_(::make_shared<reconnectable_snitch_helper>(_my_dc)).then([this] {
+            _gossip_started = true;
+        });
     });
 
 }
