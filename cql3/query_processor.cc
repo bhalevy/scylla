@@ -459,12 +459,13 @@ query_processor::query_processor(service::storage_proxy& proxy, database& db, se
                             {system_ks_label_instance})
 
             });
-
-    // FIXME: temporarily discard returned future
-    (void)_mnotifier.register_listener(_migration_subscriber.get());
 }
 
 query_processor::~query_processor() {
+}
+
+future<> query_processor::on_start() {
+    return _mnotifier.register_listener(_migration_subscriber.get());
 }
 
 future<> query_processor::stop() {

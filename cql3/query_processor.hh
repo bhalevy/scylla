@@ -310,6 +310,7 @@ public:
     future<::shared_ptr<cql_transport::messages::result_message::prepared>>
     prepare(sstring query_string, const service::client_state& client_state, bool for_thrift);
 
+    future<> on_start();
     future<> stop();
 
     future<::shared_ptr<cql_transport::messages::result_message>>
