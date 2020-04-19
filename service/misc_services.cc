@@ -244,9 +244,9 @@ view_update_backlog_broker::view_update_backlog_broker(
 }
 
 future<> view_update_backlog_broker::start() {
-    // FIXME: temporarily discard returned future
-    (void)_gossiper.register_(shared_from_this());
+    auto fut = _gossiper.register_(shared_from_this());
     if (this_shard_id() == 0) {
+      fut = fut.then([this] {
         // Gossiper runs only on shard 0, and there's no API to add multiple, per-shard application states.
         // Also, right now we aggregate all backlogs, since the coordinator doesn't keep per-replica shard backlogs.
         _started = seastar::async([this] {
@@ -261,8 +261,9 @@ future<> view_update_backlog_broker::start() {
                 sleep_abortable(gms::gossiper::INTERVAL, _as).get();
             }
         }).handle_exception_type([] (const seastar::sleep_aborted& ignored) { });
+      });
     }
-    return make_ready_future<>();
+    return fut;
 }
 
 future<> view_update_backlog_broker::stop() {
