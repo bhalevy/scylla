@@ -141,7 +141,8 @@ gossiper::gossiper(abort_source& as, feature_service& features, locator::token_m
     fat_client_timeout = quarantine_delay() / 2;
     /* register with the Failure Detector for receiving Failure detector events */
     fd().register_failure_detection_event_listener(this);
-    register_(make_shared<feature_enabler>(*this));
+    // FIXME: temporarily discard returned future
+    (void)register_(make_shared<feature_enabler>(*this));
     // Register this instance with JMX
     namespace sm = seastar::metrics;
     auto ep = get_broadcast_address();
@@ -882,9 +883,8 @@ bool gossiper::is_seed(const gms::inet_address& endpoint) const {
     return _seeds.count(endpoint);
 }
 
-void gossiper::register_(shared_ptr<i_endpoint_state_change_subscriber> subscriber) {
-    // FIXME: temporarily discard returned future
-    (void)_subscribers.add(subscriber);
+future<> gossiper::register_(shared_ptr<i_endpoint_state_change_subscriber> subscriber) {
+    return _subscribers.add(subscriber);
 }
 
 future<> gossiper::unregister_(shared_ptr<i_endpoint_state_change_subscriber> subscriber) {

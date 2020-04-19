@@ -245,7 +245,7 @@ public:
      *
      * @param subscriber module which implements the IEndpointStateChangeSubscriber
      */
-    void register_(shared_ptr<i_endpoint_state_change_subscriber> subscriber);
+    future<> register_(shared_ptr<i_endpoint_state_change_subscriber> subscriber);
 
     /**
      * Unregister interest for state changes.

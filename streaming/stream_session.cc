@@ -341,7 +341,8 @@ future<> stream_session::init_streaming_service(distributed<database>& db, distr
     //     return get_stream_manager().stop();
     // });
     return get_stream_manager().start().then([] {
-        gms::get_local_gossiper().register_(get_local_stream_manager().shared_from_this());
+        return gms::get_local_gossiper().register_(get_local_stream_manager().shared_from_this());
+    }).then([] {
         return _db->invoke_on_all([] (auto& db) {
             init_messaging_service_handler();
         });
