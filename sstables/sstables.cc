@@ -34,6 +34,7 @@
 #include <seastar/core/shared_future.hh>
 #include <seastar/core/byteorder.hh>
 #include <seastar/core/aligned_buffer.hh>
+#include <seastar/util/file.hh>
 #include <iterator>
 
 #include "dht/sharder.hh"
@@ -2628,6 +2629,54 @@ std::vector<std::pair<component_type, sstring>> sstable::all_components() const 
     return all;
 }
 
+static bool is_same_file(const stat_data& sd1, const stat_data& sd2) noexcept {
+    return sd1.device_id == sd2.device_id && sd1.inode_number == sd2.inode_number;
+}
+
+static auto stat_files(sstring path1, sstring path2) noexcept {
+    return when_all_succeed(file_stat(std::move(path1), follow_symlink::no),
+                            file_stat(std::move(path2), follow_symlink::no));
+}
+
+future<bool> same_file(sstring path1, sstring path2) noexcept {
+    return stat_files(std::move(path1), std::move(path2)).then([] (stat_data sd1, stat_data sd2) {
+        return make_ready_future<bool>(is_same_file(sd1, sd2));
+    });
+}
+
+future<> idempotent_link_file(sstring oldpath, sstring newpath) noexcept {
+    return link_file(oldpath, newpath)
+            .handle_exception_type([oldpath = std::move(oldpath), newpath = std::move(newpath)] (std::system_error& link_exception) mutable {
+        if (link_exception.code().value() != EEXIST) {
+            return make_exception_future<>(link_exception);
+        }
+        return same_file(oldpath, newpath)
+                .then_wrapped([oldpath = std::move(oldpath), newpath = std::move(newpath), &link_exception] (future<bool> fut) mutable {
+            if (fut.failed()) {
+                try {
+                    std::rethrow_exception(fut.get_exception());
+                } catch (std::system_error& stat_exception) {
+                    if (stat_exception.code().value() == ENOENT) {
+                        // When create_links is called in parallel the destination TemporaryTOC may be removed
+                        // in parallel to this call.
+                        // Retry using recursion, as it should either fail differently or eventually succeed.
+                        sstlog.trace("Retrying idempotent_link_file: {} {}", oldpath, newpath);
+                        return idempotent_link_file(std::move(oldpath), std::move(newpath));
+                    }
+                } catch (...) {
+                }
+                return make_exception_future<>(link_exception);
+            }
+            auto same = fut.get0();
+            if (same) {
+                return make_ready_future<>();
+            } else {
+                return make_exception_future<>(link_exception);
+            }
+        });
+    });
+}
+
 // create_links links all component files from the sstable directory to
 // the given destination directory, using the provided generation.
 //
@@ -2640,24 +2689,64 @@ std::vector<std::pair<component_type, sstring>> sstable::all_components() const 
 future<> sstable::create_links(sstring dir, int64_t generation) const {
     return seastar::async([this, dir = std::move(dir), generation] {
         sstlog.debug("create_links: {} -> {} generation={}", get_filename(), dir, generation);
+        // Check is the operation is replayed, possibly when moving sstables
+        // from staging to the base dir, for example, right after create_links completes,
+        // and right before deleting the source links.
+        // We end up in two valid sstables in this case, so make create_links idempotent.
+        bool any_missing = false;
+        auto comps = all_components();
+        parallel_for_each(comps, [this, &dir, generation, &any_missing] (auto p) {
+            auto comp = p.second;
+            auto dst = sstable::filename(dir, _schema->ks_name(), _schema->cf_name(), _version, generation, _format, comp);
+            return file_exists(dst).then([this, dst = std::move(dst), &dir, comp, &any_missing] (bool exists) mutable {
+                if (!exists) {
+                    any_missing = true;
+                    return make_ready_future<>();
+                }
+                auto src = sstable::filename(_dir, _schema->ks_name(), _schema->cf_name(), _version, _generation, _format, comp);
+                return same_file(src, dst).then_wrapped([this, src = std::move(src), dst = std::move(dst), &dir] (future<bool> fut) {
+                    if (fut.failed()) {
+                        auto eptr = fut.get_exception();
+                        sstlog.error("Error while linking SSTable: {} to {}: {}", src, dst, eptr);
+                        return make_exception_future<>(eptr);
+                    }
+                    auto same = fut.get0();
+                    if (!same) {
+                        sstlog.error("Error while linking SSTable: {} to {}: File exists", src, dst);
+                        auto msg = format("Error while linking SSTable {} to {}: File exists", get_filename(), dir);
+                        throw malformed_sstable_exception(msg, _dir);
+                    }
+                    return make_ready_future<>();
+                });
+            });
+        }).get();
+
+        // fully replayed?
+        if (!any_missing) {
+            sstlog.trace("create_links: {} -> {} generation={}: done: none missing", get_filename(), dir, generation);
+            return;
+        }
+
         // TemporaryTOC is always first, TOC is always last
         auto dst = sstable::filename(dir, _schema->ks_name(), _schema->cf_name(), _version, generation, _format, component_type::TemporaryTOC);
-        sstable_write_io_check(link_file, filename(component_type::TOC), dst).get();
+        sstable_write_io_check(idempotent_link_file, filename(component_type::TOC), dst).get();
         sstable_write_io_check(sync_directory, dir).get();
         // FIXME: Should clean already-created links if we failed midway.
-        parallel_for_each(all_components(), [this, &dir, generation] (auto p) {
+        parallel_for_each(comps, [this, &dir, generation] (auto p) {
             if (p.first == component_type::TOC) {
                 return make_ready_future<>();
             }
             auto src = sstable::filename(_dir, _schema->ks_name(), _schema->cf_name(), _version, _generation, _format, p.second);
             auto dst = sstable::filename(dir, _schema->ks_name(), _schema->cf_name(), _version, generation, _format, p.second);
-            return sstable_write_io_check(link_file, std::move(src), std::move(dst));
+            return sstable_write_io_check(idempotent_link_file, std::move(src), std::move(dst));
         }).get();
         sstable_write_io_check(sync_directory, dir).get();
         auto src = sstable::filename(dir, _schema->ks_name(), _schema->cf_name(), _version, generation, _format, component_type::TemporaryTOC);
              dst = sstable::filename(dir, _schema->ks_name(), _schema->cf_name(), _version, generation, _format, component_type::TOC);
-        sstable_write_io_check(rename_file, src, dst).get();
+        // This could be running in parallel, e.g. on another thread, so rename might fail to find src
+        sstable_write_io_check(rename_file, std::move(src), std::move(dst)).get();
         sstable_write_io_check(sync_directory, dir).get();
+        sstlog.trace("create_links: {} -> {} generation={}: done", get_filename(), dir, generation);
     });
 }
 
