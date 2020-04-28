@@ -2693,6 +2693,40 @@ std::vector<std::pair<component_type, sstring>> sstable::all_components() const 
     return all;
 }
 
+static bool is_same_file(const seastar::stat_data& sd1, const seastar::stat_data& sd2) noexcept {
+    return sd1.device_id == sd2.device_id && sd1.inode_number == sd2.inode_number;
+}
+
+future<bool> same_file(sstring path1, sstring path2) noexcept {
+    return when_all_succeed(file_stat(std::move(path1)), file_stat(std::move(path2))).then_unpack([] (seastar::stat_data sd1, seastar::stat_data sd2) {
+        return is_same_file(sd1, sd2);
+    });
+}
+
+// support replay of link by considering link_file EEXIST error as successful when the newpath is hard linked to oldpath.
+future<> idempotent_link_file(sstring oldpath, sstring newpath) noexcept {
+    return do_with(std::move(oldpath), std::move(newpath), [] (const sstring& oldpath, const sstring& newpath) {
+        return link_file(oldpath, newpath).handle_exception([&] (std::exception_ptr eptr) mutable {
+            try {
+                std::rethrow_exception(eptr);
+            } catch (const std::system_error& ex) {
+                if (ex.code().value() != EEXIST) {
+                    throw;
+                }
+            }
+            return same_file(oldpath, newpath).then_wrapped([eptr = std::move(eptr)] (future<bool> fut) mutable {
+                if (!fut.failed()) {
+                    auto same = fut.get0();
+                    if (same) {
+                        return make_ready_future<>();
+                    }
+                }
+                return make_exception_future<>(eptr);
+            });
+        });
+    });
+}
+
 /// create_links links all component files from the sstable directory to
 /// the given destination directory, using the provided generation.
 ///
@@ -2704,28 +2738,70 @@ std::vector<std::pair<component_type, sstring>> sstable::all_components() const 
 /// a shared sstable.
 future<> sstable::create_links(sstring dir, int64_t generation) const {
     sstlog.trace("create_links: {} -> {} generation={}", get_filename(), dir, generation);
-    // TemporaryTOC is always first, TOC is always last
-    auto dst = sstable::filename(dir, _schema->ks_name(), _schema->cf_name(), _version, generation, _format, component_type::TemporaryTOC);
-    return sstable_write_io_check(::link_file, filename(component_type::TOC), dst).then([this, dir] {
-        return sstable_write_io_check(sync_directory, dir);
-    }).then([this, dir, generation] {
-        // FIXME: Should clean already-created links if we failed midway.
-        return parallel_for_each(all_components(), [this, dir, generation] (auto p) {
-            if (p.first == component_type::TOC) {
+    // Check is the operation is replayed, possibly when moving sstables
+    // from staging to the base dir, for example, right after create_links completes,
+    // and right before deleting the source links.
+    // We end up in two valid sstables in this case, so make create_links idempotent.
+    return do_with(std::move(dir), false, all_components(), [this, generation] (const sstring& dir, bool& any_missing, auto& comps) {
+        return parallel_for_each(comps, [this, &dir, generation, &any_missing] (auto p) mutable {
+            auto comp = p.second;
+            auto src = sstable::filename(_dir, _schema->ks_name(), _schema->cf_name(), _version, _generation, _format, comp);
+            auto dst = sstable::filename(dir, _schema->ks_name(), _schema->cf_name(), _version, generation, _format, comp);
+            return do_with(std::move(src), std::move(dst), [this, &dir, comp, &any_missing] (const sstring& src, const sstring& dst) mutable {
+                return file_exists(dst).then([&, this] (bool exists) mutable {
+                    if (!exists) {
+                        any_missing = true;
+                        return make_ready_future<>();
+                    }
+                    return same_file(src, dst).then_wrapped([&, this] (future<bool> fut) {
+                        if (fut.failed()) {
+                            auto eptr = fut.get_exception();
+                            sstlog.error("Error while linking SSTable: {} to {}: {}", src, dst, eptr);
+                            return make_exception_future<>(eptr);
+                        }
+                        auto same = fut.get0();
+                        if (!same) {
+                            sstlog.error("Error while linking SSTable: {} to {}: File exists", src, dst);
+                            auto msg = format("Error while linking SSTable {} to {}: File exists", get_filename(), dir);
+                            throw malformed_sstable_exception(msg, _dir);
+                        }
+                        return make_ready_future<>();
+                    });
+                });
+            });
+        }).then([this, &dir, generation, &any_missing, &comps] {
+            // fully replayed?
+            if (!any_missing) {
+                sstlog.trace("create_links: {} -> {} generation={}: done: none missing", get_filename(), dir, generation);
                 return make_ready_future<>();
             }
-            auto src = sstable::filename(_dir, _schema->ks_name(), _schema->cf_name(), _version, _generation, _format, p.second);
-            auto dst = sstable::filename(dir, _schema->ks_name(), _schema->cf_name(), _version, generation, _format, p.second);
-            return sstable_write_io_check(::link_file, std::move(src), std::move(dst));
+
+            // TemporaryTOC is always first, TOC is always last
+            auto dst = sstable::filename(dir, _schema->ks_name(), _schema->cf_name(), _version, generation, _format, component_type::TemporaryTOC);
+            return sstable_write_io_check(idempotent_link_file, filename(component_type::TOC), std::move(dst)).then([this, &dir] {
+                return sstable_write_io_check(sync_directory, dir);
+            }).then([this, &dir, generation, &comps] {
+                // FIXME: Should clean already-created links if we failed midway.
+                return parallel_for_each(comps, [this, &dir, generation] (auto p) {
+                    if (p.first == component_type::TOC) {
+                        return make_ready_future<>();
+                    }
+                    auto src = sstable::filename(_dir, _schema->ks_name(), _schema->cf_name(), _version, _generation, _format, p.second);
+                    auto dst = sstable::filename(dir, _schema->ks_name(), _schema->cf_name(), _version, generation, _format, p.second);
+                    return sstable_write_io_check(idempotent_link_file, std::move(src), std::move(dst));
+                });
+            }).then([this, &dir] {
+                return sstable_write_io_check(sync_directory, dir);
+            }).then([this, &dir, generation] {
+                auto src = sstable::filename(dir, _schema->ks_name(), _schema->cf_name(), _version, generation, _format, component_type::TemporaryTOC);
+                auto dst = sstable::filename(dir, _schema->ks_name(), _schema->cf_name(), _version, generation, _format, component_type::TOC);
+                return sstable_write_io_check(rename_file, std::move(src), std::move(dst));
+            }).then([this, &dir] {
+                return sstable_write_io_check(sync_directory, dir);
+            }).then([this, &dir, generation] {
+                sstlog.trace("create_links: {} -> {} generation={}: done", get_filename(), dir, generation);
+            });
         });
-    }).then([this, dir] {
-        return sstable_write_io_check(sync_directory, dir);
-    }).then([dir, this, generation] {
-        auto src = sstable::filename(dir, _schema->ks_name(), _schema->cf_name(), _version, generation, _format, component_type::TemporaryTOC);
-        auto dst = sstable::filename(dir, _schema->ks_name(), _schema->cf_name(), _version, generation, _format, component_type::TOC);
-        return sstable_write_io_check(rename_file, src, dst);
-    }).then([this, dir] {
-        return sstable_write_io_check(sync_directory, dir);
     });
 }
 
