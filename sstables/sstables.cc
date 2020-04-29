@@ -2637,7 +2637,7 @@ std::vector<std::pair<component_type, sstring>> sstable::all_components() const 
 // Note: create_links may be called in parallel by multiple threads
 // on the same source and destination (e.g. when taking a snapshot of
 // a shared sstable.
-future<> sstable::create_links(const sstring& dir, int64_t generation) const {
+future<> sstable::create_links(sstring dir, int64_t generation) const {
     sstlog.debug("create_links: {} -> {} generation={}", get_filename(), dir, generation);
     // TemporaryTOC is always first, TOC is always last
     auto dst = sstable::filename(dir, _schema->ks_name(), _schema->cf_name(), _version, generation, _format, component_type::TemporaryTOC);
