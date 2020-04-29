@@ -720,7 +720,7 @@ public:
     }
 
     bool has_correct_max_deletion_time() const {
-        return (_version == sstable_version_types::mc) || has_scylla_component();
+        return _version >= sstable_version_types::mc || has_scylla_component();
     }
 
     bool filter_has_key(const key& key) const {
