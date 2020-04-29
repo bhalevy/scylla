@@ -421,10 +421,10 @@ public:
 
     std::vector<std::pair<component_type, sstring>> all_components() const;
 
-    future<> create_links(const sstring& dir, int64_t generation) const;
+    future<> create_links(sstring dir, int64_t generation) const;
 
-    future<> create_links(const sstring& dir) const {
-        return create_links(dir, _generation);
+    future<> create_links(sstring dir) const {
+        return create_links(std::move(dir), _generation);
     }
 
     // Delete the sstable by unlinking all sstable files
