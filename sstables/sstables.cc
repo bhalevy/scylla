@@ -2694,6 +2694,7 @@ std::vector<std::pair<component_type, sstring>> sstable::all_components() const 
 }
 
 future<> sstable::create_links(const sstring& dir, int64_t generation) const {
+    sstlog.trace("create_links: {} -> {} generation={}", get_filename(), dir, generation);
     // TemporaryTOC is always first, TOC is always last
     auto dst = sstable::filename(dir, _schema->ks_name(), _schema->cf_name(), _version, generation, _format, component_type::TemporaryTOC);
     return sstable_write_io_check(::link_file, filename(component_type::TOC), dst).then([this, dir] {
@@ -2722,6 +2723,7 @@ future<> sstable::create_links(const sstring& dir, int64_t generation) const {
 }
 
 future<> sstable::set_generation(int64_t new_generation) {
+    sstlog.debug("Setting generation for {} to generation={}", get_filename(), new_generation);
     return create_links(_dir, new_generation).then([this] {
         return remove_file(filename(component_type::TOC)).then([this] {
             return sstable_write_io_check(sync_directory, _dir);
@@ -2742,6 +2744,8 @@ future<> sstable::set_generation(int64_t new_generation) {
 
 future<> sstable::move_to_new_dir(sstring new_dir, int64_t new_generation, bool do_sync_dirs) {
     sstring old_dir = get_dir();
+    sstlog.debug("Moving {} old_generation={} to {} new_generation={} do_sync_dirs={}",
+            get_filename(), old_dir, _generation, new_dir, new_generation, do_sync_dirs);
     return create_links(new_dir, new_generation).then([this] {
         // Now that the source sstable is linked to new_dir, mark the source links for
         // deletion by renaming the TOC file to TOC.tmp
