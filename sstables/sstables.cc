@@ -2629,6 +2629,15 @@ std::vector<std::pair<component_type, sstring>> sstable::all_components() const 
     return all;
 }
 
+/// create_links links all component files from the sstable directory to
+/// the given destination directory, using the provided generation.
+///
+/// \param dir - the destination directory.
+/// \param generation - the generation of the destination sstable
+///
+/// Note: create_links may be called in parallel by multiple threads
+/// on the same source and destination (e.g. when taking a snapshot of
+/// a shared sstable.
 future<> sstable::create_links(const sstring& dir, int64_t generation) const {
     sstlog.trace("create_links: {} -> {} generation={}", get_filename(), dir, generation);
     // TemporaryTOC is always first, TOC is always last
