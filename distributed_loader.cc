@@ -696,8 +696,8 @@ future<> distributed_loader::do_populate_column_family(distributed<database>& db
     };
 
     using verifier_map = std::unordered_map<unsigned long, sstable_descriptor>;
-    return do_with(std::vector<future<>>(), verifier_map(),
-            [&db, sstdir = std::move(sstdir), ks, cf] (std::vector<future<>>& futures, verifier_map& verifier) {
+    return do_with(std::vector<future<>>(), verifier_map(), std::move(sstdir), std::move(ks), std::move(cf),
+            [&db] (std::vector<future<>>& futures, verifier_map& verifier, sstring& sstdir, sstring& ks, sstring& cf) {
         return lister::scan_dir(sstdir, { directory_entry_type::regular }, [&db, &verifier, &futures] (fs::path sstdir, directory_entry de) {
             // FIXME: The secondary indexes are in this level, but with a directory type, (starting with ".")
 
@@ -740,8 +740,8 @@ future<> distributed_loader::do_populate_column_family(distributed<database>& db
             return make_ready_future<>();
         }, &column_family::manifest_json_filter).then([&futures] {
             return execute_futures(futures);
-        }).then([&verifier, sstdir, ks = std::move(ks), cf = std::move(cf)] {
-            return do_for_each(verifier, [sstdir = std::move(sstdir), ks = std::move(ks), cf = std::move(cf)] (auto v) {
+        }).then([&verifier, &sstdir, &ks, &cf] {
+            return do_for_each(verifier, [&sstdir, &ks, &cf] (auto v) {
                 if (v.second.status == component_status::has_temporary_toc_file) {
                     unsigned long gen = v.first;
                     sstables::sstable::version_types version = v.second.version;
