@@ -456,7 +456,7 @@ void compaction_manager::postpone_compaction_for_column_family(column_family* cf
 
 future<> compaction_manager::stop() {
     do_stop();
-    return std::move(*_stop_future);
+    return _stop_future ? std::move(*_stop_future) : make_ready_future<>();
 }
 
 void compaction_manager::do_stop() {
