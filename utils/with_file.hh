@@ -46,12 +46,14 @@ namespace utils {
 ///         and closes it if func fails
 template <typename Func>
 inline
-auto close_file_on_failure(future<file> file_fut, Func func) {
-    return file_fut.then([func = std::move(func)](file f) {
-        return futurize_invoke(func, f).handle_exception([f] (std::exception_ptr e) mutable {
-            return f.close().then_wrapped([f, e = std::move(e)] (future<> x) {
-                using futurator = futurize<std::result_of_t<Func(file)>>;
-                return futurator::make_exception_future(e);
+auto close_file_on_failure(future<file> file_fut, Func&& func) noexcept {
+    return file_fut.then([func = std::forward<Func>(func)] (file f) mutable {
+        return do_with(std::move(f), [func = std::forward<Func>(func)] (file& f) {
+            return futurize_invoke(func, f).handle_exception([&f] (std::exception_ptr e) mutable {
+                return f.close().then_wrapped([e = std::move(e)] (future<> x) {
+                    using futurator = futurize<std::result_of_t<Func(file)>>;
+                    return futurator::make_exception_future(e);
+                });
             });
         });
     });
