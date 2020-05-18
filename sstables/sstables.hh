@@ -558,7 +558,7 @@ private:
 public:
     const bool has_component(component_type f) const;
 private:
-    future<file> open_file(component_type, open_flags, file_open_options = {});
+    future<file> open_file(component_type, open_flags, file_open_options = {}) noexcept;
 
     template <component_type Type, typename T>
     future<> read_simple(T& comp, const io_priority_class& pc);
@@ -572,7 +572,7 @@ private:
     void write_digest(uint32_t full_checksum);
 
     future<file> rename_new_sstable_component_file(sstring from_file, sstring to_file, file fd);
-    future<file> new_sstable_component_file(const io_error_handler& error_handler, component_type f, open_flags flags, file_open_options options = {});
+    future<file> new_sstable_component_file(const io_error_handler& error_handler, component_type f, open_flags flags, file_open_options options = {}) noexcept;
 
     future<> touch_temp_dir();
     future<> remove_temp_dir();
