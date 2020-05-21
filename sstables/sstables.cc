@@ -1169,6 +1169,12 @@ void sstable::validate_min_max_metadata() {
         return;
     }
 
+    // clear min/max metadata from old format sstables
+    if (!sstables::is_later(_version, sstable_version_types::mc)) {
+        clear_incorrect_min_max_column_names();
+        return;
+    }
+
     // The min/max metadata is wrong if:
     // 1) it's not empty and schema defines no clustering key.
     // 2) their size differ.
@@ -1203,7 +1209,7 @@ void sstable::validate_max_local_deletion_time() {
 }
 
 void sstable::set_clustering_components_ranges() {
-    if (!_schema->clustering_key_size()) {
+    if (!_schema->clustering_key_size() || !sstables::is_later(_version, sstable_version_types::mc)) {
         return;
     }
     auto& min_column_names = get_stats_metadata().min_column_names.elements;
