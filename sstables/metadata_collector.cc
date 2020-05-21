@@ -23,7 +23,7 @@
 
 namespace sstables {
 
-void metadata_collector::do_update_min_max_components(const schema& schema, const clustering_key_prefix& key) {
+void metadata_collector::do_update_min_max_components(const schema& schema, const clustering_key_prefix& key, bool update_suffix) {
     auto may_grow = [] (std::vector<bytes_opt>& v, size_t target_size) {
         if (target_size > v.size()) {
             v.resize(target_size);
@@ -41,13 +41,26 @@ void metadata_collector::do_update_min_max_components(const schema& schema, cons
     for (auto& value : key.components()) {
         auto& type = types[i];
 
-        if (!max_seen[i] || type->compare(value, max_seen[i].value()) > 0) {
+        if (!max_seen[i] || (max_seen[i].value().size() && type->compare(value, max_seen[i].value()) > 0)) {
             max_seen[i] = bytes(value.data(), value.size());
         }
-        if (!min_seen[i] || type->compare(value, min_seen[i].value()) < 0) {
+        if (!min_seen[i] || (min_seen[i].value().size() && type->compare(value, min_seen[i].value()) < 0)) {
             min_seen[i] = bytes(value.data(), value.size());
         }
         i++;
+    }
+
+    // range_tombstones that contain only a prefix of the clustering key components
+    // implicitly apply to unbounded ranges of the remaining components.
+    // Indicate that by using empty values.
+    //
+    // This is required for supporting the md sstable format.
+    // See https://issues.apache.org/jira/browse/CASSANDRA-14861
+    if (update_suffix) {
+        while (i < clustering_key_size) {
+            min_seen[i] = bytes();
+            max_seen[i] = bytes();
+        }
     }
 }
 
