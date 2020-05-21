@@ -1257,7 +1257,9 @@ void writer::write_clustered(const clustering_row& clustered_row, uint64_t prev_
     flush_tmp_bufs();
 
     // Collect statistics
-    _sst.get_metadata_collector().update_min_max_components(clustered_row.key());
+    if (sstables::is_later(_sst.get_version(), sstable_version_types::mc)) {
+        _sst.get_metadata_collector().update_min_max_components(clustered_row.key());
+    }
     collect_row_stats(_data_writer->offset() - current_pos, &clustered_row.key());
 }
 

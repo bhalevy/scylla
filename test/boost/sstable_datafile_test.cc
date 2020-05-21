@@ -3285,6 +3285,13 @@ SEASTAR_TEST_CASE(test_promoted_index_read) {
 
 static void check_min_max_column_names(const sstable_ptr& sst, std::vector<bytes> min_components, std::vector<bytes> max_components) {
     const auto& st = sst->get_stats_metadata();
+    BOOST_TEST_MESSAGE(fmt::format("sstable={} version={} min_column_names.size={} max_column_names.size={}",
+            sst->get_filename(), sst->get_version(), st.min_column_names.elements.size(), st.max_column_names.elements.size()));
+    if (!sstables::is_later(sst->get_version(), sstable_version_types::mc)) {
+        BOOST_REQUIRE(st.min_column_names.elements.size() == 0);
+        BOOST_REQUIRE(st.max_column_names.elements.size() == 0);
+        return;
+    }
     BOOST_REQUIRE(st.min_column_names.elements.size() == min_components.size());
     BOOST_REQUIRE(st.min_column_names.elements.size() == st.max_column_names.elements.size());
     for (auto i = 0U; i < st.min_column_names.elements.size(); i++) {
@@ -3346,6 +3353,7 @@ SEASTAR_TEST_CASE(min_max_clustering_key_test) {
                         .with_column("ck2", utf8_type, column_kind::clustering_key)
                         .with_column("r1", int32_type)
                         .build();
+                BOOST_TEST_MESSAGE("test_min_max_clustering_key: min={\"a\", \"b\"} max={\"a\", \"c\"}");
                 test_min_max_clustering_key(s, {"key1"}, {{"a", "b"},
                                                           {"a", "c"}}, {"a", "b"}, {"a", "c"}, version);
             }
@@ -3357,6 +3365,7 @@ SEASTAR_TEST_CASE(min_max_clustering_key_test) {
                         .with_column("ck2", utf8_type, column_kind::clustering_key)
                         .with_column("r1", int32_type)
                         .build();
+                BOOST_TEST_MESSAGE("test_min_max_clustering_key: min={\"a\", \"b\"} max={\"a\", \"c\"}");
                 test_min_max_clustering_key(s, {"key1"}, {{"a", "b"},
                                                           {"a", "c"}}, {"a", "b"}, {"a", "c"}, version);
             }
@@ -3366,6 +3375,7 @@ SEASTAR_TEST_CASE(min_max_clustering_key_test) {
                         .with_column("ck1", utf8_type, column_kind::clustering_key)
                         .with_column("r1", int32_type)
                         .build();
+                BOOST_TEST_MESSAGE("test_min_max_clustering_key: min={\"a\"} max={\"z\"}");
                 test_min_max_clustering_key(s, {"key1"}, {{"a"},
                                                           {"z"}}, {"a"}, {"z"}, version);
             }
@@ -3375,6 +3385,7 @@ SEASTAR_TEST_CASE(min_max_clustering_key_test) {
                         .with_column("ck1", utf8_type, column_kind::clustering_key)
                         .with_column("r1", int32_type)
                         .build();
+                BOOST_TEST_MESSAGE("test_min_max_clustering_key: min={\"a\"} max={\"z\"}");
                 test_min_max_clustering_key(s, {"key1"}, {{"a"},
                                                           {"z"}}, {"a"}, {"z"}, version, true);
             }
@@ -3383,6 +3394,7 @@ SEASTAR_TEST_CASE(min_max_clustering_key_test) {
                         .with_column("pk", utf8_type, column_kind::partition_key)
                         .with_column("r1", int32_type)
                         .build();
+                BOOST_TEST_MESSAGE("test_min_max_clustering_key: min={} max={}");
                 test_min_max_clustering_key(s, {"key1"}, {}, {}, {}, version);
             }
         }

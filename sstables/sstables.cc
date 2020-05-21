@@ -1172,6 +1172,12 @@ void sstable::validate_min_max_metadata() {
         return;
     }
 
+    // clear min/max metadata from old format sstables
+    if (!sstables::is_later(_version, sstable_version_types::mc)) {
+        clear_incorrect_min_max_column_names();
+        return;
+    }
+
     // The min/max metadata is wrong if:
     // 1) it's not empty and schema defines no clustering key.
     // 2) their size differ.
@@ -1206,7 +1212,7 @@ void sstable::validate_max_local_deletion_time() {
 }
 
 void sstable::set_clustering_components_ranges() {
-    if (!_schema->clustering_key_size()) {
+    if (!_schema->clustering_key_size() || !sstables::is_later(_version, sstable_version_types::mc)) {
         return;
     }
     auto& min_column_names = get_stats_metadata().min_column_names.elements;
@@ -1730,8 +1736,6 @@ void sstable::write_clustered_row(file_writer& out, const schema& schema, const 
 
     maybe_write_row_marker(out, schema, clustered_row.marker(), clustering_key);
     maybe_write_row_tombstone(out, clustering_key, clustered_row);
-
-    get_metadata_collector().update_min_max_components(clustered_row.key());
 
     // Write all cells of a partition's row.
     clustered_row.cells().for_each_cell([&] (column_id id, const atomic_cell_or_collection& c) {
