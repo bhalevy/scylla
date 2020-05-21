@@ -485,7 +485,7 @@ private:
     uint64_t _filter_file_size = 0;
     uint64_t _bytes_on_disk = 0;
     db_clock::time_point _data_file_write_time;
-    std::vector<nonwrapping_range<bytes_view>> _clustering_components_ranges;
+    nonwrapping_range<clustering_key_prefix> _clustering_components_ranges;
     std::vector<unsigned> _shards;
     std::optional<dht::decorated_key> _first;
     std::optional<dht::decorated_key> _last;
@@ -822,7 +822,7 @@ public:
         return _components->summary;
     }
 
-    const std::vector<nonwrapping_range<bytes_view>>& clustering_components_ranges() const;
+    const nonwrapping_range<clustering_key_prefix>& clustering_components_ranges() const;
 
     // Gets ratio of droppable tombstone. A tombstone is considered droppable here
     // for cells expired before gc_before and regular tombstones older than gc_before.

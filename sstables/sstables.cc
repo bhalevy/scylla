@@ -1221,18 +1221,37 @@ void sstable::set_clustering_components_ranges() {
     if (!_schema->clustering_key_size()) {
         return;
     }
-    auto& min_column_names = get_stats_metadata().min_column_names.elements;
-    auto& max_column_names = get_stats_metadata().max_column_names.elements;
 
-    auto s = std::min(min_column_names.size(), max_column_names.size());
-    _clustering_components_ranges.reserve(s);
-    for (auto i = 0U; i < s; i++) {
-        auto r = nonwrapping_range<bytes_view>({{ min_column_names[i].value, true }}, {{ max_column_names[i].value, true }});
-        _clustering_components_ranges.push_back(std::move(r));
+    auto& min_elements = get_stats_metadata().min_column_names.elements;
+    auto& max_elements = get_stats_metadata().max_column_names.elements;
+
+    if (min_elements.empty() && max_elements.empty()) {
+        return;
+    }
+
+    auto get_ckp = [this] (const utils::chunked_vector<disk_string<uint16_t>>& column_names) {
+        std::vector<bytes> key_bytes;
+        key_bytes.reserve(column_names.size());
+        for (auto& value : column_names) {
+            key_bytes.push_back(bytes(bytes_view(value)));
+        }
+        return clustering_key_prefix(std::move(key_bytes));
+    };
+
+    auto get_bound = [this, &get_ckp] (const utils::chunked_vector<disk_string<uint16_t>>& column_names) {
+        return nonwrapping_range<clustering_key_prefix>::bound(get_ckp(column_names), true);
+    };
+
+    if (max_elements.empty()) {
+        _clustering_components_ranges = nonwrapping_range<clustering_key_prefix>::make_starting_with(get_bound(min_elements));
+    } else if (min_elements.empty()) {
+        _clustering_components_ranges = nonwrapping_range<clustering_key_prefix>::make_ending_with(get_bound(max_elements));
+    } else {
+        _clustering_components_ranges = nonwrapping_range<clustering_key_prefix>::make(get_bound(min_elements), get_bound(max_elements));
     }
 }
 
-const std::vector<nonwrapping_range<bytes_view>>& sstable::clustering_components_ranges() const {
+const nonwrapping_range<clustering_key_prefix>& sstable::clustering_components_ranges() const {
     return _clustering_components_ranges;
 }
 

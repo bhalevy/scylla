@@ -55,84 +55,6 @@ static seastar::metrics::label keyspace_label("ks");
 
 using namespace std::chrono_literals;
 
-// Stores ranges for all components of the same clustering key, index 0 referring to component
-// range 0, and so on.
-using ck_filter_clustering_key_components = std::vector<nonwrapping_range<bytes_view>>;
-// Stores an entry for each clustering key range specified by the filter.
-using ck_filter_clustering_key_ranges = std::vector<ck_filter_clustering_key_components>;
-
-// Used to split a clustering key range into a range for each component.
-// If a range in ck_filtering_all_ranges is composite, a range will be created
-// for each component. If it's not composite, a single range is created.
-// This split is needed to check for overlap in each component individually.
-static ck_filter_clustering_key_ranges
-ranges_for_clustering_key_filter(const schema_ptr& schema, const query::clustering_row_ranges& ck_filtering_all_ranges) {
-    ck_filter_clustering_key_ranges ranges;
-
-    for (auto& r : ck_filtering_all_ranges) {
-        // this vector stores a range for each component of a key, only one if not composite.
-        ck_filter_clustering_key_components composite_ranges;
-
-        if (r.is_full()) {
-            ranges.push_back({ nonwrapping_range<bytes_view>::make_open_ended_both_sides() });
-            continue;
-        }
-        auto start = r.start() ? r.start()->value().components() : clustering_key_prefix::make_empty().components();
-        auto end = r.end() ? r.end()->value().components() : clustering_key_prefix::make_empty().components();
-        auto start_it = start.begin();
-        auto end_it = end.begin();
-
-        // This test is enough because equal bounds in nonwrapping_range are inclusive.
-        auto is_singular = [&schema] (const auto& type_it, const bytes_view& b1, const bytes_view& b2) {
-            if (type_it == schema->clustering_key_type()->types().end()) {
-                throw std::runtime_error(format("clustering key filter passed more components than defined in schema of {}.{}",
-                    schema->ks_name(), schema->cf_name()));
-            }
-            return (*type_it)->compare(b1, b2) == 0;
-        };
-        auto type_it = schema->clustering_key_type()->types().begin();
-        composite_ranges.reserve(schema->clustering_key_size());
-
-        // the rule is to ignore any component cn if another component ck (k < n) is not if the form [v, v].
-        // If we have [v1, v1], [v2, v2], ... {vl3, vr3}, ....
-        // then we generate [v1, v1], [v2, v2], ... {vl3, vr3}. Where {  = '(' or '[', etc.
-        while (start_it != start.end() && end_it != end.end() && is_singular(type_it++, *start_it, *end_it)) {
-            composite_ranges.push_back(nonwrapping_range<bytes_view>({{ std::move(*start_it++), true }},
-                {{ std::move(*end_it++), true }}));
-        }
-        // handle a single non-singular tail element, if present
-        if (start_it != start.end() && end_it != end.end()) {
-            composite_ranges.push_back(nonwrapping_range<bytes_view>({{ std::move(*start_it), r.start()->is_inclusive() }},
-                {{ std::move(*end_it), r.end()->is_inclusive() }}));
-        } else if (start_it != start.end()) {
-            composite_ranges.push_back(nonwrapping_range<bytes_view>({{ std::move(*start_it), r.start()->is_inclusive() }}, {}));
-        } else if (end_it != end.end()) {
-            composite_ranges.push_back(nonwrapping_range<bytes_view>({}, {{ std::move(*end_it), r.end()->is_inclusive() }}));
-        }
-
-        ranges.push_back(std::move(composite_ranges));
-    }
-    return ranges;
-}
-
-// Return true if this sstable possibly stores clustering row(s) specified by ranges.
-static inline bool
-contains_rows(const sstables::sstable& sst, const schema_ptr& schema, const ck_filter_clustering_key_ranges& ranges) {
-    auto& clustering_key_types = schema->clustering_key_type()->types();
-    auto& clustering_components_ranges = sst.clustering_components_ranges();
-
-    if (!schema->clustering_key_size() || clustering_components_ranges.empty()) {
-        return true;
-    }
-    return boost::algorithm::any_of(ranges, [&] (const ck_filter_clustering_key_components& range) {
-        auto s = std::min(range.size(), clustering_components_ranges.size());
-        return boost::algorithm::all_of(boost::irange<unsigned>(0, s), [&] (unsigned i) {
-            auto& type = clustering_key_types[i];
-            return range[i].is_full() || range[i].overlaps(clustering_components_ranges[i], type->as_tri_comparator());
-        });
-    });
-}
-
 // Filter out sstables for reader using bloom filter and sstable metadata that keeps track
 // of a range for each clustering component.
 static std::vector<sstables::shared_sstable>
@@ -172,12 +94,8 @@ filter_sstable_for_reader(std::vector<sstables::shared_sstable>&& sstables, colu
         stats->surviving_sstables_after_clustering_filter += sstables.size();
         return sstables;
     }
-    auto ranges = ranges_for_clustering_key_filter(schema, ck_filtering_all_ranges);
-    if (ranges.empty()) {
-        return {};
-    }
 
-    auto sstable_has_tombstone_or_clustering_key = [&schema, &ranges] (const sstables::shared_sstable& sst) {
+    auto sstable_has_tombstone_or_clustering_key = [&schema, &ck_filtering_all_ranges] (const sstables::shared_sstable& sst) {
         // Include sstables with tombstones that are not scylla's since
         // they may contain partition tombstones that are not taken into
         // account in min/max coloumn names metadata.
@@ -190,7 +108,19 @@ filter_sstable_for_reader(std::vector<sstables::shared_sstable>&& sstables, colu
             }
         }
 
-        return contains_rows(*sst, schema, ranges);
+        // Return true if this sstable possibly stores clustering row(s) specified by ranges.
+        const auto& clustering_components_ranges = sst->clustering_components_ranges();
+
+        if (clustering_components_ranges.is_full()) {
+            return true;
+        }
+
+        // prefix_equal_tri_compare is used to allow comparing to partial
+        // clustering_key_prefix bounds representing range tombstones
+        auto cmp = clustering_key_prefix::prefix_equal_tri_compare(*schema);
+        return boost::algorithm::any_of(ck_filtering_all_ranges, [&clustering_components_ranges, &cmp] (const auto& range) {
+            return range.is_full() || clustering_components_ranges.overlaps(range, cmp);
+        });
     };
     auto skipped = std::partition(sstables.begin(), sstables.end(), sstable_has_tombstone_or_clustering_key);
     sstables.erase(skipped, sstables.end());
