@@ -684,7 +684,7 @@ private:
         return s;
     }
 
-    void make_metadata_collector();
+    void make_metadata_collector(const schema& schema);
 public:
     future<> read_toc();
 
