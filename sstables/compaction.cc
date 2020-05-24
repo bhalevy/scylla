@@ -459,10 +459,11 @@ protected:
     void setup_new_sstable(shared_sstable& sst) {
         _info->new_sstables.push_back(sst);
         _new_unused_sstables.push_back(sst);
+        sst->make_metadata_collector(*_schema);
         sst->get_metadata_collector().set_replay_position(_rp);
         sst->get_metadata_collector().sstable_level(_sstable_level);
         for (auto ancestor : _ancestors) {
-            sst->add_ancestor(ancestor);
+            sst->get_metadata_collector().add_ancestor(ancestor);
         }
     }
 
@@ -1394,6 +1395,9 @@ get_fully_expired_sstables(column_family& cf, const std::vector<sstables::shared
         // Get ancestors from metadata collector which is empty after restart. It works for this purpose because
         // we only need to check that a sstable compacted *in this instance* hasn't an ancestor undeleted.
         // Not getting it from sstable metadata because mc format hasn't it available.
+        if (!candidate->has_metadata_collector()) {
+            return false;
+        }
         return boost::algorithm::any_of(candidate->get_metadata_collector().ancestors(), [&compacted_undeleted_gens] (auto gen) {
             return compacted_undeleted_gens.count(gen);
         });
