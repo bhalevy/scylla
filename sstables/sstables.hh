@@ -305,10 +305,6 @@ public:
         return _marked_for_deletion == mark_for_deletion::marked;
     }
 
-    void add_ancestor(int64_t generation) {
-        _collector.add_ancestor(generation);
-    }
-
     // Returns true iff this sstable contains data which belongs to many shards.
     bool is_shared() const;
 
@@ -409,8 +405,16 @@ public:
 
     bool requires_view_building() const;
 
+    bool has_metadata_collector() const {
+        return _collector.has_value();
+    }
+
     metadata_collector& get_metadata_collector() {
-        return _collector;
+        if (!_collector.has_value()) {
+            sstlog.error("No metadata collector at: {}", current_backtrace());
+            abort();
+        }
+        return *_collector;
     }
 
     std::vector<std::pair<component_type, sstring>> all_components() const;
@@ -469,7 +473,7 @@ private:
     bool _open = false;
     // NOTE: _collector and _c_stats are used to generation of statistics file
     // when writing a new sstable.
-    metadata_collector _collector;
+    std::optional<metadata_collector> _collector;
     column_stats _c_stats;
     file _index_file;
     file _data_file;
@@ -676,6 +680,8 @@ private:
         serialization_header& s = *static_cast<serialization_header *>(p.get());
         return s;
     }
+
+    void make_metadata_collector(const schema& schema);
 public:
     future<> read_toc();
 
@@ -838,6 +844,8 @@ public:
     friend class sstable_writer_k_l;
     friend class mc::writer;
     friend class index_reader;
+    friend class sstable_writer;
+    friend class compaction;
     template <typename DataConsumeRowsContext>
     friend data_consume_context<DataConsumeRowsContext>
     data_consume_rows(const schema&, shared_sstable, typename DataConsumeRowsContext::consumer&, disk_read_range, uint64_t);
