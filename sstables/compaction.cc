@@ -488,7 +488,7 @@ protected:
     void setup_new_sstable(shared_sstable& sst) {
         _info->new_sstables.push_back(sst);
         _new_unused_sstables.push_back(sst);
-        sst->make_metadata_collector();
+        sst->make_metadata_collector(*_schema);
         sst->get_metadata_collector().set_replay_position(_rp);
         sst->get_metadata_collector().sstable_level(_sstable_level);
         for (auto ancestor : _ancestors) {

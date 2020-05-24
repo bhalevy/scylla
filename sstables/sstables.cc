@@ -1738,7 +1738,7 @@ void sstable::write_clustered_row(file_writer& out, const schema& schema, const 
     maybe_write_row_marker(out, schema, clustered_row.marker(), clustering_key);
     maybe_write_row_tombstone(out, clustering_key, clustered_row);
 
-    get_metadata_collector().update_min_max_components(*_schema, clustered_row.key());
+    get_metadata_collector().update_min_max_components(clustered_row.key());
 
     // Write all cells of a partition's row.
     clustered_row.cells().for_each_cell([&] (column_id id, const atomic_cell_or_collection& c) {
@@ -2226,9 +2226,11 @@ sstable::write_scylla_metadata(const io_priority_class& pc, shard_id shard, ssta
 }
 
 void
-sstable::make_metadata_collector() {
+sstable::make_metadata_collector(const schema& schema) {
     if (!_collector) {
-        _collector.emplace(metadata_collector());
+        _collector.emplace(metadata_collector(schema));
+    } else {
+        assert(_collector->get_schema() == schema);
     }
 }
 
@@ -2362,7 +2364,7 @@ void sstable_writer_k_l::consume_end_of_stream()
 
 sstable_writer::sstable_writer(sstable& sst, const schema& s, uint64_t estimated_partitions,
         const sstable_writer_config& cfg, encoding_stats enc_stats, const io_priority_class& pc, shard_id shard) {
-    sst.make_metadata_collector();
+    sst.make_metadata_collector(s);
     if (sst.get_version() == sstable_version_types::mc) {
         _impl = mc::make_writer(sst, s, estimated_partitions, cfg, enc_stats, pc, shard);
     } else {
