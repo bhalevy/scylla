@@ -262,6 +262,10 @@ public:
         }
     }
 
+    void disable_min_max_components() {
+        _has_min_max_clustering_keys = false;
+    }
+
     void update(column_stats&& stats) {
         _timestamp_tracker.update(stats.timestamp_tracker);
         _local_deletion_time_tracker.update(stats.local_deletion_time_tracker);

@@ -1337,7 +1337,9 @@ void writer::write_clustered(const rt_marker& marker, uint64_t prev_row_size) {
     write_vint(*_data_writer, _tmp_bufs.size());
     flush_tmp_bufs();
 
-    _sst.get_metadata_collector().update_min_max_components(marker.clustering);
+    // be conservative about metadata clustering key ranges
+    // and compatible with the md format (See CASSANDRA-14861)
+    _sst.get_metadata_collector().disable_min_max_components();
 }
 
 void writer::consume(rt_marker&& marker) {
