@@ -51,4 +51,10 @@ void metadata_collector::do_update_min_max_components(const clustering_key_prefi
     }
 }
 
+void metadata_collector::disable_min_max_components() noexcept {
+    _min_column_names.resize(0);
+    _max_column_names.resize(0);
+    _has_min_max_clustering_keys = false;
+}
+
 } // namespace sstables
