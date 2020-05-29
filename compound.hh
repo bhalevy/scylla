@@ -120,10 +120,8 @@ public:
         // TODO: Optimize
         std::vector<bytes> partial;
         partial.reserve(values.size());
-        auto i = _types.begin();
-        for (auto&& component : values) {
-            assert(i != _types.end());
-            partial.push_back((*i++)->decompose(component));
+        for (const data_value& component : values) {
+            partial.push_back(component.serialize_nonnull());
         }
         return serialize_value(partial);
     }
