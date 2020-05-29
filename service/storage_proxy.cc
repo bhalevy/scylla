@@ -2426,7 +2426,7 @@ storage_proxy::mutate_atomically(std::vector<mutation> mutations, db::consistenc
         future<> async_remove_from_batchlog() {
             // delete batch
             auto schema = _p._db.local().find_schema(db::system_keyspace::NAME, db::system_keyspace::BATCHLOG);
-            auto key = partition_key::from_exploded(*schema, {uuid_type->decompose(_batch_uuid)});
+            auto key = partition_key::from_exploded(*schema, {serialized(_batch_uuid)});
             auto now = service::client_state(service::client_state::internal_tag()).get_timestamp();
             mutation m(schema, key);
             m.partition().apply_delete(*schema, clustering_key_prefix::make_empty(), tombstone(now, gc_clock::now()));
