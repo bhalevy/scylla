@@ -50,7 +50,6 @@ public:
     }
     virtual bytes_opt execute(cql_serialization_format sf, const std::vector<bytes_opt>& parameters) override {
         auto from_type = arg_types()[0];
-        auto to_type = return_type();
 
         auto&& val = parameters[0];
         if (!val) {
@@ -58,7 +57,7 @@ public:
         }
         auto val_from = from_type->deserialize(*val);
         auto val_to = _func(val_from);
-        return to_type->decompose(val_to);
+        return val_to.serialize();
     }
 };
 
