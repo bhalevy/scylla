@@ -58,7 +58,7 @@ public:
         _count = 0;
     }
     virtual opt_bytes compute(cql_serialization_format sf) override {
-        return long_type->decompose(_count);
+        return serialized(_count);
     }
     virtual void add_input(cql_serialization_format sf, const std::vector<opt_bytes>& values) override {
         ++_count;
@@ -118,7 +118,7 @@ public:
         _sum = {};
     }
     virtual opt_bytes compute(cql_serialization_format sf) override {
-        return data_type_for<Type>()->decompose(accumulator_for<Type>::narrow(_sum));
+        return serialized(accumulator_for<Type>::narrow(_sum));
     }
     virtual void add_input(cql_serialization_format sf, const std::vector<opt_bytes>& values) override {
         if (!values[0]) {
@@ -175,7 +175,7 @@ public:
         if (_count) {
             ret = impl_div_for_avg<Type>::div(_sum, _count);
         }
-        return data_type_for<Type>()->decompose(ret);
+        return serialized(ret);
     }
     virtual void add_input(cql_serialization_format sf, const std::vector<opt_bytes>& values) override {
         if (!values[0]) {
@@ -252,7 +252,7 @@ public:
         if (!_max) {
             return {};
         }
-        return data_type_for<Type>()->decompose(data_value(Type{*_max}));
+        return serialized(data_value(Type{*_max}));
     }
     virtual void add_input(cql_serialization_format sf, const std::vector<opt_bytes>& values) override {
         if (!values[0]) {
@@ -348,7 +348,7 @@ public:
         if (!_min) {
             return {};
         }
-        return data_type_for<Type>()->decompose(data_value(Type{*_min}));
+        return serialized(data_value(Type{*_min}));
     }
     virtual void add_input(cql_serialization_format sf, const std::vector<opt_bytes>& values) override {
         if (!values[0]) {
@@ -427,7 +427,7 @@ public:
         _count = 0;
     }
     virtual opt_bytes compute(cql_serialization_format sf) override {
-        return long_type->decompose(_count);
+        return serialized(_count);
     }
     virtual void add_input(cql_serialization_format sf, const std::vector<opt_bytes>& values) override {
         if (!values[0]) {
