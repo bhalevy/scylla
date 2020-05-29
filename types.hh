@@ -544,6 +544,7 @@ public:
         return _value_length_if_fixed;
     }
 public:
+    // FIXME: Delete this and replace all calls with serialize_nonnull
     bytes decompose(const data_value& value) const;
     // Safe to call across shards
     const sstring& name() const {
