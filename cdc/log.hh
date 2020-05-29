@@ -148,6 +148,6 @@ bytes log_data_column_deleted_elements_name_bytes(const bytes& column_name);
 
 bool is_cdc_metacolumn_name(const sstring& name);
 
-utils::UUID generate_timeuuid(api::timestamp_type t);
+timeuuid_native_type generate_timeuuid(api::timestamp_type t);
 
 } // namespace cdc

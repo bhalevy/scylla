@@ -829,15 +829,15 @@ static bytes_opt get_preimage_col_value(const column_definition& cdef, const cql
 }
 
 /* Given a timestamp, generates a timeuuid with the following properties:
- * 1. `t1` < `t2` implies timeuuid_type->less(timeuuid_type->decompose(generate_timeuuid(`t1`)),
- *                                            timeuuid_type->decompose(generate_timeuuid(`t2`))),
+ * 1. `t1` < `t2` implies timeuuid_type->less(serialized(generate_timeuuid(`t1`)),
+ *                                            serialized(generate_timeuuid(`t2`))),
  * 2. utils::UUID_gen::micros_timestamp(generate_timeuuid(`t`)) == `t`.
  *
  * If `t1` == `t2`, then generate_timeuuid(`t1`) != generate_timeuuid(`t2`),
  * with unspecified nondeterministic ordering.
  */
-utils::UUID generate_timeuuid(api::timestamp_type t) {
-    return utils::UUID_gen::get_random_time_UUID_from_micros(t);
+timeuuid_native_type generate_timeuuid(api::timestamp_type t) {
+    return timeuuid_native_type{utils::UUID_gen::get_random_time_UUID_from_micros(t)};
 }
 
 class log_mutation_builder {

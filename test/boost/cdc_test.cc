@@ -54,7 +54,7 @@ static cql_test_config mk_cdc_test_config() {
 
 namespace cdc {
 api::timestamp_type find_timestamp(const mutation&);
-utils::UUID generate_timeuuid(api::timestamp_type);
+timeuuid_native_type generate_timeuuid(api::timestamp_type);
 }
 
 SEASTAR_THREAD_TEST_CASE(test_find_mutation_timestamp) {
@@ -147,9 +147,9 @@ SEASTAR_THREAD_TEST_CASE(test_generate_timeuuid) {
         auto tuuid1 = cdc::generate_timeuuid(t1);
         auto tuuid2 = cdc::generate_timeuuid(t2);
 
-        auto cmp = timeuuid_type->compare(timeuuid_type->decompose(tuuid1), timeuuid_type->decompose(tuuid2));
+        auto cmp = timeuuid_type->compare(serialized(tuuid1), serialized(tuuid2));
         BOOST_REQUIRE((t1 == t2) || (t1 < t2 && cmp < 0) || (t1 > t2 && cmp > 0));
-        BOOST_REQUIRE(utils::UUID_gen::micros_timestamp(tuuid1) == t1 && utils::UUID_gen::micros_timestamp(tuuid2) == t2);
+        BOOST_REQUIRE(utils::UUID_gen::micros_timestamp(tuuid1.uuid) == t1 && utils::UUID_gen::micros_timestamp(tuuid2.uuid) == t2);
     }
 }
 
