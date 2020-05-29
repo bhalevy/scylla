@@ -126,16 +126,29 @@ static data_value castas_fctn_from_float_to_decimal(data_value from) {
 }
 
 template<typename FromType>
-static data_value castas_fctn_to_string(data_value from) {
+static data_value castas_fctn_to_utf8(data_value from) {
     return to_sstring(value_cast<FromType>(from));
 }
 
-static data_value castas_fctn_from_varint_to_string(data_value from) {
+template<typename FromType>
+static data_value castas_fctn_to_ascii(data_value from) {
+    return ascii_native_type{to_sstring(value_cast<FromType>(from))};
+}
+
+static data_value castas_fctn_from_varint_to_utf8(data_value from) {
     return to_sstring(value_cast<utils::multiprecision_int>(from).str());
 }
 
-static data_value castas_fctn_from_decimal_to_string(data_value from) {
+static data_value castas_fctn_from_varint_to_ascii(data_value from) {
+    return ascii_native_type{to_sstring(value_cast<utils::multiprecision_int>(from).str())};
+}
+
+static data_value castas_fctn_from_decimal_to_utf8(data_value from) {
     return value_cast<big_decimal>(from).to_string();
+}
+
+static data_value castas_fctn_from_decimal_to_ascii(data_value from) {
+    return ascii_native_type{value_cast<big_decimal>(from).to_string()};
 }
 
 db_clock::time_point millis_to_time_point(const int64_t millis) {
@@ -178,8 +191,12 @@ static data_value castas_fctn_from_timeuuid_to_date(data_value from) {
     return time_point_to_date(millis_to_time_point(utils::UUID_gen::unix_timestamp(val_from)));
 }
 
-static data_value castas_fctn_from_dv_to_string(data_value from) {
+static data_value castas_fctn_from_dv_to_utf8(data_value from) {
     return from.type()->to_string_impl(from);
+}
+
+static data_value castas_fctn_from_dv_to_ascii(data_value from) {
+    return ascii_native_type{from.type()->to_string_impl(from)};
 }
 
 // FIXME: Add conversions for counters, after they are fully implemented...
@@ -329,36 +346,44 @@ castas_fctn get_castas_fctn(data_type to_type, data_type from_type) {
         return castas_fctn_from_integer_to_decimal<utils::multiprecision_int>;
 
     case cast_switch_case_val(kind::ascii, kind::byte):
+        return castas_fctn_to_ascii<int8_t>;
     case cast_switch_case_val(kind::utf8, kind::byte):
-        return castas_fctn_to_string<int8_t>;
+        return castas_fctn_to_utf8<int8_t>;
 
     case cast_switch_case_val(kind::ascii, kind::short_kind):
+        return castas_fctn_to_ascii<int16_t>;
     case cast_switch_case_val(kind::utf8, kind::short_kind):
-        return castas_fctn_to_string<int16_t>;
+        return castas_fctn_to_utf8<int16_t>;
 
     case cast_switch_case_val(kind::ascii, kind::int32):
+        return castas_fctn_to_ascii<int32_t>;
     case cast_switch_case_val(kind::utf8, kind::int32):
-        return castas_fctn_to_string<int32_t>;
+        return castas_fctn_to_utf8<int32_t>;
 
     case cast_switch_case_val(kind::ascii, kind::long_kind):
+        return castas_fctn_to_ascii<int64_t>;
     case cast_switch_case_val(kind::utf8, kind::long_kind):
-        return castas_fctn_to_string<int64_t>;
+        return castas_fctn_to_utf8<int64_t>;
 
     case cast_switch_case_val(kind::ascii, kind::float_kind):
+        return castas_fctn_to_ascii<float>;
     case cast_switch_case_val(kind::utf8, kind::float_kind):
-        return castas_fctn_to_string<float>;
+        return castas_fctn_to_utf8<float>;
 
     case cast_switch_case_val(kind::ascii, kind::double_kind):
+        return castas_fctn_to_ascii<double>;
     case cast_switch_case_val(kind::utf8, kind::double_kind):
-        return castas_fctn_to_string<double>;
+        return castas_fctn_to_utf8<double>;
 
     case cast_switch_case_val(kind::ascii, kind::varint):
+        return castas_fctn_from_varint_to_ascii;
     case cast_switch_case_val(kind::utf8, kind::varint):
-        return castas_fctn_from_varint_to_string;
+        return castas_fctn_from_varint_to_utf8;
 
     case cast_switch_case_val(kind::ascii, kind::decimal):
+        return castas_fctn_from_decimal_to_ascii;
     case cast_switch_case_val(kind::utf8, kind::decimal):
-        return castas_fctn_from_decimal_to_string;
+        return castas_fctn_from_decimal_to_utf8;
 
     case cast_switch_case_val(kind::simple_date, kind::timestamp):
         return castas_fctn_from_timestamp_to_date;
@@ -377,6 +402,7 @@ castas_fctn get_castas_fctn(data_type to_type, data_type from_type) {
     case cast_switch_case_val(kind::ascii, kind::uuid):
     case cast_switch_case_val(kind::ascii, kind::boolean):
     case cast_switch_case_val(kind::ascii, kind::inet):
+        return castas_fctn_from_dv_to_ascii;
     case cast_switch_case_val(kind::utf8, kind::timestamp):
     case cast_switch_case_val(kind::utf8, kind::simple_date):
     case cast_switch_case_val(kind::utf8, kind::time):
@@ -384,7 +410,7 @@ castas_fctn get_castas_fctn(data_type to_type, data_type from_type) {
     case cast_switch_case_val(kind::utf8, kind::uuid):
     case cast_switch_case_val(kind::utf8, kind::boolean):
     case cast_switch_case_val(kind::utf8, kind::inet):
-        return castas_fctn_from_dv_to_string;
+        return castas_fctn_from_dv_to_utf8;
     case cast_switch_case_val(kind::utf8, kind::ascii):
         return castas_fctn_simple<sstring, sstring>;
     }
