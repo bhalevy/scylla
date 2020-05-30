@@ -76,7 +76,7 @@ target_parser::target_info target_parser::parse(schema_ptr schema, const sstring
     target_info info;
 
     auto get_column = [&schema] (const sstring& name) -> const column_definition* {
-        const column_definition* cdef = schema->get_column_definition(utf8_type->decompose(name));
+        const column_definition* cdef = schema->get_column_definition(serialized(name));
         if (!cdef) {
             throw std::runtime_error(format("Column {} not found", name));
         }
