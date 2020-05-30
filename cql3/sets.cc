@@ -141,7 +141,7 @@ sets::value::from_serialized(const fragmented_temporary_buffer::view& val, const
         auto s = value_cast<set_type_impl::native_type>(type.deserialize(v, sf));
         std::set<bytes, serialized_compare> elements(type.get_elements_type()->as_less_comparator());
         for (auto&& element : s) {
-            elements.insert(elements.end(), type.get_elements_type()->decompose(element));
+            elements.insert(elements.end(), element.serialize_nonnull());
         }
         return value(std::move(elements));
       });
