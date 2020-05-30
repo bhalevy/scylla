@@ -68,30 +68,30 @@ BOOST_AUTO_TEST_CASE(test_null_is_not_empty) {
 }
 
 BOOST_AUTO_TEST_CASE(test_bytes_type_string_conversions) {
-    BOOST_REQUIRE(bytes_type->equal(bytes_type->from_string("616263646566"), bytes_type->decompose(data_value(bytes{"abcdef"}))));
+    BOOST_REQUIRE(bytes_type->equal(bytes_type->from_string("616263646566"), serialized(bytes{"abcdef"})));
 }
 
 BOOST_AUTO_TEST_CASE(test_byte_type_string_conversions) {
-    BOOST_REQUIRE(byte_type->equal(byte_type->from_string("123"), byte_type->decompose(int8_t(123))));
-    BOOST_REQUIRE_EQUAL(byte_type->to_string(byte_type->decompose(int8_t(123))), "123");
+    BOOST_REQUIRE(byte_type->equal(byte_type->from_string("123"), serialized(int8_t(123))));
+    BOOST_REQUIRE_EQUAL(byte_type->to_string(serialized(int8_t(123))), "123");
 
-    BOOST_REQUIRE(byte_type->equal(byte_type->from_string("12"), byte_type->decompose(int8_t(12))));
-    BOOST_REQUIRE(byte_type->equal(byte_type->from_string("0012"), byte_type->decompose(int8_t(12))));
-    BOOST_REQUIRE(byte_type->equal(byte_type->from_string("+12"), byte_type->decompose(int8_t(12))));
-    BOOST_REQUIRE_EQUAL(byte_type->to_string(byte_type->decompose(int8_t(12))), "12");
-    BOOST_REQUIRE(byte_type->equal(byte_type->from_string("-12"), byte_type->decompose(int8_t(-12))));
-    BOOST_REQUIRE_EQUAL(byte_type->to_string(byte_type->decompose(int8_t(-12))), "-12");
+    BOOST_REQUIRE(byte_type->equal(byte_type->from_string("12"), serialized(int8_t(12))));
+    BOOST_REQUIRE(byte_type->equal(byte_type->from_string("0012"), serialized(int8_t(12))));
+    BOOST_REQUIRE(byte_type->equal(byte_type->from_string("+12"), serialized(int8_t(12))));
+    BOOST_REQUIRE_EQUAL(byte_type->to_string(serialized(int8_t(12))), "12");
+    BOOST_REQUIRE(byte_type->equal(byte_type->from_string("-12"), serialized(int8_t(-12))));
+    BOOST_REQUIRE_EQUAL(byte_type->to_string(serialized(int8_t(-12))), "-12");
 
-    BOOST_REQUIRE(byte_type->equal(byte_type->from_string("0"), byte_type->decompose(int8_t(0))));
-    BOOST_REQUIRE(byte_type->equal(byte_type->from_string("-0"), byte_type->decompose(int8_t(0))));
-    BOOST_REQUIRE(byte_type->equal(byte_type->from_string("+0"), byte_type->decompose(int8_t(0))));
-    BOOST_REQUIRE_EQUAL(byte_type->to_string(byte_type->decompose(int8_t(0))), "0");
+    BOOST_REQUIRE(byte_type->equal(byte_type->from_string("0"), serialized(int8_t(0))));
+    BOOST_REQUIRE(byte_type->equal(byte_type->from_string("-0"), serialized(int8_t(0))));
+    BOOST_REQUIRE(byte_type->equal(byte_type->from_string("+0"), serialized(int8_t(0))));
+    BOOST_REQUIRE_EQUAL(byte_type->to_string(serialized(int8_t(0))), "0");
 
-    BOOST_REQUIRE(byte_type->equal(byte_type->from_string("-128"), byte_type->decompose(int8_t(-128))));
-    BOOST_REQUIRE_EQUAL(byte_type->to_string(byte_type->decompose((int8_t(-128)))), "-128");
+    BOOST_REQUIRE(byte_type->equal(byte_type->from_string("-128"), serialized(int8_t(-128))));
+    BOOST_REQUIRE_EQUAL(byte_type->to_string(serialized((int8_t(-128)))), "-128");
 
-    BOOST_REQUIRE(byte_type->equal(byte_type->from_string("127"), byte_type->decompose(int8_t(127))));
-    BOOST_REQUIRE_EQUAL(byte_type->to_string(byte_type->decompose(int8_t(127))), "127");
+    BOOST_REQUIRE(byte_type->equal(byte_type->from_string("127"), serialized(int8_t(127))));
+    BOOST_REQUIRE_EQUAL(byte_type->to_string(serialized(int8_t(127))), "127");
 
     test_parsing_fails(byte_type, "asd");
     test_parsing_fails(byte_type, "-129");
@@ -101,26 +101,26 @@ BOOST_AUTO_TEST_CASE(test_byte_type_string_conversions) {
 }
 
 BOOST_AUTO_TEST_CASE(test_short_type_string_conversions) {
-    BOOST_REQUIRE(short_type->equal(short_type->from_string("12345"), short_type->decompose(int16_t(12345))));
-    BOOST_REQUIRE_EQUAL(short_type->to_string(short_type->decompose(int16_t(12345))), "12345");
+    BOOST_REQUIRE(short_type->equal(short_type->from_string("12345"), serialized(int16_t(12345))));
+    BOOST_REQUIRE_EQUAL(short_type->to_string(serialized(int16_t(12345))), "12345");
 
-    BOOST_REQUIRE(short_type->equal(short_type->from_string("12"), short_type->decompose(int16_t(12))));
-    BOOST_REQUIRE(short_type->equal(short_type->from_string("0012"), short_type->decompose(int16_t(12))));
-    BOOST_REQUIRE(short_type->equal(short_type->from_string("+12"), short_type->decompose(int16_t(12))));
-    BOOST_REQUIRE_EQUAL(short_type->to_string(short_type->decompose(int16_t(12))), "12");
-    BOOST_REQUIRE(short_type->equal(short_type->from_string("-12"), short_type->decompose(int16_t(-12))));
-    BOOST_REQUIRE_EQUAL(short_type->to_string(short_type->decompose(int16_t(-12))), "-12");
+    BOOST_REQUIRE(short_type->equal(short_type->from_string("12"), serialized(int16_t(12))));
+    BOOST_REQUIRE(short_type->equal(short_type->from_string("0012"), serialized(int16_t(12))));
+    BOOST_REQUIRE(short_type->equal(short_type->from_string("+12"), serialized(int16_t(12))));
+    BOOST_REQUIRE_EQUAL(short_type->to_string(serialized(int16_t(12))), "12");
+    BOOST_REQUIRE(short_type->equal(short_type->from_string("-12"), serialized(int16_t(-12))));
+    BOOST_REQUIRE_EQUAL(short_type->to_string(serialized(int16_t(-12))), "-12");
 
-    BOOST_REQUIRE(short_type->equal(short_type->from_string("0"), short_type->decompose(int16_t(0))));
-    BOOST_REQUIRE(short_type->equal(short_type->from_string("-0"), short_type->decompose(int16_t(0))));
-    BOOST_REQUIRE(short_type->equal(short_type->from_string("+0"), short_type->decompose(int16_t(0))));
-    BOOST_REQUIRE_EQUAL(short_type->to_string(short_type->decompose(int16_t(0))), "0");
+    BOOST_REQUIRE(short_type->equal(short_type->from_string("0"), serialized(int16_t(0))));
+    BOOST_REQUIRE(short_type->equal(short_type->from_string("-0"), serialized(int16_t(0))));
+    BOOST_REQUIRE(short_type->equal(short_type->from_string("+0"), serialized(int16_t(0))));
+    BOOST_REQUIRE_EQUAL(short_type->to_string(serialized(int16_t(0))), "0");
 
-    BOOST_REQUIRE(short_type->equal(short_type->from_string("-32768"), short_type->decompose(int16_t(-32768))));
-    BOOST_REQUIRE_EQUAL(short_type->to_string(short_type->decompose((int16_t(-32768)))), "-32768");
+    BOOST_REQUIRE(short_type->equal(short_type->from_string("-32768"), serialized(int16_t(-32768))));
+    BOOST_REQUIRE_EQUAL(short_type->to_string(serialized((int16_t(-32768)))), "-32768");
 
-    BOOST_REQUIRE(short_type->equal(short_type->from_string("32677"), short_type->decompose(int16_t(32677))));
-    BOOST_REQUIRE_EQUAL(short_type->to_string(short_type->decompose(int16_t(32677))), "32677");
+    BOOST_REQUIRE(short_type->equal(short_type->from_string("32677"), serialized(int16_t(32677))));
+    BOOST_REQUIRE_EQUAL(short_type->to_string(serialized(int16_t(32677))), "32677");
 
     test_parsing_fails(short_type, "asd");
     test_parsing_fails(short_type, "-32769");
@@ -130,26 +130,26 @@ BOOST_AUTO_TEST_CASE(test_short_type_string_conversions) {
 }
 
 BOOST_AUTO_TEST_CASE(test_int32_type_string_conversions) {
-    BOOST_REQUIRE(int32_type->equal(int32_type->from_string("1234567890"), int32_type->decompose(1234567890)));
-    BOOST_REQUIRE_EQUAL(int32_type->to_string(int32_type->decompose(1234567890)), "1234567890");
+    BOOST_REQUIRE(int32_type->equal(int32_type->from_string("1234567890"), serialized(1234567890)));
+    BOOST_REQUIRE_EQUAL(int32_type->to_string(serialized(1234567890)), "1234567890");
 
-    BOOST_REQUIRE(int32_type->equal(int32_type->from_string("12"), int32_type->decompose(12)));
-    BOOST_REQUIRE(int32_type->equal(int32_type->from_string("0012"), int32_type->decompose(12)));
-    BOOST_REQUIRE(int32_type->equal(int32_type->from_string("+12"), int32_type->decompose(12)));
-    BOOST_REQUIRE_EQUAL(int32_type->to_string(int32_type->decompose(12)), "12");
-    BOOST_REQUIRE(int32_type->equal(int32_type->from_string("-12"), int32_type->decompose(-12)));
-    BOOST_REQUIRE_EQUAL(int32_type->to_string(int32_type->decompose(-12)), "-12");
+    BOOST_REQUIRE(int32_type->equal(int32_type->from_string("12"), serialized(12)));
+    BOOST_REQUIRE(int32_type->equal(int32_type->from_string("0012"), serialized(12)));
+    BOOST_REQUIRE(int32_type->equal(int32_type->from_string("+12"), serialized(12)));
+    BOOST_REQUIRE_EQUAL(int32_type->to_string(serialized(12)), "12");
+    BOOST_REQUIRE(int32_type->equal(int32_type->from_string("-12"), serialized(-12)));
+    BOOST_REQUIRE_EQUAL(int32_type->to_string(serialized(-12)), "-12");
 
-    BOOST_REQUIRE(int32_type->equal(int32_type->from_string("0"), int32_type->decompose(0)));
-    BOOST_REQUIRE(int32_type->equal(int32_type->from_string("-0"), int32_type->decompose(0)));
-    BOOST_REQUIRE(int32_type->equal(int32_type->from_string("+0"), int32_type->decompose(0)));
-    BOOST_REQUIRE_EQUAL(int32_type->to_string(int32_type->decompose(0)), "0");
+    BOOST_REQUIRE(int32_type->equal(int32_type->from_string("0"), serialized(0)));
+    BOOST_REQUIRE(int32_type->equal(int32_type->from_string("-0"), serialized(0)));
+    BOOST_REQUIRE(int32_type->equal(int32_type->from_string("+0"), serialized(0)));
+    BOOST_REQUIRE_EQUAL(int32_type->to_string(serialized(0)), "0");
 
-    BOOST_REQUIRE(int32_type->equal(int32_type->from_string("-2147483648"), int32_type->decompose((int32_t)-2147483648)));
-    BOOST_REQUIRE_EQUAL(int32_type->to_string(int32_type->decompose((int32_t)-2147483648)), "-2147483648");
+    BOOST_REQUIRE(int32_type->equal(int32_type->from_string("-2147483648"), serialized((int32_t)-2147483648)));
+    BOOST_REQUIRE_EQUAL(int32_type->to_string(serialized((int32_t)-2147483648)), "-2147483648");
 
-    BOOST_REQUIRE(int32_type->equal(int32_type->from_string("2147483647"), int32_type->decompose((int32_t)2147483647)));
-    BOOST_REQUIRE_EQUAL(int32_type->to_string(int32_type->decompose((int32_t)2147483647)), "2147483647");
+    BOOST_REQUIRE(int32_type->equal(int32_type->from_string("2147483647"), serialized((int32_t)2147483647)));
+    BOOST_REQUIRE_EQUAL(int32_type->to_string(serialized((int32_t)2147483647)), "2147483647");
 
     test_parsing_fails(int32_type, "asd");
     test_parsing_fails(int32_type, "-2147483649");
@@ -160,14 +160,14 @@ BOOST_AUTO_TEST_CASE(test_int32_type_string_conversions) {
 }
 
 BOOST_AUTO_TEST_CASE(test_long_type_string_conversions) {
-    BOOST_REQUIRE_EQUAL(long_type->to_string(long_type->decompose(int64_t(42))), "42");
+    BOOST_REQUIRE_EQUAL(long_type->to_string(serialized(int64_t(42))), "42");
 }
 
 BOOST_AUTO_TEST_CASE(test_timeuuid_type_string_conversions) {
-    auto now = utils::UUID_gen::get_time_UUID();
-    BOOST_REQUIRE(timeuuid_type->equal(timeuuid_type->from_string(now.to_sstring()), timeuuid_type->decompose(now)));
-    auto uuid = utils::UUID(sstring("d2177dd0-eaa2-11de-a572-001b779c76e3"));
-    BOOST_REQUIRE(timeuuid_type->equal(timeuuid_type->from_string("D2177dD0-EAa2-11de-a572-001B779C76e3"), timeuuid_type->decompose(uuid)));
+    auto now = timeuuid_native_type{utils::UUID_gen::get_time_UUID()};
+    BOOST_REQUIRE(timeuuid_type->equal(timeuuid_type->from_string(now.uuid.to_sstring()), serialized(now)));
+    auto uuid = timeuuid_native_type{utils::UUID(sstring("d2177dd0-eaa2-11de-a572-001b779c76e3"))};
+    BOOST_REQUIRE(timeuuid_type->equal(timeuuid_type->from_string("D2177dD0-EAa2-11de-a572-001B779C76e3"), serialized(uuid)));
 
     test_parsing_fails(timeuuid_type, "something");
     test_parsing_fails(timeuuid_type, "D2177dD0-EAa2-11de-a572-001B779C76e3a");
@@ -192,23 +192,23 @@ BOOST_AUTO_TEST_CASE(test_simple_date_type_string_conversions) {
 }
 
 BOOST_AUTO_TEST_CASE(test_time_type_string_conversions) {
-    BOOST_REQUIRE(time_type->equal(time_type->from_string("12:34:56"), time_type->decompose(int64_t(45296000000000))));
-    BOOST_REQUIRE_EQUAL(time_type->to_string(time_type->decompose(int64_t(45296000000000))), "12:34:56.000000000");
+    BOOST_REQUIRE(time_type->equal(time_type->from_string("12:34:56"), serialized(time_native_type{45296000000000})));
+    BOOST_REQUIRE_EQUAL(time_type->to_string(serialized(time_native_type{45296000000000})), "12:34:56.000000000");
 
-    BOOST_REQUIRE(time_type->equal(time_type->from_string("12:34:56.000000000"), time_type->decompose(int64_t(45296000000000))));
-    BOOST_REQUIRE_EQUAL(time_type->to_string(time_type->decompose(int64_t(45296000000000))), "12:34:56.000000000");
+    BOOST_REQUIRE(time_type->equal(time_type->from_string("12:34:56.000000000"), serialized(time_native_type{45296000000000})));
+    BOOST_REQUIRE_EQUAL(time_type->to_string(serialized(time_native_type{45296000000000})), "12:34:56.000000000");
 
-    BOOST_REQUIRE(time_type->equal(time_type->from_string("12:34:56.123456789"), time_type->decompose(int64_t(45296123456789))));
-    BOOST_REQUIRE_EQUAL(time_type->to_string(time_type->decompose(int64_t(45296123456789))), "12:34:56.123456789");
+    BOOST_REQUIRE(time_type->equal(time_type->from_string("12:34:56.123456789"), serialized(time_native_type{45296123456789})));
+    BOOST_REQUIRE_EQUAL(time_type->to_string(serialized(time_native_type{45296123456789})), "12:34:56.123456789");
 
-    BOOST_REQUIRE(time_type->equal(time_type->from_string("00:00:00.000000000"), time_type->decompose(int64_t(0x00000000))));
-    BOOST_REQUIRE_EQUAL(time_type->to_string(time_type->decompose(int64_t(0x00000000))), "00:00:00.000000000");
+    BOOST_REQUIRE(time_type->equal(time_type->from_string("00:00:00.000000000"), serialized(time_native_type{0x00000000})));
+    BOOST_REQUIRE_EQUAL(time_type->to_string(serialized(time_native_type{0x00000000})), "00:00:00.000000000");
 
-    BOOST_REQUIRE(time_type->equal(time_type->from_string("23:59:59.999999999"), time_type->decompose(int64_t(86399999999999))));
-    BOOST_REQUIRE_EQUAL(time_type->to_string(time_type->decompose(int64_t(86399999999999))), "23:59:59.999999999");
+    BOOST_REQUIRE(time_type->equal(time_type->from_string("23:59:59.999999999"), serialized(time_native_type{86399999999999})));
+    BOOST_REQUIRE_EQUAL(time_type->to_string(serialized(time_native_type{86399999999999})), "23:59:59.999999999");
 
-    BOOST_REQUIRE(time_type->equal(time_type->from_string("-00:00:00.000000000"), time_type->decompose(int64_t(0x00000000))));
-    BOOST_REQUIRE(time_type->equal(time_type->from_string("-00:00:00.000000001"), time_type->decompose(int64_t(0x00000001))));
+    BOOST_REQUIRE(time_type->equal(time_type->from_string("-00:00:00.000000000"), serialized(time_native_type{0x00000000})));
+    BOOST_REQUIRE(time_type->equal(time_type->from_string("-00:00:00.000000001"), serialized(time_native_type{0x00000001})));
 
     test_parsing_fails(time_type, "something");
     test_parsing_fails(time_type, "00:00");
@@ -223,12 +223,12 @@ BOOST_AUTO_TEST_CASE(test_time_type_string_conversions) {
 BOOST_AUTO_TEST_CASE(test_duration_type_string_conversions) {
     // See `duration_test.cc` for more conversion tests.
     BOOST_REQUIRE(duration_type->equal(duration_type->from_string("1y3mo5m2s"),
-                                       duration_type->decompose(cql_duration("1y3mo5m2s"))));
+                                       serialized(cql_duration("1y3mo5m2s"))));
 }
 
 BOOST_AUTO_TEST_CASE(test_uuid_type_comparison) {
-    auto uuid1 = uuid_type->decompose(utils::UUID(sstring("ad4d3770-7a50-11e6-ac4d-000000000003")));
-    auto uuid2 = uuid_type->decompose(utils::UUID(sstring("c512ba10-7a50-11e6-ac4d-000000000003")));
+    auto uuid1 = serialized(utils::UUID(sstring("ad4d3770-7a50-11e6-ac4d-000000000003")));
+    auto uuid2 = serialized(utils::UUID(sstring("c512ba10-7a50-11e6-ac4d-000000000003")));
     
     BOOST_REQUIRE_EQUAL(true, uuid_type->less(uuid1, uuid2));
     BOOST_REQUIRE_EQUAL(false, uuid_type->less(uuid2, uuid1));
@@ -236,11 +236,11 @@ BOOST_AUTO_TEST_CASE(test_uuid_type_comparison) {
 
 BOOST_AUTO_TEST_CASE(test_uuid_type_string_conversions) {
     auto now = utils::UUID_gen::get_time_UUID();
-    BOOST_REQUIRE(uuid_type->equal(uuid_type->from_string(now.to_sstring()), uuid_type->decompose(now)));
+    BOOST_REQUIRE(uuid_type->equal(uuid_type->from_string(now.to_sstring()), serialized(now)));
     auto random = utils::make_random_uuid();
-    BOOST_REQUIRE(uuid_type->equal(uuid_type->from_string(random.to_sstring()), uuid_type->decompose(random)));
+    BOOST_REQUIRE(uuid_type->equal(uuid_type->from_string(random.to_sstring()), serialized(random)));
     auto uuid = utils::UUID(sstring("d2177dd0-eaa2-11de-a572-001b779c76e3"));
-    BOOST_REQUIRE(uuid_type->equal(uuid_type->from_string("D2177dD0-EAa2-11de-a572-001B779C76e3"), uuid_type->decompose(uuid)));
+    BOOST_REQUIRE(uuid_type->equal(uuid_type->from_string("D2177dD0-EAa2-11de-a572-001B779C76e3"), serialized(uuid)));
 
     test_parsing_fails(uuid_type, "something");
     test_parsing_fails(uuid_type, "D2177dD0-EAa2-11de-a572-001B779C76e3a");
@@ -250,7 +250,7 @@ BOOST_AUTO_TEST_CASE(test_uuid_type_string_conversions) {
 
 BOOST_AUTO_TEST_CASE(test_inet_type_string_conversions) {
     net::inet_address addr("127.0.0.1");
-    BOOST_REQUIRE(inet_addr_type->equal(inet_addr_type->from_string("127.0.0.1"), inet_addr_type->decompose(addr)));
+    BOOST_REQUIRE(inet_addr_type->equal(inet_addr_type->from_string("127.0.0.1"), serialized(addr)));
 
     test_parsing_fails(inet_addr_type, "something");
     test_parsing_fails(inet_addr_type, "300.127.127.127");
@@ -261,28 +261,28 @@ BOOST_AUTO_TEST_CASE(test_inet_type_string_conversions) {
 void test_timestamp_like_string_conversions(data_type timestamp_type) {
     timestamp_type->from_string("now");
     db_clock::time_point tp(db_clock::duration(1435881600000));
-    BOOST_REQUIRE(timestamp_type->equal(timestamp_type->from_string("1435881600000"), timestamp_type->decompose(tp)));
-    BOOST_REQUIRE(timestamp_type->equal(timestamp_type->from_string("2015-07-03+0000"), timestamp_type->decompose(tp)));
-    BOOST_REQUIRE(timestamp_type->equal(timestamp_type->from_string("2015-07-03-00"), timestamp_type->decompose(tp)));
-    BOOST_REQUIRE(timestamp_type->equal(timestamp_type->from_string("2015-07-03 00:00+0000"), timestamp_type->decompose(tp)));
-    BOOST_REQUIRE(timestamp_type->equal(timestamp_type->from_string("2015-07-03 01:00:00+0000"), timestamp_type->decompose(tp + 1h)));
-    BOOST_REQUIRE(timestamp_type->equal(timestamp_type->from_string("2015-07-03 01:02:03.123+0000"), timestamp_type->decompose(tp + 123ms + 1h + 2min + 3s)));
-    BOOST_REQUIRE(timestamp_type->equal(timestamp_type->from_string("2015-7-3 1:2:3.123+0000"), timestamp_type->decompose(tp + 123ms + 1h + 2min + 3s)));
-    BOOST_REQUIRE(timestamp_type->equal(timestamp_type->from_string("2015-007-003 001:002:003.123+0000"), timestamp_type->decompose(tp + 123ms + 1h + 2min + 3s)));
-    BOOST_REQUIRE(timestamp_type->equal(timestamp_type->from_string("2015-007-003 001:002:003.1+0000"), timestamp_type->decompose(tp + 100ms + 1h + 2min + 3s)));
-    BOOST_REQUIRE(timestamp_type->equal(timestamp_type->from_string("2015-07-03 12:30:00+1230"), timestamp_type->decompose(tp)));
-    BOOST_REQUIRE(timestamp_type->equal(timestamp_type->from_string("2015-07-03 12:00:00+12"), timestamp_type->decompose(tp)));
-    BOOST_REQUIRE(timestamp_type->equal(timestamp_type->from_string("2015-07-03 12:30:00+12:30"), timestamp_type->decompose(tp)));
-    BOOST_REQUIRE(timestamp_type->equal(timestamp_type->from_string("2015-07-02 23:00-0100"), timestamp_type->decompose(tp)));
-    BOOST_REQUIRE(timestamp_type->equal(timestamp_type->from_string("2015-07-03T00:00+0000"), timestamp_type->decompose(tp)));
-    BOOST_REQUIRE(timestamp_type->equal(timestamp_type->from_string("2015-07-03T01:00:00+0000"), timestamp_type->decompose(tp + 1h)));
-    BOOST_REQUIRE(timestamp_type->equal(timestamp_type->from_string("2015-07-03t00:00:00z"), timestamp_type->decompose(tp)));
-    BOOST_REQUIRE(timestamp_type->equal(timestamp_type->from_string("2015-07-03T00:00:00Z"), timestamp_type->decompose(tp)));
-    BOOST_REQUIRE(timestamp_type->equal(timestamp_type->from_string("2015-07-03T00:00:00.123+0000"), timestamp_type->decompose(tp + 123ms)));
-    BOOST_REQUIRE(timestamp_type->equal(timestamp_type->from_string("2015-07-03T12:30:00+1230"), timestamp_type->decompose(tp)));
-    BOOST_REQUIRE(timestamp_type->equal(timestamp_type->from_string("2015-07-02T23:00-0100"), timestamp_type->decompose(tp)));
+    BOOST_REQUIRE(timestamp_type->equal(timestamp_type->from_string("1435881600000"), serialized(tp)));
+    BOOST_REQUIRE(timestamp_type->equal(timestamp_type->from_string("2015-07-03+0000"), serialized(tp)));
+    BOOST_REQUIRE(timestamp_type->equal(timestamp_type->from_string("2015-07-03-00"), serialized(tp)));
+    BOOST_REQUIRE(timestamp_type->equal(timestamp_type->from_string("2015-07-03 00:00+0000"), serialized(tp)));
+    BOOST_REQUIRE(timestamp_type->equal(timestamp_type->from_string("2015-07-03 01:00:00+0000"), serialized(tp + 1h)));
+    BOOST_REQUIRE(timestamp_type->equal(timestamp_type->from_string("2015-07-03 01:02:03.123+0000"), serialized(tp + 123ms + 1h + 2min + 3s)));
+    BOOST_REQUIRE(timestamp_type->equal(timestamp_type->from_string("2015-7-3 1:2:3.123+0000"), serialized(tp + 123ms + 1h + 2min + 3s)));
+    BOOST_REQUIRE(timestamp_type->equal(timestamp_type->from_string("2015-007-003 001:002:003.123+0000"), serialized(tp + 123ms + 1h + 2min + 3s)));
+    BOOST_REQUIRE(timestamp_type->equal(timestamp_type->from_string("2015-007-003 001:002:003.1+0000"), serialized(tp + 100ms + 1h + 2min + 3s)));
+    BOOST_REQUIRE(timestamp_type->equal(timestamp_type->from_string("2015-07-03 12:30:00+1230"), serialized(tp)));
+    BOOST_REQUIRE(timestamp_type->equal(timestamp_type->from_string("2015-07-03 12:00:00+12"), serialized(tp)));
+    BOOST_REQUIRE(timestamp_type->equal(timestamp_type->from_string("2015-07-03 12:30:00+12:30"), serialized(tp)));
+    BOOST_REQUIRE(timestamp_type->equal(timestamp_type->from_string("2015-07-02 23:00-0100"), serialized(tp)));
+    BOOST_REQUIRE(timestamp_type->equal(timestamp_type->from_string("2015-07-03T00:00+0000"), serialized(tp)));
+    BOOST_REQUIRE(timestamp_type->equal(timestamp_type->from_string("2015-07-03T01:00:00+0000"), serialized(tp + 1h)));
+    BOOST_REQUIRE(timestamp_type->equal(timestamp_type->from_string("2015-07-03t00:00:00z"), serialized(tp)));
+    BOOST_REQUIRE(timestamp_type->equal(timestamp_type->from_string("2015-07-03T00:00:00Z"), serialized(tp)));
+    BOOST_REQUIRE(timestamp_type->equal(timestamp_type->from_string("2015-07-03T00:00:00.123+0000"), serialized(tp + 123ms)));
+    BOOST_REQUIRE(timestamp_type->equal(timestamp_type->from_string("2015-07-03T12:30:00+1230"), serialized(tp)));
+    BOOST_REQUIRE(timestamp_type->equal(timestamp_type->from_string("2015-07-02T23:00-0100"), serialized(tp)));
 
-    BOOST_REQUIRE_EQUAL(timestamp_type->to_string(timestamp_type->decompose(tp)), "2015-07-03T00:00:00");
+    BOOST_REQUIRE_EQUAL(timestamp_type->to_string(serialized(tp)), "2015-07-03T00:00:00");
 
     auto now = time(nullptr);
     ::tm local_now;
@@ -290,9 +290,9 @@ void test_timestamp_like_string_conversions(data_type timestamp_type) {
     char buf[100];
     db_clock::time_point now_tp(db_clock::duration(now * 1000));
     strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S%z", &local_now);
-    BOOST_REQUIRE(timestamp_type->equal(timestamp_type->from_string(buf), timestamp_type->decompose(now_tp)));
+    BOOST_REQUIRE(timestamp_type->equal(timestamp_type->from_string(buf), serialized(now_tp)));
     strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", &local_now);
-    BOOST_REQUIRE(timestamp_type->equal(timestamp_type->from_string(buf), timestamp_type->decompose(now_tp)));
+    BOOST_REQUIRE(timestamp_type->equal(timestamp_type->from_string(buf), serialized(now_tp)));
 
     struct tm dst = { 0 };
     dst.tm_isdst = -1;
@@ -304,13 +304,13 @@ void test_timestamp_like_string_conversions(data_type timestamp_type) {
     dst.tm_sec = 5;
     auto dst_jan = db_clock::from_time_t(mktime(&dst));
     strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", &dst);
-    BOOST_REQUIRE(timestamp_type->equal(timestamp_type->from_string(buf), timestamp_type->decompose(dst_jan)));
+    BOOST_REQUIRE(timestamp_type->equal(timestamp_type->from_string(buf), serialized(dst_jan)));
 
     dst.tm_isdst = -1;
     dst.tm_mon = 6 - 1;
     auto dst_jun = db_clock::from_time_t(mktime(&dst));
     strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", &dst);
-    BOOST_REQUIRE(timestamp_type->equal(timestamp_type->from_string(buf), timestamp_type->decompose(dst_jun)));
+    BOOST_REQUIRE(timestamp_type->equal(timestamp_type->from_string(buf), serialized(dst_jun)));
 
     test_parsing_fails(timestamp_type, "something");
     test_parsing_fails(timestamp_type, "2001-99-01");
@@ -329,25 +329,25 @@ BOOST_AUTO_TEST_CASE(test_date_string_conversions) {
 }
 
 BOOST_AUTO_TEST_CASE(test_boolean_type_string_conversions) {
-    BOOST_REQUIRE(boolean_type->equal(boolean_type->from_string(""), boolean_type->decompose(false)));
-    BOOST_REQUIRE(boolean_type->equal(boolean_type->from_string("false"), boolean_type->decompose(false)));
-    BOOST_REQUIRE(boolean_type->equal(boolean_type->from_string("fAlSe"), boolean_type->decompose(false)));
-    BOOST_REQUIRE(boolean_type->equal(boolean_type->from_string("true"), boolean_type->decompose(true)));
-    BOOST_REQUIRE(boolean_type->equal(boolean_type->from_string("tRue"), boolean_type->decompose(true)));
+    BOOST_REQUIRE(boolean_type->equal(boolean_type->from_string(""), serialized(false)));
+    BOOST_REQUIRE(boolean_type->equal(boolean_type->from_string("false"), serialized(false)));
+    BOOST_REQUIRE(boolean_type->equal(boolean_type->from_string("fAlSe"), serialized(false)));
+    BOOST_REQUIRE(boolean_type->equal(boolean_type->from_string("true"), serialized(true)));
+    BOOST_REQUIRE(boolean_type->equal(boolean_type->from_string("tRue"), serialized(true)));
 
-    BOOST_REQUIRE_EQUAL(boolean_type->to_string(boolean_type->decompose(false)), "false");
-    BOOST_REQUIRE_EQUAL(boolean_type->to_string(boolean_type->decompose(true)), "true");
+    BOOST_REQUIRE_EQUAL(boolean_type->to_string(serialized(false)), "false");
+    BOOST_REQUIRE_EQUAL(boolean_type->to_string(serialized(true)), "true");
     BOOST_REQUIRE_EQUAL(boolean_type->to_string(bytes()), "");
 }
 
 template<typename T>
 void test_floating_type_compare(data_type t)
 {
-    auto nan = t->decompose(std::numeric_limits<T>::quiet_NaN());
-    auto pinf = t->decompose(std::numeric_limits<T>::infinity());
-    auto ninf = t->decompose(-std::numeric_limits<T>::infinity());
-    auto pzero = t->decompose(T(0.));
-    auto nzero = t->decompose(T(-0.));
+    auto nan = serialized(std::numeric_limits<T>::quiet_NaN());
+    auto pinf = serialized(std::numeric_limits<T>::infinity());
+    auto ninf = serialized(-std::numeric_limits<T>::infinity());
+    auto pzero = serialized(T(0.));
+    auto nzero = serialized(T(-0.));
 
     BOOST_REQUIRE(t->less(ninf, pinf));
     BOOST_REQUIRE(t->less(ninf, nan));
@@ -368,7 +368,7 @@ BOOST_AUTO_TEST_CASE(test_floating_types_compare) {
 
 template<typename T>
 void test_float_type_to_string(data_type t) {
-    auto v = t->decompose(T(42.1));
+    auto v = serialized(T(42.1));
     BOOST_REQUIRE_EQUAL(t->to_string(v), "42.1");
 }
 
@@ -382,10 +382,10 @@ BOOST_AUTO_TEST_CASE(test_duration_type_compare) {
 }
 
 BOOST_AUTO_TEST_CASE(test_varint) {
-    BOOST_REQUIRE(varint_type->equal(varint_type->from_string("-1"), varint_type->decompose(utils::multiprecision_int(-1))));
-    BOOST_REQUIRE(varint_type->equal(varint_type->from_string("255"), varint_type->decompose(utils::multiprecision_int(255))));
-    BOOST_REQUIRE(varint_type->equal(varint_type->from_string("1"), varint_type->decompose(utils::multiprecision_int(1))));
-    BOOST_REQUIRE(varint_type->equal(varint_type->from_string("0"), varint_type->decompose(utils::multiprecision_int(0))));
+    BOOST_REQUIRE(varint_type->equal(varint_type->from_string("-1"), serialized(utils::multiprecision_int(-1))));
+    BOOST_REQUIRE(varint_type->equal(varint_type->from_string("255"), serialized(utils::multiprecision_int(255))));
+    BOOST_REQUIRE(varint_type->equal(varint_type->from_string("1"), serialized(utils::multiprecision_int(1))));
+    BOOST_REQUIRE(varint_type->equal(varint_type->from_string("0"), serialized(utils::multiprecision_int(0))));
 
     BOOST_CHECK_EQUAL(value_cast<utils::multiprecision_int>(varint_type->deserialize(varint_type->from_string("-1"))),
                       utils::multiprecision_int(-1));
@@ -406,23 +406,23 @@ BOOST_AUTO_TEST_CASE(test_varint) {
     BOOST_REQUIRE(varint_type->equal(from_hex("001000"), from_hex("1000")));
     BOOST_REQUIRE(varint_type->equal(from_hex("ff9000"), from_hex("9000")));
 
-    BOOST_REQUIRE(varint_type->equal(from_hex("ff"), varint_type->decompose(utils::multiprecision_int(-1))));
+    BOOST_REQUIRE(varint_type->equal(from_hex("ff"), serialized(utils::multiprecision_int(-1))));
 
-    BOOST_REQUIRE(varint_type->equal(from_hex("00ff"), varint_type->decompose(utils::multiprecision_int(255))));
+    BOOST_REQUIRE(varint_type->equal(from_hex("00ff"), serialized(utils::multiprecision_int(255))));
 
     BOOST_CHECK_EQUAL(value_cast<utils::multiprecision_int>(varint_type->deserialize(from_hex("ff"))), utils::multiprecision_int(-1));
     BOOST_CHECK_EQUAL(value_cast<utils::multiprecision_int>(varint_type->deserialize(from_hex("00ff"))), utils::multiprecision_int(255));
 
-    BOOST_REQUIRE(!varint_type->equal(from_hex("00ff"), varint_type->decompose(utils::multiprecision_int(-1))));
-    BOOST_REQUIRE(!varint_type->equal(from_hex("ff"), varint_type->decompose(utils::multiprecision_int(255))));
+    BOOST_REQUIRE(!varint_type->equal(from_hex("00ff"), serialized(utils::multiprecision_int(-1))));
+    BOOST_REQUIRE(!varint_type->equal(from_hex("ff"), serialized(utils::multiprecision_int(255))));
 
-    BOOST_REQUIRE(varint_type->equal(from_hex("00deadbeef"), varint_type->decompose(utils::multiprecision_int("0xdeadbeef"))));
-    BOOST_REQUIRE(varint_type->equal(from_hex("00ffffffffffffffffffffffffffffffff"), varint_type->decompose(utils::multiprecision_int("340282366920938463463374607431768211455"))));
+    BOOST_REQUIRE(varint_type->equal(from_hex("00deadbeef"), serialized(utils::multiprecision_int("0xdeadbeef"))));
+    BOOST_REQUIRE(varint_type->equal(from_hex("00ffffffffffffffffffffffffffffffff"), serialized(utils::multiprecision_int("340282366920938463463374607431768211455"))));
 
     BOOST_CHECK_EQUAL(value_cast<utils::multiprecision_int>(varint_type->deserialize(from_hex("00deadbeef"))), utils::multiprecision_int("0xdeadbeef"));
     BOOST_CHECK_EQUAL(value_cast<utils::multiprecision_int>(varint_type->deserialize(from_hex("00ffffffffffffffffffffffffffffffff"))), utils::multiprecision_int("340282366920938463463374607431768211455"));
 
-    BOOST_REQUIRE_EQUAL(from_hex("80000000"), varint_type->decompose(utils::multiprecision_int(-2147483648)));
+    BOOST_REQUIRE_EQUAL(from_hex("80000000"), serialized(utils::multiprecision_int(-2147483648)));
 
     test_parsing_fails(varint_type, "1A");
 }
@@ -431,42 +431,42 @@ BOOST_AUTO_TEST_CASE(test_decimal) {
     auto bd = value_cast<big_decimal>(decimal_type->deserialize(decimal_type->from_string("-1")));
     BOOST_CHECK_EQUAL(bd.scale(), 0);
     BOOST_CHECK_EQUAL(bd.unscaled_value(), -1);
-    BOOST_CHECK_EQUAL(decimal_type->to_string(decimal_type->decompose(bd)), "-1");
+    BOOST_CHECK_EQUAL(decimal_type->to_string(serialized(bd)), "-1");
 
     bd = value_cast<big_decimal>(decimal_type->deserialize(decimal_type->from_string("-1.00")));
     BOOST_CHECK_EQUAL(bd.scale(), 2);
     BOOST_CHECK_EQUAL(bd.unscaled_value(), -100);
-    BOOST_CHECK_EQUAL(decimal_type->to_string(decimal_type->decompose(bd)), "-1");
+    BOOST_CHECK_EQUAL(decimal_type->to_string(serialized(bd)), "-1");
 
     bd = value_cast<big_decimal>(decimal_type->deserialize(decimal_type->from_string("123")));
     BOOST_CHECK_EQUAL(bd.scale(), 0);
     BOOST_CHECK_EQUAL(bd.unscaled_value(), 123);
-    BOOST_CHECK_EQUAL(decimal_type->to_string(decimal_type->decompose(bd)), "123");
+    BOOST_CHECK_EQUAL(decimal_type->to_string(serialized(bd)), "123");
 
     bd = value_cast<big_decimal>(decimal_type->deserialize(decimal_type->from_string("1.23e3")));
     BOOST_CHECK_EQUAL(bd.scale(), -1);
     BOOST_CHECK_EQUAL(bd.unscaled_value(), 123);
-    BOOST_CHECK_EQUAL(decimal_type->to_string(decimal_type->decompose(bd)), "1230");
+    BOOST_CHECK_EQUAL(decimal_type->to_string(serialized(bd)), "1230");
 
     bd = value_cast<big_decimal>(decimal_type->deserialize(decimal_type->from_string("1.23e+3")));
     BOOST_CHECK_EQUAL(bd.scale(), -1);
     BOOST_CHECK_EQUAL(bd.unscaled_value(), 123);
-    BOOST_CHECK_EQUAL(decimal_type->to_string(decimal_type->decompose(bd)), "1230");
+    BOOST_CHECK_EQUAL(decimal_type->to_string(serialized(bd)), "1230");
 
     bd = value_cast<big_decimal>(decimal_type->deserialize(decimal_type->from_string("1.23")));
     BOOST_CHECK_EQUAL(bd.scale(), 2);
     BOOST_CHECK_EQUAL(bd.unscaled_value(), 123);
-    BOOST_CHECK_EQUAL(decimal_type->to_string(decimal_type->decompose(bd)), "1.23");
+    BOOST_CHECK_EQUAL(decimal_type->to_string(serialized(bd)), "1.23");
 
     bd = value_cast<big_decimal>(decimal_type->deserialize(decimal_type->from_string("0.123")));
     BOOST_CHECK_EQUAL(bd.scale(), 3);
     BOOST_CHECK_EQUAL(bd.unscaled_value(), 123);
-    BOOST_CHECK_EQUAL(decimal_type->to_string(decimal_type->decompose(bd)), "0.123");
+    BOOST_CHECK_EQUAL(decimal_type->to_string(serialized(bd)), "0.123");
 
     bd = value_cast<big_decimal>(decimal_type->deserialize(decimal_type->from_string("0.00123")));
     BOOST_CHECK_EQUAL(bd.scale(), 5);
     BOOST_CHECK_EQUAL(bd.unscaled_value(), 123);
-    BOOST_CHECK_EQUAL(decimal_type->to_string(decimal_type->decompose(bd)), "0.00123");
+    BOOST_CHECK_EQUAL(decimal_type->to_string(serialized(bd)), "0.00123");
 
     BOOST_REQUIRE(decimal_type->equal(decimal_type->from_string("-1"), decimal_type->from_string("-1.00")));
     BOOST_REQUIRE(decimal_type->equal(decimal_type->from_string("1.23e5"), decimal_type->from_string("123000.0")));
@@ -527,7 +527,7 @@ BOOST_AUTO_TEST_CASE(test_tuple) {
         return native_type({std::get<0>(v), std::get<1>(v), std::get<2>(v)});
     };
     auto native_to_bytes = [t] (native_type v) {
-        return t->decompose(make_tuple_value(t, v));
+        return serialized(make_tuple_value(t, v));
     };
     auto bytes_to_native = [t] (bytes v) {
         return value_cast<native_type>(t->deserialize(v));
@@ -723,8 +723,8 @@ BOOST_AUTO_TEST_CASE(test_create_reversed_type) {
     BOOST_REQUIRE(ri->is_reversed());
     BOOST_REQUIRE(ri->is_value_compatible_with(*bytes_type));
     BOOST_REQUIRE(!ri->is_compatible_with(*bytes_type));
-    auto val_lt = bytes_type->decompose(data_value(bytes("a")));
-    auto val_gt = bytes_type->decompose(data_value(bytes("b")));
+    auto val_lt = serialized(bytes("a"));
+    auto val_gt = serialized(bytes("b"));
     auto straight_comp = bytes_type->compare(bytes_view(val_lt), bytes_view(val_gt));
     auto reverse_comp = ri->compare(bytes_view(val_lt), bytes_view(val_gt));
     BOOST_REQUIRE(straight_comp == -reverse_comp);
@@ -732,7 +732,7 @@ BOOST_AUTO_TEST_CASE(test_create_reversed_type) {
 
 BOOST_AUTO_TEST_CASE(test_reversed_type_to_string) {
     auto ri = reversed_type_impl::get_instance(int32_type);
-    auto v = ri->decompose(42);
+    auto v = data_value::make(ri, std::make_unique<maybe_empty<int>>(42)).serialize_nonnull();
     BOOST_REQUIRE_EQUAL(ri->to_string(v), "42");
 }
 
@@ -754,8 +754,8 @@ BOOST_AUTO_TEST_CASE(test_create_reverse_collection_type) {
     second_set.push_back(data_value(b1));
     second_set.push_back(data_value(b3));
 
-    auto bv1 = my_set_type->decompose(make_set_value(my_set_type, first_set));
-    auto bv2 = my_set_type->decompose(make_set_value(my_set_type, second_set));
+    auto bv1 = make_set_value(my_set_type, first_set).serialize_nonnull();
+    auto bv2 = make_set_value(my_set_type, second_set).serialize_nonnull();
 
     auto straight_comp = my_set_type->compare(bytes_view(bv1), bytes_view(bv2));
     auto reverse_comp = ri->compare(bytes_view(bv2), bytes_view(bv2));
@@ -771,8 +771,8 @@ BOOST_AUTO_TEST_CASE(test_parse_reversed_type) {
     BOOST_REQUIRE(ri->is_value_compatible_with(*int32_type));
     BOOST_REQUIRE(!ri->is_compatible_with(*int32_type));
 
-    auto val_lt = int32_type->decompose(1);
-    auto val_gt = int32_type->decompose(2);
+    auto val_lt = serialized(1);
+    auto val_gt = serialized(2);
     auto straight_comp = int32_type->compare(bytes_view(val_lt), bytes_view(val_gt));
     auto reverse_comp = ri->compare(bytes_view(val_lt), bytes_view(val_gt));
     BOOST_REQUIRE(straight_comp == -reverse_comp);
