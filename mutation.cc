@@ -83,7 +83,7 @@ void mutation::set_cell(const clustering_key_prefix& prefix, const bytes& name, 
     if (!column_def) {
         throw std::runtime_error(format("no column definition found for '{}'", name));
     }
-    return set_cell(prefix, *column_def, atomic_cell::make_live(*column_def->type, timestamp, column_def->type->decompose(value), ttl));
+    return set_cell(prefix, *column_def, atomic_cell::make_live(*column_def->type, timestamp, value.serialize_nonnull(), ttl));
 }
 
 void mutation::set_cell(const clustering_key_prefix& prefix, const column_definition& def, atomic_cell_or_collection&& value) {
