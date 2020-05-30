@@ -72,7 +72,7 @@ row_assertion::describe(schema_ptr schema) const {
         if (value.is_null()) {
             return format("{}=null", to_sstring(name));
         } else {
-            return format("{}=\"{}\"", to_sstring(name), def->type->to_string(def->type->decompose(value)));
+            return format("{}=\"{}\"", to_sstring(name), def->type->to_string(value.serialize_nonnull()));
         }
     })) + "}";
 }
