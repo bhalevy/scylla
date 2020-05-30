@@ -324,7 +324,7 @@ lists::setter_by_index::execute(mutation& m, const clustering_key_prefix& prefix
 
     auto ltype = static_cast<const list_type_impl*>(column.type.get());
     const data_value& eidx_dv = existing_list[idx].first;
-    bytes eidx = eidx_dv.type()->decompose(eidx_dv);
+    bytes eidx = eidx_dv.serialize_nonnull();
     collection_mutation_description mut;
     mut.cells.reserve(1);
     if (!value) {
