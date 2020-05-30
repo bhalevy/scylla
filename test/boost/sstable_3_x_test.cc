@@ -3939,7 +3939,7 @@ SEASTAR_THREAD_TEST_CASE(test_write_different_types) {
     mutation mut{s, key};
     clustering_key ckey = clustering_key::make_empty();
     mut.partition().apply_insert(*s, ckey, write_timestamp);
-    mut.set_cell(ckey, "asciival", data_value{"hello"}, write_timestamp);
+    mut.set_cell(ckey, "asciival", data_value{ascii_native_type{"hello"}}, write_timestamp);
     mut.set_cell(ckey, "bigintval", data_value{std::numeric_limits<int64_t>::max()}, write_timestamp);
     mut.set_cell(ckey, "blobval", data_value{bytes{'g', 'r', 'e', 'a', 't'}}, write_timestamp);
     mut.set_cell(ckey, "boolval", data_value{true}, write_timestamp);
