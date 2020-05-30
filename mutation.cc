@@ -60,7 +60,7 @@ void mutation::set_static_cell(const bytes& name, const data_value& value, api::
     if (!column_def->is_static()) {
         throw std::runtime_error(format("column '{}' is not static", name));
     }
-    partition().static_row().apply(*column_def, atomic_cell::make_live(*column_def->type, timestamp, column_def->type->decompose(value), ttl));
+    partition().static_row().apply(*column_def, atomic_cell::make_live(*column_def->type, timestamp, value.serialize_nonnull(), ttl));
 }
 
 void mutation::set_clustered_cell(const clustering_key& key, const bytes& name, const data_value& value,
