@@ -141,7 +141,7 @@ lists::value::from_serialized(bytes_view v, const list_type_impl& type, cql_seri
         elements.reserve(l.size());
         for (auto&& element : l) {
             // elements can be null in lists that represent a set of IN values
-            elements.push_back(element.is_null() ? bytes_opt() : bytes_opt(type.get_elements_type()->decompose(element)));
+            elements.push_back(element.serialize());
         }
         return value(std::move(elements));
     } catch (marshal_exception& e) {
