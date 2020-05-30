@@ -525,7 +525,7 @@ lists::discarder_by_index::execute(mutation& m, const clustering_key_prefix& pre
     }
     collection_mutation_description mut;
     const data_value& eidx_dv = existing_list[idx].first;
-    bytes eidx = eidx_dv.type()->decompose(eidx_dv);
+    bytes eidx = eidx_dv.serialize_nonnull();
     mut.cells.emplace_back(std::move(eidx), params.make_dead_cell());
     m.set_cell(prefix, column, mut.serialize(*column.type));
 }
