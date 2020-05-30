@@ -162,8 +162,7 @@ maps::value::from_serialized(const fragmented_temporary_buffer::view& fragmented
         auto m = value_cast<map_type_impl::native_type>(type.deserialize(value, sf));
         std::map<bytes, bytes, serialized_compare> map(type.get_keys_type()->as_less_comparator());
         for (auto&& e : m) {
-            map.emplace(type.get_keys_type()->decompose(e.first),
-                        type.get_values_type()->decompose(e.second));
+            map.emplace(e.first.serialize_nonnull(), e.second.serialize_nonnull());
         }
         return maps::value { std::move(map) };
       });
