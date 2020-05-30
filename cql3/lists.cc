@@ -486,8 +486,8 @@ lists::discarder::execute(mutation& m, const clustering_key_prefix& prefix, cons
                                 [ltype, value] (auto&& v) { return ltype->get_elements_type()->equal(*v, value); })
                                          != to_discard.end();
         };
-        bytes eidx = cell.first.type()->decompose(cell.first);
-        bytes value = cell.second.type()->decompose(cell.second);
+        bytes eidx = cell.first.serialize_nonnull();
+        bytes value = cell.second.serialize_nonnull();
         if (has_value(value)) {
             mnew.cells.emplace_back(std::move(eidx), params.make_dead_cell());
         }
