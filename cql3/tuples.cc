@@ -93,7 +93,7 @@ tuples::in_value::from_serialized(const fragmented_temporary_buffer::view& value
         std::vector<std::vector<bytes_opt>> elements;
         elements.reserve(l.size());
         for (auto&& e : l) {
-            elements.emplace_back(to_bytes_opt_vec(ttype->split(ttype->decompose(e))));
+            elements.emplace_back(to_bytes_opt_vec(ttype->split(e.serialize_nonnull())));
         }
         return tuples::in_value(elements);
       });
@@ -147,7 +147,7 @@ shared_ptr<terminal> tuples::in_marker::bind(const query_options& options) {
                 auto l = value_cast<list_type_impl::native_type>(type.deserialize(v, options.get_cql_serialization_format()));
 
                 for (auto&& element : l) {
-                    elem_type.validate(elem_type.decompose(element), options.get_cql_serialization_format());
+                    elem_type.validate(element.serialize_nonnull(), options.get_cql_serialization_format());
                 }
             });
         } catch (marshal_exception& e) {
