@@ -26,31 +26,31 @@ logging::logger mdclogger("metadata_collector");
 
 namespace sstables {
 
+void metadata_collector::convert(disk_array<uint32_t, disk_string<uint16_t>>&to, const bound_view& from) {
+    mdclogger.trace("{}: convert size={}", _name, from.prefix().size(_schema));
+    if (from.prefix().is_empty()) {
+        return;
+    }
+    for (auto value : from.prefix().components()) {
+        to.elements.push_back(disk_string<uint16_t>{bytes(value.data(), value.size())});
+    }
+}
+
 void metadata_collector::do_update_min_max_components(const clustering_key_prefix& key) {
-    auto may_grow = [] (std::vector<bytes_opt>& v, size_t target_size) {
-        if (target_size > v.size()) {
-            v.resize(target_size);
-        }
-    };
+    const bound_view::tri_compare cmp(_schema);
+    bool set_min = false;
 
-    auto clustering_key_size = _schema.clustering_key_size();
-    auto& min_seen = min_column_names();
-    auto& max_seen = max_column_names();
-    may_grow(min_seen, clustering_key_size);
-    may_grow(max_seen, clustering_key_size);
+    if (cmp(key, _min_bound) < 0) {
+        mdclogger.trace("{}: setting min_bound={} size={}", _name, key, key.size(_schema));
+        _min_clustering_key = make_lw_shared<clustering_key_prefix>(key);
+        _min_bound = bound_view(*_min_clustering_key, bound_kind::incl_start);
+        set_min = true;
+    }
 
-    auto& types = _schema.clustering_key_type()->types();
-    auto i = 0U;
-    for (auto& value : key.components()) {
-        auto& type = types[i];
-
-        if (!max_seen[i] || type->compare(value, max_seen[i].value()) > 0) {
-            max_seen[i] = bytes(value.data(), value.size());
-        }
-        if (!min_seen[i] || type->compare(value, min_seen[i].value()) < 0) {
-            min_seen[i] = bytes(value.data(), value.size());
-        }
-        i++;
+    if (cmp(key, _max_bound) > 0) {
+        mdclogger.trace("{}: setting max_bound={} size={}", _name, key, key.size(_schema));
+        _max_clustering_key = set_min ? _min_clustering_key : make_lw_shared<clustering_key_prefix>(key);
+        _max_bound = bound_view(*_max_clustering_key, bound_kind::incl_end);
     }
 }
 
