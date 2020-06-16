@@ -52,7 +52,9 @@ scheme identify_best_supported_scheme() {
     throw no_supported_schemes();
 }
 
-sstring hash_with_salt(const sstring& pass, const sstring& salt) {
+sstring hash_with_salt(std::string_view p, std::string_view s) {
+    sstring pass(p);
+    sstring salt(s);
     auto res = crypt_r(pass.c_str(), salt.c_str(), &tlcrypt);
     if (!res || (res[0] == '*')) {
         throw std::system_error(errno, std::system_category());
@@ -77,7 +79,7 @@ no_supported_schemes::no_supported_schemes()
         : std::runtime_error("No allowed hashing schemes are supported on this system") {
 }
 
-bool check(const sstring& pass, const sstring& salted_hash) {
+bool check(std::string_view pass, std::string_view salted_hash) {
     return detail::hash_with_salt(pass, salted_hash) == salted_hash;
 }
 

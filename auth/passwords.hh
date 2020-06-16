@@ -91,7 +91,7 @@ sstring generate_salt(RandomNumberEngine& g) {
 ///
 /// \throws \ref std::system_error when an unexpected implementation-specific error occurs.
 ///
-sstring hash_with_salt(const sstring& pass, const sstring& salt);
+sstring hash_with_salt(std::string_view pass, std::string_view salt);
 
 } // namespace detail
 
@@ -106,7 +106,7 @@ sstring hash_with_salt(const sstring& pass, const sstring& salt);
 /// \throws \ref std::system_error when the implementation-specific implementation fails to hash the cleartext.
 ///
 template <typename RandomNumberEngine>
-sstring hash(const sstring& pass, RandomNumberEngine& g) {
+sstring hash(std::string_view pass, RandomNumberEngine& g) {
     return detail::hash_with_salt(pass, detail::generate_salt(g));
 }
 
@@ -120,6 +120,6 @@ sstring hash(const sstring& pass, RandomNumberEngine& g) {
 ///
 /// \throws \ref std::system_error when an unexpected implementation-specific error occurs.
 ///
-bool check(const sstring& pass, const sstring& salted_hash);
+bool check(std::string_view pass, std::string_view salted_hash);
 
 } // namespace auth::passwords

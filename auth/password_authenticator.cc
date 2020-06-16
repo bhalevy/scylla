@@ -67,7 +67,7 @@ constexpr std::string_view password_authenticator_name("org.apache.cassandra.aut
 // name of the hash column.
 static constexpr std::string_view SALTED_HASH = "salted_hash";
 static constexpr std::string_view DEFAULT_USER_NAME = meta::DEFAULT_SUPERUSER_NAME;
-static const sstring DEFAULT_USER_PASSWORD = sstring(meta::DEFAULT_SUPERUSER_NAME);
+static constexpr std::string_view DEFAULT_USER_PASSWORD = meta::DEFAULT_SUPERUSER_NAME;
 
 static logging::logger plogger("password_authenticator");
 
