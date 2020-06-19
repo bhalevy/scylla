@@ -1063,7 +1063,7 @@ class dummy_file_impl : public file_impl {
         return make_ready_future<>();
     }
 
-    virtual subscription<directory_entry> list_directory(std::function<future<> (directory_entry de)> next) override {
+    virtual future<> list_directory(std::function<future<> (directory_entry de)> next) override {
         throw_with_backtrace<std::bad_function_call>();
     }
 

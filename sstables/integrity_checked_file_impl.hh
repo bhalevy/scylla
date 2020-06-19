@@ -81,7 +81,7 @@ public:
         return get_file_impl(_file)->dup();
     }
 
-    virtual subscription<directory_entry> list_directory(std::function<future<> (directory_entry de)> next) override {
+    virtual future<> list_directory(std::function<future<> (directory_entry de)> next) override {
         return get_file_impl(_file)->list_directory(next);
     }
 

@@ -48,7 +48,7 @@ public:
     virtual future<uint64_t> size(void) override;
     virtual future<> close() override;
     virtual std::unique_ptr<seastar::file_handle_impl> dup() override;
-    virtual subscription<directory_entry> list_directory(std::function<future<> (directory_entry de)> next) override;
+    virtual future<> list_directory(std::function<future<> (directory_entry de)> next) override;
     virtual future<temporary_buffer<uint8_t>> dma_read_bulk(uint64_t offset, size_t range_size, const io_priority_class& pc) override;
 };
 
@@ -224,7 +224,7 @@ traced_file_impl::dup() {
     return get_file_impl(_f)->dup();
 }
 
-subscription<directory_entry>
+future<>
 traced_file_impl::list_directory(std::function<future<> (directory_entry de)> next) {
     return get_file_impl(_f)->list_directory(std::move(next));
 }

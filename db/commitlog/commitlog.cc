@@ -1116,7 +1116,7 @@ db::commitlog::segment_manager::list_descriptors(sstring dirname) {
                 : _dirname(std::move(n)), _file(std::move(f)), _fname_prefix(std::move(fname_prefix)), _list_done(
                         _file.list_directory(
                                 std::bind(&helper::process, this,
-                                        std::placeholders::_1)).done()) {
+                                        std::placeholders::_1))) {
         }
 
         future<> process(directory_entry de) {
@@ -2130,7 +2130,7 @@ db::commitlog::read_log_file(const sstring& filename, const sstring& pfx, seasta
         f = make_checked_file(commit_error_handler, std::move(f));
         descriptor d(filename, pfx);
         auto w = make_lw_shared<work>(std::move(f), d, read_io_prio_class, off);
-        auto ret = w->s.listen(next).done();
+        auto ret = w->s.listen(next);
 
         return w->s.started().then(std::bind(&work::read_file, w.get())).then([w] {
             if (!w->failed) {

@@ -266,7 +266,7 @@ public:
     test_setup(file f, sstring path)
             : _f(std::move(f))
             , _path(path)
-            , _listing_done(_f.list_directory([this] (directory_entry de) { return _remove(de); }).done()) {
+            , _listing_done(_f.list_directory([this] (directory_entry de) { return _remove(de); })) {
     }
     ~test_setup() {
         // FIXME: discarded future.
