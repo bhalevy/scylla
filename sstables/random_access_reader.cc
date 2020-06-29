@@ -31,7 +31,7 @@ namespace sstables {
 
 extern logging::logger sstlog;
 
-future <temporary_buffer<char>> random_access_reader::read_exactly(size_t n) {
+future <temporary_buffer<char>> random_access_reader::read_exactly(size_t n) noexcept {
     return with_lock(_lock.for_read(), [this, n] {
         if (_closed) {
             return make_exception_future<temporary_buffer<char>>(std::runtime_error("reader closed"));
@@ -50,7 +50,7 @@ static future<> close_if_needed(std::unique_ptr<input_stream<char>> in) {
     return in->close().finally([in = std::move(in)] {});
 }
 
-future<> random_access_reader::seek(uint64_t pos) {
+future<> random_access_reader::seek(uint64_t pos) noexcept {
     return with_lock(_lock.for_write(), [this, pos] {
         if (_closed) {
             return make_exception_future<std::unique_ptr<input_stream<char>>>(std::runtime_error("reader closed"));
@@ -63,7 +63,7 @@ future<> random_access_reader::seek(uint64_t pos) {
     });
 }
 
-future<> random_access_reader::close() {
+future<> random_access_reader::close() noexcept {
     return with_lock(_lock.for_write(), [this] {
         if (_closed) {
             return make_exception_future<std::unique_ptr<input_stream<char>>>(std::runtime_error("reader already closed"));
@@ -89,7 +89,7 @@ input_stream<char> file_random_access_reader::open_at(uint64_t pos) {
     return make_file_input_stream(_file, pos, len, std::move(options));
 }
 
-future<> file_random_access_reader::close() {
+future<> file_random_access_reader::close() noexcept {
     return random_access_reader::close().finally([this] {
         return _file.close().handle_exception([save = _file](auto ep) {
             sstlog.warn("sstable close failed: {}", ep);
