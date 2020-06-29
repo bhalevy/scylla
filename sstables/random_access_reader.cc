@@ -40,15 +40,14 @@ static future<> close_if_needed(std::unique_ptr<input_stream<char>> in) {
     return in->close().finally([in = std::move(in)] {});
 }
 
-void random_access_reader::seek(uint64_t pos) {
-    if (_in) {
-        // Future is waited on indirectly in `close()` (via `_close_gate`).
-        // FIXME: error handling
-        (void)seastar::with_gate(_close_gate, [prev = std::move(_in)] () mutable {
-            return close_if_needed(std::move(prev));
-        });
-    }
-    set(open_at(pos));
+future<> random_access_reader::seek(uint64_t pos) {
+    return seastar::with_gate(_close_gate, [this, pos] {
+        auto tmp = std::make_unique<input_stream<char>>(open_at(pos));
+        std::swap(tmp, _in);
+        return make_ready_future<std::unique_ptr<input_stream<char>>>(std::move(tmp));
+    }).then([] (std::unique_ptr<input_stream<char>> prev) {
+        return close_if_needed(std::move(prev));
+    });
 }
 
 future<> random_access_reader::close() {

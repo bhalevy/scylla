@@ -44,7 +44,7 @@ protected:
 public:
     future <temporary_buffer<char>> read_exactly(size_t n);
 
-    void seek(uint64_t pos);
+    future<> seek(uint64_t pos);
 
     bool eof() const { return _in->eof(); }
 
