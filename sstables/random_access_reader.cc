@@ -21,6 +21,8 @@
 
 #include <exception>
 
+#include "seastar/core/iostream.hh"
+#include "seastar/core/do_with.hh"
 #include "sstables/random_access_reader.hh"
 #include "utils/disk-error-handler.hh"
 #include "log.hh"
@@ -30,7 +32,15 @@ namespace sstables {
 extern logging::logger sstlog;
 
 future <temporary_buffer<char>> random_access_reader::read_exactly(size_t n) {
-    return _in->read_exactly(n);
+    return with_lock(_lock.for_read(), [this, n] {
+        if (_closed) {
+            return make_exception_future<temporary_buffer<char>>(std::runtime_error("reader closed"));
+        }
+        if (!_in) {
+            return make_exception_future<temporary_buffer<char>>(std::runtime_error("reader not opened"));
+        }
+        return _in->read_exactly(n);
+    });
 }
 
 static future<> close_if_needed(std::unique_ptr<input_stream<char>> in) {
@@ -41,8 +51,11 @@ static future<> close_if_needed(std::unique_ptr<input_stream<char>> in) {
 }
 
 future<> random_access_reader::seek(uint64_t pos) {
-    return seastar::with_gate(_close_gate, [this, pos] {
-        auto tmp = std::make_unique<input_stream<char>>(open_at(pos));
+    return with_lock(_lock.for_write(), [this, pos] {
+        if (_closed) {
+            return make_exception_future<std::unique_ptr<input_stream<char>>>(std::runtime_error("reader closed"));
+        }
+        std::unique_ptr<input_stream<char>> tmp = std::make_unique<input_stream<char>>(open_at(pos));
         std::swap(tmp, _in);
         return make_ready_future<std::unique_ptr<input_stream<char>>>(std::move(tmp));
     }).then([] (std::unique_ptr<input_stream<char>> prev) {
@@ -51,7 +64,13 @@ future<> random_access_reader::seek(uint64_t pos) {
 }
 
 future<> random_access_reader::close() {
-    return _close_gate.close().then([prev = std::move(_in)] () mutable {
+    return with_lock(_lock.for_write(), [this] {
+        if (_closed) {
+            return make_exception_future<std::unique_ptr<input_stream<char>>>(std::runtime_error("reader already closed"));
+        }
+        _closed = true;
+        return make_ready_future<std::unique_ptr<input_stream<char>>>(std::move(_in));
+    }).then([] (std::unique_ptr<input_stream<char>> prev) {
         return close_if_needed(std::move(prev));
     });
 }

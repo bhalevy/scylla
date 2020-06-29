@@ -26,13 +26,17 @@
 #include <seastar/core/gate.hh>
 #include <seastar/core/iostream.hh>
 #include <seastar/core/temporary_buffer.hh>
+#include <seastar/core/rwlock.hh>
 #include "seastarx.hh"
 
 namespace sstables {
 
+class file_random_access_reader;
+
 class random_access_reader {
     std::unique_ptr <input_stream<char>> _in;
-    seastar::gate _close_gate;
+    seastar::rwlock _lock;
+    bool _closed = false;
 protected:
     virtual input_stream<char> open_at(uint64_t pos) = 0;
 
