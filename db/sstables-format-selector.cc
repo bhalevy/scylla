@@ -27,6 +27,7 @@
 #include "gms/feature_service.hh"
 #include "gms/versioned_value.hh"
 #include "db/system_keyspace.hh"
+#include "db/config.hh"
 
 namespace db {
 
@@ -45,7 +46,8 @@ sstables_format_selector::sstables_format_selector(gms::gossiper& g, sharded<gms
     : _gossiper(g)
     , _features(f)
     , _db(db)
-    , _mc_feature_listener(*this, sstables::sstable_version_types::mc) {
+    , _mx_feature_listener(*this, db.local().get_config().enable_sstables_md_format() ?
+            sstables::sstable_version_types::md : sstables::sstable_version_types::mc) {
 }
 
 future<> sstables_format_selector::maybe_select_format(sstables::sstable_version_types new_format) {
@@ -56,6 +58,7 @@ future<> sstables_format_selector::maybe_select_format(sstables::sstable_version
 
 future<> sstables_format_selector::do_maybe_select_format(sstables::sstable_version_types new_format) {
     return with_semaphore(_sem, 1, [this, new_format] {
+        logger.info("Maybe select format {}.  Current selected format is {}", to_string(new_format), to_string(_selected_format));
         if (new_format <= _selected_format) {
             return make_ready_future<bool>(false);
         }
@@ -74,7 +77,7 @@ future<> sstables_format_selector::do_maybe_select_format(sstables::sstable_vers
 future<> sstables_format_selector::start() {
     assert(this_shard_id() == 0);
     return read_sstables_format().then([this] {
-        _features.local().cluster_supports_mc_sstable().when_enabled(_mc_feature_listener);
+        _features.local().cluster_supports_mc_sstable().when_enabled(_mx_feature_listener);
         return make_ready_future<>();
     });
 }
@@ -87,6 +90,7 @@ future<> sstables_format_selector::read_sstables_format() {
     return db::system_keyspace::get_scylla_local_param(SSTABLE_FORMAT_PARAM_NAME).then([this] (std::optional<sstring> format_opt) {
         if (format_opt) {
             sstables::sstable_version_types format = sstables::from_string(*format_opt);
+            logger.info("Setting {} sstables format by local param", to_string(format));
             return select_format(format);
         }
         return make_ready_future<>();
