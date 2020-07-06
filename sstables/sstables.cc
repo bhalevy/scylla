@@ -1913,8 +1913,7 @@ class components_writer {
     sstable& _sst;
     const schema& _schema;
     file_writer& _out;
-    file_writer _index;
-    bool _index_needs_close;
+    std::unique_ptr<file_writer> _index;
     uint64_t _max_sstable_size;
     bool _tombstone_written;
     // Remember first and last keys, which we need for the summary file.
@@ -1939,10 +1938,9 @@ public:
     components_writer(sstable& sst, const schema& s, file_writer& out, uint64_t estimated_partitions, const sstable_writer_config&, const io_priority_class& pc);
     ~components_writer();
     components_writer(components_writer&& o) : _sst(o._sst), _schema(o._schema), _out(o._out), _index(std::move(o._index)),
-        _index_needs_close(o._index_needs_close), _max_sstable_size(o._max_sstable_size), _tombstone_written(o._tombstone_written),
+        _max_sstable_size(o._max_sstable_size), _tombstone_written(o._tombstone_written),
         _first_key(std::move(o._first_key)), _last_key(std::move(o._last_key)), _partition_key(std::move(o._partition_key)),
         _index_sampling_state(std::move(o._index_sampling_state)), _range_tombstones(std::move(o._range_tombstones)) {
-        o._index_needs_close = false;
     }
 
     void consume_new_partition(const dht::decorated_key& dk);
@@ -1971,7 +1969,7 @@ void maybe_add_summary_entry(summary& s, const dht::token& token, bytes_view key
 
 void components_writer::maybe_add_summary_entry(const dht::token& token, bytes_view key) {
     return sstables::maybe_add_summary_entry(_sst._components->summary, token, key, get_offset(),
-        _index.offset(), _index_sampling_state);
+        _index->offset(), _index_sampling_state);
 }
 
 // Returns offset into data component.
@@ -2005,12 +2003,11 @@ components_writer::components_writer(sstable& sst, const schema& s, file_writer&
     : _sst(sst)
     , _schema(s)
     , _out(out)
-    , _index(index_file_writer(sst, pc))
-    , _index_needs_close(true)
     , _max_sstable_size(cfg.max_sstable_size)
     , _tombstone_written(false)
     , _range_tombstones(s)
 {
+    _index = std::make_unique<file_writer>(index_file_writer(sst, pc));
     _sst._components->filter = utils::i_filter::get_filter(estimated_partitions, _schema.bloom_filter_fp_chance(), utils::filter_format::k_l_format);
     _sst._pi_write.desired_block_size = cfg.promoted_index_block_size;
     _sst._correctly_serialize_non_compound_range_tombstones = cfg.correctly_serialize_non_compound_range_tombstones;
@@ -2038,7 +2035,7 @@ void components_writer::consume_new_partition(const dht::decorated_key& dk) {
     // Write an index entry minus the "promoted index" (sample of columns)
     // part. We can only write that after processing the entire partition
     // and collecting the sample of columns.
-    write_index_header(_sst.get_version(), _index, p_key, _out.offset());
+    write_index_header(_sst.get_version(), *_index, p_key, _out.offset());
     _sst._pi_write.data = {};
     _sst._pi_write.numblocks = 0;
     _sst._pi_write.deltime.local_deletion_time = std::numeric_limits<int32_t>::max();
@@ -2128,7 +2125,7 @@ stop_iteration components_writer::consume_end_of_partition() {
             _out.offset() - _sst._pi_write.block_start_offset);
         _sst._pi_write.numblocks++;
     }
-    write_index_promoted(_sst.get_version(), _index, _sst._pi_write.data, _sst._pi_write.deltime,
+    write_index_promoted(_sst.get_version(), *_index, _sst._pi_write.data, _sst._pi_write.deltime,
             _sst._pi_write.numblocks);
     _sst._pi_write.data = {};
     _sst._pi_write.block_first_colname = {};
@@ -2162,8 +2159,8 @@ void components_writer::consume_end_of_stream() {
     // what if there is only one partition? what if it is empty?
     seal_summary(_sst._components->summary, std::move(_first_key), std::move(_last_key), _index_sampling_state);
 
-    _index_needs_close = false;
-    _index.close();
+    _index->close();
+    _index.reset();
 
     if (_sst.has_component(component_type::CompressionInfo)) {
         _sst._collector.add_compression_ratio(_sst._components->compression.compressed_file_length(), _sst._components->compression.uncompressed_file_length());
@@ -2175,9 +2172,9 @@ void components_writer::consume_end_of_stream() {
 }
 
 components_writer::~components_writer() {
-    if (_index_needs_close) {
+    if (_index) {
         try {
-            _index.close();
+            _index->close();
         } catch (...) {
             sstlog.error("components_writer failed to close file: {}", std::current_exception());
         }
