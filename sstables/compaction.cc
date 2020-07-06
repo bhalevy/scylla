@@ -1418,9 +1418,9 @@ get_fully_expired_sstables(column_family& cf, const std::vector<sstables::shared
     auto compacted_undeleted_gens = boost::copy_range<std::unordered_set<int64_t>>(cf.compacted_undeleted_sstables()
         | boost::adaptors::transformed(std::mem_fn(&sstables::sstable::generation)));
     auto has_undeleted_ancestor = [&compacted_undeleted_gens] (auto& candidate) {
-        // Get ancestors from metadata collector which is empty after restart. It works for this purpose because
+        // Get ancestors from sstable which is empty after restart. It works for this purpose because
         // we only need to check that a sstable compacted *in this instance* hasn't an ancestor undeleted.
-        return boost::algorithm::any_of(candidate->get_metadata_collector().ancestors(), [&compacted_undeleted_gens] (auto gen) {
+        return boost::algorithm::any_of(candidate->compaction_ancestors(), [&compacted_undeleted_gens] (auto gen) {
             return compacted_undeleted_gens.count(gen);
         });
     };

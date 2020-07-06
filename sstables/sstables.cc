@@ -1886,7 +1886,7 @@ create_sharding_metadata(schema_ptr schema, const dht::decorated_key& first_key,
 
 // In the beginning of the statistics file, there is a disk_hash used to
 // map each metadata type to its correspondent position in the file.
-void seal_statistics(sstable_version_types v, statistics& s, metadata_collector& collector,
+void seal_statistics(sstable_version_types v, statistics& s, metadata_collector& collector, const std::set<ancestors_metadata::type>& ancestors,
         const sstring partitioner, double bloom_filter_fp_chance, schema_ptr schema,
         const dht::decorated_key& first_key, const dht::decorated_key& last_key, const encoding_stats& enc_stats) {
     validation_metadata validation;
@@ -1898,6 +1898,9 @@ void seal_statistics(sstable_version_types v, statistics& s, metadata_collector&
     s.contents[metadata_type::Validation] = std::make_unique<validation_metadata>(std::move(validation));
 
     collector.construct_compaction(compaction);
+    if (!ancestors.empty()) {
+        compaction.ancestors.elements = utils::chunked_vector<uint32_t>(ancestors.begin(), ancestors.end());
+    }
     s.contents[metadata_type::Compaction] = std::make_unique<compaction_metadata>(std::move(compaction));
 
     collector.construct_stats(stats);
@@ -2167,7 +2170,7 @@ void components_writer::consume_end_of_stream() {
     }
 
     _sst.set_first_and_last_keys();
-    seal_statistics(_sst.get_version(), _sst._components->statistics, _sst._collector, _schema.get_partitioner().name(), _schema.bloom_filter_fp_chance(),
+    seal_statistics(_sst.get_version(), _sst._components->statistics, _sst._collector, _sst.compaction_ancestors(), _schema.get_partitioner().name(), _schema.bloom_filter_fp_chance(),
             _sst._schema, _sst.get_first_decorated_key(), _sst.get_last_decorated_key());
 }
 
@@ -2216,7 +2219,7 @@ sstable::write_scylla_metadata(const io_priority_class& pc, shard_id shard, ssta
     _components->scylla_metadata->data.set<scylla_metadata_type::RunIdentifier>(std::move(identifier));
     // Note: we write also an empty ancestors set as it indicates that the sstable was flushed from the memtable
     ancestors_metadata am;
-    auto ancestors = _collector.ancestors();
+    auto ancestors = compaction_ancestors();
     am.ancestors.elements = utils::chunked_vector<ancestors_metadata::type>(ancestors.begin(), ancestors.end());
     _components->scylla_metadata->data.set<scylla_metadata_type::Ancestors>(std::move(am));
 

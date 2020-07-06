@@ -305,8 +305,12 @@ public:
         return _marked_for_deletion == mark_for_deletion::marked;
     }
 
-    void add_ancestor(int64_t generation) {
-        _collector.add_ancestor(generation);
+    const std::set<ancestors_metadata::type>& compaction_ancestors() const noexcept {
+        return _compaction_ancestors;
+    }
+
+    void add_ancestor(ancestors_metadata::type generation) {
+        _compaction_ancestors.insert(generation);
     }
 
     // Returns true iff this sstable contains data which belongs to many shards.
@@ -471,6 +475,9 @@ private:
     // when writing a new sstable.
     metadata_collector _collector;
     column_stats _c_stats;
+    // _compaction_ancestors track which sstable generations were used to generate this sstable.
+    // it is then used to generate the ancestors metadata in the statistics or scylla components.
+    std::set<ancestors_metadata::type> _compaction_ancestors;
     file _index_file;
     file _data_file;
     uint64_t _data_file_size;
