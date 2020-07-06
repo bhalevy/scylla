@@ -2214,6 +2214,11 @@ sstable::write_scylla_metadata(const io_priority_class& pc, shard_id shard, ssta
     _components->scylla_metadata->data.set<scylla_metadata_type::Sharding>(std::move(sm));
     _components->scylla_metadata->data.set<scylla_metadata_type::Features>(std::move(features));
     _components->scylla_metadata->data.set<scylla_metadata_type::RunIdentifier>(std::move(identifier));
+    // Note: we write also an empty ancestors set as it indicates that the sstable was flushed from the memtable
+    ancestors_metadata am;
+    auto ancestors = _collector.ancestors();
+    am.ancestors.elements = utils::chunked_vector<ancestors_metadata::type>(ancestors.begin(), ancestors.end());
+    _components->scylla_metadata->data.set<scylla_metadata_type::Ancestors>(std::move(am));
 
     write_simple<component_type::Scylla>(*_components->scylla_metadata, pc);
 }
@@ -3214,6 +3219,24 @@ sstable::compute_shards_for_this_sstable() const {
         rpras = sharder.next(*_schema);
     }
     return boost::copy_range<std::vector<unsigned>>(shards);
+}
+
+std::set<ancestors_metadata::type> sstable::get_ancestors_metadata() const {
+    std::set<ancestors_metadata::type> res;
+    if (get_version() < sstable_version_types::mc) {
+        auto ancestors = get_compaction_metadata().ancestors;
+        for (auto ancestor : ancestors.elements) {
+            res.insert(ancestor);
+        }
+    } else if (has_scylla_component()) {
+        auto opt_ancestors = _components->scylla_metadata->get_optional_ancestors();
+        if (opt_ancestors) {
+            for (auto ancestor : *opt_ancestors) {
+                res.insert(ancestor);
+            }
+        }
+    }
+    return res;
 }
 
 future<bool> sstable::has_partition_key(const utils::hashed_key& hk, const dht::decorated_key& dk) {

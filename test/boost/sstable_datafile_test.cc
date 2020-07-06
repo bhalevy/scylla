@@ -1607,10 +1607,19 @@ SEASTAR_TEST_CASE(check_compaction_ancestor_metadata) {
                 for (auto& ancestor : cm.ancestors.elements) {
                     ancestors.insert(ancestor);
                 }
+                BOOST_REQUIRE(ancestors.size() == 4);
                 BOOST_REQUIRE(ancestors.find(42) != ancestors.end());
                 BOOST_REQUIRE(ancestors.find(43) != ancestors.end());
                 BOOST_REQUIRE(ancestors.find(44) != ancestors.end());
                 BOOST_REQUIRE(ancestors.find(45) != ancestors.end());
+
+                BOOST_REQUIRE(sst->has_ancestors_metadata());
+                auto ancestors_metadata = sst->get_ancestors_metadata();
+                BOOST_REQUIRE(ancestors_metadata.size() == 4);
+                BOOST_REQUIRE(ancestors_metadata.find(42) != ancestors_metadata.end());
+                BOOST_REQUIRE(ancestors_metadata.find(43) != ancestors_metadata.end());
+                BOOST_REQUIRE(ancestors_metadata.find(44) != ancestors_metadata.end());
+                BOOST_REQUIRE(ancestors_metadata.find(45) != ancestors_metadata.end());
 
                 return make_ready_future<>();
             });

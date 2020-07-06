@@ -706,6 +706,13 @@ public:
         return _components->scylla_metadata->get_features();
     }
 
+    bool has_ancestors_metadata() const noexcept {
+        return get_version() < sstable_version_types::mc ||
+                (has_scylla_component() && _components->scylla_metadata->has_ancestors());
+    }
+
+    std::set<ancestors_metadata::type> get_ancestors_metadata() const;
+
     utils::UUID run_identifier() const {
         return _run_identifier;
     }
