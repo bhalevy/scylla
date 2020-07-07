@@ -2184,13 +2184,6 @@ sstable::write_scylla_metadata(const io_priority_class& pc, shard_id shard, ssta
     write_simple<component_type::Scylla>(*_components->scylla_metadata, pc);
 }
 
-void sstable::update_stats_on_end_of_stream()
-{
-    if (_c_stats.capped_local_deletion_time) {
-        _stats.on_capped_local_deletion_time();
-    }
-}
-
 void sstable_writer_k_l::prepare_file_writer()
 {
     file_output_stream_options options;
@@ -2356,7 +2349,9 @@ stop_iteration sstable_writer::consume_end_of_partition() {
 }
 
 void sstable_writer::consume_end_of_stream() {
-    _impl->_sst.update_stats_on_end_of_stream();
+    if (_impl->_sst._c_stats.capped_local_deletion_time) {
+        _impl->_sst.get_stats().on_capped_local_deletion_time();
+    }
     return _impl->consume_end_of_stream();
 }
 
