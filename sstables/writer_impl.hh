@@ -24,6 +24,7 @@
 #include "sstables.hh"
 #include "schema_fwd.hh"
 #include "mutation_fragment.hh"
+#include "metadata_collector.hh"
 
 namespace sstables {
 
@@ -32,6 +33,10 @@ struct sstable_writer::writer_impl {
     const schema& _schema;
     const io_priority_class& _pc;
     const sstable_writer_config _cfg;
+    // NOTE: _collector and _c_stats are used to generation of statistics file
+    // when writing a new sstable.
+    metadata_collector _collector;
+    column_stats _c_stats;
 
     writer_impl(sstable& sst, const schema& schema, const io_priority_class& pc, const sstable_writer_config& cfg)
         : _sst(sst)

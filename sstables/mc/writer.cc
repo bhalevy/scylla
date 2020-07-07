@@ -941,7 +941,7 @@ void writer::consume_new_partition(const dht::decorated_key& dk) {
     maybe_add_summary_entry(dk.token(), bytes_view(*_partition_key));
 
     _sst._components->filter->add(bytes_view(*_partition_key));
-    _sst.get_metadata_collector().add_key(bytes_view(*_partition_key));
+    _collector.add_key(bytes_view(*_partition_key));
 
     auto p_key = disk_string_view<uint16_t>();
     p_key.value = bytes_view(*_partition_key);
@@ -1258,8 +1258,8 @@ void writer::write_clustered(const clustering_row& clustered_row, uint64_t prev_
 
     // Collect statistics
     if (_schema.clustering_key_size()) {
-        column_name_helper::min_max_components(_schema, _sst.get_metadata_collector().min_column_names(),
-            _sst.get_metadata_collector().max_column_names(), clustered_row.key().components());
+        column_name_helper::min_max_components(_schema, _collector.min_column_names(),
+            _collector.max_column_names(), clustered_row.key().components());
     }
     collect_row_stats(_data_writer->offset() - current_pos, &clustered_row.key());
 }
@@ -1339,8 +1339,8 @@ void writer::write_clustered(const rt_marker& marker, uint64_t prev_row_size) {
     flush_tmp_bufs();
 
     if (_schema.clustering_key_size()) {
-        column_name_helper::min_max_components(_schema, _sst.get_metadata_collector().min_column_names(),
-            _sst.get_metadata_collector().max_column_names(), marker.clustering.components());
+        column_name_helper::min_max_components(_schema, _collector.min_column_names(),
+            _collector.max_column_names(), marker.clustering.components());
     }
 }
 
@@ -1373,7 +1373,7 @@ stop_iteration writer::consume_end_of_partition() {
 
 
     // update is about merging column_stats with the data being stored by collector.
-    _sst.get_metadata_collector().update(std::move(_c_stats));
+    _collector.update(std::move(_c_stats));
     _c_stats.reset();
 
     if (!_first_key) {
@@ -1394,14 +1394,14 @@ void writer::consume_end_of_stream() {
     seal_summary(_sst._components->summary, std::move(_first_key), std::move(_last_key), _index_sampling_state);
 
     if (_sst.has_component(component_type::CompressionInfo)) {
-        _sst.get_metadata_collector().add_compression_ratio(_sst._components->compression.compressed_file_length(), _sst._components->compression.uncompressed_file_length());
+        _collector.add_compression_ratio(_sst._components->compression.compressed_file_length(), _sst._components->compression.uncompressed_file_length());
     }
 
     close_writer(_index_writer);
     _sst.set_first_and_last_keys();
 
     _sst._components->statistics.contents[metadata_type::Serialization] = std::make_unique<serialization_header>(std::move(_sst_schema.header));
-    seal_statistics(_sst.get_version(), _sst._components->statistics, _sst.get_metadata_collector(), _sst.compaction_ancestors(),
+    seal_statistics(_sst.get_version(), _sst._components->statistics, _collector, _sst.compaction_ancestors(),
         _sst._schema->get_partitioner().name(), _schema.bloom_filter_fp_chance(),
         _sst._schema, _sst.get_first_decorated_key(), _sst.get_last_decorated_key(), _enc_stats);
     close_data_writer();
