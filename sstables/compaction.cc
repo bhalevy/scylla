@@ -476,6 +476,7 @@ protected:
         sstable_writer_config cfg = _cf.get_sstables_manager().configure_writer();
         cfg.max_sstable_size = _max_sstable_size;
         cfg.run_identifier = _run_identifier;
+        cfg.replay_position = _rp;
         return cfg;
     }
 
