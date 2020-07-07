@@ -2302,7 +2302,6 @@ sstable_writer_k_l::sstable_writer_k_l(sstable& sst, const schema& s, uint64_t e
     _index = std::make_unique<file_writer>(index_file_writer(sst, pc));
     _sst._components->filter = utils::i_filter::get_filter(estimated_partitions, _schema.bloom_filter_fp_chance(), utils::filter_format::k_l_format);
     _pi_write.desired_block_size = cfg.promoted_index_block_size;
-    _sst._correctly_serialize_non_compound_range_tombstones = cfg.correctly_serialize_non_compound_range_tombstones;
     _index_sampling_state.summary_byte_cost = cfg.summary_byte_cost;
 
     prepare_summary(_sst._components->summary, estimated_partitions, _schema.min_index_interval());
