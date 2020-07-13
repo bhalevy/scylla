@@ -3237,7 +3237,7 @@ static sstable_assertions validate_read(schema_ptr s, const std::filesystem::pat
 static constexpr api::timestamp_type write_timestamp = 1525385507816568;
 static constexpr gc_clock::time_point write_time_point = gc_clock::time_point{} + gc_clock::duration{1525385507};
 
-static void validate_stats_metadata(schema_ptr s, sstable_assertions written_sst, sstring table_name) {
+static void validate_stats_metadata(schema_ptr s, sstable_assertions& written_sst, sstring table_name, bool validate_min_max_column_names = true) {
     auto orig_sst = written_sst.get_env().reusable_sst(s, get_write_test_path(table_name), 1, sstable_version_types::mc).get0();
 
     const auto& orig_stats = orig_sst->get_stats_metadata();
@@ -3256,12 +3256,28 @@ static void validate_stats_metadata(schema_ptr s, sstable_assertions written_sst
     BOOST_REQUIRE_EQUAL(orig_stats.max_local_deletion_time, written_stats.max_local_deletion_time);
     BOOST_REQUIRE_EQUAL(orig_stats.min_ttl, written_stats.min_ttl);
     BOOST_REQUIRE_EQUAL(orig_stats.max_ttl, written_stats.max_ttl);
-    BOOST_REQUIRE(orig_stats.min_column_names.elements == written_stats.min_column_names.elements);
-    BOOST_REQUIRE(orig_stats.max_column_names.elements == written_stats.max_column_names.elements);
+    if (validate_min_max_column_names) {
+        // man/max column name tracking of tombstones was changed for md format
+        BOOST_REQUIRE(orig_stats.min_column_names.elements == written_stats.min_column_names.elements);
+        BOOST_REQUIRE(orig_stats.max_column_names.elements == written_stats.max_column_names.elements);
+    }
     BOOST_REQUIRE_EQUAL(orig_stats.columns_count, written_stats.columns_count);
     BOOST_REQUIRE_EQUAL(orig_stats.rows_count, written_stats.rows_count);
     check_estimated_histogram(orig_stats.estimated_partition_size, written_stats.estimated_partition_size);
     check_estimated_histogram(orig_stats.estimated_cells_count, written_stats.estimated_cells_count);
+}
+
+static void check_min_max_column_names(sstable_assertions& written_sst, std::vector<bytes> min_components, std::vector<bytes> max_components) {
+    const auto& st = written_sst.get_stats_metadata();
+    BOOST_TEST_MESSAGE(fmt::format("min {}/{} max {}/{}", st.min_column_names.elements.size(), min_components.size(), st.max_column_names.elements.size(), max_components.size()));
+    BOOST_REQUIRE(st.min_column_names.elements.size() == min_components.size());
+    for (auto i = 0U; i < st.min_column_names.elements.size(); i++) {
+        BOOST_REQUIRE(min_components[i] == st.min_column_names.elements[i].value);
+    }
+    BOOST_REQUIRE(st.max_column_names.elements.size() == max_components.size());
+    for (auto i = 0U; i < st.max_column_names.elements.size(); i++) {
+        BOOST_REQUIRE(max_components[i] == st.max_column_names.elements[i].value);
+    }
 }
 
 SEASTAR_THREAD_TEST_CASE(test_write_static_row) {
@@ -4112,7 +4128,8 @@ SEASTAR_THREAD_TEST_CASE(test_write_adjacent_range_tombstones) {
 
     tmpdir tmp = write_and_compare_sstables(s, mt, table_name);
     auto written_sst = validate_read(s, tmp.path(), {mut});
-    validate_stats_metadata(s, written_sst, table_name);
+    validate_stats_metadata(s, written_sst, table_name, false);
+    check_min_max_column_names(written_sst, {"aaa"}, {"aaa"});
 }
 
 // Test the case when subsequent RTs have a common clustering but those bounds are both exclusive
@@ -4230,7 +4247,8 @@ SEASTAR_THREAD_TEST_CASE(test_write_mixed_rows_and_range_tombstones) {
 
     tmpdir tmp = write_and_compare_sstables(s, mt, table_name);
     auto written_sst = validate_read(s, tmp.path(), {mut});
-    validate_stats_metadata(s, written_sst, table_name);
+    validate_stats_metadata(s, written_sst, table_name, false);
+    check_min_max_column_names(written_sst, {"aaa"}, {"ddd"});
 }
 
 SEASTAR_THREAD_TEST_CASE(test_write_many_range_tombstones) {
@@ -4320,7 +4338,8 @@ SEASTAR_THREAD_TEST_CASE(test_write_adjacent_range_tombstones_with_rows) {
 
     tmpdir tmp = write_and_compare_sstables(s, mt, table_name);
     auto written_sst = validate_read(s, tmp.path(), {mut});
-    validate_stats_metadata(s, written_sst, table_name);
+    validate_stats_metadata(s, written_sst, table_name, false);
+    check_min_max_column_names(written_sst, {"aaa"}, {"aaa"});
 }
 
 SEASTAR_THREAD_TEST_CASE(test_write_range_tombstone_same_start_with_row) {
@@ -4359,7 +4378,8 @@ SEASTAR_THREAD_TEST_CASE(test_write_range_tombstone_same_start_with_row) {
 
     tmpdir tmp = write_and_compare_sstables(s, mt, table_name);
     auto written_sst = validate_read(s, tmp.path(), {mut});
-    validate_stats_metadata(s, written_sst, table_name);
+    validate_stats_metadata(s, written_sst, table_name, false);
+    check_min_max_column_names(written_sst, {"aaa", "bbb"}, {"aaa"});
 }
 
 SEASTAR_THREAD_TEST_CASE(test_write_range_tombstone_same_end_with_row) {
@@ -4398,7 +4418,8 @@ SEASTAR_THREAD_TEST_CASE(test_write_range_tombstone_same_end_with_row) {
 
     tmpdir tmp = write_and_compare_sstables(s, mt, table_name);
     auto written_sst = validate_read(s, tmp.path(), {mut});
-    validate_stats_metadata(s, written_sst, table_name);
+    validate_stats_metadata(s, written_sst, table_name, false);
+    check_min_max_column_names(written_sst, {"aaa"}, {"aaa", "bbb"});
 }
 
 SEASTAR_THREAD_TEST_CASE(test_write_overlapped_start_range_tombstones) {
@@ -4498,7 +4519,8 @@ SEASTAR_THREAD_TEST_CASE(test_write_two_non_adjacent_range_tombstones) {
 
     tmpdir tmp = write_and_compare_sstables(s, mt, table_name);
     auto written_sst = validate_read(s, tmp.path(), {mut});
-    validate_stats_metadata(s, written_sst, table_name);
+    validate_stats_metadata(s, written_sst, table_name, false);
+    check_min_max_column_names(written_sst, {"aaa"}, {"aaa"});
 }
 
 // The resulting files are supposed to be identical to the files

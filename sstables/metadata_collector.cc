@@ -21,13 +21,14 @@
 
 #include "log.hh"
 #include "metadata_collector.hh"
+#include "range_tombstone.hh"
 
 logging::logger mdclogger("metadata_collector");
 
 namespace sstables {
 
 void metadata_collector::convert(disk_array<uint32_t, disk_string<uint16_t>>&to, const bound_view& from) {
-    mdclogger.trace("{}: convert size={}", _name, from.prefix().size(_schema));
+    mdclogger.trace("{}: convert: {} size={}", _name, from.prefix(), from.prefix().size(_schema));
     if (from.prefix().is_empty()) {
         return;
     }
@@ -52,6 +53,53 @@ void metadata_collector::do_update_min_max_components(const clustering_key_prefi
         _max_clustering_key = set_min ? _min_clustering_key : make_lw_shared<clustering_key_prefix>(key);
         _max_bound = bound_view(*_max_clustering_key, bound_kind::incl_end);
     }
+}
+
+void metadata_collector::do_update_min_max_components(const bound_view& v) {
+    const bound_view::tri_compare cmp(_schema);
+    bool set_min = false;
+
+    if (cmp(v, _min_bound) < 0) {
+        mdclogger.trace("{}: setting min_bound={} size={}", _name, v.prefix(), v.prefix().size(_schema));
+        _min_clustering_key = make_lw_shared<clustering_key_prefix>(v.prefix());
+        _min_bound = bound_view(*_min_clustering_key, v.kind());
+        set_min = true;
+    }
+
+    if (cmp(v, _max_bound) > 0) {
+        mdclogger.trace("{}: setting max_bound={} size={}", _name, v.prefix(), v.prefix().size(_schema));
+        _max_clustering_key = set_min ? _min_clustering_key : make_lw_shared<clustering_key_prefix>(v.prefix());
+        _max_bound = bound_view(*_max_clustering_key, v.kind());
+    }
+}
+
+void metadata_collector::do_update_min_max_components(const range_tombstone& rt) {
+    if (!rt.start) {
+        mdclogger.trace("{}: setting min_bound=bottom", _name);
+        _min_clustering_key = nullptr;
+        _min_bound = bound_view::bottom();
+    } else {
+        mdclogger.trace("{}: updating rt.start", _name);
+        do_update_min_max_components(bound_view(rt.start, rt.start_kind));
+    }
+
+    if (!rt.end) {
+        mdclogger.trace("{}: setting max_bound=top", _name);
+        _max_clustering_key = nullptr;
+        _max_bound = bound_view::top();
+    } else {
+        mdclogger.trace("{}: updating rt.end", _name);
+        do_update_min_max_components(bound_view(rt.end, rt.end_kind));
+    }
+}
+
+void metadata_collector::do_disable_min_max_components() noexcept {
+    mdclogger.trace("{}: do_disable_min_max_components", _name);
+    _min_clustering_key = nullptr;
+    _max_clustering_key = nullptr;
+    _min_bound = bound_view::bottom();
+    _max_bound = bound_view::top();
+    _has_min_max_clustering_keys = false;
 }
 
 } // namespace sstables

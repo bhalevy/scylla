@@ -50,6 +50,8 @@
 
 #include <algorithm>
 
+class range_tombstone;
+
 namespace sstables {
 
 static constexpr int TOMBSTONE_HISTOGRAM_BIN_SIZE = 100;
@@ -182,6 +184,9 @@ private:
     void convert(disk_array<uint32_t, disk_string<uint16_t>>&to, const bound_view& from);
 
     void do_update_min_max_components(const clustering_key_prefix& key);
+    void do_update_min_max_components(const bound_view& v);
+    void do_update_min_max_components(const range_tombstone& rt);
+    void do_disable_min_max_components() noexcept;
 public:
     explicit metadata_collector(const schema& schema, sstring name)
         : _schema(schema)
@@ -250,6 +255,18 @@ public:
         }
     }
 
+    void update_min_max_components(const range_tombstone& rt) {
+        if (_has_min_max_clustering_keys) {
+            do_update_min_max_components(rt);
+        }
+    }
+
+    void disable_min_max_components() noexcept {
+        if (_has_min_max_clustering_keys) {
+            do_disable_min_max_components();
+        }
+    }
+
     void update(column_stats&& stats) {
         _timestamp_tracker.update(stats.timestamp_tracker);
         _local_deletion_time_tracker.update(stats.local_deletion_time_tracker);
@@ -284,8 +301,10 @@ public:
         m.estimated_tombstone_drop_time = std::move(_estimated_tombstone_drop_time);
         m.sstable_level = _sstable_level;
         m.repaired_at = _repaired_at;
-        convert(m.min_column_names, _min_bound);
-        convert(m.max_column_names, _max_bound);
+        if (_has_min_max_clustering_keys) {
+            convert(m.min_column_names, _min_bound);
+            convert(m.max_column_names, _max_bound);
+        }
         m.has_legacy_counter_shards = _has_legacy_counter_shards;
         m.columns_count = _columns_count;
         m.rows_count = _rows_count;
