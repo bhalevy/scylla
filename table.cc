@@ -81,9 +81,14 @@ filter_sstable_for_reader_by_ck(std::vector<sstables::shared_sstable>&& sstables
         return sstables;
     }
 
-    // FIXME: Workaround for https://github.com/scylladb/scylla/issues/3552
+    // Consider filtering by min/max column_name metadata
+    // only if all sstables were written using the md format.
+    // Prior to that, min/max metadata was wrong and filtering was disabled as
+    // workaround for https://github.com/scylladb/scylla/issues/3552
     // and https://github.com/scylladb/scylla/issues/3553
-    const bool filtering_broken = true;
+    const bool filtering_broken = std::find_if(sstables.cbegin(), sstables.cend(), [] (const sstables::shared_sstable& sst) {
+            return sst->get_version() < sstables::sstable_version_types::md;
+        }) != sstables.cend();
 
     if (filtering_broken) {
          return sstables;
