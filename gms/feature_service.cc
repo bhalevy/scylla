@@ -100,7 +100,7 @@ feature_config feature_config_from_db_config(db::config& cfg, std::set<sstring> 
 
     fcfg._disabled_features = std::move(disabled);
 
-    if (!cfg.enable_sstables_mc_format()) {
+    if (!cfg.enable_sstables_mc_format() && !cfg.enable_sstables_md_format()) {
         fcfg._disabled_features.insert(sstring(gms::features::MC_SSTABLE));
     }
     if (!cfg.enable_user_defined_functions()) {
