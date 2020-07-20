@@ -47,11 +47,14 @@ protected:
     bool _disable_tombstone_compaction = false;
     float _tombstone_threshold = DEFAULT_TOMBSTONE_THRESHOLD;
     db_clock::duration _tombstone_compaction_interval = DEFAULT_TOMBSTONE_COMPACTION_INTERVAL();
+    compaction_backlog_tracker _backlog_tracker;
+
 public:
     static std::optional<sstring> get_value(const std::map<sstring, sstring>& options, const sstring& name);
 protected:
-    compaction_strategy_impl() = default;
-    explicit compaction_strategy_impl(const std::map<sstring, sstring>& options);
+    compaction_strategy_impl(std::unique_ptr<compaction_backlog_tracker::impl> backlog_tracker);
+    explicit compaction_strategy_impl(const std::map<sstring, sstring>& options, std::unique_ptr<compaction_backlog_tracker::impl> backlog_tracker);
+
 public:
     virtual ~compaction_strategy_impl() {}
     virtual compaction_descriptor get_sstables_for_compaction(column_family& cfs, std::vector<sstables::shared_sstable> candidates) = 0;
@@ -76,7 +79,9 @@ public:
     // droppable tombstone histogram and gc_before.
     bool worth_dropping_tombstones(const shared_sstable& sst, gc_clock::time_point gc_before);
 
-    virtual compaction_backlog_tracker& get_backlog_tracker() = 0;
+    compaction_backlog_tracker& get_backlog_tracker() {
+        return _backlog_tracker;
+    }
 
     virtual uint64_t adjust_partition_estimate(const mutation_source_metadata& ms_meta, uint64_t partition_estimate);
 

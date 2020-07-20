@@ -41,8 +41,6 @@ public:
     virtual int64_t estimated_pending_compactions(column_family& cf) const override;
 
     virtual compaction_strategy_type type() const;
-
-    virtual compaction_backlog_tracker& get_backlog_tracker() override;
 };
 
 }

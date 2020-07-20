@@ -33,7 +33,6 @@ class leveled_compaction_strategy : public compaction_strategy_impl {
     std::optional<std::vector<std::optional<dht::decorated_key>>> _last_compacted_keys;
     std::vector<int> _compaction_counter;
     size_tiered_compaction_strategy_options _stcs_options;
-    compaction_backlog_tracker _backlog_tracker;
     int32_t calculate_max_sstable_size_in_mb(std::optional<sstring> option_value) const;
 public:
     leveled_compaction_strategy(const std::map<sstring, sstring>& options);
@@ -57,10 +56,6 @@ public:
         return compaction_strategy_type::leveled;
     }
     virtual std::unique_ptr<sstable_set_impl> make_sstable_set(schema_ptr schema) const override;
-
-    virtual compaction_backlog_tracker& get_backlog_tracker() override {
-        return _backlog_tracker;
-    }
 
     virtual compaction_descriptor get_reshaping_job(std::vector<shared_sstable> input, schema_ptr schema, const ::io_priority_class& iop, reshape_mode mode) override;
 };

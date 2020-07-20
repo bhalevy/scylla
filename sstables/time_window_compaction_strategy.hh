@@ -105,7 +105,6 @@ class time_window_compaction_strategy : public compaction_strategy_impl {
     // Keep track of all recent active windows that still need to be compacted into a single SSTable
     std::unordered_set<timestamp_type> _recent_active_windows;
     size_tiered_compaction_strategy_options _stcs_options;
-    compaction_backlog_tracker _backlog_tracker;
 public:
     // The maximum amount of buckets we segregate data into when writing into sstables.
     // To prevent an explosion in the number of sstables we cap it.
@@ -182,10 +181,6 @@ public:
 
     virtual compaction_strategy_type type() const {
         return compaction_strategy_type::time_window;
-    }
-
-    virtual compaction_backlog_tracker& get_backlog_tracker() override {
-        return _backlog_tracker;
     }
 
     virtual uint64_t adjust_partition_estimate(const mutation_source_metadata& ms_meta, uint64_t partition_estimate) override;

@@ -24,7 +24,7 @@
 
 namespace sstables {
 
-sstable_run_based_compaction_strategy_for_tests::sstable_run_based_compaction_strategy_for_tests() = default;
+sstable_run_based_compaction_strategy_for_tests::sstable_run_based_compaction_strategy_for_tests() : compaction_strategy_impl(nullptr) {}
 
 compaction_descriptor sstable_run_based_compaction_strategy_for_tests::get_sstables_for_compaction(column_family& cf, std::vector<sstables::shared_sstable> uncompacting_sstables) {
     // Get unique runs from all uncompacting sstables
@@ -67,9 +67,4 @@ int64_t sstable_run_based_compaction_strategy_for_tests::estimated_pending_compa
 compaction_strategy_type sstable_run_based_compaction_strategy_for_tests::type() const {
     throw std::runtime_error("unimplemented");
 }
-
-compaction_backlog_tracker& sstable_run_based_compaction_strategy_for_tests::get_backlog_tracker() {
-    throw std::runtime_error("unimplemented");
-}
-
 }
