@@ -980,6 +980,10 @@ void writer::consume(tombstone t) {
 
     _pi_write_m.tomb = t;
     _tombstone_written = true;
+
+    if (t) {
+        _sst.get_metadata_collector().disable_min_max_components();
+    }
 }
 
 void writer::write_cell(bytes_ostream& writer, const clustering_key_prefix* clustering_key, atomic_cell_view cell,
