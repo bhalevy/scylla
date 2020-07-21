@@ -838,6 +838,10 @@ public:
 
     void update_stats_on_end_of_stream();
 
+    bool has_correct_min_max_column_names() const noexcept {
+        return _version >= sstable_version_types::md;
+    }
+
     // Allow the test cases from sstable_test.cc to test private methods. We use
     // a placeholder to avoid cluttering this class too much. The sstable_test class
     // will then re-export as public every method it needs.
