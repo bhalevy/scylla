@@ -357,6 +357,107 @@ flat_mutation_reader make_nonforwardable(flat_mutation_reader r, bool single_par
     return make_flat_mutation_reader<reader>(std::move(r), single_partition);
 }
 
+// Based on make_forwardable, make_partition_exist emits partition_start/partition_end
+// if the underlying reader returns an empty result.
+//
+// This is required to prevent https://github.com/scylladb/scylla/issues/3552
+// when filter_sstable_for_reader omits sstables containing the partition_key
+// based on the slice clustering range, such that the cache is populated with
+// no matched row for the partition.
+flat_mutation_reader make_partition_exist(flat_mutation_reader m, partition_key emit_if_empty) {
+    class reader : public flat_mutation_reader::impl {
+        flat_mutation_reader _underlying;
+        position_range _current;
+        mutation_fragment_opt _next;
+        std::optional<partition_key> _emit_if_empty;
+        // When resolves, _next is engaged or _end_of_stream is set.
+        future<> ensure_next(db::timeout_clock::time_point timeout) {
+            if (_next) {
+                return make_ready_future<>();
+            }
+            return _underlying(timeout).then([this] (auto&& mfo) {
+                _next = std::move(mfo);
+                if (!_next) {
+                    _end_of_stream = true;
+                }
+            });
+        }
+    public:
+        reader(flat_mutation_reader r, partition_key emit_if_empty) : impl(r.schema()), _underlying(std::move(r)), _current({
+            position_in_partition(position_in_partition::partition_start_tag_t()),
+            position_in_partition(position_in_partition::after_static_row_tag_t())
+        }), _emit_if_empty(std::move(emit_if_empty)) { }
+        virtual future<> fill_buffer(db::timeout_clock::time_point timeout) override {
+            return repeat([this, timeout] {
+                if (is_buffer_full()) {
+                    return make_ready_future<stop_iteration>(stop_iteration::yes);
+                }
+                return ensure_next(timeout).then([this] {
+                    if (is_end_of_stream()) {
+                        if (_emit_if_empty) {
+                            fmr_logger.trace("make_partition_exists: emit_if_empty");
+                            push_mutation_fragment(partition_start(dht::decorate_key(*_schema, *_emit_if_empty), tombstone{}));
+                            push_mutation_fragment(partition_end());
+                            _emit_if_empty.reset();
+                        }
+                        return stop_iteration::yes;
+                    } else if (_emit_if_empty) {
+                        fmr_logger.trace("make_partition_exists: resetting emit_if_empty");
+                        _emit_if_empty.reset();
+                    }
+                    position_in_partition::less_compare cmp(*_schema);
+                    if (!cmp(_next->position(), _current.end())) {
+                        _end_of_stream = true;
+                        // keep _next, it may be relevant for next range
+                        return stop_iteration::yes;
+                    }
+                    if (_next->relevant_for_range(*_schema, _current.start())) {
+                        push_mutation_fragment(std::move(*_next));
+                    }
+                    _next = {};
+                    return stop_iteration::no;
+                });
+            });
+        }
+        virtual future<> fast_forward_to(position_range pr, db::timeout_clock::time_point timeout) override {
+            _current = std::move(pr);
+            _end_of_stream = false;
+            forward_buffer_to(_current.start());
+            return make_ready_future<>();
+        }
+        virtual void next_partition() override {
+            _end_of_stream = false;
+            _emit_if_empty.reset();
+            if (!_next || !_next->is_partition_start()) {
+                _underlying.next_partition();
+                _next = {};
+            }
+            clear_buffer_to_next_partition();
+            _current = {
+                position_in_partition(position_in_partition::partition_start_tag_t()),
+                position_in_partition(position_in_partition::after_static_row_tag_t())
+            };
+        }
+        virtual future<> fast_forward_to(const dht::partition_range& pr, db::timeout_clock::time_point timeout) override {
+            _end_of_stream = false;
+            clear_buffer();
+            _next = {};
+            _current = {
+                position_in_partition(position_in_partition::partition_start_tag_t()),
+                position_in_partition(position_in_partition::after_static_row_tag_t())
+            };
+            assert(pr.is_singular() && "make_partition_exist supports only singular partition ranges");
+            fmr_logger.trace("make_partition_exists: fast_forward_to {}", *pr.start()->value().key());
+            _emit_if_empty.emplace(*pr.start()->value().key());
+            return _underlying.fast_forward_to(pr, timeout);
+        }
+        virtual size_t buffer_size() const override {
+            return flat_mutation_reader::impl::buffer_size() + _underlying.buffer_size();
+        }
+    };
+    return make_flat_mutation_reader<reader>(std::move(m), std::move(emit_if_empty));
+}
+
 class empty_flat_reader final : public flat_mutation_reader::impl {
 public:
     empty_flat_reader(schema_ptr s) : impl(std::move(s)) { _end_of_stream = true; }

@@ -630,6 +630,8 @@ flat_mutation_reader make_forwardable(flat_mutation_reader m);
 
 flat_mutation_reader make_nonforwardable(flat_mutation_reader, bool);
 
+flat_mutation_reader make_partition_exist(flat_mutation_reader, partition_key emit_if_empty);
+
 flat_mutation_reader make_empty_flat_reader(schema_ptr s);
 
 flat_mutation_reader flat_mutation_reader_from_mutations(std::vector<mutation>, const dht::partition_range& pr = query::full_partition_range, streamed_mutation::forwarding fwd = streamed_mutation::forwarding::no);
