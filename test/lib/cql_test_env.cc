@@ -470,6 +470,10 @@ public:
             });
 
             db.invoke_on_all([] (database& db) {
+                db.set_format_by_config();
+            }).get();
+
+            db.invoke_on_all([] (database& db) {
                 db.get_compaction_manager().enable();
             }).get();
 
