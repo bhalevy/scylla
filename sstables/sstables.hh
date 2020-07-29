@@ -822,8 +822,6 @@ public:
         return _components->summary;
     }
 
-    const std::vector<nonwrapping_range<bytes_view>>& clustering_components_ranges() const;
-
     // Gets ratio of droppable tombstone. A tombstone is considered droppable here
     // for cells expired before gc_before and regular tombstones older than gc_before.
     double estimate_droppable_tombstone_ratio(gc_clock::time_point gc_before) const;
@@ -837,6 +835,9 @@ public:
     }
 
     void update_stats_on_end_of_stream();
+
+    // Return true if this sstable possibly stores clustering row(s) specified by ranges.
+    bool may_contain_rows(const std::vector<std::vector<nonwrapping_range<bytes_view>>>& ranges);
 
     // Allow the test cases from sstable_test.cc to test private methods. We use
     // a placeholder to avoid cluttering this class too much. The sstable_test class
