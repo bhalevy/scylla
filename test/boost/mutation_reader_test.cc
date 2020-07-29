@@ -140,6 +140,22 @@ SEASTAR_TEST_CASE(test_combining_one_reader_with_many_partitions) {
     });
 }
 
+SEASTAR_THREAD_TEST_CASE(allocation_failure_in_init) {
+    auto& injector = memory::local_failure_injector();
+    uint64_t i = 0;
+    do {
+        try {
+            injector.fail_after(i++);
+            do_with_cql_env([] (cql_test_env&) {
+                return make_ready_future<>();
+            }).get();
+            injector.cancel();
+        } catch (const std::bad_alloc&) {
+            // expected
+        }
+    } while (injector.failed());
+}
+
 SEASTAR_THREAD_TEST_CASE(combined_reader_galloping_within_partition_test) {
     simple_schema s;
 
