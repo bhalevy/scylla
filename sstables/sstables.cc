@@ -2238,6 +2238,10 @@ void sstable::update_stats_on_end_of_stream()
 }
 
 bool sstable::may_contain_rows(const std::vector<std::vector<nonwrapping_range<bytes_view>>>& ranges) {
+    if (_version <= sstables::sstable_version_types::mc) {
+        return true;
+    }
+
     auto clustering_components_size = _clustering_components_ranges.size();
     if (!_schema->clustering_key_size() || !clustering_components_size) {
         return true;
