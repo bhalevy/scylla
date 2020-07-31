@@ -34,6 +34,7 @@
 #include <seastar/core/shared_future.hh>
 #include <seastar/core/byteorder.hh>
 #include <seastar/core/aligned_buffer.hh>
+#include <seastar/util/filesystem_error_injector.hh>
 #include <iterator>
 
 #include "dht/sharder.hh"
@@ -79,6 +80,8 @@
 #include "database.hh"
 #include <boost/algorithm/string/predicate.hpp>
 #include "tracing/traced_file.hh"
+
+namespace fsei = seastar::filesystem_error_injector;
 
 thread_local disk_error_signal_type sstable_read_error;
 thread_local disk_error_signal_type sstable_write_error;
@@ -1289,6 +1292,24 @@ future<file> sstable::open_file(component_type type, open_flags flags, file_open
 }
 
 future<> sstable::open_or_create_data(open_flags oflags, file_open_options options) noexcept {
+    static thread_local seastar::lw_shared_ptr<fsei::injector> injector;
+    if (!injector) {
+        injector = make_lw_shared<fsei::injector>(fsei::syscall_type::open, EIO);
+    }
+    auto prob = (_generation / 7) % 4;
+    switch (prob) {
+    case 0:
+        break;
+    case 1:
+        injector->fail_once_after(0);
+        break;
+    case 2:
+        injector->fail_once_after(1);
+        break;
+    case 3:
+        injector->fail_after(0, 2);
+        break;
+    }
     return when_all_succeed(
         open_file(component_type::Index, oflags, options).then([this] (file f) { _index_file = std::move(f); }),
         open_file(component_type::Data, oflags, options).then([this] (file f) { _data_file = std::move(f); })
