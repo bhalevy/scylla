@@ -2716,26 +2716,6 @@ static void native_value_delete(const abstract_type& t, void* object) {
     visit(t, native_value_delete_visitor{object});
 }
 
-namespace {
-struct native_typeid_visitor {
-    template <typename N, typename A> const std::type_info& operator()(const concrete_type<N, A>&) {
-        return typeid(typename concrete_type<N, A>::native_type);
-    }
-    const std::type_info& operator()(const reversed_type_impl& t) {
-        return visit(*t.underlying_type(), native_typeid_visitor{});
-    }
-    const std::type_info& operator()(const counter_type_impl&) { fail(unimplemented::cause::COUNTERS); }
-    const std::type_info& operator()(const empty_type_impl&) {
-        // Can't happen
-        abort();
-    }
-};
-}
-
-const std::type_info& abstract_type::native_typeid() const {
-    return visit(*this, native_typeid_visitor{});
-}
-
 bytes abstract_type::decompose(const data_value& value) const {
     if (!value._value) {
         return {};
