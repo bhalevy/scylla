@@ -467,6 +467,8 @@ future<> compaction_manager::stop() {
         return make_ready_future<>();
     } else {
         do_stop();
+        assert(_stop_future);
+        assert(_stop_future->valid());
         return std::move(*_stop_future);
     }
 }
@@ -480,6 +482,7 @@ void compaction_manager::really_do_stop() {
     cmlog.info("Asked to stop");
     // Reset the metrics registry
     _metrics.clear();
+    assert(!_stop_future);
     _stop_future.emplace(stop_ongoing_compactions("shutdown").then([this] () mutable {
         reevaluate_postponed_compactions();
         return std::move(_waiting_reevalution);
