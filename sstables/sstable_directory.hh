@@ -85,7 +85,7 @@ private:
 
     // We may have hundreds of thousands of files to load. To protect against OOMs we will limit
     // how many of them we process at the same time.
-    semaphore _load_semaphore;
+    const size_t _load_parallelism;
 
     // Flags below control how to behave when scanning new SSTables.
     need_mutate_level _need_mutate_level;
@@ -125,12 +125,10 @@ private:
     future<> remove_input_sstables_from_reshaping(std::vector<sstables::shared_sstable> sstlist);
     future<> collect_output_sstables_from_reshaping(std::vector<sstables::shared_sstable> reshaped_sstables);
 
-    template <typename Container, typename Func>
-    future<> parallel_for_each_restricted(Container&& C, Func&& func);
     future<> load_foreign_sstables(sstable_info_vector info_vec);
 public:
     sstable_directory(std::filesystem::path sstable_dir,
-            unsigned load_parallelism,
+            size_t load_parallelism,
             need_mutate_level need_mutate,
             lack_of_toc_fatal fatal_nontoc,
             enable_dangerous_direct_import_of_cassandra_counters eddiocc,

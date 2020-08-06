@@ -42,14 +42,14 @@ bool manifest_json_filter(const fs::path&, const directory_entry& entry) {
 }
 
 sstable_directory::sstable_directory(fs::path sstable_dir,
-        unsigned load_parallelism,
+        size_t load_parallelism,
         need_mutate_level need_mutate_level,
         lack_of_toc_fatal throw_on_missing_toc,
         enable_dangerous_direct_import_of_cassandra_counters eddiocc,
         allow_loading_materialized_view allow_mv,
         sstable_object_from_existing_fn sstable_from_existing)
     : _sstable_dir(std::move(sstable_dir))
-    , _load_semaphore(load_parallelism)
+    , _load_parallelism(load_parallelism)
     , _need_mutate_level(need_mutate_level)
     , _throw_on_missing_toc(throw_on_missing_toc)
     , _enable_dangerous_direct_import_of_cassandra_counters(eddiocc)
@@ -193,7 +193,7 @@ sstable_directory::process_sstable_dir(const ::io_priority_class& iop) {
 
             // _descriptors is everything with a TOC. So after we remove this, what's left is
             // SSTables for which a TOC was not found.
-            return parallel_for_each_restricted(state.descriptors, [this, &state, &iop] (sstables::entry_descriptor desc) {
+            return max_concurrent_for_each(state.descriptors, _load_parallelism, [this, &state, &iop] (sstables::entry_descriptor desc) {
                 state.generations_found.erase(desc.generation);
                 // This will try to pre-load this file and throw an exception if it is invalid
                 return process_descriptor(std::move(desc), iop);
@@ -240,12 +240,14 @@ sstable_directory::move_foreign_sstables(sharded<sstable_directory>& source_dire
 
 future<>
 sstable_directory::load_foreign_sstables(sstable_info_vector info_vec) {
-    return parallel_for_each_restricted(info_vec, [this] (sstables::foreign_sstable_open_info& info) {
+    return do_with(std::move(info_vec), [this] (sstable_info_vector& info_vec) {
+      return max_concurrent_for_each(info_vec, _load_parallelism, [this] (sstables::foreign_sstable_open_info& info) {
         auto sst = _sstable_object_from_existing_sstable(_sstable_dir, info.generation, info.version, info.format);
         return sst->load(std::move(info)).then([sst, this] {
             _unshared_local_sstables.push_back(sst);
             return make_ready_future<>();
         });
+      });
     });
 }
 
@@ -403,17 +405,7 @@ sstable_directory::reshard(sstable_info_vector shared_info, compaction_manager& 
 
 future<>
 sstable_directory::do_for_each_sstable(std::function<future<>(sstables::shared_sstable)> func) {
-    return parallel_for_each_restricted(_unshared_local_sstables, std::move(func));
-}
-
-template <typename Container, typename Func>
-future<>
-sstable_directory::parallel_for_each_restricted(Container&& C, Func&& func) {
-    return parallel_for_each(C, [this, func = std::move(func)] (auto& el) mutable {
-        return with_semaphore(_load_semaphore, 1, [this, func,  el = std::move(el)] () mutable {
-            return func(el);
-        });
-    });
+    return max_concurrent_for_each(_unshared_local_sstables, _load_parallelism, std::move(func));
 }
 
 void
