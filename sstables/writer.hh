@@ -110,10 +110,6 @@ public:
         _size += data.len();
         return make_ready_future<>();
     }
-    virtual future<> put(std::vector<temporary_buffer<char>> data) override {
-        _size += boost::accumulate(data | boost::adaptors::transformed(std::mem_fn(&temporary_buffer<char>::size)), 0);
-        return make_ready_future<>();
-    }
     virtual future<> put(temporary_buffer<char> buf) override {
         _size += buf.size();
         return make_ready_future<>();
