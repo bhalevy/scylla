@@ -500,8 +500,11 @@ public:
             , _full_checksum(ChecksumType::init_checksum())
     {}
 
-    future<> put(net::packet data) { abort(); }
-    virtual future<> put(temporary_buffer<char> buf) override {
+    virtual future<> put(net::packet data) override {
+        auto frags = data.release();
+        assert(frags.size() == 1 && "Multiple fragments are not supported");
+        temporary_buffer<char> buf = std::move(frags[0]);
+
         auto output_len = _compression.compress_max_size(buf.size());
 
         // account space for checksum that goes after compressed data.

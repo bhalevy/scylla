@@ -110,10 +110,6 @@ public:
         _size += data.len();
         return make_ready_future<>();
     }
-    virtual future<> put(temporary_buffer<char> buf) override {
-        _size += buf.size();
-        return make_ready_future<>();
-    }
     virtual future<> flush() override {
         return make_ready_future<>();
     }
@@ -156,8 +152,11 @@ public:
     virtual temporary_buffer<char> allocate_buffer(size_t size) override {
         return _out.allocate_buffer(size); // preserve alignment requirements
     }
-    future<> put(net::packet data) { abort(); }
-    virtual future<> put(temporary_buffer<char> buf) override {
+    virtual future<> put(net::packet data) override {
+        auto frags = data.release();
+        assert(frags.size() == 1 && "Multiple fragments are not supported");
+        temporary_buffer<char> buf = std::move(frags[0]);
+
         // bufs will usually be a multiple of chunk size, but this won't be the case for
         // the last buffer being flushed.
 

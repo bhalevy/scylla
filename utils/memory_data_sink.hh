@@ -55,10 +55,10 @@ class memory_data_sink : public data_sink_impl {
 public:
     memory_data_sink(memory_data_sink_buffers& b) : _bufs(b) {}
     virtual future<> put(net::packet data)  override {
-        abort();
-        return make_ready_future<>();
-    }
-    virtual future<> put(temporary_buffer<char> buf) override {
+        auto frags = data.release();
+        assert(frags.size() == 1 && "Multiple fragments are not supported");
+        temporary_buffer<char> buf = std::move(frags[0]);
+
         _bufs.put(std::move(buf));
         return make_ready_future<>();
     }
