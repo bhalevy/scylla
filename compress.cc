@@ -89,7 +89,7 @@ shared_ptr<compressor> compressor::create(const sstring& name, const opt_getter&
     return compressor_registry::create(qn, opts);
 }
 
-shared_ptr<compressor> compressor::create(const std::map<sstring, sstring>& options) {
+shared_ptr<compressor> compressor::create(const option_map& options) {
     auto i = options.find(compression_parameters::SSTABLE_COMPRESSION);
     if (i != options.end() && !i->second.empty()) {
         return create(i->second, [&options](const sstring& key) -> opt_string {
@@ -123,7 +123,7 @@ compression_parameters::compression_parameters(compressor_ptr c)
     : _compressor(std::move(c))
 {}
 
-compression_parameters::compression_parameters(const std::map<sstring, sstring>& options) {
+compression_parameters::compression_parameters(const option_map& options) {
     _compressor = compressor::create(options);
 
     validate_options(options);
@@ -192,7 +192,7 @@ bool compression_parameters::operator!=(const compression_parameters& other) con
     return !(*this == other);
 }
 
-void compression_parameters::validate_options(const std::map<sstring, sstring>& options) {
+void compression_parameters::validate_options(const option_map& options) {
     // currently, there are no options specific to a particular compressor
     static std::set<sstring> keywords({
         sstring(SSTABLE_COMPRESSION),

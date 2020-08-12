@@ -93,7 +93,7 @@ class date_tiered_compaction_strategy_options {
     api::timestamp_type max_sstable_age;
     api::timestamp_type base_time;
 public:
-    date_tiered_compaction_strategy_options(const std::map<sstring, sstring>& options);
+    date_tiered_compaction_strategy_options(const sstables::compaction_strategy_impl::option_map& options);
 
     date_tiered_compaction_strategy_options();
 private:
@@ -108,7 +108,7 @@ public:
 
     date_tiered_manifest() = delete;
 
-    date_tiered_manifest(const std::map<sstring, sstring>& options)
+    date_tiered_manifest(const sstables::compaction_strategy_impl::option_map& options)
         : _options(options) {}
 
     std::vector<sstables::shared_sstable>
@@ -292,7 +292,7 @@ class date_tiered_compaction_strategy : public compaction_strategy_impl {
     date_tiered_manifest _manifest;
     compaction_backlog_tracker _backlog_tracker;
 public:
-    date_tiered_compaction_strategy(const std::map<sstring, sstring>& options);
+    date_tiered_compaction_strategy(const option_map& options);
     virtual compaction_descriptor get_sstables_for_compaction(column_family& cfs, std::vector<sstables::shared_sstable> candidates) override;
 
     virtual int64_t estimated_pending_compactions(column_family& cf) const override {

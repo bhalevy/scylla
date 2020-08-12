@@ -30,6 +30,7 @@
 #include "exceptions/exceptions.hh"
 #include "sstables/compaction_backlog_manager.hh"
 #include "compaction_strategy_type.hh"
+#include "absl-flat_hash_map.hh"
 
 class table;
 using column_family = table;
@@ -50,6 +51,7 @@ using reader_consumer = noncopyable_function<future<> (flat_mutation_reader)>;
 class compaction_strategy {
     ::shared_ptr<compaction_strategy_impl> _compaction_strategy_impl;
 public:
+    using option_map = flat_hash_map<sstring, sstring>;
     compaction_strategy(::shared_ptr<compaction_strategy_impl> impl);
 
     compaction_strategy();
@@ -151,6 +153,6 @@ public:
 };
 
 // Creates a compaction_strategy object from one of the strategies available.
-compaction_strategy make_compaction_strategy(compaction_strategy_type strategy, const std::map<sstring, sstring>& options);
+compaction_strategy make_compaction_strategy(compaction_strategy_type strategy, const compaction_strategy::option_map& options);
 
 }

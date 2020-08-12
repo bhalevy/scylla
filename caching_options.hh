@@ -66,7 +66,7 @@ public:
         return _enabled;
     }
 
-    std::map<sstring, sstring> to_map() const {
+    option_map to_map() const {
         std::map<sstring, sstring> res = {{ "keys", _key_cache },
                 { "rows_per_partition", _row_cache }};
         if (!_enabled) {

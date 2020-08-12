@@ -703,7 +703,7 @@ std::ostream& operator<<(std::ostream& os, const schema& s) {
     return os;
 }
 
-static std::ostream& map_as_cql_param(std::ostream& os, const std::map<sstring, sstring>& map, bool first = true) {
+static std::ostream& map_as_cql_param(std::ostream& os, const sstables::compaction_option_map& map, bool first = true) {
     for (auto i: map) {
         if (first) {
             first = false;

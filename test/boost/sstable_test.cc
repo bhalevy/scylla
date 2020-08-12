@@ -1196,10 +1196,12 @@ SEASTAR_TEST_CASE(test_skipping_in_compressed_stream) {
         file_input_stream_options opts;
         opts.read_ahead = 0;
 
-        compression_parameters cp({
+        option_map c_opts({
             { compression_parameters::SSTABLE_COMPRESSION, "LZ4Compressor" },
             { compression_parameters::CHUNK_LENGTH_KB, std::to_string(opts.buffer_size/1024) },
         });
+
+        compression_parameters cp(c_opts);
 
         sstables::compression c;
         // this initializes "c"

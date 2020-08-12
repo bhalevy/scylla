@@ -46,6 +46,9 @@
 #include "schema_builder.hh"
 #include "compaction_strategy.hh"
 #include "utils/UUID.hh"
+#include "absl-flat_hash_map.hh"
+
+using option_map = flat_hash_map<sstring, sstring>;
 
 namespace db {
 class extensions;
@@ -95,8 +98,8 @@ private:
 public:
     schema::extensions_map make_schema_extensions(const db::extensions& exts);
     void validate(const database& db, const schema::extensions_map& schema_extensions) const;
-    std::map<sstring, sstring> get_compaction_options() const;
-    std::optional<std::map<sstring, sstring>> get_compression_options() const;
+    option_map get_compaction_options() const;
+    std::optional<option_map> get_compression_options() const;
     const cdc::options* get_cdc_options(const schema::extensions_map&) const;
     std::optional<caching_options> get_caching_options() const;
 #if 0

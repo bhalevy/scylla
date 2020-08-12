@@ -36,7 +36,7 @@ class leveled_compaction_strategy : public compaction_strategy_impl {
     compaction_backlog_tracker _backlog_tracker;
     int32_t calculate_max_sstable_size_in_mb(std::optional<sstring> option_value) const;
 public:
-    leveled_compaction_strategy(const std::map<sstring, sstring>& options);
+    leveled_compaction_strategy(const option_map& options);
     virtual compaction_descriptor get_sstables_for_compaction(column_family& cfs, std::vector<sstables::shared_sstable> candidates) override;
 
     virtual compaction_descriptor get_major_compaction_job(column_family& cf, std::vector<sstables::shared_sstable> candidates) override;

@@ -20,6 +20,7 @@
  */
 
 #pragma once
+#include "absl-flat_hash_map.hh"
 
 namespace sstables {
 
@@ -33,4 +34,6 @@ enum class compaction_strategy_type {
 };
 
 enum class reshape_mode { strict, relaxed };
+
+using compaction_option_map = flat_hash_map<sstring, sstring>;
 }

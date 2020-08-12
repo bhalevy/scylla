@@ -44,7 +44,7 @@ class size_tiered_compaction_strategy_options {
     double bucket_high = DEFAULT_BUCKET_HIGH;
     double cold_reads_to_omit =  DEFAULT_COLD_READS_TO_OMIT;
 public:
-    size_tiered_compaction_strategy_options(const std::map<sstring, sstring>& options);
+    size_tiered_compaction_strategy_options(const compaction_strategy_impl::option_map& options);
 
     size_tiered_compaction_strategy_options();
 
@@ -132,7 +132,7 @@ class size_tiered_compaction_strategy : public compaction_strategy_impl {
 public:
     size_tiered_compaction_strategy() = default;
 
-    size_tiered_compaction_strategy(const std::map<sstring, sstring>& options);
+    size_tiered_compaction_strategy(const option_map& options);
     explicit size_tiered_compaction_strategy(const size_tiered_compaction_strategy_options& options);
 
     virtual compaction_descriptor get_sstables_for_compaction(column_family& cfs, std::vector<sstables::shared_sstable> candidates) override;

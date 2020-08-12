@@ -170,15 +170,15 @@ void cf_prop_defs::validate(const database& db, const schema::extensions_map& sc
     speculative_retry::from_sstring(get_string(KW_SPECULATIVE_RETRY, speculative_retry(speculative_retry::type::NONE, 0).to_sstring()));
 }
 
-std::map<sstring, sstring> cf_prop_defs::get_compaction_options() const {
+option_map cf_prop_defs::get_compaction_options() const {
     auto compaction_options = get_map(KW_COMPACTION);
     if (compaction_options ) {
         return compaction_options.value();
     }
-    return std::map<sstring, sstring>{};
+    return compaction_strategy_options{};
 }
 
-std::optional<std::map<sstring, sstring>> cf_prop_defs::get_compression_options() const {
+std::optional<option_map> cf_prop_defs::get_compression_options() const {
     auto compression_options = get_map(KW_COMPRESSION);
     if (compression_options) {
         return { compression_options.value() };

@@ -29,7 +29,9 @@
 #include <seastar/core/sstring.hh>
 
 #include "exceptions/exceptions.hh"
+#include "absl-flat_hash_map.hh"
 
+using option_map = flat_hash_map<sstring, sstring>;
 
 class compressor {
     sstring _name;
@@ -76,7 +78,7 @@ public:
     using opt_getter = std::function<opt_string(const sstring&)>;
 
     static shared_ptr<compressor> create(const sstring& name, const opt_getter&);
-    static shared_ptr<compressor> create(const std::map<sstring, sstring>&);
+    static shared_ptr<compressor> create(const option_map&);
 
     static thread_local const shared_ptr<compressor> lz4;
     static thread_local const shared_ptr<compressor> snappy;
@@ -107,7 +109,7 @@ private:
 public:
     compression_parameters();
     compression_parameters(compressor_ptr);
-    compression_parameters(const std::map<sstring, sstring>& options);
+    compression_parameters(const option_map& options);
     ~compression_parameters();
 
     compressor_ptr get_compressor() const { return _compressor; }
@@ -123,5 +125,5 @@ public:
         return compression_parameters(nullptr);
     }
 private:
-    void validate_options(const std::map<sstring, sstring>&);
+    void validate_options(const option_map&);
 };

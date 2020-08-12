@@ -1774,9 +1774,9 @@ SEASTAR_THREAD_TEST_CASE(test_deflate_partition_key_with_values_of_different_typ
 SEASTAR_THREAD_TEST_CASE(test_zstd_partition_key_with_values_of_different_types_read) {
     auto abj = defer([] { await_background_jobs().get(); });
     test_partition_key_with_values_of_different_types_read(
-        ZSTD_PARTITION_KEY_WITH_VALUES_OF_DIFFERENT_TYPES_PATH, compressor::create({
+        ZSTD_PARTITION_KEY_WITH_VALUES_OF_DIFFERENT_TYPES_PATH, compressor::create(option_map({
             {"sstable_compression", "org.apache.cassandra.io.compress.ZstdCompressor"},
-            {"compression_level", "1"}}));
+            {"compression_level", "1"}})));
 }
 
 // Following test runs on files in test/resource/sstables/3.x/zstd/multiple_chunks.

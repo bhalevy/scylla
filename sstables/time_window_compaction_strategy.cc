@@ -25,7 +25,7 @@
 
 namespace sstables {
 
-time_window_compaction_strategy_options::time_window_compaction_strategy_options(const std::map<sstring, sstring>& options) {
+time_window_compaction_strategy_options::time_window_compaction_strategy_options(const compaction_strategy_impl::option_map& options) {
     std::chrono::seconds window_unit = DEFAULT_COMPACTION_WINDOW_UNIT;
     int window_size = DEFAULT_COMPACTION_WINDOW_SIZE;
 

@@ -473,7 +473,7 @@ compaction_strategy_impl::get_reshaping_job(std::vector<shared_sstable> input, s
     return compaction_descriptor();
 }
 
-std::optional<sstring> compaction_strategy_impl::get_value(const std::map<sstring, sstring>& options, const sstring& name) {
+std::optional<sstring> compaction_strategy_impl::get_value(const option_map& options, const sstring& name) {
     auto it = options.find(name);
     if (it == options.end()) {
         return std::nullopt;
@@ -481,7 +481,7 @@ std::optional<sstring> compaction_strategy_impl::get_value(const std::map<sstrin
     return it->second;
 }
 
-compaction_strategy_impl::compaction_strategy_impl(const std::map<sstring, sstring>& options) {
+compaction_strategy_impl::compaction_strategy_impl(const option_map& options) {
     using namespace cql3::statements;
 
     auto tmp_value = get_value(options, TOMBSTONE_THRESHOLD_OPTION);
@@ -758,7 +758,7 @@ public:
     }
 };
 
-leveled_compaction_strategy::leveled_compaction_strategy(const std::map<sstring, sstring>& options)
+leveled_compaction_strategy::leveled_compaction_strategy(const option_map& options)
         : compaction_strategy_impl(options)
         , _max_sstable_size_in_mb(calculate_max_sstable_size_in_mb(compaction_strategy_impl::get_value(options, SSTABLE_SIZE_OPTION)))
         , _stcs_options(options)
@@ -782,7 +782,7 @@ leveled_compaction_strategy::calculate_max_sstable_size_in_mb(std::optional<sstr
     return max_size;
 }
 
-time_window_compaction_strategy::time_window_compaction_strategy(const std::map<sstring, sstring>& options)
+time_window_compaction_strategy::time_window_compaction_strategy(const option_map& options)
     : compaction_strategy_impl(options)
     , _options(options)
     , _stcs_options(options)
@@ -912,7 +912,7 @@ date_tiered_manifest::create_sst_and_min_timestamp_pairs(const std::vector<sstab
     return sstable_min_timestamp_pairs;
 }
 
-date_tiered_compaction_strategy_options::date_tiered_compaction_strategy_options(const std::map<sstring, sstring>& options) {
+date_tiered_compaction_strategy_options::date_tiered_compaction_strategy_options(const sstables::compaction_strategy_impl::option_map& options) {
     using namespace cql3::statements;
 
     auto tmp_value = sstables::compaction_strategy_impl::get_value(options, TIMESTAMP_RESOLUTION_KEY);
@@ -936,7 +936,7 @@ date_tiered_compaction_strategy_options::date_tiered_compaction_strategy_options
 
 namespace sstables {
 
-date_tiered_compaction_strategy::date_tiered_compaction_strategy(const std::map<sstring, sstring>& options)
+date_tiered_compaction_strategy::date_tiered_compaction_strategy(const option_map& options)
     : compaction_strategy_impl(options)
     , _manifest(options)
     , _backlog_tracker(std::make_unique<unimplemented_backlog_tracker>())
@@ -984,7 +984,7 @@ compaction_descriptor date_tiered_compaction_strategy::get_sstables_for_compacti
     return sstables::compaction_descriptor({ *it }, cfs.get_sstable_set(), service::get_local_compaction_priority());
 }
 
-size_tiered_compaction_strategy::size_tiered_compaction_strategy(const std::map<sstring, sstring>& options)
+size_tiered_compaction_strategy::size_tiered_compaction_strategy(const option_map& options)
     : compaction_strategy_impl(options)
     , _options(options)
     , _backlog_tracker(std::make_unique<size_tiered_backlog_tracker>())
@@ -1060,7 +1060,7 @@ bool compaction_strategy::use_interposer_consumer() const {
     return _compaction_strategy_impl->use_interposer_consumer();
 }
 
-compaction_strategy make_compaction_strategy(compaction_strategy_type strategy, const std::map<sstring, sstring>& options) {
+compaction_strategy make_compaction_strategy(compaction_strategy_type strategy, const compaction_strategy_impl::option_map& options) {
     ::shared_ptr<compaction_strategy_impl> impl;
 
     switch (strategy) {

@@ -632,7 +632,7 @@ private:
         // FIXME: SizeTiered doesn't really work yet. Being it marked here only means that this is the strategy
         // we will use by default - when we have the choice.
         sstables::compaction_strategy_type _compaction_strategy = sstables::compaction_strategy_type::size_tiered;
-        std::map<sstring, sstring> _compaction_strategy_options;
+        sstables::compaction_option_map _compaction_strategy_options;
         bool _compaction_enabled = true;
         caching_options _caching_options;
         table_schema_version _version;
@@ -808,7 +808,7 @@ public:
         return _raw._compaction_enabled ? _raw._compaction_strategy : sstables::compaction_strategy_type::null;
     }
 
-    const std::map<sstring, sstring>& compaction_strategy_options() const {
+    const sstables::compaction_option_map& compaction_strategy_options() const {
         return _raw._compaction_strategy_options;
     }
 

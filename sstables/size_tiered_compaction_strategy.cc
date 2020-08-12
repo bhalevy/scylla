@@ -26,7 +26,7 @@
 
 namespace sstables {
 
-size_tiered_compaction_strategy_options::size_tiered_compaction_strategy_options(const std::map<sstring, sstring>& options) {
+size_tiered_compaction_strategy_options::size_tiered_compaction_strategy_options(const compaction_strategy_impl::option_map& options) {
     using namespace cql3::statements;
 
     auto tmp_value = compaction_strategy_impl::get_value(options, MIN_SSTABLE_SIZE_KEY);

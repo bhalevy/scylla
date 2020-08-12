@@ -87,7 +87,7 @@ private:
 public:
     time_window_compaction_strategy_options(const time_window_compaction_strategy_options&);
     time_window_compaction_strategy_options(time_window_compaction_strategy_options&&);
-    time_window_compaction_strategy_options(const std::map<sstring, sstring>& options);
+    time_window_compaction_strategy_options(const compaction_strategy_impl::option_map& options);
 
     std::chrono::seconds get_sstable_window_size() const { return sstable_window_size; }
 
@@ -115,8 +115,9 @@ public:
     using bucket_t = std::vector<shared_sstable>;
     enum class bucket_compaction_mode { none, size_tiered, major };
 public:
-    time_window_compaction_strategy(const std::map<sstring, sstring>& options);
+    time_window_compaction_strategy(const option_map& options);
     virtual compaction_descriptor get_sstables_for_compaction(column_family& cf, std::vector<shared_sstable> candidates) override;
+
 private:
     static timestamp_type
     to_timestamp_type(time_window_compaction_strategy_options::timestamp_resolutions resolution, int64_t timestamp_from_sstable) {

@@ -26,6 +26,7 @@
 #include "compaction_strategy.hh"
 #include "database_fwd.hh"
 #include "db_clock.hh"
+#include "absl-flat_hash_map.hh"
 
 namespace sstables {
 
@@ -48,10 +49,11 @@ protected:
     float _tombstone_threshold = DEFAULT_TOMBSTONE_THRESHOLD;
     db_clock::duration _tombstone_compaction_interval = DEFAULT_TOMBSTONE_COMPACTION_INTERVAL();
 public:
-    static std::optional<sstring> get_value(const std::map<sstring, sstring>& options, const sstring& name);
+    using option_map = flat_hash_map<sstring, sstring>;
+    static std::optional<sstring> get_value(const option_map& options, const sstring& name);
 protected:
     compaction_strategy_impl() = default;
-    explicit compaction_strategy_impl(const std::map<sstring, sstring>& options);
+    explicit compaction_strategy_impl(const option_map& options);
 public:
     virtual ~compaction_strategy_impl() {}
     virtual compaction_descriptor get_sstables_for_compaction(column_family& cfs, std::vector<sstables::shared_sstable> candidates) = 0;
