@@ -167,34 +167,11 @@ insert_token_range_to_sorted_container_while_unwrapping(
 }
 
 dht::token_range_vector
-abstract_replication_strategy::get_ranges(inet_address ep) const {
-    return do_get_ranges(ep, _token_metadata, false);
-}
-
-dht::token_range_vector
-abstract_replication_strategy::get_ranges_in_thread(inet_address ep) const {
-    return do_get_ranges(ep, _token_metadata, true);
-}
-
-dht::token_range_vector
 abstract_replication_strategy::get_ranges(inet_address ep, const token_metadata& tm) const {
-    return do_get_ranges(ep, tm, false);
-}
-
-dht::token_range_vector
-abstract_replication_strategy::get_ranges_in_thread(inet_address ep, const token_metadata& tm) const {
-    return do_get_ranges(ep, tm, true);
-}
-
-dht::token_range_vector
-abstract_replication_strategy::do_get_ranges(inet_address ep, const token_metadata& tm, bool can_yield) const {
     dht::token_range_vector ret;
     auto prev_tok = tm.sorted_tokens().back();
     for (auto tok : tm.sorted_tokens()) {
         for (inet_address a : calculate_natural_endpoints(tok, tm)) {
-            if (can_yield) {
-                seastar::thread::maybe_yield();
-            }
             if (a == ep) {
                 insert_token_range_to_sorted_container_while_unwrapping(prev_tok, tok, ret);
                 break;
@@ -203,6 +180,24 @@ abstract_replication_strategy::do_get_ranges(inet_address ep, const token_metada
         prev_tok = tok;
     }
     return ret;
+}
+
+future<dht::token_range_vector>
+abstract_replication_strategy::get_ranges_async(inet_address ep, const token_metadata& tm) const noexcept {
+    return do_with(dht::token_range_vector(), dht::token(), [this, ep, &tm] (dht::token_range_vector& ret, dht::token& prev_tok) {
+        prev_tok = tm.sorted_tokens().back();
+        return do_for_each(tm.sorted_tokens(), [this, ep, &tm, &ret, &prev_tok] (const token& tok) {
+            for (inet_address a : calculate_natural_endpoints(tok, tm)) {
+                if (a == ep) {
+                    insert_token_range_to_sorted_container_while_unwrapping(prev_tok, tok, ret);
+                    break;
+                }
+            }
+            prev_tok = tok;
+        }).then([&ret] {
+            return make_ready_future<dht::token_range_vector>(std::move(ret));
+        });
+    });
 }
 
 dht::token_range_vector
