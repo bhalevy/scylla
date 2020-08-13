@@ -727,8 +727,8 @@ future<> compaction_manager::perform_cleanup(database& db, column_family* cf) {
         return make_exception_future<>(std::runtime_error(format("cleanup request failed: there is an ongoing cleanup on {}.{}",
             cf->schema()->ks_name(), cf->schema()->cf_name())));
     }
-        auto schema = cf->schema();
-        auto& rs = db.find_keyspace(schema->ks_name()).get_replication_strategy();
+    auto schema = cf->schema();
+    auto& rs = db.find_keyspace(schema->ks_name()).get_replication_strategy();
     return rs.get_ranges_async(utils::fb_utilities::get_broadcast_address()).then([this, cf, schema] (dht::token_range_vector sorted_owned_ranges) {
         return do_with(cf->candidates_for_compaction(), std::vector<sstables::shared_sstable>{}, std::move(sorted_owned_ranges),
                     [this, schema] (const std::vector<sstables::shared_sstable>& candidates, std::vector<sstables::shared_sstable>& sstables, dht::token_range_vector& sorted_owned_ranges) {
