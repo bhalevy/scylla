@@ -735,7 +735,7 @@ future<> compaction_manager::perform_cleanup(database& db, column_family* cf) {
         const auto candidates = cf->candidates_for_compaction();
         std::copy_if(candidates.begin(), candidates.end(), std::back_inserter(sstables), [&sorted_owned_ranges, schema] (const sstables::shared_sstable& sst) {
             seastar::thread::maybe_yield();
-            return sorted_owned_ranges.empty() || needs_cleanup(sst, sorted_owned_ranges, schema);
+            return needs_cleanup(sst, sorted_owned_ranges, schema);
         });
         return sstables;
     }).then([this, cf] (std::vector<sstables::shared_sstable> sstables) {
