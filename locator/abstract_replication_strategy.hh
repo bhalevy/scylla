@@ -116,11 +116,11 @@ public:
     dht::token_range_vector get_ranges_in_thread(inet_address ep) const;
 
     // Use the token_metadata provided by the caller instead of _token_metadata
-    dht::token_range_vector get_ranges(inet_address ep, token_metadata& tm) const;
+    dht::token_range_vector get_ranges(inet_address ep, const token_metadata& tm) const;
     // Caller must make sure that we can safely yield while accessing token_metadata
-    dht::token_range_vector get_ranges_in_thread(inet_address ep, token_metadata& tm) const;
+    dht::token_range_vector get_ranges_in_thread(inet_address ep, const token_metadata& tm) const;
 private:
-    dht::token_range_vector do_get_ranges(inet_address ep, token_metadata& tm, bool can_yield) const;
+    dht::token_range_vector do_get_ranges(inet_address ep, const token_metadata& tm, bool can_yield) const;
 
 public:
     // get_primary_ranges() returns the list of "primary ranges" for the given
