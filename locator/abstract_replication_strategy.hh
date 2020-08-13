@@ -24,6 +24,10 @@
 #include <memory>
 #include <functional>
 #include <unordered_map>
+
+#include <seastar/core/future.hh>
+
+#include "seastarx.hh"
 #include "gms/inet_address.hh"
 #include "dht/i_partitioner.hh"
 #include "token_metadata.hh"
@@ -112,15 +116,19 @@ public:
     // The list is sorted, and its elements are non overlapping and non wrap-around.
     // It the analogue of Origin's getAddressRanges().get(endpoint).
     // This function is not efficient, and not meant for the fast path.
-    dht::token_range_vector get_ranges(inet_address ep) const;
-    dht::token_range_vector get_ranges_in_thread(inet_address ep) const;
+    dht::token_range_vector get_ranges(inet_address ep) const {
+        return get_ranges(ep, _token_metadata);
+    }
+    future<dht::token_range_vector> get_ranges_async(inet_address ep) const noexcept {
+        // copy token_metadata so we can safely yield if needed
+        // FIXME: this may temporarily add a stall that should be replaced by an asynchronous interface
+        return get_ranges_async(ep, token_metadata(_token_metadata));
+    }
 
     // Use the token_metadata provided by the caller instead of _token_metadata
     dht::token_range_vector get_ranges(inet_address ep, const token_metadata& tm) const;
     // Caller must make sure that we can safely yield while accessing token_metadata
-    dht::token_range_vector get_ranges_in_thread(inet_address ep, const token_metadata& tm) const;
-private:
-    dht::token_range_vector do_get_ranges(inet_address ep, const token_metadata& tm, bool can_yield) const;
+    future<dht::token_range_vector> get_ranges_async(inet_address ep, const token_metadata& tm) const;
 
 public:
     // get_primary_ranges() returns the list of "primary ranges" for the given

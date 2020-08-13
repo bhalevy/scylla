@@ -2070,7 +2070,7 @@ future<> do_rebuild_replace_with_repair(seastar::sharded<database>& db, locator:
             }
             auto& ks = db.local().find_keyspace(keyspace_name);
             auto& strat = ks.get_replication_strategy();
-            dht::token_range_vector ranges = strat.get_ranges_in_thread(myip, tm);
+            dht::token_range_vector ranges = strat.get_ranges_async(myip, tm).get0();
             nr_ranges_total += ranges.size();
 
         }

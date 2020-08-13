@@ -730,7 +730,7 @@ future<> compaction_manager::perform_cleanup(database& db, column_family* cf) {
     return seastar::async([this, cf, &db] {
         auto schema = cf->schema();
         auto& rs = db.find_keyspace(schema->ks_name()).get_replication_strategy();
-        auto sorted_owned_ranges = rs.get_ranges_in_thread(utils::fb_utilities::get_broadcast_address());
+        auto sorted_owned_ranges = rs.get_ranges_async(utils::fb_utilities::get_broadcast_address()).get0();
         auto sstables = std::vector<sstables::shared_sstable>{};
         const auto candidates = cf->candidates_for_compaction();
         std::copy_if(candidates.begin(), candidates.end(), std::back_inserter(sstables), [&sorted_owned_ranges, schema] (const sstables::shared_sstable& sst) {
