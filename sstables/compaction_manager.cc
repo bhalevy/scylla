@@ -727,17 +727,19 @@ future<> compaction_manager::perform_cleanup(database& db, column_family* cf) {
         return make_exception_future<>(std::runtime_error(format("cleanup request failed: there is an ongoing cleanup on {}.{}",
             cf->schema()->ks_name(), cf->schema()->cf_name())));
     }
-    return seastar::async([this, cf, &db] {
         auto schema = cf->schema();
         auto& rs = db.find_keyspace(schema->ks_name()).get_replication_strategy();
-        auto sorted_owned_ranges = rs.get_ranges_async(utils::fb_utilities::get_broadcast_address()).get0();
-        auto sstables = std::vector<sstables::shared_sstable>{};
-        const auto candidates = cf->candidates_for_compaction();
-        std::copy_if(candidates.begin(), candidates.end(), std::back_inserter(sstables), [&sorted_owned_ranges, schema] (const sstables::shared_sstable& sst) {
-            seastar::thread::maybe_yield();
-            return needs_cleanup(sst, sorted_owned_ranges, schema);
+    return rs.get_ranges_async(utils::fb_utilities::get_broadcast_address()).then([this, cf, schema] (dht::token_range_vector sorted_owned_ranges) {
+        return do_with(cf->candidates_for_compaction(), std::vector<sstables::shared_sstable>{}, std::move(sorted_owned_ranges),
+                    [this, schema] (const std::vector<sstables::shared_sstable>& candidates, std::vector<sstables::shared_sstable>& sstables, dht::token_range_vector& sorted_owned_ranges) {
+            return do_for_each(candidates.cbegin(), candidates.cend(), [&sorted_owned_ranges, schema, &sstables] (const sstables::shared_sstable& sst) {
+                if (needs_cleanup(sst, sorted_owned_ranges, schema)) {
+                    sstables.push_back(sst);
+                }
+            }).then([&sstables] {
+                return std::move(sstables);
+            });
         });
-        return sstables;
     }).then([this, cf] (std::vector<sstables::shared_sstable> sstables) {
         return rewrite_sstables(cf, sstables::compaction_options::make_cleanup(),
                 [sstables = std::move(sstables)] (const table&) { return sstables; });
