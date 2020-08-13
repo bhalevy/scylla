@@ -731,11 +731,14 @@ future<> compaction_manager::perform_cleanup(database& db, column_family* cf) {
         auto schema = cf->schema();
         auto& rs = db.find_keyspace(schema->ks_name()).get_replication_strategy();
         auto sorted_owned_ranges = rs.get_ranges_async(utils::fb_utilities::get_broadcast_address()).get0();
+        const auto& candidates = cf->candidates_for_compaction();
+        if (sorted_owned_ranges.empty()) {
+            return candidates;
+        }
         auto sstables = std::vector<sstables::shared_sstable>{};
-        const auto candidates = cf->candidates_for_compaction();
-        std::copy_if(candidates.begin(), candidates.end(), std::back_inserter(sstables), [&sorted_owned_ranges, schema] (const sstables::shared_sstable& sst) {
+        std::copy_if(candidates.cbegin(), candidates.cend(), std::back_inserter(sstables), [&sorted_owned_ranges, schema] (const sstables::shared_sstable& sst) {
             seastar::thread::maybe_yield();
-            return sorted_owned_ranges.empty() || needs_cleanup(sst, sorted_owned_ranges, schema);
+            return needs_cleanup(sst, sorted_owned_ranges, schema);
         });
         return sstables;
     }).then([this, cf] (std::vector<sstables::shared_sstable> sstables) {
