@@ -173,7 +173,10 @@ abstract_replication_strategy::get_ranges(inet_address ep) const {
 
 dht::token_range_vector
 abstract_replication_strategy::get_ranges_in_thread(inet_address ep) const {
-    return do_get_ranges(ep, _token_metadata, true);
+    // copy token_metadata so we can safely yield if needed
+    // FIXME: this may temporarily add a stall that should be replaced by an asynchronous interface
+    token_metadata tm_copy(_token_metadata);
+    return do_get_ranges(ep, tm_copy, true);
 }
 
 dht::token_range_vector
