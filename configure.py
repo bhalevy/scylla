@@ -394,6 +394,7 @@ scylla_tests = set([
     'test/boost/bptree_test',
     'test/boost/double_decker_test',
     'test/boost/stall_free_test',
+    'test/boost/versioned_shared_ptr_test',
     'test/manual/ec2_snitch_test',
     'test/manual/enormous_table_scan_test',
     'test/manual/gce_snitch_test',
@@ -983,6 +984,7 @@ pure_boost_tests = set([
     'test/boost/vint_serialization_test',
     'test/boost/bptree_test',
     'test/manual/streaming_histogram_test',
+    'test/boost/versioned_shared_ptr_test',
 ])
 
 tests_not_using_seastar_test_framework = set([
@@ -1061,6 +1063,7 @@ deps['test/boost/linearizing_input_stream_test'] = [
 
 deps['test/boost/duration_test'] += ['test/lib/exception_utils.cc']
 deps['test/boost/alternator_base64_test'] += ['alternator/base64.cc']
+deps['test/boost/versioned_shared_ptr_test'] = [ "test/boost/versioned_shared_ptr_test.cc" ]
 
 deps['utils/gz/gen_crc_combine_table'] = ['utils/gz/gen_crc_combine_table.cc']
 
