@@ -165,7 +165,7 @@ bool string_pair_eq::operator()(spair lhs, spair rhs) const {
 
 utils::UUID database::empty_version = utils::UUID_gen::get_name_UUID(bytes{});
 
-database::database(const db::config& cfg, database_config dbcfg, service::migration_notifier& mn, gms::feature_service& feat, const locator::token_metadata& tm, abort_source& as)
+database::database(const db::config& cfg, database_config dbcfg, service::migration_notifier& mn, gms::feature_service& feat, const locator::shared_token_metadata& tm, abort_source& as)
     : _stats(make_lw_shared<db_stats>())
     , _cl_stats(std::make_unique<cell_locker_stats>())
     , _cfg(cfg)
@@ -219,7 +219,7 @@ database::database(const db::config& cfg, database_config dbcfg, service::migrat
     , _data_listeners(std::make_unique<db::data_listeners>(*this))
     , _mnotifier(mn)
     , _feat(feat)
-    , _token_metadata(tm)
+    , _token_metadata(tm.get())
 {
     local_schema_registry().init(*this); // TODO: we're never unbound.
     setup_metrics();

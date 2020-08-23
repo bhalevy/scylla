@@ -64,13 +64,10 @@
 #include <seastar/core/condition-variable.hh>
 #include <seastar/core/metrics_registration.hh>
 #include <seastar/core/abort_source.hh>
+#include "locator/token_metadata_fwd.hh"
 
 namespace db {
 class config;
-}
-
-namespace locator {
-class token_metadata;
 }
 
 namespace gms {
@@ -238,7 +235,7 @@ private:
     // The value must be kept alive until completes and not change.
     future<> replicate(inet_address, application_state key, const versioned_value& value);
 public:
-    explicit gossiper(abort_source& as, feature_service& features, const locator::token_metadata& tokens, netw::messaging_service& ms, db::config& cfg);
+    explicit gossiper(abort_source& as, feature_service& features, const locator::shared_token_metadata& tokens, netw::messaging_service& ms, db::config& cfg);
 
     void set_last_processed_message_at();
     void set_last_processed_message_at(clk::time_point tp);
