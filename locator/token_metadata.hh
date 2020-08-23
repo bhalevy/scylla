@@ -49,6 +49,7 @@
 #include <boost/range/iterator_range.hpp>
 #include <boost/icl/interval.hpp>
 #include "range.hh"
+#include "token_metadata_fwd.hh"
 
 // forward declaration since database.hh includes this file
 class keyspace;

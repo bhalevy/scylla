@@ -88,7 +88,7 @@ future<> await_background_jobs_on_all_shards();
 
 static const sstring testing_superuser = "tester";
 
-static future<> tst_init_ms_fd_gossiper(sharded<gms::feature_service>& features, sharded<locator::token_metadata>& tm, sharded<netw::messaging_service>& ms, db::config& cfg, db::seed_provider_type seed_provider,
+static future<> tst_init_ms_fd_gossiper(sharded<gms::feature_service>& features, sharded<locator::shared_token_metadata>& tm, sharded<netw::messaging_service>& ms, db::config& cfg, db::seed_provider_type seed_provider,
             sharded<abort_source>& abort_sources, sstring cluster_name = "Test Cluster") {
         // Init gossiper
         std::set<gms::inet_address> seeds;
@@ -422,7 +422,7 @@ public:
                 cfg->max_memory_for_unlimited_query_hard_limit.set(uint64_t(query::result_memory_limiter::unlimited_result_size));
             }
 
-            sharded<locator::token_metadata> token_metadata;
+            sharded<locator::shared_token_metadata> token_metadata;
             token_metadata.start().get();
             auto stop_token_metadata = defer([&token_metadata] { token_metadata.stop().get(); });
 
