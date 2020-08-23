@@ -216,4 +216,90 @@ versioned_shared_ptr<T> make_versioned_shared_ptr(Args... args) {
     return versioned_shared_ptr<T>(make_lw_shared<T>(std::forward<Args>(args)...));
 }
 
+template <typename T>
+class versioned_shared_object {
+    lw_shared_ptr<versioned_shared_ptr<T>> _shared;
+public:
+    // used to construct the shared object as sharded<> instance
+    template <typename... Args>
+    versioned_shared_object(Args... args) noexcept(std::is_nothrow_constructible_v<T, Args...>)
+        : _shared(make_lw_shared<versioned_shared_ptr<T>>(make_lw_shared<T>(std::forward<Args>(args)...)))
+    { }
+
+    versioned_shared_object(const versioned_shared_object&) noexcept = default;
+
+    versioned_shared_object(versioned_shared_object&&) noexcept(std::is_nothrow_move_constructible_v<T>) = default;
+
+    auto version() const noexcept {
+        return _shared->version();
+    }
+
+    // get a read-only snapshot of the shared object,
+    // guaranteed not to change while holding the versioned_shared_ptr.
+    //
+    // Note: caller may use version() to detect changes in the
+    // versioned_shared_object.
+    const versioned_shared_ptr<T> get_shared_ptr() const noexcept {
+        return *_shared;
+    }
+
+    // get a mutable snapshot of the shared object.
+    // can be modified without affecting anyone who got
+    // a snapshot using get_shared_ptr().
+    //
+    // when done, caller can apply the changes to the shared object
+    // using cmp_and_set_shared_ptr(), or set_shared_ptr() (if serializability
+    // of changes isn't required).
+    versioned_shared_ptr<T> clone_shared_ptr() const {
+        return _shared->clone();
+    }
+
+    // Safely apply changes to the shared object done on a versioned_shared_ptr
+    // previously retrieved by clone_shared_ptr().
+    //
+    // Exceptions: may throw uid/version_mismatch errors
+    void cmp_and_set_shared_ptr(const versioned_shared_ptr<T>& x) {
+        _shared->cmp_and_set(x);
+    }
+
+    // Safely apply changes to the shared object done on a versioned_shared_ptr
+    // previously retrieved by clone_shared_ptr().
+    //
+    // Exceptions: may throw uid/version_mismatch errors
+    void cmp_and_set_shared_ptr(versioned_shared_ptr<T>&& x) {
+        _shared->cmp_and_set(std::move(x));
+    }
+
+    // apply changes to the shared object done on a versioned_shared_ptr
+    // previously retrieved by clone_shared_ptr().
+    //
+    // Exceptions: may throw uid_mismatch error
+    void set_shared_ptr(const versioned_shared_ptr<T>& x) {
+        _shared->set(x);
+    }
+
+    // apply changes to the shared object done on a versioned_shared_ptr
+    // previously retrieved by clone_shared_ptr().
+    //
+    // Exceptions: may throw uid_mismatch error
+    void set_shared_ptr(versioned_shared_ptr<T>&& x) {
+        _shared->set(std::move(x));
+    }
+
+    // get a reference to the shared object
+    // caller must not yield when using this reference
+    const T& get() const noexcept {
+        return **_shared;
+    }
+
+    // get a mutable reference to the shared object
+    // caller must not yield when using this reference
+    //
+    // Note: this is dangerous and should generally be avoided
+    // in favor of using clone_shared_ptr() ... cmp_and_set_shared_ptr()
+    T& get_mutable() const noexcept {
+        return **_shared;
+    }
+};
+
 } // namespace utils

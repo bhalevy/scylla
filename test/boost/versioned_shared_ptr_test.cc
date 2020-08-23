@@ -182,3 +182,38 @@ BOOST_AUTO_TEST_CASE(test_versioned_shared_ptr_uid) {
     p0.reset();
     BOOST_REQUIRE_NO_THROW(p0.cmp_and_set(p1));
 }
+
+BOOST_AUTO_TEST_CASE(test_versioned_shared_object) {
+    struct X {
+        int value;
+    };
+
+    auto so0 = utils::versioned_shared_object<X>(42);
+    BOOST_REQUIRE_EQUAL(so0.get().value, 42);
+
+    auto so1 = so0;
+    BOOST_REQUIRE_EQUAL(so1.version(), so0.version());
+    BOOST_REQUIRE_EQUAL(so1.get().value, 42);
+
+    auto p0 = so0.get_shared_ptr();
+    BOOST_REQUIRE_EQUAL(p0->value, 42);
+
+    auto p1 = so1.clone_shared_ptr();
+    BOOST_REQUIRE_NE(p1.version(), p0.version());
+    BOOST_REQUIRE_EQUAL(p1->value, 42);
+    p1->value = 17;
+
+    BOOST_REQUIRE_EQUAL(so0.get().value, 42);
+    BOOST_REQUIRE_EQUAL(so1.get().value, 42);
+    BOOST_REQUIRE_EQUAL(p0->value, 42);
+
+    BOOST_REQUIRE_NO_THROW(so1.cmp_and_set_shared_ptr(p1));
+    BOOST_REQUIRE_EQUAL(so1.version(), so0.version());
+    BOOST_REQUIRE_EQUAL(so0.get().value, 17);
+    BOOST_REQUIRE_EQUAL(so1.get().value, 17);
+
+    // test that the read-only snapshot wasn't changed
+    // and that the version change is reflected in the base versioned_shared_object
+    BOOST_REQUIRE_NE(so1.version(), p0.version());
+    BOOST_REQUIRE_EQUAL(p0->value, 42);
+}
