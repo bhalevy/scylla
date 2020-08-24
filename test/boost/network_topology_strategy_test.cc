@@ -182,10 +182,9 @@ future<> simple_test() {
     utils::fb_utilities::set_broadcast_rpc_address(gms::inet_address("localhost"));
 
     // Create the RackInferringSnitch
-    return i_endpoint_snitch::create_snitch("RackInferringSnitch").then(
-        [] {
-
-        lw_shared_ptr<token_metadata> tm = make_lw_shared<token_metadata>();
+    return i_endpoint_snitch::create_snitch("RackInferringSnitch").then([] {
+      return do_with(locator::shared_token_metadata(), [] (locator::shared_token_metadata& stm) {
+        token_metadata& tm = stm.get_mutable();
         std::vector<ring_point> ring_points = {
             { 1.0,  inet_address("192.100.10.1") },
             { 2.0,  inet_address("192.101.10.1") },
@@ -201,7 +200,7 @@ future<> simple_test() {
         };
         // Initialize the token_metadata
         for (unsigned i = 0; i < ring_points.size(); i++) {
-            tm->update_normal_token(
+            tm.update_normal_token(
                 {dht::token::kind::key, d2t(ring_points[i].point / ring_points.size())},
                 ring_points[i].host);
         }
@@ -215,7 +214,7 @@ future<> simple_test() {
         };
 
         auto ars_uptr = abstract_replication_strategy::create_replication_strategy(
-            "test keyspace", "NetworkTopologyStrategy", *tm, options323);
+            "test keyspace", "NetworkTopologyStrategy", stm, options323);
 
         auto ars_ptr = ars_uptr.get();
 
@@ -230,7 +229,7 @@ future<> simple_test() {
         };
 
         ars_uptr = abstract_replication_strategy::create_replication_strategy(
-            "test keyspace", "NetworkTopologyStrategy", *tm, options320);
+            "test keyspace", "NetworkTopologyStrategy", stm, options320);
 
         ars_ptr = ars_uptr.get();
 
@@ -242,10 +241,11 @@ future<> simple_test() {
         // points will be taken from the cache when it shouldn't and the
         // corresponding check will fail.
         //
-        tm->invalidate_cached_rings();
+        tm.invalidate_cached_rings();
         full_ring_check(ring_points, options320, ars_ptr);
 
         return i_endpoint_snitch::stop_snitch();
+      });
     });
 }
 
@@ -254,13 +254,13 @@ future<> heavy_origin_test() {
     utils::fb_utilities::set_broadcast_rpc_address(gms::inet_address("localhost"));
 
     // Create the RackInferringSnitch
-    return i_endpoint_snitch::create_snitch("RackInferringSnitch").then(
-        [] {
+    return i_endpoint_snitch::create_snitch("RackInferringSnitch").then([] {
+      return do_with(locator::shared_token_metadata(), [] (locator::shared_token_metadata& stm) {
         std::vector<int> dc_racks = {2, 4, 8};
         std::vector<int> dc_endpoints = {128, 256, 512};
         std::vector<int> dc_replication = {2, 6, 6};
 
-        lw_shared_ptr<token_metadata> tm = make_lw_shared<token_metadata>();
+        token_metadata& tm = stm.get_mutable();
         std::map<sstring, sstring> config_options;
         std::unordered_map<inet_address, std::unordered_set<token>> tokens;
         std::vector<ring_point> ring_points;
@@ -301,16 +301,17 @@ future<> heavy_origin_test() {
             }
         }
 
-        tm->update_normal_tokens(tokens);
+        tm.update_normal_tokens(tokens);
 
         auto ars_uptr = abstract_replication_strategy::create_replication_strategy(
-            "test keyspace", "NetworkTopologyStrategy", *tm, config_options);
+            "test keyspace", "NetworkTopologyStrategy", stm, config_options);
 
         auto ars_ptr = ars_uptr.get();
 
         full_ring_check(ring_points, config_options, ars_ptr);
 
         return i_endpoint_snitch::stop_snitch();
+      });
     });
 }
 

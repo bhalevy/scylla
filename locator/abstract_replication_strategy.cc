@@ -30,7 +30,7 @@ logging::logger abstract_replication_strategy::logger("replication_strategy");
 
 abstract_replication_strategy::abstract_replication_strategy(
     const sstring& ks_name,
-    const token_metadata& token_metadata,
+    const shared_token_metadata& token_metadata,
     snitch_ptr& snitch,
     const std::map<sstring, sstring>& config_options,
     replication_strategy_type my_type)
@@ -40,12 +40,12 @@ abstract_replication_strategy::abstract_replication_strategy(
         , _snitch(snitch)
         , _my_type(my_type) {}
 
-std::unique_ptr<abstract_replication_strategy> abstract_replication_strategy::create_replication_strategy(const sstring& ks_name, const sstring& strategy_name, const token_metadata& tk_metadata, const std::map<sstring, sstring>& config_options) {
+std::unique_ptr<abstract_replication_strategy> abstract_replication_strategy::create_replication_strategy(const sstring& ks_name, const sstring& strategy_name, const shared_token_metadata& tk_metadata, const std::map<sstring, sstring>& config_options) {
     assert(locator::i_endpoint_snitch::get_local_snitch_ptr());
     try {
         return create_object<abstract_replication_strategy,
                              const sstring&,
-                             const token_metadata&,
+                             const shared_token_metadata&,
                              snitch_ptr&,
                              const std::map<sstring, sstring>&>
             (strategy_name, ks_name, tk_metadata,
@@ -57,7 +57,7 @@ std::unique_ptr<abstract_replication_strategy> abstract_replication_strategy::cr
 
 void abstract_replication_strategy::validate_replication_strategy(const sstring& ks_name,
                                                                   const sstring& strategy_name,
-                                                                  const token_metadata& token_metadata,
+                                                                  const shared_token_metadata& token_metadata,
                                                                   const std::map<sstring, sstring>& config_options)
 {
     auto strategy = create_replication_strategy(ks_name, strategy_name, token_metadata, config_options);
@@ -74,7 +74,7 @@ void abstract_replication_strategy::validate_replication_strategy(const sstring&
 }
 
 std::vector<inet_address> abstract_replication_strategy::get_natural_endpoints(const token& search_token) {
-    return do_get_natural_endpoints(search_token, _token_metadata);
+    return do_get_natural_endpoints(search_token, _token_metadata.get());
 }
 
 std::vector<inet_address> abstract_replication_strategy::do_get_natural_endpoints(const token& search_token, const token_metadata& tm) {
@@ -94,7 +94,7 @@ std::vector<inet_address> abstract_replication_strategy::do_get_natural_endpoint
 }
 
 std::vector<inet_address> abstract_replication_strategy::get_natural_endpoints_without_node_being_replaced(const token& search_token) {
-    const token_metadata& tm = _token_metadata;
+    const token_metadata& tm = _token_metadata.get();
     std::vector<gms::inet_address> natural_endpoints = do_get_natural_endpoints(search_token, tm);
     if (tm.is_any_node_being_replaced() &&
         allow_remove_node_being_replaced_from_natural_endpoints()) {
@@ -174,12 +174,13 @@ insert_token_range_to_sorted_container_while_unwrapping(
 
 dht::token_range_vector
 abstract_replication_strategy::get_ranges(inet_address ep) const {
-    return do_get_ranges(ep, _token_metadata, false);
+    return do_get_ranges(ep, _token_metadata.get(), false);
 }
 
 dht::token_range_vector
 abstract_replication_strategy::get_ranges_in_thread(inet_address ep) const {
-    return do_get_ranges(ep, _token_metadata, true);
+    token_metadata_ptr stm = _token_metadata.get_shared_ptr();
+    return do_get_ranges(ep, *stm, true);
 }
 
 dht::token_range_vector
@@ -214,9 +215,10 @@ abstract_replication_strategy::do_get_ranges(inet_address ep, const token_metada
 dht::token_range_vector
 abstract_replication_strategy::get_primary_ranges(inet_address ep) {
     dht::token_range_vector ret;
-    auto prev_tok = _token_metadata.sorted_tokens().back();
-    for (auto tok : _token_metadata.sorted_tokens()) {
-        auto&& eps = calculate_natural_endpoints(tok, _token_metadata);
+    token_metadata_ptr stm = _token_metadata.get_shared_ptr();
+    auto prev_tok = stm->sorted_tokens().back();
+    for (auto tok : stm->sorted_tokens()) {
+        auto&& eps = calculate_natural_endpoints(tok, *stm);
         if (eps.size() > 0 && eps[0] == ep) {
             insert_token_range_to_sorted_container_while_unwrapping(prev_tok, tok, ret);
         }
@@ -229,10 +231,11 @@ dht::token_range_vector
 abstract_replication_strategy::get_primary_ranges_within_dc(inet_address ep) {
     dht::token_range_vector ret;
     sstring local_dc = _snitch->get_datacenter(ep);
-    std::unordered_set<inet_address> local_dc_nodes = _token_metadata.get_topology().get_datacenter_endpoints().at(local_dc);
-    auto prev_tok = _token_metadata.sorted_tokens().back();
-    for (auto tok : _token_metadata.sorted_tokens()) {
-        auto&& eps = calculate_natural_endpoints(tok, _token_metadata);
+    token_metadata_ptr stm = _token_metadata.get_shared_ptr();
+    std::unordered_set<inet_address> local_dc_nodes = stm->get_topology().get_datacenter_endpoints().at(local_dc);
+    auto prev_tok = stm->sorted_tokens().back();
+    for (auto tok : stm->sorted_tokens()) {
+        auto&& eps = calculate_natural_endpoints(tok, *stm);
         // Unlike get_primary_ranges() which checks if ep is the first
         // owner of this range, here we check if ep is the first just
         // among nodes which belong to the local dc of ep.
