@@ -355,6 +355,14 @@ public:
         return _shared;
     }
 
+    token_metadata_ptr clone() const {
+        return make_token_metadata_ptr(*_shared);
+    }
+
+    void set(token_metadata_ptr tmptr) noexcept {
+        _shared = std::move(tmptr);
+    }
+
     // FIXME: temporary, to be replaced by clone/set.
     token_metadata_ptr get_mutable() const noexcept {
         return _shared;
