@@ -239,7 +239,7 @@ public:
 
     const gms::feature_service& features() const { return _features; }
 
-    const locator::token_metadata& get_token_metadata() const { return _token_metadata; }
+    const locator::token_metadata& get_token_metadata() const noexcept { return _token_metadata; }
 
     query::max_result_size get_max_result_size(const query::partition_slice& slice) const;
 
