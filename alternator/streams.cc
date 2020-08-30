@@ -474,11 +474,11 @@ future<executor::request_return_type> executor::describe_stream(client_state& cl
     // TODO: label
     // TODO: creation time
 
-    const auto& tm = _proxy.get_token_metadata();
+    auto normal_token_owners = _proxy.get_token_metadata_ptr()->count_normal_token_owners();
     // cannot really "resume" query, must iterate all data. because we cannot query neither "time" (pk) > something,
     // or on expired...
     // TODO: maybe add secondary index to topology table to enable this?
-    return _sdks.cdc_get_versioned_streams({ tm.count_normal_token_owners() }).then([this, &db, schema, shard_start, limit, ret = std::move(ret), stream_desc = std::move(stream_desc)](std::map<db_clock::time_point, cdc::streams_version> topologies) mutable {
+    return _sdks.cdc_get_versioned_streams({ normal_token_owners }).then([this, &db, schema, shard_start, limit, ret = std::move(ret), stream_desc = std::move(stream_desc)](std::map<db_clock::time_point, cdc::streams_version> topologies) mutable {
         auto i = topologies.begin();
         auto e = topologies.end();
         auto prev = e;
