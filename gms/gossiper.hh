@@ -556,7 +556,7 @@ private:
     abort_source& _abort_source;
     condition_variable _features_condvar;
     feature_service& _feature_service;
-    const locator::token_metadata& _token_metadata;
+    const locator::shared_token_metadata& _shared_token_metadata;
     netw::messaging_service& _messaging;
     db::config& _cfg;
     failure_detector _fd;
@@ -565,6 +565,7 @@ private:
     std::set<sstring> get_supported_features(inet_address endpoint) const;
     // Get features supported by all the nodes this node knows about
     std::set<sstring> get_supported_features(const std::unordered_map<gms::inet_address, sstring>& loaded_peer_features, ignore_features_of_local_node ignore_local_node) const;
+    locator::token_metadata_ptr get_token_metadata_ptr() const noexcept;
 public:
     void check_knows_remote_features(std::set<std::string_view>& local_features, const std::unordered_map<inet_address, sstring>& loaded_peer_features) const;
     void maybe_enable_features();
