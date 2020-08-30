@@ -118,6 +118,7 @@ private:
     using boot_strapper = dht::boot_strapper;
     using token_metadata = locator::token_metadata;
     using shared_token_metadata = locator::shared_token_metadata;
+    using token_metadata_ptr = locator::token_metadata_ptr;
     using application_state = gms::application_state;
     using inet_address = gms::inet_address;
     using versioned_value = gms::versioned_value;
@@ -155,7 +156,7 @@ private:
      */
     bool _for_testing;
 public:
-    storage_service(abort_source& as, distributed<database>& db, gms::gossiper& gossiper, sharded<db::system_distributed_keyspace>&, sharded<db::view::view_update_generator>&, gms::feature_service& feature_service, storage_service_config config, sharded<service::migration_notifier>& mn, locator::shared_token_metadata& tm, sharded<netw::messaging_service>& ms, /* only for tests */ bool for_testing = false);
+    storage_service(abort_source& as, distributed<database>& db, gms::gossiper& gossiper, sharded<db::system_distributed_keyspace>&, sharded<db::view::view_update_generator>&, gms::feature_service& feature_service, storage_service_config config, sharded<service::migration_notifier>& mn, locator::shared_token_metadata& stm, sharded<netw::messaging_service>& ms, /* only for tests */ bool for_testing = false);
 
     // Needed by distributed<>
     future<> stop();
@@ -166,18 +167,27 @@ private:
     future<> do_update_pending_ranges();
     void register_metrics();
 
-    locator::token_metadata& get_mutable_token_metadata() {
-        return _token_metadata;
+    token_metadata_ptr get_mutable_token_metadata_ptr() {
+        if (!_updated_token_metadata) {
+            _updated_token_metadata = _token_metadata.clone_shared_ptr();
+        }
+        return _updated_token_metadata;
     }
-
 public:
     future<> keyspace_changed(const sstring& ks_name);
     future<> update_pending_ranges();
     void update_pending_ranges_nowait(inet_address endpoint);
     void update_topology(inet_address endpoint);
 
+    const token_metadata_ptr get_token_metadata_ptr() const noexcept {
+        if (__builtin_expect(bool(_updated_token_metadata), false)) {
+            return _updated_token_metadata;
+        }
+        return _token_metadata.get_shared_ptr();
+    }
+
     const locator::token_metadata& get_token_metadata() const noexcept {
-        return _token_metadata;
+        return *get_token_metadata_ptr();
     }
 
     cdc::metadata& get_cdc_metadata() {
@@ -212,7 +222,8 @@ private:
         return utils::fb_utilities::get_broadcast_address();
     }
     /* This abstraction maintains the token/endpoint metadata information */
-    token_metadata& _token_metadata;
+    shared_token_metadata _token_metadata;
+    token_metadata_ptr _updated_token_metadata;
 
     // Maintains the set of known CDC generations used to pick streams for log writes (i.e., the partition keys of these log writes).
     // Updated in response to certain gossip events (see the handle_cdc_generation function).

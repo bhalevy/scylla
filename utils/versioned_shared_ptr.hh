@@ -119,8 +119,12 @@ public:
         return _ptr.get();
     }
 
+    versioned_shared_ptr clone_from(const T& orig) const {
+        return versioned_shared_ptr(make_lw_shared<T>(orig), _uid, _version + 1);
+    }
+
     versioned_shared_ptr clone() const {
-        return versioned_shared_ptr(make_lw_shared<T>(*(_ptr.get())), _uid, _version + 1);
+        return clone_from(*(_ptr.get()));
     }
 
     shard_id shard() const noexcept {
@@ -252,6 +256,10 @@ public:
     // of changes isn't required).
     versioned_shared_ptr<T> clone_shared_ptr() const {
         return _shared->clone();
+    }
+
+    versioned_shared_ptr<T> clone_shared_ptr_from(const T& orig) const {
+        return _shared->clone_from(orig);
     }
 
     // Safely apply changes to the shared object done on a versioned_shared_ptr
