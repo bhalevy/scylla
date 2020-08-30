@@ -126,7 +126,7 @@ public:
 gossiper::gossiper(abort_source& as, feature_service& features, const locator::shared_token_metadata& stm, netw::messaging_service& ms, db::config& cfg)
         : _abort_source(as)
         , _feature_service(features)
-        , _token_metadata(*stm.get())
+        , _shared_token_metadata(stm)
         , _messaging(ms)
         , _cfg(cfg)
         , _fd(cfg.phi_convict_threshold(),
