@@ -382,11 +382,6 @@ public:
         _shared = std::move(tmptr);
     }
 
-    // FIXME: temporary, to be replaced by clone/set.
-    token_metadata_ptr get_mutable() const noexcept {
-        return _shared;
-    }
-
     future<token_metadata_lock> get_lock() noexcept;
 
 protected:
