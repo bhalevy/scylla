@@ -1776,7 +1776,7 @@ storage_proxy::~storage_proxy() {}
 storage_proxy::storage_proxy(distributed<database>& db, storage_proxy::config cfg, db::view::node_update_backlog& max_view_update_backlog,
         scheduling_group_key stats_key, gms::feature_service& feat, const locator::shared_token_metadata& tm, netw::messaging_service& ms)
     : _db(db)
-    , _token_metadata(tm.get())
+    , _token_metadata(tm)
     , _read_smp_service_group(cfg.read_smp_service_group)
     , _write_smp_service_group(cfg.write_smp_service_group)
     , _write_ack_smp_service_group(cfg.write_ack_smp_service_group)
