@@ -227,18 +227,8 @@ future<> gossiping_property_file_snitch::reload_configuration() {
                 }).get();
 
                 // update Storage Service on each shard
-                auto cpus = boost::irange(0u, smp::count);
-                parallel_for_each(cpus.begin(), cpus.end(), [] (unsigned int c) {
-                    return smp::submit_to(c, [] {
-                        if (service::get_storage_service().local_is_initialized()) {
-                            auto& tmd = service::get_local_storage_service().get_mutable_token_metadata();
-
-                            // initiate the token metadata endpoints cache reset
-                            tmd.invalidate_cached_rings();
-                            // re-read local rack and DC info
-                            tmd.update_topology(utils::fb_utilities::get_broadcast_address());
-                        }
-                    });
+                service::get_storage_service().invoke_on_all([] (auto&& ss) {
+                    ss.update_topology(utils::fb_utilities::get_broadcast_address());
                 }).get();
 
 
