@@ -1761,7 +1761,7 @@ future<> bootstrap_with_repair(seastar::sharded<database>& db, seastar::sharded<
             }
             auto& ks = db.local().find_keyspace(keyspace_name);
             auto& strat = ks.get_replication_strategy();
-            dht::token_range_vector desired_ranges = strat.get_pending_address_ranges(*tmptr, tokens, myip);
+            dht::token_range_vector desired_ranges = strat.get_pending_address_ranges(tmptr, tokens, myip);
             seastar::thread::maybe_yield();
             nr_ranges_total += desired_ranges.size();
         }
@@ -1777,7 +1777,7 @@ future<> bootstrap_with_repair(seastar::sharded<database>& db, seastar::sharded<
             }
             auto& ks = db.local().find_keyspace(keyspace_name);
             auto& strat = ks.get_replication_strategy();
-            dht::token_range_vector desired_ranges = strat.get_pending_address_ranges(*tmptr, tokens, myip);
+            dht::token_range_vector desired_ranges = strat.get_pending_address_ranges(tmptr, tokens, myip);
             bool find_node_in_local_dc_only = strat.get_type() == locator::replication_strategy_type::network_topology;
 
             //Active ranges
