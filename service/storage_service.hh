@@ -166,6 +166,10 @@ private:
     future<> do_update_pending_ranges();
     void register_metrics();
 
+    locator::token_metadata& get_mutable_token_metadata() {
+        return _token_metadata;
+    }
+
 public:
     future<> keyspace_changed(const sstring& ks_name);
     future<> update_pending_ranges();
@@ -173,10 +177,6 @@ public:
     void update_topology(inet_address endpoint);
 
     const locator::token_metadata& get_token_metadata() const noexcept {
-        return _token_metadata;
-    }
-
-    locator::token_metadata& get_mutable_token_metadata() {
         return _token_metadata;
     }
 
