@@ -362,15 +362,6 @@ public:
     const T& get() const noexcept {
         return **_shared;
     }
-
-    // get a mutable reference to the shared object
-    // caller must not yield when using this reference
-    //
-    // FIXME: to be removed once all users are converted to
-    // {cmp_and_,}set_shared_ptr().
-    T& get_mutable() const noexcept {
-        return **_shared;
-    }
 };
 
 } // namespace utils
