@@ -89,6 +89,7 @@
 
 #include "index/target_parser.hh"
 #include "lua.hh"
+#include "encoding_stats.hh"
 
 using namespace db::system_keyspace;
 using namespace std::chrono_literals;
@@ -2334,9 +2335,28 @@ schema_ptr create_table_from_mutations(const schema_ctxt& ctxt, schema_mutations
         for (auto& row : dcr.rows()) {
             auto name = row.get_nonnull<sstring>("column_name");
             auto type = cql_type_parser::parse(ks_name, row.get_nonnull<sstring>("type"));
-            auto time = row.get_nonnull<db_clock::time_point>("dropped_time");
-            api::timestamp_type timestamp = time.time_since_epoch().count();
-            builder.without_column(name, type, api::timestamp_clock::time_point(api::timestamp_clock::duration(timestamp)));
+            auto count = row.get_nonnull<db_clock::time_point>("dropped_time").time_since_epoch().count();
+            constexpr int64_t max_millis = 253402300800LL * 1000;   // 10000/01/01 00:00:00 UTC in milliseconds
+            bool is_millis = count < max_millis;
+            api::timestamp_clock::time_point time;
+            // If the timestamp looks like it was wrongly written in microseconds
+            // due to https://github.com/scylladb/scylla/issues/7175
+            // use it as an api::timestamp_type rather than db_clock::time_point.
+            //
+            // We determine that by comparing the integer value
+            // to the timestamp_epoch (22 Sep 2015 00:00:00 UTC)
+            // in microseconds. This is safe since if these were
+            // milliseconds, they would refer to 17 Jan 47693.
+            slogger.trace("create_table_from_mutations: dropped_column={} dropped_time={} ({}seconds)", name, count,
+                    is_millis ? "milli" : "micro");
+            if (is_millis) {
+                auto duration_in_millis = std::chrono::milliseconds(count);
+                auto timestamp_duration = std::chrono::duration_cast<api::timestamp_clock::duration>(duration_in_millis);
+                time = api::timestamp_clock::time_point(timestamp_duration);
+            } else {
+                time = api::timestamp_clock::time_point(api::timestamp_clock::duration(count));
+            }
+            builder.without_column(name, type, time);
         }
     }
 
