@@ -89,6 +89,7 @@
 
 #include "index/target_parser.hh"
 #include "lua.hh"
+#include "encoding_stats.hh"
 
 using namespace db::system_keyspace;
 using namespace std::chrono_literals;
@@ -2333,7 +2334,21 @@ schema_ptr create_table_from_mutations(const schema_ctxt& ctxt, schema_mutations
             auto name = row.get_nonnull<sstring>("column_name");
             auto type = cql_type_parser::parse(ks_name, row.get_nonnull<sstring>("type"));
             auto time = row.get_nonnull<db_clock::time_point>("dropped_time");
-            builder.without_column(name, type, time.time_since_epoch().count());
+            // If the timestamp looks like it was wrongly written in microseconds
+            // due to https://github.com/scylladb/scylla/issues/7175
+            // use it as an api::timestamp_type rather than db_clock::time_point.
+            //
+            // We determine that by comparing the integer value
+            // to the timestamp_epoch (22 Sep 2015 00:00:00 UTC)
+            // in microseconds. This is safe since if these were
+            // milliseconds, they would refer to 17 Jan 47693.
+            int64_t count = time.time_since_epoch().count();
+            slogger.trace("create_table_from_mutations: dropped_column={} dropped_time={}", name, count);
+            if (count >= encoding_stats::timestamp_epoch) {
+                builder.without_column(name, type, count);
+            } else {
+                builder.without_column(name, type, time);
+            }
         }
     }
 

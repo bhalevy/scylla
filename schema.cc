@@ -41,6 +41,7 @@
 #include "dht/token-sharding.hh"
 #include "cdc/cdc_extension.hh"
 #include "db/paxos_grace_seconds_extension.hh"
+#include "timestamp.hh"
 
 constexpr int32_t schema::NAME_LENGTH;
 
@@ -1001,11 +1002,19 @@ schema_builder& schema_builder::without_column(sstring name, api::timestamp_type
 schema_builder& schema_builder::without_column(sstring name, data_type type, api::timestamp_type timestamp)
 {
     auto ret = _raw._dropped_columns.emplace(name, schema::dropped_column{type, timestamp});
-    if (!ret.second && ret.first->second.timestamp < timestamp) {
+    if (ret.second) {
+        dblog.trace("schema_builder::without_column {}: dropped_time={}", name, timestamp);
+    } else if (ret.first->second.timestamp < timestamp) {
         ret.first->second.type = type;
         ret.first->second.timestamp = timestamp;
+        dblog.trace("schema_builder::without_column updated {}: dropped_time={}", name, timestamp);
     }
     return *this;
+}
+
+schema_builder& schema_builder::without_column(sstring name, data_type type, db_clock::time_point tp)
+{
+    return without_column(std::move(name), type, std::chrono::duration_cast<api::timestamp_clock::duration>(tp.time_since_epoch()).count());
 }
 
 schema_builder& schema_builder::rename_column(bytes from, bytes to)

@@ -258,6 +258,7 @@ public:
     schema_builder& remove_column(bytes name);
     schema_builder& without_column(sstring name, api::timestamp_type timestamp);
     schema_builder& without_column(sstring name, data_type, api::timestamp_type timestamp);
+    schema_builder& without_column(sstring name, data_type, db_clock::time_point tp);
     schema_builder& rename_column(bytes from, bytes to);
     schema_builder& alter_column_type(bytes name, data_type new_type);
     schema_builder& mark_column_computed(bytes name, column_computation_ptr computation);
