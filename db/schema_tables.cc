@@ -1786,7 +1786,14 @@ static data_type expand_user_type(data_type original) {
 
 static void add_dropped_column_to_schema_mutation(schema_ptr table, const sstring& name, const schema::dropped_column& column, api::timestamp_type timestamp, mutation& m) {
     auto ckey = clustering_key::from_exploded(*dropped_columns(), {utf8_type->decompose(table->cf_name()), utf8_type->decompose(name)});
-    db_clock::time_point tp(db_clock::duration(column.timestamp));
+
+    bool dropped_columns_millisecond_resolution = db::qctx && db::qctx->db().features().cluster_supports_dropped_columns_millisecond_resolution();
+    slogger.trace("add_dropped_column_to_schema_mutation: dropped_column={} dropped_time={} cluster_supports_dropped_columns_millisecond_resolution={}",
+            name, column.timestamp, dropped_columns_millisecond_resolution);
+    db_clock::duration dropped_time = dropped_columns_millisecond_resolution ?
+            std::chrono::duration_cast<db_clock::duration>(api::timestamp_clock::duration(column.timestamp)) :
+            db_clock::duration(column.timestamp);
+    db_clock::time_point tp = db_clock::time_point(dropped_time);
     m.set_clustered_cell(ckey, "dropped_time", tp, timestamp);
 
     /*
