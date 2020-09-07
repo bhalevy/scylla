@@ -104,6 +104,7 @@ private:
     gms::feature _lwt_feature;
     gms::feature _per_table_partitioners_feature;
     gms::feature _per_table_caching_feature;
+    gms::feature _dropped_columns_millisecond_resolution_feature;
 
 public:
     bool cluster_supports_range_tombstones() const {
@@ -219,6 +220,10 @@ public:
 
     bool cluster_supports_lwt() const {
         return bool(_lwt_feature);
+    }
+
+    const feature& cluster_supports_dropped_columns_millisecond_resolution() const noexcept {
+        return _dropped_columns_millisecond_resolution_feature;
     }
 };
 
