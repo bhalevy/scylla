@@ -340,6 +340,7 @@ mutable_token_metadata_ptr make_token_metadata_ptr(Args... args) {
 
 class shared_token_metadata {
     mutable_token_metadata_ptr _shared;
+    semaphore _sem = { 1 };
 public:
     // used to construct the shared object as a sharded<> instance
     shared_token_metadata()
@@ -365,6 +366,8 @@ public:
     mutable_token_metadata_ptr get_mutable() const noexcept {
         return _shared;
     }
+
+    future<token_metadata_lock> get_lock() noexcept;
 };
 
 }

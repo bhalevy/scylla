@@ -22,6 +22,7 @@
 #pragma once
 
 #include <seastar/core/shared_ptr.hh>
+#include <seastar/core/semaphore.hh>
 
 namespace locator {
 
@@ -29,5 +30,6 @@ class token_metadata;
 class shared_token_metadata;
 using token_metadata_ptr = lw_shared_ptr<const token_metadata>;
 using mutable_token_metadata_ptr = lw_shared_ptr<token_metadata>;
+using token_metadata_lock = semaphore_units<semaphore_default_exception_factory>;
 
 }
