@@ -27,6 +27,6 @@ namespace locator {
 
 class token_metadata;
 class shared_token_metadata;
-
+class token_metadata_lock;
 
 }

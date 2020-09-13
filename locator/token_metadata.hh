@@ -340,8 +340,27 @@ token_metadata_ptr make_token_metadata_ptr(Args... args) {
     return make_lw_shared<token_metadata>(std::forward<Args>(args)...);
 }
 
+class token_metadata_lock {
+    shared_token_metadata& _stm;
+    std::unique_ptr<semaphore_units<semaphore_default_exception_factory>> _units;
+public:
+    explicit token_metadata_lock(shared_token_metadata& stm) noexcept
+        : _stm(stm)
+    { }
+
+    token_metadata_lock(const token_metadata_lock&) = delete;
+    token_metadata_lock(token_metadata_lock&& o) = default;
+
+    ~token_metadata_lock() = default;
+
+    future<> lock() noexcept;
+
+    void unlock() noexcept;
+};
+
 class shared_token_metadata {
     token_metadata_ptr _shared;
+    semaphore _sem = { 1 };
 public:
     // used to construct the shared object as a sharded<> instance
     shared_token_metadata()
@@ -367,6 +386,15 @@ public:
     token_metadata_ptr get_mutable() const noexcept {
         return _shared;
     }
+
+    future<token_metadata_lock> get_lock() noexcept;
+
+protected:
+    semaphore& sem() {
+        return _sem;
+    }
+
+    friend class token_metadata_lock;
 };
 
 }

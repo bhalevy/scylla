@@ -1984,4 +1984,24 @@ const endpoint_dc_rack& topology::get_location(const inet_address& ep) const {
 }
 
 /////////////////// class topology end /////////////////////////////////////////
+
+future<token_metadata_lock> shared_token_metadata::get_lock() noexcept {
+    return do_with(token_metadata_lock(*this), [] (token_metadata_lock& lk) {
+        return lk.lock().then([&lk] {
+            return std::move(lk);
+        });
+    });
+}
+
+future<> token_metadata_lock::lock() noexcept {
+    assert(!_units);
+    return get_units(_stm.sem(), 1).then([this] (auto units) noexcept {
+        _units = std::make_unique<semaphore_units<semaphore_default_exception_factory>>(std::move(units));
+    });
+}
+
+void token_metadata_lock::unlock() noexcept {
+    _units.reset();
+}
+
 } // namespace locator
