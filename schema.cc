@@ -355,7 +355,7 @@ schema::schema(const raw_schema& raw, std::optional<raw_view_info> raw_view_info
 
         auto dropped_at_it = _raw._dropped_columns.find(def.name_as_text());
         if (dropped_at_it != _raw._dropped_columns.end()) {
-            def._dropped_at = std::max(def._dropped_at, dropped_at_it->second.timestamp);
+            def._dropped_at = std::max(def._dropped_at, dropped_at_it->second.timestamp());
         }
 
         def._thrift_bits = column_definition::thrift_bits();
@@ -675,7 +675,7 @@ std::ostream& operator<<(std::ostream& os, const schema& s) {
         if (n++ != 0) {
             os << ", ";
         }
-        os << dc.first << " : { " << dc.second.type->name() << ", " << dc.second.timestamp << " }";
+        os << dc.first << " : { " << dc.second.type->name() << ", " << dc.second.timestamp() << " }";
     }
     os << "}";
     os << ",collections={";
@@ -1000,11 +1000,10 @@ schema_builder& schema_builder::without_column(sstring name, api::timestamp_cloc
 
 schema_builder& schema_builder::without_column(sstring name, data_type type, api::timestamp_clock::time_point tp)
 {
-    api::timestamp_type timestamp = tp.time_since_epoch().count();
-    auto ret = _raw._dropped_columns.emplace(name, schema::dropped_column{type, timestamp});
-    if (!ret.second && ret.first->second.timestamp < timestamp) {
+    auto ret = _raw._dropped_columns.emplace(name, schema::dropped_column{type, tp});
+    if (!ret.second && ret.first->second.tp < tp) {
         ret.first->second.type = type;
-        ret.first->second.timestamp = timestamp;
+        ret.first->second.tp = tp;
     }
     return *this;
 }

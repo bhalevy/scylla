@@ -984,7 +984,7 @@ class mp_row_consumer_m : public consumer_m {
         if (!column_info.id) {
             sstring name = sstring(to_sstring_view(*column_info.name));
             auto it = _schema->dropped_columns().find(name);
-            if (it == _schema->dropped_columns().end() || timestamp > it->second.timestamp) {
+            if (it == _schema->dropped_columns().end() || timestamp > it->second.timestamp()) {
                 throw malformed_sstable_exception(format("Column {} missing in current schema", name));
             }
         }

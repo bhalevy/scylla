@@ -590,9 +590,13 @@ class schema final : public enable_lw_shared_from_this<schema> {
 public:
     struct dropped_column {
         data_type type;
-        api::timestamp_type timestamp;
+        api::timestamp_clock::time_point tp;
         bool operator==(const dropped_column& rhs) const {
-            return type == rhs.type && timestamp == rhs.timestamp;
+            return type == rhs.type && tp == rhs.tp;
+        }
+
+        api::timestamp_type timestamp() const noexcept {
+            return tp.time_since_epoch().count();
         }
     };
     using extensions_map = std::map<sstring, ::shared_ptr<schema_extension>>;
