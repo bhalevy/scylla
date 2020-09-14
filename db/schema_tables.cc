@@ -194,11 +194,11 @@ static void add_index_to_schema_mutation(schema_ptr table,
                 mutation& mutation);
 
 static void drop_column_from_schema_mutation(schema_ptr schema_table, schema_ptr table,
-                const sstring& column_name, long timestamp,
+                const sstring& column_name, api::timestamp_type timestamp,
                 std::vector<mutation>&);
 
 static void drop_index_from_schema_mutation(schema_ptr table,
-                const index_metadata& column, long timestamp,
+                const index_metadata& column, api::timestamp_type timestamp,
                 std::vector<mutation>& mutations);
 
 static future<schema_ptr> create_table_from_table_row(
@@ -2459,7 +2459,7 @@ static void add_index_to_schema_mutation(schema_ptr table,
     store_map(m, ckey, "options", timestamp, index.options());
 }
 
-static void drop_index_from_schema_mutation(schema_ptr table, const index_metadata& index, long timestamp, std::vector<mutation>& mutations)
+static void drop_index_from_schema_mutation(schema_ptr table, const index_metadata& index, api::timestamp_type timestamp, std::vector<mutation>& mutations)
 {
     schema_ptr s = indexes();
     auto pkey = partition_key::from_singular(*s, table->ks_name());
@@ -2473,7 +2473,7 @@ static void drop_column_from_schema_mutation(
         schema_ptr schema_table,
         schema_ptr table,
         const sstring& column_name,
-        long timestamp,
+        api::timestamp_type timestamp,
         std::vector<mutation>& mutations)
 {
     auto pkey = partition_key::from_singular(*schema_table, table->ks_name());
