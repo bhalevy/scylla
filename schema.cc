@@ -1001,9 +1001,12 @@ schema_builder& schema_builder::without_column(sstring name, api::timestamp_cloc
 schema_builder& schema_builder::without_column(sstring name, data_type type, api::timestamp_clock::time_point tp)
 {
     auto ret = _raw._dropped_columns.emplace(name, schema::dropped_column{type, tp});
-    if (!ret.second && ret.first->second.tp < tp) {
+    if (ret.second) {
+        dblog.trace("schema_builder::without_column {}: dropped_time={}", name, tp.time_since_epoch().count());
+    } else if (ret.first->second.tp < tp) {
         ret.first->second.type = type;
         ret.first->second.tp = tp;
+        dblog.trace("schema_builder::without_column updated {}: dropped_time={}", name, tp.time_since_epoch().count());
     }
     return *this;
 }
