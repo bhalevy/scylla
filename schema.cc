@@ -989,17 +989,18 @@ schema_builder& schema_builder::remove_column(bytes name)
     if(it == _raw._columns.end()) {
         throw std::out_of_range(format("Cannot remove: column {} not found.", name));
     }
-    without_column(it->name_as_text(), it->type, api::new_timestamp());
+    without_column(it->name_as_text(), it->type, api::timestamp_clock::now());
     _raw._columns.erase(it);
     return *this;
 }
 
-schema_builder& schema_builder::without_column(sstring name, api::timestamp_type timestamp) {
-    return without_column(std::move(name), bytes_type, timestamp);
+schema_builder& schema_builder::without_column(sstring name, api::timestamp_clock::time_point tp) {
+    return without_column(std::move(name), bytes_type, tp);
 }
 
-schema_builder& schema_builder::without_column(sstring name, data_type type, api::timestamp_type timestamp)
+schema_builder& schema_builder::without_column(sstring name, data_type type, api::timestamp_clock::time_point tp)
 {
+    api::timestamp_type timestamp = tp.time_since_epoch().count();
     auto ret = _raw._dropped_columns.emplace(name, schema::dropped_column{type, timestamp});
     if (!ret.second && ret.first->second.timestamp < timestamp) {
         ret.first->second.type = type;

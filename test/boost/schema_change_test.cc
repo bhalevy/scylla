@@ -308,7 +308,7 @@ SEASTAR_TEST_CASE(test_combined_column_add_and_drop) {
 
             auto s2 = schema_builder("ks", "table1", std::make_optional(s1->id()))
                     .with_column("pk", bytes_type, column_kind::partition_key)
-                    .without_column("v1", bytes_type, api::new_timestamp())
+                    .without_column("v1", bytes_type, api::timestamp_clock::now())
                     .build();
 
             // Drop v1
@@ -327,7 +327,7 @@ SEASTAR_TEST_CASE(test_combined_column_add_and_drop) {
 
                 auto s4 = schema_builder("ks", "table1", std::make_optional(s1->id()))
                         .with_column("pk", bytes_type, column_kind::partition_key)
-                        .without_column("v1", list_type_impl::get_instance(int32_type, true), api::new_timestamp())
+                        .without_column("v1", list_type_impl::get_instance(int32_type, true), api::timestamp_clock::now())
                         .build();
 
                 auto muts = db::schema_tables::make_update_table_mutations(keyspace, s3, s4,

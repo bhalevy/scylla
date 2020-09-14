@@ -2333,7 +2333,8 @@ schema_ptr create_table_from_mutations(const schema_ctxt& ctxt, schema_mutations
             auto name = row.get_nonnull<sstring>("column_name");
             auto type = cql_type_parser::parse(ks_name, row.get_nonnull<sstring>("type"));
             auto time = row.get_nonnull<db_clock::time_point>("dropped_time");
-            builder.without_column(name, type, time.time_since_epoch().count());
+            api::timestamp_type timestamp = time.time_since_epoch().count();
+            builder.without_column(name, type, api::timestamp_clock::time_point(api::timestamp_clock::duration(timestamp)));
         }
     }
 

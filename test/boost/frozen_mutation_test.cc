@@ -141,8 +141,8 @@ SEASTAR_TEST_CASE(test_deserialization_using_wrong_schema_throws) {
         schema_ptr s3 = new_table()
             .with_column("pk_col", bytes_type, column_kind::partition_key)
             .with_column("reg_3", bytes_type)
-            .without_column("reg_0", new_timestamp())
-            .without_column("reg_1", new_timestamp())
+            .without_column("reg_0", api::timestamp_clock::now())
+            .without_column("reg_1", api::timestamp_clock::now())
             .build();
 
         schema_ptr s4 = new_table()

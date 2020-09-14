@@ -278,7 +278,7 @@ schema_ptr table_description::build_schema() const {
     }
 
     for (auto&& [ name, type, timestamp ] : _removed_columns) {
-        sb.without_column(name, type, timestamp);
+        sb.without_column(name, type, api::timestamp_clock::time_point(api::timestamp_clock::duration(timestamp)));
     }
 
     return sb.build();

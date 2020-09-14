@@ -451,7 +451,7 @@ public:
             if (td.has("dropped_columns")) {
                 auto map = td.get_map<sstring, int64_t>("dropped_columns");
                 for (auto&& e : map) {
-                    builder.without_column(e.first, api::timestamp_type(e.second));
+                    builder.without_column(e.first, api::timestamp_clock::time_point(api::timestamp_clock::duration(e.second)));
                 };
             }
 
