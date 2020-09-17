@@ -421,8 +421,13 @@ sstable_directory::reshard(sstable_info_vector shared_info, compaction_manager& 
 
 future<>
 sstable_directory::do_for_each_sstable(std::function<future<>(sstables::shared_sstable)> func) {
-    return do_with(std::move(func), [this] (std::function<future<>(sstables::shared_sstable)>& func) {
-        return max_concurrent_for_each(_unshared_local_sstables, _load_parallelism, [&func] (sstables::shared_sstable sstable) mutable {
+    return do_for_each_sstable(_unshared_local_sstables, _load_parallelism, std::move(func));
+}
+
+future<>
+sstable_directory::do_for_each_sstable(std::vector<sstables::shared_sstable>& sstables, size_t load_parallelism, std::function<future<>(sstables::shared_sstable)> func) {
+    return do_with(std::move(func), [&sstables, load_parallelism] (std::function<future<>(sstables::shared_sstable)>& func) {
+        return max_concurrent_for_each(sstables, load_parallelism, [&func] (sstables::shared_sstable sstable) mutable {
             return with_semaphore(*_load_semaphore, 1, [&func, sstable = std::move(sstable)] () mutable {
                 return func(std::move(sstable));
             });

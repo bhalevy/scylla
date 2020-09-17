@@ -198,6 +198,7 @@ public:
     // Helper function that processes all unshared SSTables belonging to this shard, respecting the
     // concurrency limit.
     future<> do_for_each_sstable(std::function<future<>(sstables::shared_sstable)> func);
+    static future<> do_for_each_sstable(std::vector<sstables::shared_sstable>& sstables, size_t load_parallelism, std::function<future<>(sstables::shared_sstable)> func);
 
     // Retrieves the list of shared SSTables in this object. The list will be reset once this
     // is called.
