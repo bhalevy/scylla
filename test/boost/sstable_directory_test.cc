@@ -122,8 +122,14 @@ SEASTAR_THREAD_TEST_CASE(sstable_directory_test_table_simple_empty_directory_sca
     auto f = open_file_dma(manifest.native(), open_flags::wo | open_flags::create | open_flags::truncate).get0();
     f.close().get();
 
+    sharded<semaphore> sstdir_sem;
+    sstdir_sem.start(1).get();
+    auto stop_sstdir_sem = defer([&sstdir_sem] {
+        sstdir_sem.stop().get();
+    });
+
     sharded<sstable_directory> sstdir;
-    sstdir.start(dir.path(), 1,
+    sstdir.start(dir.path(), 1, std::ref(sstdir_sem),
             sstable_directory::need_mutate_level::no,
             sstable_directory::lack_of_toc_fatal::no,
             sstable_directory::enable_dangerous_direct_import_of_cassandra_counters::no,
@@ -149,8 +155,14 @@ SEASTAR_THREAD_TEST_CASE(sstable_directory_test_table_scan_incomplete_sstables) 
     // We should fail validation and leave the directory untouched
     remove_file(sst->filename(sstables::component_type::Statistics)).get();
 
+    sharded<semaphore> sstdir_sem;
+    sstdir_sem.start(1).get();
+    auto stop_sstdir_sem = defer([&sstdir_sem] {
+        sstdir_sem.stop().get();
+    });
+
     sharded<sstable_directory> sstdir;
-    sstdir.start(dir.path(), 1,
+    sstdir.start(dir.path(), 1, std::ref(sstdir_sem),
             sstable_directory::need_mutate_level::no,
             sstable_directory::lack_of_toc_fatal::no,
             sstable_directory::enable_dangerous_direct_import_of_cassandra_counters::no,
@@ -171,8 +183,14 @@ SEASTAR_THREAD_TEST_CASE(sstable_directory_test_table_temporary_toc) {
     auto sst = make_sstable_for_this_shard(std::bind(new_sstable, dir.path(), 1)).get0();
     rename_file(sst->filename(sstables::component_type::TOC), sst->filename(sstables::component_type::TemporaryTOC)).get();
 
+    sharded<semaphore> sstdir_sem;
+    sstdir_sem.start(1).get();
+    auto stop_sstdir_sem = defer([&sstdir_sem] {
+        sstdir_sem.stop().get();
+    });
+
     sharded<sstable_directory> sstdir;
-    sstdir.start(dir.path(), 1,
+    sstdir.start(dir.path(), 1, std::ref(sstdir_sem),
             sstable_directory::need_mutate_level::no,
             sstable_directory::lack_of_toc_fatal::yes,
             sstable_directory::enable_dangerous_direct_import_of_cassandra_counters::no,
@@ -194,8 +212,14 @@ SEASTAR_THREAD_TEST_CASE(sstable_directory_test_table_missing_toc) {
     auto sst = make_sstable_for_this_shard(std::bind(new_sstable, dir.path(), 1)).get0();
     remove_file(sst->filename(sstables::component_type::TOC)).get();
 
+    sharded<semaphore> sstdir_sem;
+    sstdir_sem.start(1).get();
+    auto stop_sstdir_sem = defer([&sstdir_sem] {
+        sstdir_sem.stop().get();
+    });
+
     sharded<sstable_directory> sstdir_fatal;
-    sstdir_fatal.start(dir.path(), 1,
+    sstdir_fatal.start(dir.path(), 1, std::ref(sstdir_sem),
             sstable_directory::need_mutate_level::no,
             sstable_directory::lack_of_toc_fatal::yes,
             sstable_directory::enable_dangerous_direct_import_of_cassandra_counters::no,
@@ -210,7 +234,7 @@ SEASTAR_THREAD_TEST_CASE(sstable_directory_test_table_missing_toc) {
     BOOST_REQUIRE_THROW(expect_malformed_sstable.get(), sstables::malformed_sstable_exception);
 
     sharded<sstable_directory> sstdir_ok;
-    sstdir_ok.start(dir.path(), 1,
+    sstdir_ok.start(dir.path(), 1, std::ref(sstdir_sem),
             sstable_directory::need_mutate_level::no,
             sstable_directory::lack_of_toc_fatal::no,
             sstable_directory::enable_dangerous_direct_import_of_cassandra_counters::no,
@@ -237,8 +261,14 @@ SEASTAR_THREAD_TEST_CASE(sstable_directory_test_temporary_statistics) {
     f.close().get();
     auto tempstat = fs::canonical(fs::path(tempstr));
 
+    sharded<semaphore> sstdir_sem;
+    sstdir_sem.start(1).get();
+    auto stop_sstdir_sem = defer([&sstdir_sem] {
+        sstdir_sem.stop().get();
+    });
+
     sharded<sstable_directory> sstdir_ok;
-    sstdir_ok.start(dir.path(), 1,
+    sstdir_ok.start(dir.path(), 1, std::ref(sstdir_sem),
             sstable_directory::need_mutate_level::no,
             sstable_directory::lack_of_toc_fatal::no,
             sstable_directory::enable_dangerous_direct_import_of_cassandra_counters::no,
@@ -259,7 +289,7 @@ SEASTAR_THREAD_TEST_CASE(sstable_directory_test_temporary_statistics) {
     remove_file(sst->filename(sstables::component_type::Statistics)).get();
 
     sharded<sstable_directory> sstdir_fatal;
-    sstdir_fatal.start(dir.path(), 1,
+    sstdir_fatal.start(dir.path(), 1, std::ref(sstdir_sem),
             sstable_directory::need_mutate_level::no,
             sstable_directory::lack_of_toc_fatal::no,
             sstable_directory::enable_dangerous_direct_import_of_cassandra_counters::no,
@@ -281,8 +311,14 @@ SEASTAR_THREAD_TEST_CASE(sstable_directory_test_generation_sanity) {
     auto sst = make_sstable_for_this_shard(std::bind(new_sstable, dir.path(), 6666)).get0();
     rename_file(sst->filename(sstables::component_type::TOC), sst->filename(sstables::component_type::TemporaryTOC)).get();
 
+    sharded<semaphore> sstdir_sem;
+    sstdir_sem.start(1).get();
+    auto stop_sstdir_sem = defer([&sstdir_sem] {
+        sstdir_sem.stop().get();
+    });
+
     sharded<sstable_directory> sstdir;
-    sstdir.start(dir.path(), 1,
+    sstdir.start(dir.path(), 1, std::ref(sstdir_sem),
             sstable_directory::need_mutate_level::no,
             sstable_directory::lack_of_toc_fatal::yes,
             sstable_directory::enable_dangerous_direct_import_of_cassandra_counters::no,
@@ -329,8 +365,14 @@ SEASTAR_THREAD_TEST_CASE(sstable_directory_unshared_sstables_sanity_matched_gene
         }).get();
     }
 
+    sharded<semaphore> sstdir_sem;
+    sstdir_sem.start(1).get();
+    auto stop_sstdir_sem = defer([&sstdir_sem] {
+        sstdir_sem.stop().get();
+    });
+
     sharded<sstable_directory> sstdir;
-    sstdir.start(dir.path(), 1,
+    sstdir.start(dir.path(), 1, std::ref(sstdir_sem),
             sstable_directory::need_mutate_level::no,
             sstable_directory::lack_of_toc_fatal::yes,
             sstable_directory::enable_dangerous_direct_import_of_cassandra_counters::no,
@@ -359,8 +401,14 @@ SEASTAR_THREAD_TEST_CASE(sstable_directory_unshared_sstables_sanity_unmatched_ge
         }).get();
     }
 
+    sharded<semaphore> sstdir_sem;
+    sstdir_sem.start(1).get();
+    auto stop_sstdir_sem = defer([&sstdir_sem] {
+        sstdir_sem.stop().get();
+    });
+
     sharded<sstable_directory> sstdir;
-    sstdir.start(dir.path(), 1,
+    sstdir.start(dir.path(), 1, std::ref(sstdir_sem),
             sstable_directory::need_mutate_level::no,
             sstable_directory::lack_of_toc_fatal::yes,
             sstable_directory::enable_dangerous_direct_import_of_cassandra_counters::no,
@@ -384,8 +432,14 @@ SEASTAR_TEST_CASE(sstable_directory_test_table_lock_works) {
         auto& cf = e.local_db().find_column_family(ks_name, cf_name);
         auto path = fs::path(cf.dir());
 
+        sharded<semaphore> sstdir_sem;
+        sstdir_sem.start(1).get();
+        auto stop_sstdir_sem = defer([&sstdir_sem] {
+            sstdir_sem.stop().get();
+        });
+
         sharded<sstable_directory> sstdir;
-        sstdir.start(path, 1,
+        sstdir.start(path, 1, std::ref(sstdir_sem),
                 sstable_directory::need_mutate_level::no,
                 sstable_directory::lack_of_toc_fatal::no,
                 sstable_directory::enable_dangerous_direct_import_of_cassandra_counters::no,
@@ -443,8 +497,14 @@ SEASTAR_TEST_CASE(sstable_directory_shared_sstables_reshard_correctly) {
             make_sstable_for_all_shards(e.db().local(), cf, upload_path.native(), generation++, sstables::sstable_version_types::mc, sstables::sstable::format_types::big).get();
         }
 
+        sharded<semaphore> sstdir_sem;
+        sstdir_sem.start(1).get();
+        auto stop_sstdir_sem = defer([&sstdir_sem] {
+            sstdir_sem.stop().get();
+        });
+
         sharded<sstable_directory> sstdir;
-        sstdir.start(upload_path, 1,
+        sstdir.start(upload_path, 1, std::ref(sstdir_sem),
                 sstable_directory::need_mutate_level::no,
                 sstable_directory::lack_of_toc_fatal::yes,
                 sstable_directory::enable_dangerous_direct_import_of_cassandra_counters::no,
@@ -496,8 +556,14 @@ SEASTAR_TEST_CASE(sstable_directory_shared_sstables_reshard_distributes_well_eve
             make_sstable_for_all_shards(e.db().local(), cf, upload_path.native(), generation++ * smp::count, sstables::sstable_version_types::mc, sstables::sstable::format_types::big).get();
         }
 
+        sharded<semaphore> sstdir_sem;
+        sstdir_sem.start(1).get();
+        auto stop_sstdir_sem = defer([&sstdir_sem] {
+            sstdir_sem.stop().get();
+        });
+
         sharded<sstable_directory> sstdir;
-        sstdir.start(upload_path, 1,
+        sstdir.start(upload_path, 1, std::ref(sstdir_sem),
                 sstable_directory::need_mutate_level::no,
                 sstable_directory::lack_of_toc_fatal::yes,
                 sstable_directory::enable_dangerous_direct_import_of_cassandra_counters::no,
@@ -549,8 +615,14 @@ SEASTAR_TEST_CASE(sstable_directory_shared_sstables_reshard_respect_max_threshol
             make_sstable_for_all_shards(e.db().local(), cf, upload_path.native(), generation++, sstables::sstable_version_types::mc, sstables::sstable::format_types::big).get();
         }
 
+        sharded<semaphore> sstdir_sem;
+        sstdir_sem.start(1).get();
+        auto stop_sstdir_sem = defer([&sstdir_sem] {
+            sstdir_sem.stop().get();
+        });
+
         sharded<sstable_directory> sstdir;
-        sstdir.start(upload_path, 1,
+        sstdir.start(upload_path, 1, std::ref(sstdir_sem),
                 sstable_directory::need_mutate_level::no,
                 sstable_directory::lack_of_toc_fatal::yes,
                 sstable_directory::enable_dangerous_direct_import_of_cassandra_counters::no,
