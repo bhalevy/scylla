@@ -41,6 +41,8 @@ bool manifest_json_filter(const fs::path&, const directory_entry& entry) {
     return true;
 }
 
+thread_local std::unique_ptr<semaphore> sstable_directory::_load_semaphore;
+
 sstable_directory::sstable_directory(fs::path sstable_dir,
         size_t load_parallelism,
         need_mutate_level need_mutate_level,
@@ -56,7 +58,21 @@ sstable_directory::sstable_directory(fs::path sstable_dir,
     , _allow_loading_materialized_view(allow_mv)
     , _sstable_object_from_existing_sstable(std::move(sstable_from_existing))
     , _unshared_remote_sstables(smp::count)
-{}
+{
+    if (!_load_semaphore) {
+        // Note: _load_semaphore is initialized only once, with _load_parallelism
+        // provided to the first constructor that happens to get here.
+        // To set a different value, use the static `init_load_semaphore` method.
+        // before constructing any sstable_directory.
+        init_load_semaphore(_load_parallelism);
+    }
+}
+
+void
+sstable_directory::init_load_semaphore(size_t load_parallelism) {
+    assert(!_load_semaphore);
+    _load_semaphore = std::make_unique<semaphore>(load_parallelism);
+}
 
 void
 sstable_directory::handle_component(scan_state& state, sstables::entry_descriptor desc, fs::path filename) {
@@ -405,7 +421,13 @@ sstable_directory::reshard(sstable_info_vector shared_info, compaction_manager& 
 
 future<>
 sstable_directory::do_for_each_sstable(std::function<future<>(sstables::shared_sstable)> func) {
-    return max_concurrent_for_each(_unshared_local_sstables, _load_parallelism, std::move(func));
+    return do_with(std::move(func), [this] (std::function<future<>(sstables::shared_sstable)>& func) {
+        return max_concurrent_for_each(_unshared_local_sstables, _load_parallelism, [&func] (sstables::shared_sstable sstable) mutable {
+            return with_semaphore(*_load_semaphore, 1, [&func, sstable = std::move(sstable)] () mutable {
+                return func(std::move(sstable));
+            });
+        });
+    });
 }
 
 void

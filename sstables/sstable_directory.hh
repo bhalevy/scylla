@@ -87,6 +87,8 @@ private:
     // how many of them we process at the same time.
     const size_t _load_parallelism;
 
+    static thread_local std::unique_ptr<semaphore> _load_semaphore;
+
     // Flags below control how to behave when scanning new SSTables.
     need_mutate_level _need_mutate_level;
     lack_of_toc_fatal _throw_on_missing_toc;
@@ -134,6 +136,13 @@ public:
             enable_dangerous_direct_import_of_cassandra_counters eddiocc,
             allow_loading_materialized_view,
             sstable_object_from_existing_fn sstable_from_existing);
+
+    // initializes the global, per-shard `_load_semaphore` with `load_parallelism` units
+    // can be called only once.
+    // implicitly called by the `sstable_directory` constructor with
+    // the `load_parallelism` argument passed to it, if `_load_semaphore`
+    // wasn't initialized already.
+    static void init_load_semaphore(size_t load_parallelism);
 
     // moves unshared SSTables that don't belong to this shard to the right shards.
     future<> move_foreign_sstables(sharded<sstable_directory>& source_directory);
