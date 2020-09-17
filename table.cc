@@ -1406,8 +1406,9 @@ future<> table::snapshot(database& db, sstring name) {
         }
         auto jsondir = _config.datadir + "/snapshots/" + name;
         return do_with(std::move(tables), std::move(jsondir), [this, &db] (std::vector<sstables::shared_sstable>& tables, const sstring& jsondir) {
-            return io_check([&jsondir] { return recursive_touch_directory(jsondir); }).then([this, &jsondir, &tables] {
-                return parallel_for_each(tables, [&jsondir] (sstables::shared_sstable sstable) {
+            return io_check([&jsondir] { return recursive_touch_directory(jsondir); }).then([this, &db, &jsondir, &tables] {
+                return sstables::sstable_directory::do_for_each_sstable(tables, db.get_config().initial_sstable_loading_concurrency(),
+                        [&jsondir] (sstables::shared_sstable sstable) {
                     return io_check([sstable, &dir = jsondir] {
                         return sstable->create_links(dir);
                     });
