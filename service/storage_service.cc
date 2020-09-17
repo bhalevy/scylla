@@ -292,7 +292,7 @@ void storage_service::prepare_to_join(
     auto my_tokens = db::system_keyspace::get_saved_tokens().get0();
     bool restarting_normal_node = db::system_keyspace::bootstrap_complete() && !db().local().is_replacing() && !my_tokens.empty();
     auto tmlock = get_token_metadata_lock().get0();
-    auto tmptr = get_mutable_token_metadata_ptr();
+    auto tmptr = get_mutable_token_metadata_ptr().get0();
     if (restarting_normal_node) {
         slogger.info("Restarting a node in NORMAL status");
         // This node must know about its chosen tokens before other nodes do
@@ -552,7 +552,7 @@ void storage_service::join_token_ring(int delay) {
 
     slogger.debug("Setting tokens to {}", _bootstrap_tokens);
     auto tmlock = get_token_metadata_lock().get0();
-    auto tmptr = get_mutable_token_metadata_ptr();
+    auto tmptr = get_mutable_token_metadata_ptr().get0();
 
     // This node must know about its chosen tokens before other nodes do
     // since they may start sending writes to this node after it gossips status = NORMAL.
@@ -920,7 +920,7 @@ void storage_service::bootstrap() {
             // when inserting the new CDC generation.
             auto endpoint = get_broadcast_address();
             auto tmlock = get_token_metadata_lock().get0();
-            auto tmptr = get_mutable_token_metadata_ptr();
+            auto tmptr = get_mutable_token_metadata_ptr().get0();
             tmptr->add_bootstrap_tokens(_bootstrap_tokens, endpoint);
             update_pending_ranges(std::move(tmlock), std::move(tmptr), format("bootstrapping node {}", endpoint)).get();
 
@@ -1070,7 +1070,7 @@ void storage_service::handle_state_replacing(inet_address replacing_node) {
     slogger.debug("endpoint={} handle_state_replacing", replacing_node);
     auto host_id = _gossiper.get_host_id(replacing_node);
     auto tmlock = get_token_metadata_lock().get0();
-    auto tmptr = get_mutable_token_metadata_ptr();
+    auto tmptr = get_mutable_token_metadata_ptr().get0();
     auto existing_node_opt = tmptr->get_endpoint_for_host_id(host_id);
     auto replace_addr = db().local().get_replace_address();
     if (replacing_node == get_broadcast_address() && replace_addr && *replace_addr == get_broadcast_address()) {
@@ -1101,7 +1101,7 @@ void storage_service::handle_state_bootstrap(inet_address endpoint) {
     // or the node had crashed. Print warning if needed, clear obsolete stuff and
     // continue.
     auto tmlock = get_token_metadata_lock().get0();
-    auto tmptr = get_mutable_token_metadata_ptr();
+    auto tmptr = get_mutable_token_metadata_ptr().get0();
     if (tmptr->is_member(endpoint)) {
         // If isLeaving is false, we have missed both LEAVING and LEFT. However, if
         // isLeaving is true, we have only missed LEFT. Waiting time between completing
@@ -1132,7 +1132,7 @@ void storage_service::handle_state_normal(inet_address endpoint) {
     cdc_log.debug("Node {} state normal, streams timestamp: {}", endpoint, cdc_streams_ts);
 
     auto tmlock = get_token_metadata_lock().get0();
-    auto tmptr = get_mutable_token_metadata_ptr();
+    auto tmptr = get_mutable_token_metadata_ptr().get0();
     if (tmptr->is_member(endpoint)) {
         slogger.info("Node {} state jump to normal", endpoint);
     }
@@ -1258,7 +1258,7 @@ void storage_service::handle_state_leaving(inet_address endpoint) {
     // have this node as 'normal' (it must have been using this token before the
     // leave). This way we'll get pending ranges right.
     auto tmlock = get_token_metadata_lock().get0();
-    auto tmptr = get_mutable_token_metadata_ptr();
+    auto tmptr = get_mutable_token_metadata_ptr().get0();
     if (!tmptr->is_member(endpoint)) {
         // FIXME: this code should probably resolve token collisions too, like handle_state_normal
         slogger.info("Node {} state jump to leaving", endpoint);
@@ -1334,7 +1334,7 @@ void storage_service::handle_state_removing(inet_address endpoint, std::vector<s
             excise(std::move(tmp), endpoint, extract_expire_time(pieces));
         } else if (sstring(gms::versioned_value::REMOVING_TOKEN) == state) {
             auto tmlock = get_token_metadata_lock().get0();
-            auto tmptr = get_mutable_token_metadata_ptr();
+            auto tmptr = get_mutable_token_metadata_ptr().get0();
             slogger.debug("Tokens {} removed manually (endpoint was {})", remove_tokens, endpoint);
             // Note that the endpoint is being removed
             tmptr->add_leaving_endpoint(endpoint);
@@ -1462,7 +1462,7 @@ void storage_service::on_change(inet_address endpoint, application_state state, 
 void storage_service::on_remove(gms::inet_address endpoint) {
     slogger.debug("endpoint={} on_remove", endpoint);
     auto tmlock = get_token_metadata_lock().get0();
-    auto tmptr = get_mutable_token_metadata_ptr();
+    auto tmptr = get_mutable_token_metadata_ptr().get0();
     tmptr->remove_endpoint(endpoint);
     update_pending_ranges(std::move(tmlock), std::move(tmptr), format("on_remove {}", endpoint)).get();
 }
@@ -1662,7 +1662,7 @@ future<> storage_service::init_server(bind_messaging_port do_bind) {
             }
 
             auto tmlock = get_token_metadata_lock().get0();
-            auto tmptr = get_mutable_token_metadata_ptr();
+            auto tmptr = get_mutable_token_metadata_ptr().get0();
             for (auto x : loaded_tokens) {
                 auto ep = x.first;
                 auto tokens = x.second;
@@ -1713,8 +1713,9 @@ future<> storage_service::replicate_to_all_cores(token_metadata_lock tmlock, tok
     slogger.debug("Replicating token_metadata to all cores");
     _shared_token_metadata.set(tmptr);
     return get_storage_service().invoke_on_others([tmptr] (storage_service& local_ss){
-        auto tm = *tmptr;
+      return tmptr->clone_async().then([&local_ss] (token_metadata tm) {
         local_ss._shared_token_metadata.set(make_token_metadata_ptr(std::move(tm)));
+      });
     }).handle_exception([tmlock = std::move(tmlock)] (auto e) {
         on_internal_error(slogger, format("Failed to replicate _token_metadata: {}", e));
     });
@@ -2167,7 +2168,7 @@ future<> storage_service::removenode(sstring host_id_string) {
             slogger.debug("removenode: host_id = {}", host_id_string);
             auto my_address = ss.get_broadcast_address();
             auto tmlock = ss.get_token_metadata_lock().get0();
-            auto tmptr = ss.get_mutable_token_metadata_ptr();
+            auto tmptr = ss.get_mutable_token_metadata_ptr().get0();
             auto local_host_id = tmptr->get_host_id(my_address);
             auto host_id = utils::UUID(host_id_string);
             auto endpoint_opt = tmptr->get_endpoint_for_host_id(host_id);
@@ -2538,7 +2539,7 @@ void storage_service::excise(std::unordered_set<token> tokens, inet_address endp
     // FIXME: HintedHandOffManager.instance.deleteHintsForEndpoint(endpoint);
     remove_endpoint(endpoint);
     auto tmlock = get_token_metadata_lock().get0();
-    auto tmptr = get_mutable_token_metadata_ptr();
+    auto tmptr = get_mutable_token_metadata_ptr().get0();
     tmptr->remove_endpoint(endpoint);
     tmptr->remove_bootstrap_tokens(tokens);
 
@@ -2601,7 +2602,7 @@ void storage_service::leave_ring() {
     db::system_keyspace::set_bootstrap_state(db::system_keyspace::bootstrap_state::NEEDS_BOOTSTRAP).get();
     auto endpoint = get_broadcast_address();
     auto tmlock = get_token_metadata_lock().get0();
-    auto tmptr = get_mutable_token_metadata_ptr();
+    auto tmptr = get_mutable_token_metadata_ptr().get0();
     tmptr->remove_endpoint(get_broadcast_address());
     update_pending_ranges(std::move(tmlock), std::move(tmptr), format("leave_ring {}", endpoint)).get();
 
@@ -2643,7 +2644,7 @@ storage_service::stream_ranges(std::unordered_map<sstring, std::unordered_multim
 future<> storage_service::start_leaving() {
     return _gossiper.add_local_application_state(application_state::STATUS, versioned_value::leaving(db::system_keyspace::get_local_tokens().get0())).then([this] {
         auto tmlock = get_token_metadata_lock().get0();
-        auto tmptr = get_mutable_token_metadata_ptr();
+        auto tmptr = get_mutable_token_metadata_ptr().get0();
         auto endpoint = get_broadcast_address();
         tmptr->add_leaving_endpoint(get_broadcast_address());
         return update_pending_ranges(std::move(tmlock), std::move(tmptr), format("start_leaving {}", endpoint));
@@ -2857,7 +2858,9 @@ future<> storage_service::update_pending_ranges(token_metadata_lock tmlock, toke
 
 future<> storage_service::update_pending_ranges(sstring reason) {
     return get_token_metadata_lock().then([this, reason = std::move(reason)] (token_metadata_lock tmlock) mutable {
-        return update_pending_ranges(std::move(tmlock), get_mutable_token_metadata_ptr(), std::move(reason));
+      return get_mutable_token_metadata_ptr().then([this, reason = std::move(reason), tmlock = std::move(tmlock)] (token_metadata_ptr tmptr) mutable {
+        return update_pending_ranges(std::move(tmlock), std::move(tmptr), std::move(reason));
+      });
     });
 }
 
@@ -2875,13 +2878,13 @@ future<> storage_service::keyspace_changed(const sstring& ks_name) {
 future<> storage_service::update_topology(inet_address endpoint) {
     return service::get_storage_service().invoke_on(0, [endpoint] (auto& ss) {
       return ss.get_token_metadata_lock().then([&ss, endpoint] (token_metadata_lock tmlock) {
-        auto tmptr = ss.get_mutable_token_metadata_ptr();
-
+       return ss.get_mutable_token_metadata_ptr().then([&ss, endpoint, tmlock = std::move(tmlock)] (token_metadata_ptr tmptr) mutable {
         // initiate the token metadata endpoints cache reset
         tmptr->invalidate_cached_rings();
         // re-read local rack and DC info
         tmptr->update_topology(endpoint);
         return ss.replicate_to_all_cores(std::move(tmlock), std::move(tmptr));
+       });
       });
     });
 }

@@ -178,8 +178,10 @@ private:
     future<> publish_schema_version();
     void install_schema_version_change_listener();
 
-    token_metadata_ptr get_mutable_token_metadata_ptr() {
-        return _shared_token_metadata.clone();
+    future<token_metadata_ptr> get_mutable_token_metadata_ptr() noexcept {
+        return _shared_token_metadata.get()->clone_async().then([] (token_metadata tm) {
+            return make_ready_future<token_metadata_ptr>(make_token_metadata_ptr(std::move(tm)));
+        });
     }
 
 public:
