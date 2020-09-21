@@ -2194,12 +2194,13 @@ future<> rebuild_with_repair(seastar::sharded<database>& db, seastar::sharded<ne
 }
 
 future<> replace_with_repair(seastar::sharded<database>& db, seastar::sharded<netw::messaging_service>& ms, const locator::token_metadata_ptr tmptr, std::unordered_set<dht::token> replacing_tokens) {
+  return tmptr->clone_async().then([&db, &ms, replacing_tokens = std::move(replacing_tokens)] (locator::token_metadata tm) mutable {
     auto op = sstring("replace_with_repair");
     auto source_dc = get_local_dc();
     auto reason = streaming::stream_reason::replace;
     // update a cloned version of tmptr
     // no need to set the original version
-    auto cloned_tmptr = make_lw_shared<locator::token_metadata>(*tmptr);
-    cloned_tmptr->update_normal_tokens(replacing_tokens, utils::fb_utilities::get_broadcast_address());
-    return do_rebuild_replace_with_repair(db, ms, std::move(cloned_tmptr), std::move(op), std::move(source_dc), reason);
+    tm.update_normal_tokens(std::move(replacing_tokens), utils::fb_utilities::get_broadcast_address());
+    return do_rebuild_replace_with_repair(db, ms, make_lw_shared<locator::token_metadata>(std::move(tm)), std::move(op), std::move(source_dc), reason);
+  });
 }
