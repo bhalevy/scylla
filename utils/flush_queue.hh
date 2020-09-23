@@ -61,11 +61,11 @@ private:
     seastar::gate _gate;
     bool _chain_exceptions;
 
-    template<typename Func, typename... Args>
-    static auto call_helper(Func&& func, future<Args...> f) {
-        using futurator = futurize<std::result_of_t<Func(Args&&...)>>;
+    template<typename Func, typename Arg>
+    static auto call_helper(Func&& func, future<Arg> f) {
+        using futurator = futurize<seastar::internal::future_result_t<Func, Arg>>;
         try {
-            return futurator::apply(std::forward<Func>(func), f.get());
+            return futurator::invoke(std::forward<Func>(func), f.get());
         } catch (...) {
             return futurator::make_exception_future(std::current_exception());
         }
