@@ -250,6 +250,7 @@ void storage_service::prepare_to_join(
         std::unordered_map<gms::inet_address, sstring> loaded_peer_features,
         bind_messaging_port do_bind) {
     std::map<gms::application_state, gms::versioned_value> app_states;
+    slogger.debug("Preparing to join ring.");
     if (db::system_keyspace::was_decommissioned()) {
         if (db().local().get_config().override_decommission()) {
             slogger.warn("This node was decommissioned, but overriding by operator request.");
@@ -286,6 +287,8 @@ void storage_service::prepare_to_join(
             _gossiper.add_saved_endpoint(ep);
         }
     }
+
+    slogger.debug("replacing_a_node_with_same_ip={} replacing_a_node_with_diff_ip={}", replacing_a_node_with_same_ip, replacing_a_node_with_diff_ip);
 
     // If this is a restarting node, we should update tokens before gossip starts
     auto my_tokens = db::system_keyspace::get_saved_tokens().get0();
@@ -386,6 +389,7 @@ void storage_service::prepare_to_join(
 
     // Wait for gossip to settle so that the fetures will be enabled
     if (do_bind) {
+        slogger.debug("Wait for gossip to settle...");
         gms::get_local_gossiper().wait_for_gossip_to_settle().get();
     }
 }
@@ -400,6 +404,7 @@ void storage_service::maybe_start_sys_dist_ks() {
 void storage_service::join_token_ring(int delay) {
     // This function only gets called on shard 0, but we want to set _joined
     // on all shards, so this variable can be later read locally.
+    slogger.debug("Join token ring");
     get_storage_service().invoke_on_all([] (auto&& ss) {
         ss._joined = true;
     }).get();
@@ -414,6 +419,7 @@ void storage_service::join_token_ring(int delay) {
     // to get schema info from gossip which defeats the purpose.  See CASSANDRA-4427 for the gory details.
     std::unordered_set<inet_address> current;
     if (should_bootstrap()) {
+        slogger.debug("Join token ring: should bootstrap");
         bool resume_bootstrap = db::system_keyspace::bootstrap_in_progress();
         if (resume_bootstrap) {
             slogger.warn("Detected previous bootstrap failure; retrying");
@@ -516,6 +522,7 @@ void storage_service::join_token_ring(int delay) {
         maybe_start_sys_dist_ks();
         size_t num_tokens = _db.local().get_config().num_tokens();
         _bootstrap_tokens = db::system_keyspace::get_saved_tokens().get0();
+        slogger.debug("Join token ring: {} bootstrap tokens", _bootstrap_tokens.size());
         if (_bootstrap_tokens.empty()) {
             auto initial_tokens = _db.local().get_initial_tokens();
             if (initial_tokens.size() < 1) {
@@ -1626,6 +1633,7 @@ future<> storage_service::uninit_messaging_service_part() {
 
 future<> storage_service::init_server(bind_messaging_port do_bind) {
     assert(this_shard_id() == 0);
+    slogger.info("Init server");
 
     return seastar::async([this, do_bind] {
         _initialized = true;
@@ -2858,6 +2866,7 @@ future<> storage_service::update_pending_ranges(sstring reason) {
 
 future<> storage_service::keyspace_changed(const sstring& ks_name) {
     // Update pending ranges since keyspace can be changed after we calculate pending ranges.
+    slogger.debug("keyspace_changed");
     sstring reason = format("keyspace {}", ks_name);
     return get_storage_service().invoke_on(0, [reason = std::move(reason)] (auto& ss) mutable {
         return ss.update_pending_ranges(reason).handle_exception([reason = std::move(reason)] (auto ep) {
