@@ -144,16 +144,16 @@ private:
 public:
     const sstring& get_cluster_name() const noexcept;
     const sstring& get_partitioner_name() const noexcept;
-    inet_address get_broadcast_address() const {
+    inet_address get_broadcast_address() const noexcept {
         return utils::fb_utilities::get_broadcast_address();
     }
     void set_cluster_name(sstring name);
-    const std::set<inet_address>& get_seeds() const;
+    const std::set<inet_address>& get_seeds() const noexcept;
     void set_seeds(std::set<inet_address> _seeds);
 
     netw::messaging_service& get_local_messaging() const noexcept { return _messaging; }
 public:
-    static clk::time_point inline now() { return clk::now(); }
+    static clk::time_point inline now() noexcept { return clk::now(); }
 public:
     using endpoint_locks_map = utils::loading_shared_values<inet_address, semaphore>;
     struct endpoint_permit {
@@ -189,7 +189,7 @@ public:
     static constexpr int64_t MAX_GENERATION_DIFFERENCE = 86400 * 365;
     std::chrono::milliseconds fat_client_timeout;
 
-    std::chrono::milliseconds quarantine_delay();
+    std::chrono::milliseconds quarantine_delay() const noexcept;
 private:
     std::default_random_engine _random_engine{std::random_device{}()};
 
@@ -268,7 +268,7 @@ public:
      */
     std::set<inet_address> get_unreachable_token_owners();
 
-    int64_t get_endpoint_downtime(inet_address ep);
+    int64_t get_endpoint_downtime(inet_address ep) const noexcept;
 
     /**
      * This method is part of IFailureDetectionEventListener interface. This is invoked
@@ -284,7 +284,7 @@ public:
      * @param ep_state
      * @return
      */
-    int get_max_endpoint_state_version(endpoint_state state);
+    int get_max_endpoint_state_version(endpoint_state state) const noexcept;
 
 
 private:
@@ -357,7 +357,7 @@ public:
     future<> assassinate_endpoint(sstring address);
 
 public:
-    bool is_known_endpoint(inet_address endpoint);
+    bool is_known_endpoint(inet_address endpoint) const noexcept;
 
     future<int> get_current_generation_number(inet_address endpoint);
     future<int> get_current_heart_beat_version(inet_address endpoint);
@@ -383,23 +383,23 @@ private:
     void do_status_check();
 
 public:
-    clk::time_point get_expire_time_for_endpoint(inet_address endpoint);
+    clk::time_point get_expire_time_for_endpoint(inet_address endpoint) const noexcept;
 
-    const endpoint_state* get_endpoint_state_for_endpoint_ptr(inet_address ep) const;
+    const endpoint_state* get_endpoint_state_for_endpoint_ptr(inet_address ep) const noexcept;
     endpoint_state& get_endpoint_state(inet_address ep);
 
-    endpoint_state* get_endpoint_state_for_endpoint_ptr(inet_address ep);
+    endpoint_state* get_endpoint_state_for_endpoint_ptr(inet_address ep) noexcept;
 
-    const versioned_value* get_application_state_ptr(inet_address endpoint, application_state appstate) const;
+    const versioned_value* get_application_state_ptr(inet_address endpoint, application_state appstate) const noexcept;
     sstring get_application_state_value(inet_address endpoint, application_state appstate) const;
 
     // Use with caution, copies might be expensive (see #764)
-    std::optional<endpoint_state> get_endpoint_state_for_endpoint(inet_address ep) const;
+    std::optional<endpoint_state> get_endpoint_state_for_endpoint(inet_address ep) const noexcept;
 
     // removes ALL endpoint states; should only be called after shadow gossip
     future<> reset_endpoint_state_map();
 
-    const std::unordered_map<inet_address, endpoint_state>& get_endpoint_states() const;
+    const std::unordered_map<inet_address, endpoint_state>& get_endpoint_states() const noexcept;
 
     bool uses_host_id(inet_address endpoint) const;
 
@@ -573,9 +573,9 @@ public:
 public:
     sstring get_all_endpoint_states();
     std::map<sstring, sstring> get_simple_states();
-    int get_down_endpoint_count();
-    int get_up_endpoint_count();
-    int get_all_endpoint_count();
+    int get_down_endpoint_count() const noexcept;
+    int get_up_endpoint_count() const noexcept;
+    int get_all_endpoint_count() const noexcept;
     sstring get_endpoint_state(sstring address);
     failure_detector& fd() { return _fd; }
 };
