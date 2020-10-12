@@ -288,8 +288,14 @@ future<> migration_manager::do_merge_schema_from(netw::messaging_service::msg_ad
         return do_with(std::move(mutations), [this, id] (auto&& mutations) {
             return this->merge_schema_from(id, mutations);
         });
-    }).then([id] {
+    }).then_wrapped([id] (future<> f) {
+        if (f.failed()) {
+            auto ep = f.get_exception();
+            mlogger.warn("Failed schema merge with {}: {}", id, ep);
+            return make_exception_future<>(std::move(ep));
+        }
         mlogger.info("Schema merge with {} completed", id);
+        return make_ready_future<>();
     });
 }
 
