@@ -69,13 +69,18 @@ public:
         }
         seastar::shared_promise<> pr;
         _pending = pr.get_shared_future();
-        return with_semaphore(_sem, 1, [this, pr = std::move(pr), later] () mutable {
+        future<> ret = _pending;
+        // run in background, synchronize using `ret`
+        (void)_sem.wait().then([this, pr = std::move(pr), later] () mutable {
             if (later) {
                 return seastar::later().then([this, pr = std::move(pr)] () mutable {
                     return do_trigger(std::move(pr));
                 });
             }
             return do_trigger(std::move(pr));
+        });
+        return ret.finally([this] {
+            _sem.signal();
         });
     }
 
