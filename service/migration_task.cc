@@ -59,12 +59,21 @@ future<> migration_task::run_may_throw(const gms::inet_address& endpoint, bool c
         return can_ignore_down_node ? make_ready_future<>() : make_exception_future<>(std::runtime_error(msg));
     }
     netw::messaging_service::msg_addr id{endpoint, 0};
-    return service::get_local_migration_manager().merge_schema_from(id).handle_exception([](std::exception_ptr e) {
+    return service::get_local_migration_manager().merge_schema_from(id).handle_exception([endpoint, can_ignore_down_node](std::exception_ptr e) {
         try {
             std::rethrow_exception(e);
         } catch (const exceptions::configuration_exception& e) {
             mlogger.error("Configuration exception merging remote schema: {}", e.what());
             return make_exception_future<>(e);
+        } catch (const seastar::rpc::closed_error& e) {
+            auto msg = format("Merging schema with {} failed: {}.", endpoint, e.what());
+            if (can_ignore_down_node) {
+                mlogger.warn("{} Ignored...", msg);
+                return make_ready_future<>();
+            } else {
+                mlogger.error("{}", msg);
+                return make_exception_future<>(std::runtime_error(msg));
+            }
         }
     });
 }
