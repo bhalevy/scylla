@@ -74,6 +74,10 @@ future<> migration_task::run_may_throw(const gms::inet_address& endpoint, bool c
                 mlogger.error("{}", msg);
                 return make_exception_future<>(std::runtime_error(msg));
             }
+        } catch (...) {
+            auto msg = format("Merging schema with {} failed: {}.", endpoint, e);
+            mlogger.error("{}", msg);
+            return make_exception_future<>(std::runtime_error(msg));
         }
     });
 }
