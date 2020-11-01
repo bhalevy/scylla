@@ -745,6 +745,25 @@ int main(int ac, char** av) {
             dbcfg.gossip_scheduling_group = make_sched_group("gossip", 1000);
             dbcfg.available_memory = memory::stats().total_memory();
 
+            sst_dir_semaphore.start(cfg->initial_sstable_loading_concurrency()).get();
+            auto stop_sst_dir_sem = defer_verbose_shutdown("sst_dir_semaphore", [&sst_dir_semaphore] {
+                sst_dir_semaphore.stop().get();
+            });
+
+            db.start(std::ref(*cfg), dbcfg, std::ref(mm_notifier), std::ref(feature_service), std::ref(token_metadata), std::ref(stop_signal.as_sharded_abort_source()), std::ref(sst_dir_semaphore)).get();
+            start_large_data_handler(db).get();
+            auto stop_database_and_sstables = defer_verbose_shutdown("database", [&db] {
+                // #293 - do not stop anything - not even db (for real)
+                //return db.stop();
+                // call stop on each db instance, but leave the shareded<database> pointers alive.
+                stop_database(db).then([&db] {
+                    return db.invoke_on_all([](auto& db) {
+                        return db.stop();
+                    });
+                }).get();
+            });
+            api::set_server_config(ctx).get();
+
             const auto& ssl_opts = cfg->server_encryption_options();
             auto encrypt_what = get_or_default(ssl_opts, "internode_encryption", "none");
             auto trust_store = get_or_default(ssl_opts, "truststore");
@@ -813,24 +832,6 @@ int main(int ac, char** av) {
             service::init_storage_service(stop_signal.as_sharded_abort_source(), db, gossiper, sys_dist_ks, view_update_generator, feature_service, sscfg, mm_notifier, token_metadata, messaging).get();
             supervisor::notify("starting per-shard database core");
 
-            sst_dir_semaphore.start(cfg->initial_sstable_loading_concurrency()).get();
-            auto stop_sst_dir_sem = defer_verbose_shutdown("sst_dir_semaphore", [&sst_dir_semaphore] {
-                sst_dir_semaphore.stop().get();
-            });
-
-            db.start(std::ref(*cfg), dbcfg, std::ref(mm_notifier), std::ref(feature_service), std::ref(token_metadata), std::ref(stop_signal.as_sharded_abort_source()), std::ref(sst_dir_semaphore)).get();
-            start_large_data_handler(db).get();
-            auto stop_database_and_sstables = defer_verbose_shutdown("database", [&db] {
-                // #293 - do not stop anything - not even db (for real)
-                //return db.stop();
-                // call stop on each db instance, but leave the shareded<database> pointers alive.
-                stop_database(db).then([&db] {
-                    return db.invoke_on_all([](auto& db) {
-                        return db.stop();
-                    });
-                }).get();
-            });
-            api::set_server_config(ctx).get();
             verify_seastar_io_scheduler(opts.contains("max-io-requests"), opts.contains("io-properties") || opts.contains("io-properties-file"),
                                         cfg->developer_mode()).get();
 

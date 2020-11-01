@@ -446,24 +446,6 @@ public:
             feature_service.start(fcfg).get();
             auto stop_feature_service = defer([&] { feature_service.stop().get(); });
 
-            // FIXME: split
-            tst_init_ms_fd_gossiper(feature_service, token_metadata, ms, *cfg, db::config::seed_provider_type(), abort_sources).get();
-
-            distributed<service::storage_proxy>& proxy = service::get_storage_proxy();
-            distributed<service::migration_manager>& mm = service::get_migration_manager();
-            distributed<db::batchlog_manager>& bm = db::get_batchlog_manager();
-            sharded<cql3::cql_config> cql_config;
-            cql_config.start().get();
-            auto stop_cql_config = defer([&] { cql_config.stop().get(); });
-
-            sharded<db::view::view_update_generator> view_update_generator;
-
-            auto& ss = service::get_storage_service();
-            service::storage_service_config sscfg;
-            sscfg.available_memory = memory::stats().total_memory();
-            ss.start(std::ref(abort_sources), std::ref(db), std::ref(gms::get_gossiper()), std::ref(sys_dist_ks), std::ref(view_update_generator), std::ref(feature_service), sscfg, std::ref(mm_notif), std::ref(token_metadata), std::ref(ms), true).get();
-            auto stop_storage_service = defer([&ss] { ss.stop().get(); });
-
             sharded<semaphore> sst_dir_semaphore;
             sst_dir_semaphore.start(cfg->initial_sstable_loading_concurrency()).get();
             auto stop_sst_dir_sem = defer([&sst_dir_semaphore] {
@@ -484,6 +466,24 @@ public:
             db.invoke_on_all([] (database& db) {
                 db.set_format_by_config();
             }).get();
+
+            // FIXME: split
+            tst_init_ms_fd_gossiper(feature_service, token_metadata, ms, *cfg, db::config::seed_provider_type(), abort_sources).get();
+
+            distributed<service::storage_proxy>& proxy = service::get_storage_proxy();
+            distributed<service::migration_manager>& mm = service::get_migration_manager();
+            distributed<db::batchlog_manager>& bm = db::get_batchlog_manager();
+            sharded<cql3::cql_config> cql_config;
+            cql_config.start().get();
+            auto stop_cql_config = defer([&] { cql_config.stop().get(); });
+
+            sharded<db::view::view_update_generator> view_update_generator;
+
+            auto& ss = service::get_storage_service();
+            service::storage_service_config sscfg;
+            sscfg.available_memory = memory::stats().total_memory();
+            ss.start(std::ref(abort_sources), std::ref(db), std::ref(gms::get_gossiper()), std::ref(sys_dist_ks), std::ref(view_update_generator), std::ref(feature_service), sscfg, std::ref(mm_notif), std::ref(token_metadata), std::ref(ms), true).get();
+            auto stop_storage_service = defer([&ss] { ss.stop().get(); });
 
             auto stop_ms_fd_gossiper = defer([] {
                 gms::get_gossiper().stop().get();
