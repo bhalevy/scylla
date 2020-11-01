@@ -867,6 +867,8 @@ int main(int ac, char** av) {
             // #293 - do not stop anything
             // engine().at_exit([&qp] { return qp.stop(); });
 
+            sys_dist_ks.start(std::ref(qp), std::ref(mm)).get();
+
             supervisor::notify("initializing storage service");
             service::storage_service_config sscfg;
             sscfg.available_memory = memory::stats().total_memory();
