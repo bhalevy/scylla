@@ -479,6 +479,9 @@ public:
 
             sharded<db::view::view_update_generator> view_update_generator;
 
+            mm.start(std::ref(mm_notif), std::ref(feature_service), std::ref(ms)).get();
+            auto stop_mm = defer([&mm] { mm.stop().get(); });
+
             auto& ss = service::get_storage_service();
             service::storage_service_config sscfg;
             sscfg.available_memory = memory::stats().total_memory();
@@ -500,9 +503,6 @@ public:
                     make_scheduling_group_key_config<service::storage_proxy_stats::stats>();
             proxy.start(std::ref(db), spcfg, std::ref(b), scheduling_group_key_create(sg_conf).get0(), std::ref(feature_service), std::ref(token_metadata), std::ref(ms)).get();
             auto stop_proxy = defer([&proxy] { proxy.stop().get(); });
-
-            mm.start(std::ref(mm_notif), std::ref(feature_service), std::ref(ms)).get();
-            auto stop_mm = defer([&mm] { mm.stop().get(); });
 
             auto& qp = cql3::get_query_processor();
             cql3::query_processor::memory_config qp_mcfg = {memory::stats().total_memory() / 256, memory::stats().total_memory() / 2560};

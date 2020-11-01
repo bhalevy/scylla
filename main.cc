@@ -826,6 +826,13 @@ int main(int ac, char** av) {
             gossiper.start(std::ref(stop_signal.as_sharded_abort_source()), std::ref(feature_service), std::ref(token_metadata), std::ref(messaging), std::ref(*cfg), std::ref(gcfg)).get();
             // #293 - do not stop anything
             //engine().at_exit([]{ return gms::get_gossiper().stop(); });
+
+            supervisor::notify("starting migration manager");
+            mm.start(std::ref(mm_notifier), std::ref(feature_service), std::ref(messaging)).get();
+            auto stop_migration_manager = defer_verbose_shutdown("migration manager", [&mm] {
+                mm.stop().get();
+            });
+
             supervisor::notify("initializing storage service");
             service::storage_service_config sscfg;
             sscfg.available_memory = memory::stats().total_memory();
@@ -886,11 +893,7 @@ int main(int ac, char** av) {
                     std::ref(feature_service), std::ref(token_metadata), std::ref(messaging)).get();
             // #293 - do not stop anything
             // engine().at_exit([&proxy] { return proxy.stop(); });
-            supervisor::notify("starting migration manager");
-            mm.start(std::ref(mm_notifier), std::ref(feature_service), std::ref(messaging)).get();
-            auto stop_migration_manager = defer_verbose_shutdown("migration manager", [&mm] {
-                mm.stop().get();
-            });
+
             supervisor::notify("starting query processor");
             cql3::query_processor::memory_config qp_mcfg = {memory::stats().total_memory() / 256, memory::stats().total_memory() / 2560};
             qp.start(std::ref(proxy), std::ref(db), std::ref(mm_notifier), qp_mcfg, std::ref(cql_config)).get();
