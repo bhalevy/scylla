@@ -861,6 +861,12 @@ int main(int ac, char** av) {
             // #293 - do not stop anything
             // engine().at_exit([&proxy] { return proxy.stop(); });
 
+            supervisor::notify("starting query processor");
+            cql3::query_processor::memory_config qp_mcfg = {memory::stats().total_memory() / 256, memory::stats().total_memory() / 2560};
+            qp.start(std::ref(proxy), std::ref(db), std::ref(mm_notifier), qp_mcfg, std::ref(cql_config)).get();
+            // #293 - do not stop anything
+            // engine().at_exit([&qp] { return qp.stop(); });
+
             supervisor::notify("initializing storage service");
             service::storage_service_config sscfg;
             sscfg.available_memory = memory::stats().total_memory();
@@ -898,11 +904,6 @@ int main(int ac, char** av) {
 
             init_gossiper(gossiper, *cfg, listen_address, seed_provider, cluster_name);
 
-            supervisor::notify("starting query processor");
-            cql3::query_processor::memory_config qp_mcfg = {memory::stats().total_memory() / 256, memory::stats().total_memory() / 2560};
-            qp.start(std::ref(proxy), std::ref(db), std::ref(mm_notifier), qp_mcfg, std::ref(cql_config)).get();
-            // #293 - do not stop anything
-            // engine().at_exit([&qp] { return qp.stop(); });
             supervisor::notify("initializing batchlog manager");
             db::batchlog_manager_config bm_cfg;
             bm_cfg.write_request_timeout = cfg->write_request_timeout_in_ms() * 1ms;
