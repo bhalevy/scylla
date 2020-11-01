@@ -833,6 +833,34 @@ int main(int ac, char** av) {
                 mm.stop().get();
             });
 
+            supervisor::notify("starting storage proxy");
+            service::storage_proxy::config spcfg;
+            spcfg.hinted_handoff_enabled = hinted_handoff_enabled;
+            spcfg.available_memory = memory::stats().total_memory();
+            smp_service_group_config storage_proxy_smp_service_group_config;
+            // Assuming less than 1kB per queued request, this limits storage_proxy submit_to() queues to 5MB or less
+            storage_proxy_smp_service_group_config.max_nonlocal_requests = 5000;
+            spcfg.read_smp_service_group = create_smp_service_group(storage_proxy_smp_service_group_config).get0();
+            spcfg.write_smp_service_group = create_smp_service_group(storage_proxy_smp_service_group_config).get0();
+            spcfg.hints_write_smp_service_group = create_smp_service_group(storage_proxy_smp_service_group_config).get0();
+            spcfg.write_ack_smp_service_group = create_smp_service_group(storage_proxy_smp_service_group_config).get0();
+
+            static db::view::node_update_backlog node_backlog(smp::count, 10ms);
+
+            scheduling_group_key_config storage_proxy_stats_cfg =
+                    make_scheduling_group_key_config<service::storage_proxy_stats::stats>();
+            storage_proxy_stats_cfg.constructor = [plain_constructor = storage_proxy_stats_cfg.constructor] (void* ptr) {
+                plain_constructor(ptr);
+                reinterpret_cast<service::storage_proxy_stats::stats*>(ptr)->register_stats();
+                reinterpret_cast<service::storage_proxy_stats::stats*>(ptr)->register_split_metrics_local();
+            };
+
+            proxy.start(std::ref(db), spcfg, std::ref(node_backlog),
+                    scheduling_group_key_create(storage_proxy_stats_cfg).get0(),
+                    std::ref(feature_service), std::ref(token_metadata), std::ref(messaging)).get();
+            // #293 - do not stop anything
+            // engine().at_exit([&proxy] { return proxy.stop(); });
+
             supervisor::notify("initializing storage service");
             service::storage_service_config sscfg;
             sscfg.available_memory = memory::stats().total_memory();
@@ -869,30 +897,6 @@ int main(int ac, char** av) {
             }
 
             init_gossiper(gossiper, *cfg, listen_address, seed_provider, cluster_name);
-            supervisor::notify("starting storage proxy");
-            service::storage_proxy::config spcfg;
-            spcfg.hinted_handoff_enabled = hinted_handoff_enabled;
-            spcfg.available_memory = memory::stats().total_memory();
-            smp_service_group_config storage_proxy_smp_service_group_config;
-            // Assuming less than 1kB per queued request, this limits storage_proxy submit_to() queues to 5MB or less
-            storage_proxy_smp_service_group_config.max_nonlocal_requests = 5000;
-            spcfg.read_smp_service_group = create_smp_service_group(storage_proxy_smp_service_group_config).get0();
-            spcfg.write_smp_service_group = create_smp_service_group(storage_proxy_smp_service_group_config).get0();
-            spcfg.hints_write_smp_service_group = create_smp_service_group(storage_proxy_smp_service_group_config).get0();
-            spcfg.write_ack_smp_service_group = create_smp_service_group(storage_proxy_smp_service_group_config).get0();
-            static db::view::node_update_backlog node_backlog(smp::count, 10ms);
-            scheduling_group_key_config storage_proxy_stats_cfg =
-                    make_scheduling_group_key_config<service::storage_proxy_stats::stats>();
-            storage_proxy_stats_cfg.constructor = [plain_constructor = storage_proxy_stats_cfg.constructor] (void* ptr) {
-                plain_constructor(ptr);
-                reinterpret_cast<service::storage_proxy_stats::stats*>(ptr)->register_stats();
-                reinterpret_cast<service::storage_proxy_stats::stats*>(ptr)->register_split_metrics_local();
-            };
-            proxy.start(std::ref(db), spcfg, std::ref(node_backlog),
-                    scheduling_group_key_create(storage_proxy_stats_cfg).get0(),
-                    std::ref(feature_service), std::ref(token_metadata), std::ref(messaging)).get();
-            // #293 - do not stop anything
-            // engine().at_exit([&proxy] { return proxy.stop(); });
 
             supervisor::notify("starting query processor");
             cql3::query_processor::memory_config qp_mcfg = {memory::stats().total_memory() / 256, memory::stats().total_memory() / 2560};

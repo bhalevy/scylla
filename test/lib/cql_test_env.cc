@@ -482,6 +482,14 @@ public:
             mm.start(std::ref(mm_notif), std::ref(feature_service), std::ref(ms)).get();
             auto stop_mm = defer([&mm] { mm.stop().get(); });
 
+            service::storage_proxy::config spcfg;
+            spcfg.available_memory = memory::stats().total_memory();
+            db::view::node_update_backlog b(smp::count, 10ms);
+            scheduling_group_key_config sg_conf =
+                    make_scheduling_group_key_config<service::storage_proxy_stats::stats>();
+            proxy.start(std::ref(db), spcfg, std::ref(b), scheduling_group_key_create(sg_conf).get0(), std::ref(feature_service), std::ref(token_metadata), std::ref(ms)).get();
+            auto stop_proxy = defer([&proxy] { proxy.stop().get(); });
+
             auto& ss = service::get_storage_service();
             service::storage_service_config sscfg;
             sscfg.available_memory = memory::stats().total_memory();
@@ -495,14 +503,6 @@ public:
             ss.invoke_on_all([] (auto&& ss) {
                 ss.enable_all_features();
             }).get();
-
-            service::storage_proxy::config spcfg;
-            spcfg.available_memory = memory::stats().total_memory();
-            db::view::node_update_backlog b(smp::count, 10ms);
-            scheduling_group_key_config sg_conf =
-                    make_scheduling_group_key_config<service::storage_proxy_stats::stats>();
-            proxy.start(std::ref(db), spcfg, std::ref(b), scheduling_group_key_create(sg_conf).get0(), std::ref(feature_service), std::ref(token_metadata), std::ref(ms)).get();
-            auto stop_proxy = defer([&proxy] { proxy.stop().get(); });
 
             auto& qp = cql3::get_query_processor();
             cql3::query_processor::memory_config qp_mcfg = {memory::stats().total_memory() / 256, memory::stats().total_memory() / 2560};
