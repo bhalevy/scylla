@@ -109,6 +109,11 @@ adjust_bin() {
 [[ -z "\$LD_PRELOAD" ]] || { echo "\$0: not compatible with LD_PRELOAD" >&2; exit 110; }
 export GNUTLS_SYSTEM_PRIORITY_FILE="\${GNUTLS_SYSTEM_PRIORITY_FILE-$prefix/libreloc/gnutls.config}"
 export LD_LIBRARY_PATH="$prefix/libreloc"
+if [ -f "$retc/scylla/ubsan-suppressions.supp" ]; then
+    delim=""
+    [ -n "${UBSAN_OPTIONS}" ] && delim=":"
+    export UBSAN_OPTIONS="${UBSAN_OPTIONS}${delim}suppressions=${retc}/scylla/ubsan-suppressions.supp"
+fi
 exec -a "\$0" "$prefix/libexec/$bin" "\$@"
 EOF
     chmod +x "$root/$prefix/bin/$bin"
@@ -256,6 +261,14 @@ install -m755 libexec/* -Dt "$rprefix/libexec"
 for bin in libexec/*; do
 	adjust_bin "${bin#libexec/}"
 done
+# ubsan-suppressions
+if [ -f ubsan-suppressions.supp ]; then
+    install -d -m755 "$retc"/scylla
+    install -m644 ubsan-suppressions.supp -Dt "$retc"/scylla
+elif [ -f "$retc"/scylla/ubsan-suppressions.supp ]; then
+    # rename pre-existing ubsan-suppressions.supp is exists
+    mv -f "$retc"/scylla/ubsan-suppressions.supp "$retc"/scylla/ubsan-suppressions.supp.bak
+fi
 
 install -d -m755 "$rdoc"/scylla
 install -m644 README.md -Dt "$rdoc"/scylla/
