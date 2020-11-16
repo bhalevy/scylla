@@ -367,15 +367,26 @@ public:
         return _shared;
     }
 
-    mutable_token_metadata_ptr clone() const {
-        return make_token_metadata_ptr(*_shared);
-    }
-
     void set(mutable_token_metadata_ptr tmptr) noexcept {
         _shared = std::move(tmptr);
     }
 
     future<token_metadata_lock> get_lock() noexcept;
+
+    template <typename Func>
+    requires requires (Func f, token_metadata& tm) {
+        { futurize_invoke(f, tm) } -> std::same_as<future<>>;
+    } && std::is_nothrow_move_constructible_v<Func>
+    future<> mutate_token_metadata(Func func) {
+        return get_lock().then([this, func = std::move(func)] (token_metadata_lock lk) {
+            return _shared->clone_async().then([this, func = std::move(func), lk = std::move(lk)] (token_metadata tm) mutable {
+                auto tmptr = make_token_metadata_ptr(std::move(tm));
+                return futurize_invoke(func, *tmptr).then([this, lk = std::move(lk), tmptr = std::move(tmptr)] () mutable {
+                    set(std::move(tmptr));
+                });
+            });
+        });
+    }
 };
 
 }
