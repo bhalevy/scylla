@@ -208,14 +208,14 @@ void simple_test() {
         { 11.0, inet_address("192.102.40.2") }
     };
 
-  stm.mutate_token_metadata([&ring_points] (token_metadata& tm) {
-    // Initialize the token_metadata
-    for (unsigned i = 0; i < ring_points.size(); i++) {
-        tm.update_normal_token(
-            {dht::token::kind::key, d2t(ring_points[i].point / ring_points.size())},
-            ring_points[i].host);
-    }
-  }).get();
+    stm.mutate_token_metadata([&ring_points] (token_metadata& tm) {
+        // Initialize the token_metadata
+        for (unsigned i = 0; i < ring_points.size(); i++) {
+            tm.update_normal_token(
+                {dht::token::kind::key, d2t(ring_points[i].point / ring_points.size())},
+                ring_points[i].host);
+        }
+    }).get();
 
     /////////////////////////////////////
     // Create the replication strategy
@@ -613,13 +613,13 @@ SEASTAR_THREAD_TEST_CASE(testCalculateEndpoints) {
         (void)snitch.stop();
         snitch = generate_snitch(datacenters, nodes);
 
-      stm.mutate_token_metadata([&nodes] (token_metadata& tm) {
-        for (auto& node : nodes) {
-            for (size_t i = 0; i < VNODES; ++i) {
-                tm.update_normal_token(dht::token::get_random_token(), node);
+        stm.mutate_token_metadata([&nodes] (token_metadata& tm) {
+            for (auto& node : nodes) {
+                for (size_t i = 0; i < VNODES; ++i) {
+                    tm.update_normal_token(dht::token::get_random_token(), node);
+                }
             }
-        }
-      }).get();
+        }).get();
         test_equivalence(stm, snitch, datacenters);
     }
 }
