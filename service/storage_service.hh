@@ -210,15 +210,15 @@ private:
     future<> with_token_metadata_lock(std::function<future<> ()>) noexcept;
 
     // Acquire the token_metadata lock and get a mutable_token_metadata_ptr.
-    // Pass that ptr to \c func, and when successfully done,
+    // Pass the token_metadata& to \c func, and when successfully done,
     // replicate it to all cores.
     // Note: must be called on shard 0.
-    future<> mutate_token_metadata(std::function<future<> (mutable_token_metadata_ptr)> func) noexcept;
+    future<> mutate_token_metadata(std::function<future<> (token_metadata&)> func) noexcept;
 
     // Update pending ranges locally and then replicate to all cores.
     // Should be serialized under token_metadata_lock.
     // Must be called on shard 0.
-    future<> update_pending_ranges(mutable_token_metadata_ptr tmptr, sstring reason);
+    future<> update_pending_ranges(token_metadata& tm, sstring reason);
     future<> update_pending_ranges(sstring reason);
     future<> keyspace_changed(const sstring& ks_name);
     void register_metrics();
@@ -596,6 +596,7 @@ public:
     future<> check_and_repair_cdc_streams();
 private:
     // Should be serialized under token_metadata_lock.
+    future<> replicate_to_other_cores(const token_metadata& tm) noexcept;
     future<> replicate_to_all_cores(mutable_token_metadata_ptr tmptr) noexcept;
     sharded<db::system_distributed_keyspace>& _sys_dist_ks;
     sharded<db::view::view_update_generator>& _view_update_generator;
