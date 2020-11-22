@@ -1445,7 +1445,7 @@ void writer::consume_end_of_stream() {
         features.disable(sstable_feature::CorrectStaticCompact);
     }
     run_identifier identifier{_run_identifier};
-    _sst.write_scylla_metadata(_pc, _shard, std::move(features), std::move(identifier));
+    _sst.write_scylla_metadata(_pc, _shard, std::move(features), std::move(identifier), std::move(_large_data_counters));
     if (!_cfg.leave_unsealed) {
         _sst.seal_sstable(_cfg.backup).get();
     }
