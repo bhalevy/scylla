@@ -2944,6 +2944,18 @@ std::ostream& operator<<(std::ostream& out, const sstables::component_type& comp
     return out;
 }
 
+std::optional<large_data_counter_type> sstable::get_large_data_count(large_data_type t) const noexcept {
+    if (!_large_data_counters) {
+        return std::make_optional<large_data_counter_type>();
+    }
+    large_data_counter_type value = 0;
+    auto it = _large_data_counters->map.find(t);
+    if (it != _large_data_counters->map.end()) {
+        value = it->second;
+    }
+    return std::make_optional<large_data_counter_type>(value);
+}
+
 }
 
 namespace seastar {

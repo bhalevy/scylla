@@ -806,6 +806,10 @@ public:
     // Return true if this sstable possibly stores clustering row(s) specified by ranges.
     bool may_contain_rows(const query::clustering_row_ranges& ranges) const;
 
+    // Return disengaged optional if _large_data_counters is disengaged.
+    // Otherwise, return the counter value, if present, or 0.
+    std::optional<large_data_counter_type> get_large_data_count(large_data_type t) const noexcept;
+
     // Allow the test cases from sstable_test.cc to test private methods. We use
     // a placeholder to avoid cluttering this class too much. The sstable_test class
     // will then re-export as public every method it needs.
