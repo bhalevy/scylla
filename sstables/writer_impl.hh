@@ -37,6 +37,7 @@ struct sstable_writer::writer_impl {
     // when writing a new sstable.
     metadata_collector _collector;
     column_stats _c_stats;
+    scylla_metadata::large_data_stats _large_data_stats;
 
     writer_impl(sstable& sst, const schema& schema, const io_priority_class& pc, const sstable_writer_config& cfg)
         : _sst(sst)
