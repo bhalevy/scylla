@@ -1327,6 +1327,11 @@ future<> sstable::open_data() noexcept {
             _open = true;
             return make_ready_future<>();
         });
+    }).then([this] {
+        auto* ldcs = _components->scylla_metadata->data.get<scylla_metadata_type::LargeDataCounters, scylla_metadata::large_data_counters>();
+        if (ldcs) {
+            _large_data_counters.emplace(*ldcs);
+        }
     });
 }
 
