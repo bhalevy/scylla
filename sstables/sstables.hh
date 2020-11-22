@@ -517,6 +517,15 @@ private:
     sstables_stats _stats;
     tracker_link_type _tracker_link;
     manager_link_type _manager_link;
+
+    // The _large_data_counters map stores the number of large data items
+    // such as lage partitions, rows, cells, and number of partitions
+    // with too many rows.
+    // When the optional _large_data_counters is disengaged we don't know
+    // if large data entries were recorded in the system tables. This will
+    // normally happen when loading legacy sstables that do not have this
+    // information in their scylla metadata.
+    std::optional<scylla_metadata::large_data_counters> _large_data_counters;
 public:
     const bool has_component(component_type f) const;
     sstables_manager& manager() { return _manager; }

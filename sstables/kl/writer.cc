@@ -612,8 +612,12 @@ stop_iteration sstable_writer_k_l::consume_end_of_partition() {
     // compute size of the current row.
     _c_stats.partition_size = _writer->offset() - _c_stats.start_offset;
 
-    _sst.get_large_data_handler().maybe_record_large_partitions(_sst, *_partition_key, _c_stats.partition_size).get();
-    _sst.get_large_data_handler().maybe_log_too_many_rows(_sst, *_partition_key, _c_stats.rows_count);
+    if (_sst.get_large_data_handler().maybe_record_large_partitions(_sst, *_partition_key, _c_stats.partition_size).get0()) {
+        _large_data_counters.map[large_data_type::large_partitions]++;
+    }
+    if (_sst.get_large_data_handler().maybe_log_too_many_rows(_sst, *_partition_key, _c_stats.rows_count)) {
+        _large_data_counters.map[large_data_type::too_many_rows]++;
+    }
 
     // update is about merging column_stats with the data being stored by collector.
     _collector.update(std::move(_c_stats));

@@ -498,6 +498,7 @@ enum class scylla_metadata_type : uint32_t {
     Features = 2,
     ExtensionAttributes = 3,
     RunIdentifier = 4,
+    LargeDataCounters = 5,
 };
 
 struct run_identifier {
@@ -509,14 +510,25 @@ struct run_identifier {
     auto describe_type(sstable_version_types v, Describer f) { return f(id); }
 };
 
+enum class large_data_type : uint32_t {
+    large_partitions = 1,
+    large_rows = 2,
+    large_cells = 3,
+    too_many_rows = 4,
+};
+
+using large_data_counter_type = uint32_t;
+
 struct scylla_metadata {
     using extension_attributes = disk_hash<uint32_t, disk_string<uint32_t>, disk_string<uint32_t>>;
+    using large_data_counters = disk_hash<uint32_t, large_data_type, large_data_counter_type>;
 
     disk_set_of_tagged_union<scylla_metadata_type,
             disk_tagged_union_member<scylla_metadata_type, scylla_metadata_type::Sharding, sharding_metadata>,
             disk_tagged_union_member<scylla_metadata_type, scylla_metadata_type::Features, sstable_enabled_features>,
             disk_tagged_union_member<scylla_metadata_type, scylla_metadata_type::ExtensionAttributes, extension_attributes>,
-            disk_tagged_union_member<scylla_metadata_type, scylla_metadata_type::RunIdentifier, run_identifier>
+            disk_tagged_union_member<scylla_metadata_type, scylla_metadata_type::RunIdentifier, run_identifier>,
+            disk_tagged_union_member<scylla_metadata_type, scylla_metadata_type::LargeDataCounters, large_data_counters>
             > data;
 
     sstable_enabled_features get_features() const {
