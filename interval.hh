@@ -28,6 +28,7 @@
 #include <boost/range/algorithm/copy.hpp>
 #include <boost/range/adaptor/sliced.hpp>
 #include <boost/range/adaptor/transformed.hpp>
+#include "utils/maybe_yield.hh"
 
 template<typename T>
 class interval_bound {
@@ -584,13 +585,14 @@ public:
     // Takes a vector of possibly overlapping intervals and returns a vector containing
     // a set of non-overlapping intervals covering the same values.
     template<typename Comparator>
-    static std::vector<nonwrapping_interval> deoverlap(std::vector<nonwrapping_interval> intervals, Comparator&& cmp) {
+    static std::vector<nonwrapping_interval> deoverlap(std::vector<nonwrapping_interval> intervals, Comparator&& cmp, utils::can_yield can_yield = utils::can_yield::no) {
         auto size = intervals.size();
         if (size <= 1) {
             return intervals;
         }
 
         std::sort(intervals.begin(), intervals.end(), [&](auto&& r1, auto&& r2) {
+            utils::maybe_yield(can_yield);
             return wrapping_interval<T>::less_than(r1._interval.start_bound(), r2._interval.start_bound(), cmp);
         });
 
@@ -599,6 +601,7 @@ public:
 
         auto&& current = intervals[0];
         for (auto&& r : intervals | boost::adaptors::sliced(1, intervals.size())) {
+            utils::maybe_yield(can_yield);
             bool includes_end = wrapping_interval<T>::greater_than_or_equal(r._interval.end_bound(), current._interval.start_bound(), cmp)
                                 && wrapping_interval<T>::greater_than_or_equal(current._interval.end_bound(), r._interval.end_bound(), cmp);
             if (includes_end) {
