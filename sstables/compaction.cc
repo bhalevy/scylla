@@ -1029,17 +1029,19 @@ private:
 class cleanup_compaction final : public regular_compaction {
     dht::token_range_vector _owned_ranges;
 private:
+    // Called in a seastar thread
     dht::partition_range_vector
     get_ranges_for_invalidation(const std::vector<shared_sstable>& sstables) {
-        auto owned_ranges = dht::to_partition_ranges(_owned_ranges);
+        auto owned_ranges = dht::to_partition_ranges(_owned_ranges, utils::can_yield::yes);
 
         auto non_owned_ranges = boost::copy_range<dht::partition_range_vector>(sstables
                 | boost::adaptors::transformed([] (const shared_sstable& sst) {
+            seastar::thread::maybe_yield();
             return dht::partition_range::make({sst->get_first_decorated_key(), true},
                                               {sst->get_last_decorated_key(), true});
         }));
         // optimize set of potentially overlapping ranges by deoverlapping them.
-        non_owned_ranges = dht::partition_range::deoverlap(std::move(non_owned_ranges), dht::ring_position_comparator(*_schema));
+        non_owned_ranges = dht::partition_range::deoverlap(std::move(non_owned_ranges), dht::ring_position_comparator(*_schema), utils::can_yield::yes);
 
         // subtract *each* owned range from the partition range of *each* sstable*,
         // such that we'll be left only with a set of non-owned ranges.
@@ -1048,6 +1050,7 @@ private:
             for (auto& non_owned_range : non_owned_ranges) {
                 auto ret = non_owned_range.subtract(owned_range, dht::ring_position_comparator(*_schema));
                 new_non_owned_ranges.insert(new_non_owned_ranges.end(), ret.begin(), ret.end());
+                seastar::thread::maybe_yield();
             }
             non_owned_ranges = std::move(new_non_owned_ranges);
         }
