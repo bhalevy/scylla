@@ -230,8 +230,6 @@ private:
             return make_ready_future<mutable_token_metadata_ptr>(make_token_metadata_ptr(std::move(tm)));
         });
     }
-public:
-    static future<> update_topology(inet_address endpoint);
 
     token_metadata_ptr get_token_metadata_ptr() const noexcept {
         return _shared_token_metadata.get();
@@ -240,6 +238,15 @@ public:
     const locator::token_metadata& get_token_metadata() const noexcept {
         return *_shared_token_metadata.get();
     }
+public:
+    template <typename Func>
+    requires std::invocable<Func, const token_metadata&>
+    auto with_token_metadata(Func func) const {
+        auto tmptr = get_token_metadata_ptr();
+        return func(*tmptr);
+    }
+
+    static future<> update_topology(inet_address endpoint);
 
     cdc::metadata& get_cdc_metadata() {
         return _cdc_metadata;

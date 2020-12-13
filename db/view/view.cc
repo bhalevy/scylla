@@ -1199,7 +1199,9 @@ future<> mutate_MV(
         auto view_token = dht::get_token(*mut.s, mut.fm.key());
         auto& keyspace_name = mut.s->ks_name();
         auto target_endpoint = get_view_natural_endpoint(keyspace_name, base_token, view_token);
-        auto remote_endpoints = service::get_local_storage_service().get_token_metadata().pending_endpoints_for(view_token, keyspace_name);
+        auto remote_endpoints = service::get_local_storage_service().with_token_metadata([&view_token, &keyspace_name] (const locator::token_metadata& tm) {
+            return tm.pending_endpoints_for(view_token, keyspace_name);
+        });
         auto maybe_account_failure = [tr_state, &stats, &cf_stats, units = pending_view_updates.split(mut.fm.representation().size())] (
                 future<>&& f,
                 gms::inet_address target,

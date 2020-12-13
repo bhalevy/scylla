@@ -164,8 +164,9 @@ protected:
         sstring local_dc = locator::i_endpoint_snitch::get_local_snitch_ptr()->get_datacenter(
                 utils::fb_utilities::get_broadcast_address());
         std::unordered_set<gms::inet_address> local_dc_nodes =
-                service::get_local_storage_service().get_token_metadata().
-                get_topology().get_datacenter_endpoints().at(local_dc);
+                service::get_local_storage_service().with_token_metadata([&local_dc] (const locator::token_metadata& tm) {
+                    return tm.get_topology().get_datacenter_endpoints().at(local_dc);
+                });
         for (auto& ip : local_dc_nodes) {
             if (gms::get_local_gossiper().is_alive(ip)) {
                 rjson::push_back(results, rjson::from_string(ip.to_sstring()));
