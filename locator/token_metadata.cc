@@ -445,6 +445,12 @@ public:
       });
     }
 
+    /**
+     * Destroy the token_metadata members using continuations
+     * to prevent reactor stalls.
+     */
+    future<> clear_gently() noexcept;
+
 public:
     dht::token_range_vector get_primary_ranges_for(std::unordered_set<token> tokens) const;
 
@@ -1006,6 +1012,35 @@ future<token_metadata_impl> token_metadata_impl::clone_only_token_map(bool clone
     });
 }
 
+template <typename Container>
+static future<> _clear_gently(Container& c) noexcept {
+    return repeat([&c, b = c.begin()] () mutable {
+        if (b == c.end()) {
+            return stop_iteration::yes;
+        }
+        b = c.erase(b);
+        return stop_iteration::no;
+    });
+}
+
+future<> token_metadata_impl::clear_gently() noexcept {
+    return _clear_gently(_token_to_endpoint_map).then([this] {
+        return _clear_gently(_endpoint_to_host_id_map);
+    }).then([this] {
+        return _clear_gently(_bootstrap_tokens);
+    }).then([this] {
+        return _clear_gently(_leaving_endpoints);
+    }).then([this] {
+        return _clear_gently(_replacing_endpoints);
+    }).then([this] {
+        return _clear_gently(_pending_ranges_interval_map);
+    }).then([this] {
+        return _clear_gently(_sorted_tokens);
+    }).then([this] {
+        return _topology.clear_gently();
+    });
+}
+
 void token_metadata_impl::sort_tokens() {
     std::vector<token> sorted;
     sorted.reserve(_token_to_endpoint_map.size());
@@ -1452,6 +1487,7 @@ void token_metadata_impl::calculate_pending_ranges_for_leaving(
             new_pending_ranges.emplace(r, ep);
         }
     }
+    metadata.clear_gently().get();
     tlogger.debug("In calculate_pending_ranges: affected_ranges.size={} ends", affected_ranges_size);
 }
 
@@ -1528,6 +1564,7 @@ future<> token_metadata_impl::update_pending_ranges(
         // At this stage newPendingRanges has been updated according to leave operations. We can
         // now continue the calculation by checking bootstrapping nodes.
         calculate_pending_ranges_for_bootstrap(strategy, new_pending_ranges, all_left_metadata);
+        all_left_metadata->clear_gently().get();
 
         // At this stage newPendingRanges has been updated according to leaving and bootstrapping nodes.
         set_pending_ranges(keyspace_name, std::move(new_pending_ranges), can_yield::yes);
@@ -1875,6 +1912,10 @@ token_metadata::clone_after_all_left() const noexcept {
     });
 }
 
+future<> token_metadata::clear_gently() noexcept {
+    return _impl->clear_gently();
+}
+
 dht::token_range_vector
 token_metadata::get_primary_ranges_for(std::unordered_set<token> tokens) const {
     return _impl->get_primary_ranges_for(std::move(tokens));
@@ -1951,10 +1992,12 @@ token_metadata::invalidate_cached_rings() {
 }
 
 /////////////////// class topology /////////////////////////////////////////////
-inline void topology::clear() {
-    _dc_endpoints.clear();
-    _dc_racks.clear();
-    _current_locations.clear();
+inline future<> topology::clear_gently() noexcept {
+    return _clear_gently(_dc_endpoints).then([this] {
+        return _clear_gently(_dc_racks);
+    }).then([this] {
+        return _clear_gently(_current_locations);
+    });
 }
 
 topology::topology(const topology& other) {

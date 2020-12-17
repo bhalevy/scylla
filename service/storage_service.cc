@@ -1705,7 +1705,13 @@ future<> storage_service::replicate_to_other_cores(const token_metadata& tm) noe
     }).then_wrapped([this] (future<> f) {
         if (f.failed()) {
             return container().invoke_on_others([] (storage_service& ss) {
-                ss._pending_token_metadata_ptr = {};
+                if (ss._pending_token_metadata_ptr) {
+                    return ss._pending_token_metadata_ptr->clear_gently().finally([&ss] {
+                        ss._pending_token_metadata_ptr = {};
+                    });
+                } else {
+                    return make_ready_future<>();
+                };
             }).finally([ep = f.get_exception()] () mutable {
                 return make_exception_future<>(std::move(ep));
             });
@@ -1729,8 +1735,10 @@ future<> storage_service::replicate_to_all_cores(mutable_token_metadata_ptr tmpt
     _pending_token_metadata_ptr = std::move(tmptr);
     return replicate_to_other_cores(tm).then_wrapped([this] (future<> f) {
         if (f.failed()) {
+          return _pending_token_metadata_ptr->clear_gently().finally([this, f = std::move(f)] () mutable {
             _pending_token_metadata_ptr = {};
             return std::move(f);
+          });
         }
         _shared_token_metadata.set(std::move(_pending_token_metadata_ptr));
         return make_ready_future<>();
@@ -2131,7 +2139,10 @@ future<> storage_service::decommission() {
                 throw std::runtime_error("local node is not a member of the token ring yet");
             }
 
-            if (tmptr->clone_after_all_left().get0().sorted_tokens().size() < 2) {
+            auto temp = tmptr->clone_after_all_left().get0();
+            auto num_tokens_after_all_left = temp.sorted_tokens().size();
+            temp.clear_gently().get();
+            if (num_tokens_after_all_left < 2) {
                 throw std::runtime_error("no other normal nodes in the ring; decommission would be pointless");
             }
 
@@ -2559,6 +2570,7 @@ std::unordered_multimap<dht::token_range, inet_address> storage_service::get_cha
             changed_ranges.emplace(r, ep);
         }
     }
+    temp.clear_gently().get();
 
     return changed_ranges;
 }
