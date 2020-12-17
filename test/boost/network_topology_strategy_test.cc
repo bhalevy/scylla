@@ -209,11 +209,11 @@ void simple_test() {
         { 11.0, inet_address("192.102.40.2") }
     };
     // Initialize the token_metadata
-    for (unsigned i = 0; i < ring_points.size(); i++) {
-        tmptr->update_normal_token(
-            {dht::token::kind::key, d2t(ring_points[i].point / ring_points.size())},
-            ring_points[i].host);
-    }
+    do_for_each(ring_points, [tmptr, size = ring_points.size()] (const ring_point& rp) {
+        return tmptr->update_normal_token(
+            {dht::token::kind::key, d2t(rp.point / size)},
+            rp.host);
+    }).get();
     stm.set(tmptr);
 
     /////////////////////////////////////
@@ -316,7 +316,7 @@ void heavy_origin_test() {
         }
     }
 
-    tmptr->update_normal_tokens(tokens);
+    tmptr->update_normal_tokens(tokens).get();
     stm.set(std::move(tmptr));
 
     auto ars_uptr = abstract_replication_strategy::create_replication_strategy(
@@ -612,11 +612,13 @@ SEASTAR_THREAD_TEST_CASE(testCalculateEndpoints) {
         (void)snitch.stop();
         snitch = generate_snitch(datacenters, nodes);
 
-        for (auto& node : nodes) {
-            for (size_t i = 0; i < VNODES; ++i) {
-                tmptr->update_normal_token(dht::token::get_random_token(), node);
-            }
-        }
+        do_for_each(nodes, [tmptr] (inet_address node) {
+            return do_with(size_t(0), [tmptr, node] (size_t& i) {
+                return do_until([&i] { return i++ >= VNODES; }, [tmptr, node] {
+                    return tmptr->update_normal_token(dht::token::get_random_token(), node);
+                });
+            });
+        }).get();
         stm.set(std::move(tmptr));
         test_equivalence(stm, snitch, datacenters);
     }
