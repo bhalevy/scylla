@@ -1707,7 +1707,7 @@ future<> storage_service::replicate_to_all_cores(mutable_token_metadata_ptr tmpt
         if (f.failed()) {
             return container().invoke_on_all([] (storage_service& ss) {
                 ss._pending_token_metadata_ptr = {};
-            }).finally([ep = f.get_exception()] () mutable {
+            }).then_wrapped([ep = f.get_exception()] (future<>) mutable {
                 return make_exception_future<>(std::move(ep));
             });
         }
