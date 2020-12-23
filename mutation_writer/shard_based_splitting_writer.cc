@@ -27,6 +27,9 @@
 #include <seastar/core/shared_mutex.hh>
 
 #include "mutation_reader.hh"
+#include "log.hh"
+
+static logging::logger wlog("shard_based_splitting_writer");
 
 namespace mutation_writer {
 
@@ -45,20 +48,32 @@ class shard_based_splitting_mutation_writer {
             : shard_writer(schema, make_queue_reader(schema, std::move(permit)), consumer) {
         }
         future<> consume(mutation_fragment mf) {
-            return _handle.push(std::move(mf));
+            // We don't want to generate another exception here
+            // if the read was aborted.
+            if (!_handle.is_terminated()) {
+                return _handle.push(std::move(mf));
+            } else {
+                return make_ready_future<>();
+            }
         }
-        future<> consume_end_of_stream() {
-            // consume_end_of_stream is always called from a finally block,
-            // and that's because we wait for _consume_fut to return. We
-            // don't want to generate another exception here if the read was
-            // aborted.
+        void consume_end_of_stream() {
+            // We don't want to generate another exception here
+            // if the read was aborted.
             if (!_handle.is_terminated()) {
                 _handle.push_end_of_stream();
             }
-            return std::move(_consume_fut);
         }
         void abort(std::exception_ptr ep) {
             _handle.abort(ep);
+        }
+        future<> close() noexcept {
+            return std::move(_consume_fut).handle_exception([this] (std::exception_ptr ep) {
+                if (_handle.is_aborted()) {
+                    wlog.debug("Consumer failed: {}. Ignored.", ep);
+                    return make_ready_future<>();
+                }
+                return make_exception_future<>(std::move(ep));
+            });
         }
     };
 
@@ -105,13 +120,12 @@ public:
         return write_to_shard(mutation_fragment(*_schema, _permit, std::move(pe)));
     }
 
-    future<> consume_end_of_stream() {
-        return parallel_for_each(_shards, [] (std::optional<shard_writer>& shard) {
-            if (!shard) {
-                return make_ready_future<>();
+    void consume_end_of_stream() {
+        for (auto& shard : _shards) {
+            if (shard) {
+                shard->consume_end_of_stream();
             }
-            return shard->consume_end_of_stream();
-        });
+        };
     }
     void abort(std::exception_ptr ep) {
         for (auto&& shard : _shards) {
@@ -119,6 +133,14 @@ public:
                 shard->abort(ep);
             }
         }
+    }
+    future<> close() noexcept {
+        return parallel_for_each(_shards, [] (std::optional<shard_writer>& shard) {
+            if (!shard) {
+                return make_ready_future<>();
+            }
+            return shard->close();
+        });
     }
 };
 

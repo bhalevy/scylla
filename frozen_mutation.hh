@@ -112,6 +112,9 @@ public:
     stop_iteration consume(range_tombstone&& rt);
 
     frozen_mutation consume_end_of_stream();
+
+    void abort(std::exception_ptr ex) noexcept;
+    future<> close() noexcept;
 };
 
 static constexpr size_t default_frozen_fragment_size = 128 * 1024;

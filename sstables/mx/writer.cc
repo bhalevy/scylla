@@ -822,11 +822,12 @@ public:
     stop_iteration consume(range_tombstone&& rt) override;
     stop_iteration consume_end_of_partition();
     void consume_end_of_stream() override;
+    future<> close() noexcept override;
 };
 
 writer::~writer() {
-    close_writer(_index_writer).get();
-    close_writer(_data_writer).get();
+    assert(!_index_writer);
+    assert(!_data_writer);
 }
 
 void writer::maybe_set_pi_first_clustering(const writer::clustering_info& info) {
@@ -1507,6 +1508,10 @@ void writer::consume_end_of_stream() {
     if (!_cfg.leave_unsealed) {
         _sst.seal_sstable(_cfg.backup).get();
     }
+}
+
+future<> writer::close() noexcept {
+    return when_all_succeed(close_writer(_index_writer), close_writer(_data_writer)).discard_result();
 }
 
 std::unique_ptr<sstable_writer::writer_impl> make_writer(sstable& sst,

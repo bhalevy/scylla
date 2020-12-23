@@ -132,6 +132,9 @@ public:
         }
         return stop_iteration(_as->abort_requested());
     }
+
+    void abort(std::exception_ptr ex) noexcept;
+    future<> close() noexcept;
 };
 
 }

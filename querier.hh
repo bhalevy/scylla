@@ -64,6 +64,12 @@ public:
     auto consume_end_of_stream() {
         return _consumer.consume_end_of_stream();
     }
+    void abort(std::exception_ptr ex) noexcept {
+        _consumer.abort(std::move(ex));
+    }
+    auto close() noexcept {
+        return _consumer.close();
+    }
 };
 
 /// Consume a page worth of data from the reader.

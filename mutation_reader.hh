@@ -343,6 +343,8 @@ public:
     auto consume(range_tombstone&& rt) { return _ptr->consume(std::move(rt)); }
     auto consume_end_of_partition() { return _ptr->consume_end_of_partition(); }
     auto consume_end_of_stream() { return _ptr->consume_end_of_stream(); }
+    auto abort(std::exception_ptr ex) noexcept { return _ptr->abort(std::move(ex)); }
+    auto close() noexcept { return _ptr->close(); }
 };
 
 template<typename FlattenedConsumer, typename... Args>
@@ -596,6 +598,9 @@ public:
 
     /// Checks if the queue is already terminated with either a success or failure (abort)
     bool is_terminated() const;
+
+    /// Checks if the queue is aborted
+    bool is_aborted() const;
 };
 
 std::pair<flat_mutation_reader, queue_reader_handle> make_queue_reader(schema_ptr s, reader_permit permit);

@@ -78,7 +78,7 @@
 
 using namespace std::chrono_literals;
 
-static logging::logger vlogger("view");
+logging::logger vlogger("view");
 
 static inline void inject_failure(std::string_view operation) {
     utils::get_local_injector().inject(operation,
@@ -1962,6 +1962,27 @@ public:
         }
         return std::move(_built_views);
     }
+
+    void abort(std::exception_ptr ex) noexcept {
+        try {
+            check_for_built_views();
+        } catch (...) {
+            // ignore
+        }
+        vlogger.debug("abort: {}", ex);
+        // FIXME: abort view building and clean up builkt views
+        if (!_built_views.views.empty()) {
+            vlogger.warn("abort: {} built views: {}", _built_views.views.size(), ex);
+        }
+        if (!_step.build_status.empty()) {
+            vlogger.warn("abort: {} in-progress view builds: {}", _step.build_status.size(), ex);
+        }
+    }
+
+    future<> close() noexcept {
+        // FIXME: wait on aborted view builds to complete
+        return make_ready_future<>();
+    }
 };
 
 // Called in the context of a seastar::thread.
@@ -2124,6 +2145,15 @@ view_updating_consumer::view_updating_consumer(schema_ptr schema, reader_permit 
         return table->stream_view_replica_updates(std::move(s), std::move(m), db::no_timeout, excluded_sstables);
     })
 { }
+
+void view_updating_consumer::abort(std::exception_ptr ex) noexcept {
+    vlogger.debug("view_updating_consumer aborted: {}", ex);
+    // FIXME: consider clearing buffer and reader
+}
+
+future<> view_updating_consumer::close() noexcept {
+    return make_ready_future<>();
+}
 
 std::vector<db::view::view_and_base> with_base_info_snapshot(std::vector<view_ptr> vs) {
     return boost::copy_range<std::vector<db::view::view_and_base>>(vs | boost::adaptors::transformed([] (const view_ptr& v) {

@@ -56,6 +56,8 @@ struct sstable_writer::writer_impl {
     virtual stop_iteration consume(range_tombstone&& rt) = 0;
     virtual stop_iteration consume_end_of_partition() = 0;
     virtual void consume_end_of_stream() = 0;
+    virtual void abort(std::exception_ptr ex) noexcept;
+    virtual future<> close() noexcept = 0;
     virtual ~writer_impl() {}
 };
 

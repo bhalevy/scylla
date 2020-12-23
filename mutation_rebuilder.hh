@@ -58,4 +58,9 @@ public:
     mutation_opt consume_end_of_stream() {
         return mutation_opt(std::move(_m));
     }
+
+    void abort(std::exception_ptr ex) noexcept {}
+    future<> close() noexcept {
+        return make_ready_future<>();
+    }
 };

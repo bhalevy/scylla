@@ -68,6 +68,8 @@ public:
     stop_iteration consume(range_tombstone&& rt) { return stop_iteration::no; }
     stop_iteration consume_end_of_partition() { return stop_iteration::no; }
     void consume_end_of_stream() {}
+    void abort(std::exception_ptr) noexcept {}
+    future<> close() noexcept { return make_ready_future<>(); }
 };
 
 class mutation_compactor_garbage_collector : public compaction_garbage_collector {
@@ -413,6 +415,19 @@ public:
         }
     }
 
+    template <typename Consumer, typename GCConsumer>
+    requires CompactedFragmentsConsumer<Consumer> && CompactedFragmentsConsumer<GCConsumer>
+    void abort(std::exception_ptr ex, Consumer& consumer, GCConsumer& gc_consumer) noexcept {
+        consumer.abort(ex);
+        gc_consumer.abort(ex);
+    }
+
+    template <typename Consumer, typename GCConsumer>
+    requires CompactedFragmentsConsumer<Consumer> && CompactedFragmentsConsumer<GCConsumer>
+    future<> close(Consumer& consumer, GCConsumer& gc_consumer) noexcept {
+        return when_all_succeed(consumer.close(), gc_consumer.close()).discard_result();
+    }
+
     /// The decorated key of the partition the compaction is positioned in.
     /// Can be null if the compaction wasn't started yet.
     const dht::decorated_key* current_partition() const {
@@ -519,6 +534,14 @@ public:
 
     auto consume_end_of_stream() {
         return _state->consume_end_of_stream(_consumer, _gc_consumer);
+    }
+
+    void abort(std::exception_ptr ex) noexcept {
+        _state->abort(std::move(ex), _consumer, _gc_consumer);
+    }
+
+    future<> close() noexcept {
+        return _state ? std::move(_state)->close(_consumer, _gc_consumer) : make_ready_future<>();
     }
 };
 

@@ -422,7 +422,7 @@ public:
     virtual future<> fast_forward_to(const dht::partition_range&, db::timeout_clock::time_point timeout) override {
         clear_buffer();
         _end_of_stream = true;
-        return make_ready_future<>();
+        return make_reqady_future<>();
     }
     virtual future<> fast_forward_to(position_range pr, db::timeout_clock::time_point timeout) override {
         return make_exception_future<>(make_backtraced_exception_ptr<std::bad_function_call>());

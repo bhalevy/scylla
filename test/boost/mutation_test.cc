@@ -2442,6 +2442,8 @@ public:
 
         return _partition_summaries;
     }
+    void abort(std::exception_ptr) noexcept {}
+    future<> close() noexcept { return make_ready_future<>(); }
 };
 
 using survived_compacted_fragments_consumer = basic_compacted_fragments_consumer_base<false>;

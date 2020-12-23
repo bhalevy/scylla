@@ -6083,6 +6083,8 @@ SEASTAR_TEST_CASE(purged_tombstone_consumer_sstable_test) {
 
             stop_iteration consume_end_of_partition() { return _writer.consume_end_of_partition(); }
             void consume_end_of_stream() { _writer.consume_end_of_stream(); _sst->open_data().get0(); }
+            auto abort(std::exception_ptr ex) noexcept { return _writer.abort(std::move(ex)); }
+            auto close() noexcept { return _writer.close(); }
         };
 
         std::optional<gc_clock::time_point> gc_before;

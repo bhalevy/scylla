@@ -96,6 +96,7 @@ public:
         schema_ptr _schema;
         reader_permit _permit;
         sstring _description;
+        std::exception_ptr _ex;
         friend class flat_mutation_reader;
     protected:
         template<typename... Args>
@@ -229,7 +230,20 @@ public:
             consumer_adapter(flat_mutation_reader::impl& reader, Consumer c)
                     : _reader(reader)
                       , _consumer(std::move(c))
-            { }
+            {
+                fmr_logger.debug("consumer_adapter [{}] constructed. _reader={} _consumer={}", (void*)this, (void*)&_reader, (void*)&_consumer);
+            }
+            consumer_adapter(const consumer_adapter&) = delete;
+            consumer_adapter(consumer_adapter&& x)
+                    : _reader(x._reader)
+                    , _decorated_key(std::move(x._decorated_key))
+                    , _consumer(std::move(x._consumer))
+            {
+                fmr_logger.debug("consumer_adapter [{}] moved {}", (void*)this, (void*)&x);
+            }
+            ~consumer_adapter() {
+                fmr_logger.debug("consumer_adapter [{}] destructing. _reader={} _consumer={}", (void*)this, (void*)&_reader, (void*)&_consumer);
+            }
             future<stop_iteration> operator()(mutation_fragment&& mf) {
                 return std::move(mf).consume(*this);
             }
@@ -251,17 +265,24 @@ public:
                 return make_ready_future<stop_iteration>(stop_iteration::no);
             }
             future<stop_iteration> consume(partition_end&& pe) {
+                fmr_logger.debug("consumer_adapter [{}] consume_end_of_partition: _reader={} _consumer={}", (void*)this, (void*)&_reader, (void*)&_consumer);
               return futurize_invoke([this] {
                 return _consumer.consume_end_of_partition();
               });
             }
+            auto consume_end_of_stream() {
+                fmr_logger.debug("consumer_adapter [{}] consume_end_of_stream: _reader={} _consumer={}", (void*)this, (void*)&_reader, (void*)&_consumer);
+                return _consumer.consume_end_of_stream();
+            }
             future<> abort(std::exception_ptr ex) noexcept {
+                fmr_logger.debug("consumer_adapter abort: {}", ex);
                 if constexpr (_consumer_has_abort) {
                     co_await futurize_invoke(_consumer.abort, ex);
                 }
                 co_await _reader.abort(std::move(ex));
             }
             future<> close() noexcept {
+                fmr_logger.debug("consumer_adapter [{}] close. _reader={} _consumer={}", (void*)this, (void*)&_reader, (void*)&_consumer);
                 if constexpr (_consumer_has_close) {
                     co_await _consumer.close();
                 }
@@ -322,6 +343,7 @@ public:
                 consume_pausable_in_thread(std::ref(adapter), std::move(filter), timeout);
             } catch (...) {
                 auto ex = std::current_exception();
+                fmr_logger.debug("consume_pausable_in_thread failed: {}", ex);
                 adapter.abort(ex).get();
                 std::rethrow_exception(std::move(ex));
             }

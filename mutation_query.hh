@@ -164,6 +164,8 @@ public:
     stop_iteration consume(range_tombstone&& rt);
     stop_iteration consume_end_of_partition();
     reconcilable_result consume_end_of_stream();
+    void abort(std::exception_ptr ex) noexcept;
+    future<> close() noexcept;
 };
 
 query::result to_data_query_result(const reconcilable_result&, schema_ptr, const query::partition_slice&, uint64_t row_limit, uint32_t partition_limit, query::result_options opts = query::result_options::only_result());

@@ -33,6 +33,7 @@ sstable_writer::sstable_writer(sstable& sst, const schema& s, uint64_t estimated
     } else {
         _impl = std::make_unique<sstable_writer_k_l>(sst, s, estimated_partitions, cfg, pc, shard);
     }
+    sstlog.debug("sstable_writer [{}] constructed {} _impl={}", (void*)this, sst.get_filename(), (void*)_impl.get());
     if (cfg.replay_position) {
         get_metadata_collector().set_replay_position(cfg.replay_position.value());
     }
@@ -74,24 +75,49 @@ stop_iteration sstable_writer::consume(range_tombstone&& rt) {
 }
 
 stop_iteration sstable_writer::consume_end_of_partition() {
-    _impl->_validator.on_end_of_partition();
+    sstlog.debug("sstable_writer [{}] consume_end_of_partition: _impl={}", (void*)this, (void*)_impl.get());
     return _impl->consume_end_of_partition();
 }
 
 void sstable_writer::consume_end_of_stream() {
-    _impl->_validator.on_end_of_stream();
+    sstlog.debug("sstable_writer [{}] consume_end_of_stream: _impl={}", (void*)this, (void*)_impl.get());
     if (_impl->_c_stats.capped_local_deletion_time) {
         _impl->_sst.get_stats().on_capped_local_deletion_time();
     }
     return _impl->consume_end_of_stream();
 }
 
+void sstable_writer::abort(std::exception_ptr ex) noexcept {
+    sstlog.debug("sstable_writer [{}] abort: {}", (void*)this, ex);
+    _impl->abort(std::move(ex));
+}
+
+future<> sstable_writer::close() noexcept {
+    sstlog.debug("sstable_writer [{}] close: _impl={}", (void*)this, (void*)_impl.get());
+    if (_impl) {
+        return _impl->close();
+    } else {
+        return make_ready_future<>();
+    }
+}
+
 metadata_collector& sstable_writer::get_metadata_collector() {
     return _impl->_collector;
 }
 
-sstable_writer::sstable_writer(sstable_writer&& o) = default;
+sstable_writer::sstable_writer(sstable_writer&& o)
+        : _impl(std::move(o._impl))
+{
+    sstlog.debug("sstable_writer [{}] moved {}", (void*)this, (void*)&o);
+}
+
 sstable_writer& sstable_writer::operator=(sstable_writer&& o) = default;
-sstable_writer::~sstable_writer() = default;
+sstable_writer::~sstable_writer() {
+    sstlog.debug("sstable_writer [{}] ~sstable_writer", (void*)this);
+};
+
+void sstable_writer::writer_impl::abort(std::exception_ptr ex) noexcept {
+    sstlog.debug("writing SSTable {} aborted: {}", _sst.get_filename(), ex);
+}
 
 } // namespace sstables

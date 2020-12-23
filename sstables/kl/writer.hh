@@ -124,6 +124,7 @@ public:
     stop_iteration consume(range_tombstone&& rt) override;
     stop_iteration consume_end_of_partition() override;
     void consume_end_of_stream() override;
+    future<> close() noexcept override;
 };
 
 } // namespace sstables

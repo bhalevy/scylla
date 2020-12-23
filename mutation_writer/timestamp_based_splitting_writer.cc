@@ -27,6 +27,9 @@
 #include <seastar/core/shared_mutex.hh>
 
 #include "mutation_reader.hh"
+#include "log.hh"
+
+static logging::logger wlog("timestamp_based_splitting_writer");
 
 namespace mutation_writer {
 
@@ -138,14 +141,22 @@ class timestamp_based_splitting_mutation_writer {
         future<> consume(mutation_fragment mf) {
             return _handle.push(std::move(mf));
         }
-        future<> consume_end_of_stream() {
+        void consume_end_of_stream() {
             if (!_handle.is_terminated()) {
                 _handle.push_end_of_stream();
             }
-            return std::move(_consume_fut);
         }
         void abort(std::exception_ptr ep) {
             _handle.abort(ep);
+        }
+        future<> close() noexcept {
+            return std::move(_consume_fut).handle_exception([this] (std::exception_ptr ep) {
+                if (_handle.is_aborted()) {
+                    wlog.debug("Consumer failed: {}. Ignored.", ep);
+                    return make_ready_future<>();
+                }
+                return make_exception_future<>(std::move(ep));
+            });
         }
     };
 
@@ -186,15 +197,20 @@ public:
     future<> consume(range_tombstone&& rt);
     future<> consume(partition_end&& pe);
 
-    future<> consume_end_of_stream() {
-        return parallel_for_each(_buckets, [] (std::pair<const bucket_id, bucket_writer>& bucket) {
-            return bucket.second.consume_end_of_stream();
-        });
+    void consume_end_of_stream() {
+        for (auto& bucket : _buckets) {
+            bucket.second.consume_end_of_stream();
+        }
     }
     void abort(std::exception_ptr ep) {
         for (auto&& b : _buckets) {
             b.second.abort(ep);
         }
+    }
+    future<> close() noexcept {
+        return parallel_for_each(_buckets, [] (std::pair<const bucket_id, bucket_writer>& bucket) {
+            return bucket.second.close();
+        });
     }
 };
 

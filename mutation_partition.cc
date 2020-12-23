@@ -2083,6 +2083,12 @@ public:
     stop_iteration consume(clustering_row&& cr, row_tombstone current_tombstone);
     stop_iteration consume(range_tombstone&&) { return stop_iteration::no; }
     uint64_t consume_end_of_stream();
+    void abort(std::exception_ptr ex) noexcept {
+        mplog.debug("mutation_querier aborted: {}", ex);
+    }
+    future<> close() noexcept {
+        return make_ready_future<>();
+    }
 };
 
 mutation_querier::mutation_querier(const schema& s, query::result::partition_writer pw,
@@ -2245,6 +2251,14 @@ public:
 
     void consume_end_of_stream() {
     }
+
+    auto abort(std::exception_ptr ex) noexcept {
+        return _mutation_consumer->abort(std::move(ex));
+    }
+
+    auto close() noexcept {
+        return std::move(_mutation_consumer)->close();
+    }
 };
 
 future<> data_query(
@@ -2363,6 +2377,14 @@ reconcilable_result reconcilable_result_builder::consume_end_of_stream() {
                                std::move(_memory_accounter).done());
 }
 
+void reconcilable_result_builder::abort(std::exception_ptr ex) noexcept {
+    _mutation_consumer->abort(std::move(ex));
+}
+
+future<> reconcilable_result_builder::close() noexcept {
+    return _mutation_consumer->close();
+}
+
 future<reconcilable_result>
 static do_mutation_query(schema_ptr s,
                mutation_source source,
@@ -2449,6 +2471,12 @@ public:
     }
     mutation_opt consume_end_of_stream() {
         return std::move(_mutation);
+    }
+    void abort(std::exception_ptr ex) noexcept {
+        mplog.debug("counter_write_query_result_builder aborted: {}", ex);
+    }
+    future<> close() noexcept {
+        return make_ready_future<>();
     }
 };
 

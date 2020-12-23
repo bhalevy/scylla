@@ -598,6 +598,14 @@ public:
     partition_checksum consume_end_of_stream() {
         return std::move(_checksum);
     }
+
+    void abort(std::exception_ptr ex) noexcept {
+        rlogger.debug("partition_hasher aborted: {}", ex);
+    }
+
+    future<> close() noexcept {
+        return make_ready_future<>();
+    }
 };
 
 future<partition_checksum> partition_checksum::compute_legacy(flat_mutation_reader mr)

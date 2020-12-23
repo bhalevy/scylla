@@ -272,6 +272,20 @@ future<mutation_opt> read_mutation_from_flat_mutation_reader(flat_mutation_reade
             }
             return _builder->consume_end_of_stream();
         }
+
+        void abort(std::exception_ptr ex) noexcept {
+            if (_builder) {
+                _builder->abort(std::move(ex));
+            }
+        }
+
+        future<> close() noexcept {
+            if (_builder) {
+                return std::move(_builder)->close();
+            } else {
+                return make_ready_future<>();
+            }
+        }
     };
     return r.consume(adapter(r.schema()), timeout);
 }

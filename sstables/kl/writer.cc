@@ -440,12 +440,8 @@ void sstable_writer_k_l::finish_file_writer()
 }
 
 sstable_writer_k_l::~sstable_writer_k_l() {
-    if (_writer) {
-        _writer->close().get();
-    }
-    if (_index) {
-        _index->close().get();
-    }
+    assert(!_writer);
+    assert(!_index);
 }
 
 sstable_writer_k_l::sstable_writer_k_l(sstable& sst, const schema& s, uint64_t estimated_partitions,
@@ -656,6 +652,12 @@ void sstable_writer_k_l::consume_end_of_stream()
     if (!_leave_unsealed) {
         _sst.seal_sstable(_backup).get();
     }
+}
+
+future<> sstable_writer_k_l::close() noexcept {
+    auto close_data = _writer ? std::move(_writer)->close() : make_ready_future<>();
+    auto close_index = _index ? std::move(_index)->close() : make_ready_future<>();
+    return when_all_succeed(std::move(close_data), std::move(close_index)).discard_result();
 }
 
 } // namespace sstables

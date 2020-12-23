@@ -610,6 +610,13 @@ flat_mutation_reader_from_mutations(reader_permit permit, std::vector<mutation> 
         virtual future<> fast_forward_to(position_range cr, db::timeout_clock::time_point timeout) override {
             throw std::runtime_error("This reader can't be fast forwarded to another position.");
         };
+        virtual void abort(std::exception_ptr ex) noexcept override {
+            destroy_mutations();
+            aborted(std::move(ex));
+        }
+        virtual future<> close() noexcept override {
+            return make_ready_future<>();
+        }
     };
     assert(!mutations.empty());
     schema_ptr s = mutations[0].schema();
@@ -910,6 +917,12 @@ make_flat_mutation_reader_from_fragments(schema_ptr schema, reader_permit permit
             do_fast_forward_to(pr);
             return make_ready_future<>();
         }
+        virtual void abort(std::exception_ptr ex) noexcept override {
+            aborted(std::move(ex));
+        }
+        virtual future<> close() noexcept override {
+            return make_ready_future<>();
+        }
     };
     return make_flat_mutation_reader<reader>(std::move(schema), std::move(permit), std::move(fragments), pr);
 }
@@ -976,6 +989,12 @@ public:
     }
     virtual future<> fast_forward_to(position_range, db::timeout_clock::time_point) override {
         return make_exception_future<>(make_backtraced_exception_ptr<std::bad_function_call>());
+    }
+    virtual void abort(std::exception_ptr ex) noexcept override {
+        aborted(std::move(ex));
+    }
+    virtual future<> close() noexcept override {
+        return make_ready_future<>();
     }
 };
 

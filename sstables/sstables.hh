@@ -914,6 +914,9 @@ public:
     stop_iteration consume_end_of_partition();
     void consume_end_of_stream();
 
+    void abort(std::exception_ptr ex) noexcept;
+    future<> close() noexcept;
+
     metadata_collector& get_metadata_collector();
 };
 

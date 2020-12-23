@@ -231,6 +231,7 @@ private:
     const schema_ptr _schema;
     streamed_mutation::forwarding _fwd_sm;
     mutation_reader::forwarding _fwd_mr;
+    std::exception_ptr _ex;
 private:
     void maybe_add_readers_at_partition_boundary();
     void maybe_add_readers(const std::optional<dht::ring_position_view>& pos);
@@ -2255,11 +2256,21 @@ future<> queue_reader_handle::push(mutation_fragment mf) {
         }
         return make_exception_future<>(std::runtime_error("Dangling queue_reader_handle"));
     }
-    return _reader->push(std::move(mf));
+    return _reader->push(std::move(mf)).then_wrapped([] (future<> f) {
+        if (f.failed()) {
+            auto ex = f.get_exception();
+            mrlog.debug("reader->push failed: {}", ex);
+            return make_exception_future<>(std::move(ex));
+        }
+        return make_ready_future<>();
+    });
 }
 
 void queue_reader_handle::push_end_of_stream() {
     if (!_reader) {
+        if (_ex) {
+            std::rethrow_exception(_ex);
+        }
         throw std::runtime_error("Dangling queue_reader_handle");
     }
     _reader->push_end_of_stream();
@@ -2269,6 +2280,10 @@ void queue_reader_handle::push_end_of_stream() {
 
 bool queue_reader_handle::is_terminated() const {
     return _reader == nullptr;
+}
+
+bool queue_reader_handle::is_aborted() const {
+    return bool(_ex);
 }
 
 void queue_reader_handle::abort(std::exception_ptr ep) {
@@ -2554,6 +2569,8 @@ class clustering_order_reader_merger {
     // reader in order to enter gallop mode. Must be greater than one.
     static constexpr int _gallop_mode_entering_threshold = 3;
 
+    std::exception_ptr _ex;
+
     bool in_gallop_mode() const {
         return _gallop_mode_hits >= _gallop_mode_entering_threshold;
     }
@@ -2734,6 +2751,10 @@ public:
     // (the data from the previous batch is destroyed).
     future<mutation_fragment_batch> operator()(db::timeout_clock::time_point timeout) {
         _current_batch.clear();
+
+        if (_ex) {
+            return make_exception_future<mutation_fragment_batch>(_ex);
+        }
 
         if (in_gallop_mode()) {
             return peek_galloping_reader(timeout);

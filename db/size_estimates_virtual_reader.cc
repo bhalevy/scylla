@@ -284,6 +284,9 @@ future<> size_estimates_mutation_reader::next_partition() {
 }
 
 future<> size_estimates_mutation_reader::fast_forward_to(const dht::partition_range& pr, db::timeout_clock::time_point timeout) {
+    if (_ex) {
+        return make_exception_future<>(_ex);
+    }
     clear_buffer();
     _prange = &pr;
     _keyspaces = std::nullopt;
@@ -293,6 +296,9 @@ future<> size_estimates_mutation_reader::fast_forward_to(const dht::partition_ra
 }
 
 future<> size_estimates_mutation_reader::fast_forward_to(position_range pr, db::timeout_clock::time_point timeout) {
+    if (_ex) {
+        return make_exception_future<>(_ex);
+    }
     forward_buffer_to(pr.start());
     _end_of_stream = false;
     if (_partition_reader) {

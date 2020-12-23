@@ -227,6 +227,15 @@ struct compaction_writer {
         : sst(std::move(sst)), writer(std::move(writer)), monitor(std::move(monitor)) {}
     compaction_writer(sstable_writer writer, shared_sstable sst)
         : compaction_writer(nullptr, std::move(writer), std::move(sst)) {}
+
+    void abort(std::exception_ptr ex) noexcept {
+        writer.abort(std::move(ex));
+    }
+
+    auto close() noexcept {
+        monitor.reset();
+        return writer.close();
+    }
 };
 
 class compacting_sstable_writer {
@@ -254,6 +263,19 @@ public:
 
     stop_iteration consume_end_of_partition();
     void consume_end_of_stream();
+
+    void abort(std::exception_ptr ex) noexcept {
+        if (_compaction_writer) {
+            _compaction_writer->writer.abort(std::move(ex));
+        }
+    }
+    future<> close() noexcept {
+        if (_compaction_writer) {
+            return std::move(_compaction_writer)->writer.close();
+        } else {
+            return make_ready_future<>();
+        }
+    }
 };
 
 struct compaction_read_monitor_generator final : public read_monitor_generator {
@@ -414,6 +436,14 @@ public:
 
     void consume_end_of_stream() {
         _data->finish_sstable_writer();
+    }
+
+    auto abort(std::exception_ptr ex) noexcept {
+        return writer().abort(std::move(ex));
+    }
+
+    auto close() noexcept {
+        return writer().close();
     }
 };
 

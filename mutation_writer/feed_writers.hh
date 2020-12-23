@@ -23,22 +23,41 @@
 
 #include "flat_mutation_reader.hh"
 
+#include "log.hh"
+extern logging::logger fmr_logger;
+
 namespace mutation_writer {
 using reader_consumer = noncopyable_function<future<> (flat_mutation_reader)>;
+
+static future<> report_exception(const char* what, future<> f) {
+    if (f.failed()) {
+        auto ex = f.get_exception();
+        fmr_logger.debug("{} failed: {}", what, ex);
+        return make_exception_future<>(std::move(ex));
+    }
+    return make_ready_future<>();
+}
 
 template <typename Writer>
 requires MutationFragmentConsumer<Writer, future<>>
 future<> feed_writer(flat_mutation_reader&& rd, Writer&& wr) {
     return do_with(std::move(rd), std::move(wr), [] (flat_mutation_reader& rd, Writer& wr) {
-        return rd.fill_buffer(db::no_timeout).then([&rd, &wr] {
+        return rd.fill_buffer(db::no_timeout).then_wrapped([&rd, &wr] (future<> f) {
+            return report_exception("rd.fill_buffer", std::move(f));
+          }).then([&rd, &wr] {
             return do_until([&rd] { return rd.is_buffer_empty() && rd.is_end_of_stream(); }, [&rd, &wr] {
-                auto f1 = rd.pop_mutation_fragment().consume(wr);
-                auto f2 = rd.is_buffer_empty() ? rd.fill_buffer(db::no_timeout) : make_ready_future<>();
+                auto f1 = rd.pop_mutation_fragment().consume(wr).then_wrapped([] (future<> f) {
+                    return report_exception("mutation_fragment.consume", std::move(f));
+                });
+                auto f2 = rd.is_buffer_empty() ? rd.fill_buffer(db::no_timeout).then_wrapped([] (future<> f) {
+                    return report_exception("inner rd.fill_buffer", std::move(f));
+                }) : make_ready_future<>();
                 return when_all_succeed(std::move(f1), std::move(f2)).discard_result();
             });
         }).then_wrapped([&rd, &wr] (future<> f) {
             if (f.failed()) {
                 auto ex = f.get_exception();
+                fmr_logger.debug("feed_writer aborting: {}", ex);
                 wr.abort(ex);
                 return rd.abort(ex).finally([ex = std::move(ex)] () mutable {
                     return make_exception_future<>(std::move(ex));
@@ -46,8 +65,8 @@ future<> feed_writer(flat_mutation_reader&& rd, Writer&& wr) {
             } else {
                 return wr.consume_end_of_stream();
             }
-        }).finally([&rd] {
-            return rd.close();
+        }).finally([&rd, &wr] {
+            return when_all_succeed(rd.close(), wr.close()).discard_result();
         });
     });
 }

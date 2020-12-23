@@ -40,6 +40,7 @@
 #include "idl/mutation.dist.impl.hh"
 #include "flat_mutation_reader.hh"
 #include "converting_mutation_partition_applier.hh"
+#include "log.hh"
 
 //
 // Representation layout:
@@ -48,6 +49,8 @@
 //
 
 using namespace db;
+
+static logging::logger fm_logger("frozen_mutation");
 
 ser::mutation_view frozen_mutation::mutation_view() const {
     auto in = ser::as_input_stream(_bytes);
@@ -185,6 +188,14 @@ frozen_mutation streamed_mutation_freezer::consume_end_of_stream() {
                                                    std::move(_crs), std::move(wr));
                   }).end_mutation();
     return frozen_mutation(std::move(out), std::move(_key));
+}
+
+void streamed_mutation_freezer::abort(std::exception_ptr ex) noexcept {
+    fm_logger.debug("streamed_mutation_freezer aborted: {}", ex);
+}
+
+future<> streamed_mutation_freezer::close() noexcept {
+    return make_ready_future<>();
 }
 
 class fragmenting_mutation_freezer {
