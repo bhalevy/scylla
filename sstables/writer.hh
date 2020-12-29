@@ -82,8 +82,8 @@ public:
     void flush() {
         _out.flush().get();
     }
-    // Must be called in a seastar thread.
-    void close();
+
+    future<> close() noexcept;
 
     uint64_t offset() const {
         return _offset.offset;
@@ -140,7 +140,7 @@ serialized_size(sstable_version_types v, const T& object) {
     auto writer = file_writer(make_sizing_output_stream(size));
     write(v, writer, object);
     writer.flush();
-    writer.close();
+    writer.close().get();
     return size;
 }
 
