@@ -23,6 +23,7 @@
 
 #include <seastar/util/bool_class.hh>
 #include <seastar/core/future.hh>
+#include <seastar/core/coroutine.hh>
 
 #include "dht/i_partitioner.hh"
 #include "position_in_partition.hh"
@@ -247,6 +248,9 @@ public:
                 return _consumer.consume_end_of_partition();
               });
             }
+            future<> abort(std::exception_ptr ex) noexcept {
+                co_await _reader.abort(std::move(ex));
+            }
         private:
             future<stop_iteration> handle_result(stop_iteration si) {
                 if (si) {
@@ -261,7 +265,7 @@ public:
             }
         };
     public:
-        template<typename Consumer>
+        template<typename Consumer, typename return_type = std::invoke_result_t<decltype(&Consumer::consume_end_of_stream), Consumer>>
         requires FlattenedConsumer<Consumer>
         // Stops when consumer returns stop_iteration::yes from consume_end_of_partition or end of stream is reached.
         // Next call will receive fragments from the next partition.
@@ -277,8 +281,17 @@ public:
         // This method returns whatever is returned from Consumer::consume_end_of_stream().S
         auto consume(Consumer consumer, db::timeout_clock::time_point timeout) {
             return do_with(consumer_adapter<Consumer>(*this, std::move(consumer)), [this, timeout] (consumer_adapter<Consumer>& adapter) {
-                return consume_pausable(std::ref(adapter), timeout).then([this, &adapter] {
-                    return adapter._consumer.consume_end_of_stream();
+                return consume_pausable(std::ref(adapter), timeout).then_wrapped([this, &adapter] (future<> f) {
+                    if (f.failed()) {
+                        auto ex = f.get_exception();
+                        return adapter.abort(ex).then_wrapped([ex = std::move(ex)] (future<> f) mutable {
+                            if (f.failed()) {
+                                return make_exception_future<return_type>(seastar::nested_exception(f.get_exception(), std::move(ex)));
+                            }
+                            return make_exception_future<return_type>(std::move(ex));
+                        });
+                    }
+                    return futurize_invoke([this, &adapter] { return adapter._consumer.consume_end_of_stream(); });
                 });
             });
         }
@@ -290,7 +303,13 @@ public:
         // entirely and never reach the consumer.
         auto consume_in_thread(Consumer consumer, Filter filter, db::timeout_clock::time_point timeout) {
             auto adapter = consumer_adapter<Consumer>(*this, std::move(consumer));
+            try {
             consume_pausable_in_thread(std::ref(adapter), std::move(filter), timeout);
+            } catch (...) {
+                auto ex = std::current_exception();
+                adapter.abort(ex).get();
+                std::rethrow_exception(std::move(ex));
+            }
             filter.on_end_of_stream();
             return adapter._consumer.consume_end_of_stream();
         };
