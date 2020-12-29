@@ -1830,7 +1830,7 @@ public:
             , _step(step)
             , _built_views{step}
             , _now(now) {
-        if (!step.current_key.key().is_empty(*_step.reader.schema())) {
+        if (!step.current_key.key().is_empty(*_step.reader->schema())) {
             load_views_to_build();
         }
     }
@@ -1839,7 +1839,7 @@ public:
         inject_failure("view_builder_load_views");
         for (auto&& vs : _step.build_status) {
             if (_step.current_token() >= vs.next_token) {
-                if (partition_key_matches(*_step.reader.schema(), *vs.view->view_info(), _step.current_key, _now)) {
+                if (partition_key_matches(*_step.reader->schema(), *vs.view->view_info(), _step.current_key, _now)) {
                     _views_to_build.push_back(vs.view);
                 }
                 if (vs.next_token || _step.current_token() != vs.first_token) {
@@ -1893,8 +1893,8 @@ public:
             return stop_iteration::yes;
         }
 
-        _fragments_memory_usage += cr.memory_usage(*_step.reader.schema());
-        _fragments.emplace_back(*_step.reader.schema(), _builder._permit, std::move(cr));
+        _fragments_memory_usage += cr.memory_usage(*_step.reader->schema());
+        _fragments.emplace_back(*_step.reader->schema(), _builder._permit, std::move(cr));
         if (_fragments_memory_usage > batch_memory_max) {
             // Although we have not yet completed the batch of base rows that
             // compact_for_query<> planned for us (view_builder::batchsize),
@@ -1914,10 +1914,10 @@ public:
         inject_failure("view_builder_flush_fragments");
         _builder._as.check();
         if (!_fragments.empty()) {
-            _fragments.emplace_front(*_step.reader.schema(), _builder._permit, partition_start(_step.current_key, tombstone()));
+            _fragments.emplace_front(*_step.reader->schema(), _builder._permit, partition_start(_step.current_key, tombstone()));
             auto base_schema = _step.base->schema();
             auto views = with_base_info_snapshot(_views_to_build);
-            auto reader = make_flat_mutation_reader_from_fragments(_step.reader.schema(), _builder._permit, std::move(_fragments));
+            auto reader = make_flat_mutation_reader_from_fragments(_step.reader->schema(), _builder._permit, std::move(_fragments));
             reader.upgrade_schema(base_schema);
             _step.base->populate_views(
                     std::move(views),
@@ -1945,7 +1945,7 @@ public:
             vlogger.debug("Completed build step for base {}.{}, at token {}; views={}", _step.base->schema()->ks_name(),
                           _step.base->schema()->cf_name(), _step.current_token(), view_names);
         }
-        if (_step.reader.is_end_of_stream() && _step.reader.is_buffer_empty()) {
+        if (_step.reader->is_end_of_stream() && _step.reader->is_buffer_empty()) {
             _step.current_key = {dht::minimum_token(), partition_key::make_empty()};
             for (auto&& vs : _step.build_status) {
                 vs.next_token = dht::minimum_token();
@@ -1961,14 +1961,15 @@ public:
 void view_builder::execute(build_step& step, exponential_backoff_retry r) {
     gc_clock::time_point now = gc_clock::now();
     auto consumer = compact_for_query<emit_only_live_rows::yes, view_builder::consumer>(
-            *step.reader.schema(),
+            *step.reader->schema(),
             now,
             step.pslice,
             batch_size,
             query::max_partitions,
             view_builder::consumer{*this, step, now});
     consumer.consume_new_partition(step.current_key); // Initialize the state in case we're resuming a partition
-    auto built = step.reader.consume_in_thread(std::move(consumer), db::no_timeout);
+    auto reader = step.reader;   // reader may be reassigned in initialize_reader_at_current_token
+    auto built = reader->consume_in_thread(std::move(consumer), db::no_timeout);
 
     _as.check();
 
