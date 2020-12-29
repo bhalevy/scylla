@@ -219,6 +219,13 @@ public:
             flat_mutation_reader::impl& _reader;
             std::optional<dht::decorated_key> _decorated_key;
             Consumer _consumer;
+            static constexpr bool _consumer_has_abort = requires(Consumer& c, std::exception_ptr ex) {
+                c.abort(ex);
+            };
+            static constexpr bool _consumer_has_close = requires(Consumer& c) {
+                { c.close() } -> std::same_as<future<>>;
+            };
+
             consumer_adapter(flat_mutation_reader::impl& reader, Consumer c)
                     : _reader(reader)
                       , _consumer(std::move(c))
@@ -249,7 +256,15 @@ public:
               });
             }
             future<> abort(std::exception_ptr ex) noexcept {
+                if constexpr (_consumer_has_abort) {
+                    co_await futurize_invoke(_consumer.abort, ex);
+                }
                 co_await _reader.abort(std::move(ex));
+            }
+            future<> close() noexcept {
+                if constexpr (_consumer_has_close) {
+                    co_await _consumer.close();
+                }
             }
         private:
             future<stop_iteration> handle_result(stop_iteration si) {
