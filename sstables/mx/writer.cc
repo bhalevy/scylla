@@ -612,8 +612,8 @@ private:
 
     void init_file_writers();
 
-    // Returns the closed writer
-    std::unique_ptr<file_writer> close_writer(std::unique_ptr<file_writer>& w);
+    // Returns a future holding the closed writer
+    future<std::unique_ptr<file_writer>> close_writer(std::unique_ptr<file_writer>& w);
 
     void close_data_writer();
     void ensure_tombstone_is_written() {
@@ -825,17 +825,8 @@ public:
 };
 
 writer::~writer() {
-    auto close_writer = [](auto& writer) {
-        if (writer) {
-            try {
-                writer->close();
-            } catch (...) {
-                sstlog.error("writer failed to close file: {}", std::current_exception());
-            }
-        }
-    };
-    close_writer(_index_writer);
-    close_writer(_data_writer);
+    close_writer(_index_writer).get();
+    close_writer(_data_writer).get();
 }
 
 void writer::maybe_set_pi_first_clustering(const writer::clustering_info& info) {
@@ -899,14 +890,16 @@ void writer::init_file_writers() {
     _index_writer = std::make_unique<file_writer>(w.get0());
 }
 
-std::unique_ptr<file_writer> writer::close_writer(std::unique_ptr<file_writer>& w) {
+future<std::unique_ptr<file_writer>> writer::close_writer(std::unique_ptr<file_writer>& w) {
     auto writer = std::move(w);
-    writer->close();
-    return writer;
+    auto close = writer ? writer->close() : make_ready_future<>();
+    return close.then([writer = std::move(writer)] () mutable {
+        return make_ready_future<std::unique_ptr<file_writer>>(std::move(writer));
+    });
 }
 
 void writer::close_data_writer() {
-    auto writer = close_writer(_data_writer);
+    auto writer = close_writer(_data_writer).get0();
     if (!_compression_enabled) {
         auto chksum_wr = static_cast<crc32_checksummed_file_writer*>(writer.get());
         _sst.write_digest(chksum_wr->full_checksum());
@@ -1479,6 +1472,7 @@ stop_iteration writer::consume_end_of_partition() {
     return get_data_offset() < _cfg.max_sstable_size ? stop_iteration::no : stop_iteration::yes;
 }
 
+// Must be called from a seastar thread.
 void writer::consume_end_of_stream() {
     _cfg.monitor->on_data_write_completed();
 
@@ -1488,7 +1482,7 @@ void writer::consume_end_of_stream() {
         _collector.add_compression_ratio(_sst._components->compression.compressed_file_length(), _sst._components->compression.uncompressed_file_length());
     }
 
-    close_writer(_index_writer);
+    close_writer(_index_writer).get();
     _sst.set_first_and_last_keys();
 
     _sst._components->statistics.contents[metadata_type::Serialization] = std::make_unique<serialization_header>(std::move(_sst_schema.header));
