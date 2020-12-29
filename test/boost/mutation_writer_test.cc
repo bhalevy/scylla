@@ -273,6 +273,8 @@ public:
     void consume_end_of_stream() {
         BOOST_REQUIRE(!_current_mutation);
     }
+    void abort(std::exception_ptr) noexcept { }
+    future<> close() noexcept { return make_ready_future<>(); }
 };
 
 } // anonymous namespace

@@ -721,6 +721,8 @@ public:
     void consume_new_partition(const dht::decorated_key&) {}
     stop_iteration consume_end_of_partition() { return stop_iteration::no; }
     uint64_t consume_end_of_stream() { return _fragments; }
+    void abort(std::exception_ptr ex) noexcept { }
+    future<> close() noexcept { return make_ready_future<>(); }
 };
 
 static

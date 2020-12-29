@@ -432,6 +432,14 @@ static void test_streamed_mutation_forwarding_is_consistent_with_slicing(populat
             }
 
             void consume_end_of_stream() { }
+
+            void abort(std::exception_ptr ex) noexcept {
+                _builder->abort(std::move(ex));
+            }
+
+            future<> close() noexcept {
+                return _builder->close();
+            }
         };
         fwd_reader.consume(consumer(m.schema(), builder), db::no_timeout).get0();
         BOOST_REQUIRE(bool(builder));

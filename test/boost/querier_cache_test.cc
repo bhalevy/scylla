@@ -63,6 +63,8 @@ public:
     std::pair<std::optional<dht::decorated_key>, std::optional<clustering_key_prefix>> consume_end_of_stream() {
         return {std::move(_dk), std::move(_ck)};
     }
+    void abort(std::exception_ptr) noexcept { }
+    future<> close() noexcept { return make_ready_future<>(); }
 };
 
 class test_querier_cache {

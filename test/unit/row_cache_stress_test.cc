@@ -230,6 +230,9 @@ public:
         testlog.trace("reader {}: done, {} rows", _id, _row_count);
         return _row_count;
     }
+
+    void abort(std::exception_ptr) noexcept { }
+    future<> close() noexcept { return make_ready_future<>(); }
 };
 
 template<typename T>
