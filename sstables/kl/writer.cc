@@ -428,7 +428,7 @@ void sstable_writer_k_l::prepare_file_writer()
 void sstable_writer_k_l::finish_file_writer()
 {
     auto writer = std::move(_writer);
-    writer->close();
+    writer->close().get();
 
     if (!_compression_enabled) {
         auto chksum_wr = static_cast<adler32_checksummed_file_writer*>(writer.get());
@@ -441,18 +441,10 @@ void sstable_writer_k_l::finish_file_writer()
 
 sstable_writer_k_l::~sstable_writer_k_l() {
     if (_writer) {
-        try {
-            _writer->close();
-        } catch (...) {
-            sstlog.error("sstable_writer failed to close file: {}", std::current_exception());
-        }
+        _writer->close().get();
     }
     if (_index) {
-        try {
-            _index->close();
-        } catch (...) {
-            sstlog.error("sstable_writer failed to close file: {}", std::current_exception());
-        }
+        _index->close().get();
     }
 }
 
@@ -638,7 +630,7 @@ void sstable_writer_k_l::consume_end_of_stream()
     // what if there is only one partition? what if it is empty?
     seal_summary(_sst._components->summary, std::move(_first_key), std::move(_last_key), _index_sampling_state).get();
 
-    _index->close();
+    _index->close().get();
     _index.reset();
 
     if (_sst.has_component(component_type::CompressionInfo)) {

@@ -935,16 +935,13 @@ file_writer::~file_writer() {
     }
 }
 
-void file_writer::close() {
+future<> file_writer::close() noexcept {
     assert(!_closed && "file_writer already closed");
-    try {
-        _closed = true;
-        _out.close().get();
-    } catch (...) {
-        auto e = std::current_exception();
+    _closed = true;
+    return futurize_invoke([this] { return _out.close(); }).handle_exception([this] (std::exception_ptr e) {
         sstlog.error("Error while closing {}: {}", get_filename(), e);
-        std::rethrow_exception(e);
-    }
+        return make_exception_future<>(e);
+    });
 }
 
 const char* file_writer::get_filename() const noexcept {
@@ -980,7 +977,7 @@ void sstable::write_toc(const io_priority_class& pc) {
     if (toc_exists) {
         // TOC will exist at this point if write_components() was called with
         // the generation of a sstable that exists.
-        w.close();
+        w.close().get();
         remove_file(file_path).get();
         throw std::runtime_error(format("SSTable write failed due to existence of TOC file for generation {:d} of {}.{}", _generation, _schema->ks_name(), _schema->cf_name()));
     }
@@ -992,7 +989,7 @@ void sstable::write_toc(const io_priority_class& pc) {
         write(_version, w, b);
     }
     w.flush();
-    w.close();
+    w.close().get();
 
     // Flushing parent directory to guarantee that temporary TOC file reached
     // the disk.
@@ -1030,6 +1027,7 @@ future<> sstable::seal_sstable() {
     });
 }
 
+// Must be called in a seastar thread.
 void sstable::write_crc(const checksum& c) {
     auto file_path = filename(component_type::CRC);
     sstlog.debug("Writing CRC file {} ", file_path);
@@ -1038,10 +1036,11 @@ void sstable::write_crc(const checksum& c) {
     options.buffer_size = 4096;
     auto w = make_component_file_writer(component_type::CRC, std::move(options)).get0();
     write(get_version(), w, c);
-    w.close();
+    w.close().get();
 }
 
 // Digest file stores the full checksum of data file converted into a string.
+// Must be called in a seastar thread.
 void sstable::write_digest(uint32_t full_checksum) {
     auto file_path = filename(component_type::Digest);
     sstlog.debug("Writing Digest file {} ", file_path);
@@ -1052,7 +1051,7 @@ void sstable::write_digest(uint32_t full_checksum) {
 
     auto digest = to_sstring<bytes>(full_checksum);
     write(get_version(), w, digest);
-    w.close();
+    w.close().get();
 }
 
 thread_local std::array<std::vector<int>, downsampling::BASE_SAMPLING_LEVEL> downsampling::_sample_pattern_cache;
@@ -1087,6 +1086,7 @@ future<> sstable::read_simple(T& component, const io_priority_class& pc) {
     });
 }
 
+// Must be called in a seastar thread.
 void sstable::do_write_simple(component_type type, const io_priority_class& pc,
         noncopyable_function<void (version_types version, file_writer& writer)> write_component) {
     auto file_path = filename(type);
@@ -1104,7 +1104,7 @@ void sstable::do_write_simple(component_type type, const io_priority_class& pc,
         eptr = std::current_exception();
     }
     try {
-        w.close();
+        w.close().get();
     } catch (...) {
         std::exception_ptr close_eptr = std::current_exception();
         sstlog.warn("failed to close file_writer: {}", close_eptr);
@@ -1259,6 +1259,7 @@ void sstable::write_statistics(const io_priority_class& pc) {
     write_simple<component_type::Statistics>(_components->statistics, pc);
 }
 
+// Must be called in a seastar thread.
 void sstable::rewrite_statistics(const io_priority_class& pc) {
     auto file_path = filename(component_type::TemporaryStatistics);
     sstlog.debug("Rewriting statistics component of sstable {}", get_filename());
@@ -1270,7 +1271,7 @@ void sstable::rewrite_statistics(const io_priority_class& pc) {
             open_flags::wo | open_flags::create | open_flags::truncate).get0();
     write(_version, w, _components->statistics);
     w.flush();
-    w.close();
+    w.close().get();
     // rename() guarantees atomicity when renaming a file into place.
     sstable_write_io_check(rename_file, file_path, filename(component_type::Statistics)).get();
 }
@@ -2715,7 +2716,7 @@ delete_atomically(std::vector<shared_sstable> ssts) {
             }
 
             w.flush();
-            w.close();
+            w.close().get();
 
             auto dir_f = open_directory(pending_delete_dir).get0();
             // Once flushed and closed, the temporary log file can be renamed.
