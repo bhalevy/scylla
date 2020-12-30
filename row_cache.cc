@@ -428,10 +428,14 @@ public:
         return make_exception_future<>(make_backtraced_exception_ptr<std::bad_function_call>());
     }
     virtual future<> abort(std::exception_ptr ex) noexcept override {
-        return _reader.abort(std::move(ex));
+        auto abort_read_context = _read_context->abort(ex);
+        auto abort_reader = _reader.abort(std::move(ex));
+        return when_all_succeed(std::move(abort_read_context), std::move(abort_reader)).discard_result();
     }
     virtual future<> close() noexcept override {
-        return _reader.close();
+        auto close_read_context = _read_context->close();
+        auto close_reader = _reader.close();
+        return when_all_succeed(std::move(close_read_context), std::move(close_reader)).discard_result();
     }
 };
 
@@ -553,6 +557,18 @@ public:
         }
 
         return _reader.fast_forward_to(std::move(pr), timeout);
+    }
+
+    future<> abort(std::exception_ptr ex) noexcept {
+        auto abort_read_context = _read_context.abort(ex);
+        auto abort_reader = _reader.abort(ex);
+        return when_all_succeed(std::move(abort_read_context), std::move(abort_reader)).discard_result();
+    }
+
+    future<> close() noexcept {
+        auto close_read_context = _read_context.close();
+        auto close_reader = _reader.close();
+        return when_all_succeed(std::move(close_read_context), std::move(close_reader)).discard_result();
     }
 };
 
@@ -723,11 +739,16 @@ public:
     virtual future<> fast_forward_to(position_range cr, db::timeout_clock::time_point timeout) override {
         return make_exception_future<>(make_backtraced_exception_ptr<std::bad_function_call>());
     }
+
     virtual future<> abort(std::exception_ptr ex) noexcept override {
-        return _reader.abort(ex);
+        auto abort_secondary_reader = _secondary_reader.abort(ex);
+        auto abort_reader = _reader.abort(std::move(ex));
+        return when_all_succeed(std::move(abort_secondary_reader), std::move(abort_reader)).discard_result();
     }
     virtual future<> close() noexcept override {
-        return _reader.close();
+        auto close_secondary_reader = _secondary_reader.close();
+        auto close_reader = _reader.close();
+        return when_all_succeed(std::move(close_secondary_reader), std::move(close_reader)).discard_result();
     }
 };
 

@@ -178,6 +178,8 @@ public:
     virtual future<> fast_forward_to(position_range pr, db::timeout_clock::time_point timeout) override {
         return make_exception_future<>(make_backtraced_exception_ptr<std::bad_function_call>());
     }
+    virtual future<> abort(std::exception_ptr ex) noexcept override;
+    virtual future<> close() noexcept override;
 };
 
 inline
@@ -694,6 +696,21 @@ void cache_flat_mutation_reader::maybe_set_static_row_continuous() {
 inline
 bool cache_flat_mutation_reader::can_populate() const {
     return _snp->at_latest_version() && _read_context->cache().phase_of(_read_context->key()) == _read_context->phase();
+}
+
+future<> cache_flat_mutation_reader::abort(std::exception_ptr ex) noexcept {
+    clogger.trace("csm {}: abort: {}: _underlying={}", fmt::ptr(this), ex, _underlying != nullptr);
+    return _underlying ? _underlying->abort(std::move(ex)) : make_ready_future<>();
+}
+
+future<> cache_flat_mutation_reader::close() noexcept {
+    clogger.trace("csm {}: close: _underlying={}", fmt::ptr(this), _underlying != nullptr);
+    if (_underlying) {
+        _underlying = nullptr;
+        auto r = std::move(_underlying_holder);
+        return r->close().finally([r = std::move(r)] {});
+    }
+    return make_ready_future<>();
 }
 
 } // namespace cache
