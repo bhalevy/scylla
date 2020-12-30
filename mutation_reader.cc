@@ -1100,6 +1100,8 @@ public:
     virtual future<> fast_forward_to(position_range, db::timeout_clock::time_point timeout) override {
         throw_with_backtrace<std::bad_function_call>();
     }
+    virtual future<> abort(std::exception_ptr ex) noexcept override;
+    virtual future<> close() noexcept override;
     reader_concurrency_semaphore::inactive_read_handle inactive_read_handle() && {
         return std::move(_irh);
     }
@@ -1528,6 +1530,15 @@ future<> evictable_reader::fast_forward_to(const dht::partition_range& pr, db::t
         });
     }
     return make_ready_future<>();
+}
+
+future<> evictable_reader::abort(std::exception_ptr ex) noexcept {
+    impl::do_abort(ex);
+    return _reader->abort(std::move(ex));
+}
+
+future<> evictable_reader::close() noexcept {
+    return _reader->close();
 }
 
 evictable_reader_handle::evictable_reader_handle(evictable_reader& r) : _r(&r)

@@ -301,6 +301,15 @@ future<> size_estimates_mutation_reader::fast_forward_to(position_range pr, db::
     return make_ready_future<>();
 }
 
+future<> size_estimates_mutation_reader::abort(std::exception_ptr ex) noexcept {
+    impl::do_abort(ex);
+    return _partition_reader->abort(std::move(ex));
+}
+
+future<> size_estimates_mutation_reader::close() noexcept {
+    return _partition_reader->close();
+}
+
 std::vector<db::system_keyspace::range_estimates>
 size_estimates_mutation_reader::estimates_for_current_keyspace(std::vector<token_range> local_ranges) const {
     // For each specified range, estimate (crudely) mean partition size and partitions count.
