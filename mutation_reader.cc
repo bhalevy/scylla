@@ -1934,6 +1934,8 @@ public:
     virtual future<> next_partition() override;
     virtual future<> fast_forward_to(const dht::partition_range& pr, db::timeout_clock::time_point timeout) override;
     virtual future<> fast_forward_to(position_range pr, db::timeout_clock::time_point timeout) override;
+    virtual future<> abort(std::exception_ptr ex) noexcept override;
+    virtual future<> close() noexcept override;
 };
 
 void multishard_combining_reader::on_partition_range_change(const dht::partition_range& pr) {
@@ -2027,9 +2029,12 @@ multishard_combining_reader::multishard_combining_reader(
 }
 
 multishard_combining_reader::~multishard_combining_reader() {
+  if (!_shard_readers.empty()) {
+    mrlog.warn("multishard_combining_reader: was not closed: {} shard_readers left", _shard_readers.size());
     for (auto& sr : _shard_readers) {
         (void)sr->stop();
     }
+  }
 }
 
 future<> multishard_combining_reader::fill_buffer(db::timeout_clock::time_point timeout) {
@@ -2070,6 +2075,20 @@ future<> multishard_combining_reader::fast_forward_to(const dht::partition_range
 
 future<> multishard_combining_reader::fast_forward_to(position_range pr, db::timeout_clock::time_point timeout) {
     return make_exception_future<>(make_backtraced_exception_ptr<std::bad_function_call>());
+}
+
+future<> multishard_combining_reader::abort(std::exception_ptr ex) noexcept {
+    return parallel_for_each(_shard_readers, [ex = std::move(ex)] (lw_shared_ptr<shard_reader>& sr) {
+        return sr->abort(ex);
+    });
+}
+
+future<> multishard_combining_reader::close() noexcept {
+    return parallel_for_each(_shard_readers, [] (lw_shared_ptr<shard_reader>& sr) {
+        return sr->close();
+    }).finally([this] {
+        _shard_readers.clear();
+    });
 }
 
 reader_concurrency_semaphore::inactive_read_handle
