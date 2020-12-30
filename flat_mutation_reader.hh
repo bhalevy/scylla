@@ -338,7 +338,7 @@ public:
         auto consume_in_thread(Consumer consumer, Filter filter, db::timeout_clock::time_point timeout) {
             auto adapter = consumer_adapter<Consumer>(*this, std::move(consumer));
             try {
-            consume_pausable_in_thread(std::ref(adapter), std::move(filter), timeout);
+                consume_pausable_in_thread(std::ref(adapter), std::move(filter), timeout);
             } catch (...) {
                 auto ex = std::current_exception();
                 adapter.abort(ex).get();
