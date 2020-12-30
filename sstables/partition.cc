@@ -466,6 +466,18 @@ public:
             return make_ready_future<>();
         }
     }
+    // FIXME: implement the index_reader::abort path.
+    // Eventually it should abort the input_stream and cancel outstanding reads.
+    virtual future<> abort(std::exception_ptr ex) noexcept override {
+        return make_ready_future<>();
+    }
+    virtual future<> close() noexcept override {
+        if (_index_reader) {
+            auto r = std::move(_index_reader);
+            return r->close().finally([r = std::move(r)] {});
+        }
+        return make_ready_future<>();
+    }
 };
 
 void mp_row_consumer_reader::on_next_partition(dht::decorated_key key, tombstone tomb) {
