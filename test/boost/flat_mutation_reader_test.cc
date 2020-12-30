@@ -331,8 +331,8 @@ SEASTAR_TEST_CASE(test_partition_checksum) {
 }
 
 SEASTAR_THREAD_TEST_CASE(test_flat_mutation_reader_move_buffer_content_to) {
-    struct dummy_reader_impl : public flat_mutation_reader::impl {
-        using flat_mutation_reader::impl::impl;
+    struct dummy_reader_impl : public flat_mutation_reader::trivially_abortable_impl {
+        dummy_reader_impl(schema_ptr s, reader_permit permit) : trivially_abortable_impl(std::move(s), std::move(permit)) { }
         virtual future<> fill_buffer(db::timeout_clock::time_point) override { return make_ready_future<>(); }
         virtual future<> next_partition() { return make_ready_future<>(); }
         virtual future<> fast_forward_to(const dht::partition_range&, db::timeout_clock::time_point) override { return make_ready_future<>(); }

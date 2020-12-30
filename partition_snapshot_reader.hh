@@ -34,7 +34,7 @@ struct partition_snapshot_reader_dummy_accounter {
 extern partition_snapshot_reader_dummy_accounter no_accounter;
 
 template <typename MemoryAccounter = partition_snapshot_reader_dummy_accounter>
-class partition_snapshot_flat_reader : public flat_mutation_reader::impl, public MemoryAccounter {
+class partition_snapshot_flat_reader : public flat_mutation_reader::trivially_abortable_impl, public MemoryAccounter {
     struct rows_position {
         mutation_partition::rows_type::const_iterator _position;
         mutation_partition::rows_type::const_iterator _end;
@@ -276,7 +276,7 @@ public:
                               query::clustering_key_filter_ranges crr, bool digest_requested,
                               logalloc::region& region, logalloc::allocating_section& read_section,
                               boost::any pointer_to_container, Args&&... args)
-        : impl(std::move(s), std::move(permit))
+        : trivially_abortable_impl(std::move(s), std::move(permit))
         , MemoryAccounter(std::forward<Args>(args)...)
         , _container_guard(std::move(pointer_to_container))
         , _ck_ranges(std::move(crr))
