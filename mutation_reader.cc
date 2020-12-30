@@ -30,6 +30,7 @@
 #include "flat_mutation_reader.hh"
 #include "schema_registry.hh"
 #include "mutation_compactor.hh"
+#include <seastar/core/coroutine.hh>
 
 logging::logger mrlog("mutation_reader");
 
@@ -143,6 +144,14 @@ public:
     future<> fast_forward_to(position_range pr, db::timeout_clock::time_point timeout) {
         return _producer.fast_forward_to(std::move(pr), timeout);
     }
+
+    future<> abort(std::exception_ptr ex) noexcept {
+        return _producer.abort(std::move(ex));
+    }
+
+    future<> close() noexcept {
+        return _producer.close();
+    }
 };
 
 // Merges the output of the sub-readers into a single non-decreasing
@@ -244,6 +253,8 @@ public:
     future<> next_partition();
     future<> fast_forward_to(const dht::partition_range& pr, db::timeout_clock::time_point timeout);
     future<> fast_forward_to(position_range pr, db::timeout_clock::time_point timeout);
+    future<> abort(std::exception_ptr ex) noexcept;
+    future<> close() noexcept;
 };
 
 /* Merge a non-decreasing stream of mutation fragment batches
@@ -271,6 +282,8 @@ public:
     virtual future<> next_partition() override;
     virtual future<> fast_forward_to(const dht::partition_range& pr, db::timeout_clock::time_point timeout) override;
     virtual future<> fast_forward_to(position_range pr, db::timeout_clock::time_point timeout) override;
+    virtual future<> abort(std::exception_ptr ex) noexcept override;
+    virtual future<> close() noexcept override;
 };
 
 // Dumb selector implementation for mutation_reader_merger that simply
@@ -375,6 +388,7 @@ future<> mutation_reader_merger::prepare_next(db::timeout_clock::time_point time
 future<mutation_reader_merger::needs_merge> mutation_reader_merger::prepare_one(db::timeout_clock::time_point timeout,
         reader_and_last_fragment_kind rk, reader_galloping reader_galloping) {
     return (*rk.reader)(timeout).then([this, rk, reader_galloping] (mutation_fragment_opt mfo) {
+        future<> to_close = make_ready_future<>();
         if (mfo) {
             if (mfo->is_partition_start()) {
                 _reader_heap.emplace_back(rk.reader, std::move(*mfo));
@@ -387,7 +401,7 @@ future<mutation_reader_merger::needs_merge> mutation_reader_merger::prepare_one(
                         _current.clear();
                         _current.push_back(std::move(*mfo));
                         _galloping_reader.last_kind = _current.back().mutation_fragment_kind();
-                        return needs_merge::no;
+                        return make_ready_future<needs_merge>(needs_merge::no);
                     }
 
                     _gallop_mode_hits = 0;
@@ -408,7 +422,9 @@ future<mutation_reader_merger::needs_merge> mutation_reader_merger::prepare_one(
         } else if (_fwd_mr == mutation_reader::forwarding::no) {
             _to_remove.splice(_to_remove.end(), _all_readers, rk.reader);
             if (_to_remove.size() >= 4) {
-                _to_remove.clear();
+                to_close = parallel_for_each(std::move(_to_remove), [] (flat_mutation_reader& r) {
+                    return r.close();
+                });
                 if (reader_galloping) {
                     // Galloping reader iterator may have become invalid at this point, so - to be safe - clear it
                     _galloping_reader.reader = { };
@@ -419,7 +435,15 @@ future<mutation_reader_merger::needs_merge> mutation_reader_merger::prepare_one(
         if (reader_galloping) {
             _gallop_mode_hits = 0;
         }
-        return needs_merge::yes;
+        return to_close.then_wrapped([] (future<> f) {
+            if (f.failed()) {
+                auto ex = f.get_exception();
+                // These readers were in the _to_remove list hence they aren't essential.
+                // Therefore it is okay to ignore a failure to close any of them.
+                mrlog.warn("mutation_reader_merger failed closing reader(s) marked for removal: {}. Ignored.", ex);
+            }
+            return make_ready_future<needs_merge>(needs_merge::yes);
+        });
     });
 }
 
@@ -588,6 +612,22 @@ future<> mutation_reader_merger::fast_forward_to(position_range pr, db::timeout_
     });
 }
 
+future<> mutation_reader_merger::abort(std::exception_ptr ex) noexcept {
+    return parallel_for_each(_all_readers, [ex = std::move(ex)] (flat_mutation_reader& mr) {
+        return mr.abort(ex);
+    });
+}
+
+future<> mutation_reader_merger::close() noexcept {
+    return parallel_for_each(_to_remove, [] (flat_mutation_reader& mr) {
+        return mr.close();
+    }).then([this] {
+        return parallel_for_each(_all_readers, [] (flat_mutation_reader& mr) {
+            return mr.close();
+        });
+    });
+}
+
 template <FragmentProducer P>
 future<> merging_reader<P>::fill_buffer(db::timeout_clock::time_point timeout) {
     return repeat([this, timeout] {
@@ -639,6 +679,17 @@ future<> merging_reader<P>::fast_forward_to(position_range pr, db::timeout_clock
     forward_buffer_to(pr.start());
     _end_of_stream = false;
     return _merger.fast_forward_to(std::move(pr), timeout);
+}
+
+template <FragmentProducer P>
+future<> merging_reader<P>::abort(std::exception_ptr ex) noexcept {
+    impl::do_abort(ex);
+    return _merger.abort(std::move(ex));
+}
+
+template <FragmentProducer P>
+future<> merging_reader<P>::close() noexcept {
+    return _merger.close();
 }
 
 flat_mutation_reader make_combined_reader(schema_ptr schema,
@@ -2738,6 +2789,18 @@ public:
 
         return parallel_for_each(_unpeeked_readers, [this, pr = std::move(pr), timeout] (reader_iterator it) {
             return it->reader.fast_forward_to(pr, timeout);
+        });
+    }
+
+    future<> abort(std::exception_ptr ex) noexcept {
+        return parallel_for_each(_all_readers, [ex = std::move(ex)] (reader_and_upper_bound& r) {
+            return r.reader.abort(ex);
+        });
+    }
+
+    future<> close() noexcept {
+        return parallel_for_each(_all_readers, [] (reader_and_upper_bound& r) {
+            return r.reader.close();
         });
     }
 };
