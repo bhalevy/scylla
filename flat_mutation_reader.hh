@@ -280,6 +280,20 @@ public:
         virtual future<> fast_forward_to(const dht::partition_range&, db::timeout_clock::time_point timeout) = 0;
         virtual future<> fast_forward_to(position_range, db::timeout_clock::time_point timeout) = 0;
 
+        // override abort() to propagate exceptions downstream
+        // Note: abort is intended to be synchronous in principle
+        // It is returning a future to allow it to propagate the exception
+        // across shards.
+        virtual future<> abort(std::exception_ptr) noexcept {
+            return make_ready_future<>();
+        }
+
+        // close should wait on any outstanding async actions
+        // and on underlying resources close().
+        virtual future<> close() noexcept {
+            return make_ready_future<>();
+        }
+
         size_t buffer_size() const {
             return _buffer_size;
         }
@@ -446,6 +460,18 @@ public:
     // fragment before calling `fast_forward_to`.
     future<> fast_forward_to(position_range cr, db::timeout_clock::time_point timeout) {
         return _impl->fast_forward_to(std::move(cr), timeout);
+    }
+    // Aborts the reader with an exception \c ex
+    future<> abort(std::exception_ptr ex) noexcept {
+        return _impl->abort(std::move(ex));
+    }
+    // Closes the reader asynchronously
+    future<> close() noexcept {
+        if (_impl) {
+            auto i = std::move(_impl);
+            return i->close().finally([i = std::move(i)] {});
+        }
+        return make_ready_future<>();
     }
     bool is_end_of_stream() const { return _impl->is_end_of_stream(); }
     bool is_buffer_empty() const { return _impl->is_buffer_empty(); }

@@ -2082,7 +2082,7 @@ public:
                 return make_ready_future<>();
             });
         }
-        abort();
+        ::abort();
     }
     virtual void next_partition() override { }
     virtual future<> fast_forward_to(const dht::partition_range& pr, db::timeout_clock::time_point) override {
