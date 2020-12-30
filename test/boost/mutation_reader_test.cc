@@ -953,6 +953,14 @@ public:
         return make_exception_future<>(make_backtraced_exception_ptr<std::bad_function_call>());
     }
 
+    virtual future<> abort(std::exception_ptr ex) noexcept override {
+        return _reader.abort(std::move(ex));
+    }
+
+    virtual future<> close() noexcept override {
+        return _reader.close();
+    }
+
     std::size_t call_count() const {
         return _call_count;
     }
@@ -3001,6 +3009,12 @@ SEASTAR_THREAD_TEST_CASE(test_manual_paused_evictable_reader_is_mutation_source)
         virtual future<> fast_forward_to(position_range pr, db::timeout_clock::time_point timeout) override {
             throw_with_backtrace<std::bad_function_call>();
         }
+        virtual future<> abort(std::exception_ptr ex) noexcept override {
+            return _reader.abort(std::move(ex));
+        }
+        virtual future<> close() noexcept override {
+            return _reader.close();
+        }
     };
 
     auto make_populate = [] (schema_ptr s, const std::vector<mutation>& mutations, gc_clock::time_point query_time) {
@@ -3830,6 +3844,18 @@ SEASTAR_THREAD_TEST_CASE(clustering_combined_reader_mutation_source_test) {
             clear_buffer();
             _end_of_stream = false;
             return _it->second.fast_forward_to(std::move(pr), timeout);
+        }
+
+        virtual future<> abort(std::exception_ptr ex) noexcept override {
+            for (auto& [k, r] : _readers) {
+                co_await r.abort(ex);
+            }
+        }
+
+        virtual future<> close() noexcept override {
+            for (auto& [k, r] : _readers) {
+                co_await r.close();
+            }
         }
 
         future<mutation_fragment_opt> next_fragment(db::timeout_clock::time_point timeout) {

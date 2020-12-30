@@ -119,6 +119,12 @@ public:
         _end_of_stream = false;
         return _rd.fast_forward_to(std::move(pr), timeout);
     }
+    virtual future<> abort(std::exception_ptr ex) noexcept override {
+        return _rd.abort(std::move(ex));
+    }
+    virtual future<> close() noexcept override {
+        return _rd.close();
+    }
 };
 
 // Creates a mutation_reader wrapper which creates a new stream of mutations

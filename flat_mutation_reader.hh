@@ -733,6 +733,12 @@ flat_mutation_reader transform(flat_mutation_reader r, T t) {
             _end_of_stream = false;
             return _reader.fast_forward_to(std::move(pr), timeout);
         }
+        virtual future<> abort(std::exception_ptr ex) noexcept override {
+            return _reader.abort(std::move(ex));
+        }
+        virtual future<> close() noexcept override {
+            return _reader.close();
+        }
     };
     return make_flat_mutation_reader<transforming_reader>(std::move(r), std::move(t));
 }
@@ -770,6 +776,12 @@ public:
         _end_of_stream = false;
         clear_buffer();
         return to_reference(_underlying).fast_forward_to(pr, timeout);
+    }
+    virtual future<> abort(std::exception_ptr ex) noexcept override {
+        return to_reference(_underlying).abort(std::move(ex));
+    }
+    virtual future<> close() noexcept override {
+        return to_reference(_underlying).close();
     }
 };
 flat_mutation_reader make_delegating_reader(flat_mutation_reader&);
