@@ -189,6 +189,17 @@ flat_mutation_reader make_reversing_reader(flat_mutation_reader& original, query
         virtual future<> fast_forward_to(position_range, db::timeout_clock::time_point) override {
             return make_exception_future<>(make_backtraced_exception_ptr<std::bad_function_call>());
         }
+
+        virtual future<> abort(std::exception_ptr ex) noexcept override {
+            impl::do_abort(ex);
+            return _source->abort(std::move(ex));
+        }
+
+        virtual future<> close() noexcept override {
+            // do nothing, we don't own the reader
+            // the caller needs to close the reader
+            return make_ready_future<>();
+        }
     };
 
     return make_flat_mutation_reader<partition_reversing_mutation_reader>(original, max_size);
@@ -308,6 +319,13 @@ flat_mutation_reader make_forwardable(flat_mutation_reader m) {
             };
             return _underlying.fast_forward_to(pr, timeout);
         }
+        virtual future<> abort(std::exception_ptr ex) noexcept override {
+            impl::do_abort(ex);
+            return _underlying.abort(std::move(ex));
+        }
+        virtual future<> close() noexcept override {
+            return _underlying.close();
+        }
     };
     return make_flat_mutation_reader<reader>(std::move(m));
 }
@@ -370,6 +388,13 @@ flat_mutation_reader make_nonforwardable(flat_mutation_reader r, bool single_par
             _end_of_stream = false;
             clear_buffer();
             return _underlying.fast_forward_to(pr, timeout);
+        }
+        virtual future<> abort(std::exception_ptr ex) noexcept override {
+            impl::do_abort(ex);
+            return _underlying.abort(std::move(ex));
+        }
+        virtual future<> close() noexcept override {
+            return _underlying.close();
         }
     };
     return make_flat_mutation_reader<reader>(std::move(r), single_partition);
@@ -747,6 +772,15 @@ public:
             return _reader.next_partition();
         }
         return make_ready_future<>();
+    }
+
+    virtual future<> abort(std::exception_ptr ex) noexcept override {
+        impl::do_abort(ex);
+        return _reader.abort(std::move(ex));
+    }
+
+    virtual future<> close() noexcept override {
+        return _reader.close();
     }
 };
 
