@@ -2057,7 +2057,7 @@ void queue_reader::push_end_of_stream() {
         _full.reset();
     }
 }
-void queue_reader::abort(std::exception_ptr ep) {
+void queue_reader::do_abort(std::exception_ptr ep) noexcept {
     _ex = std::move(ep);
     if (_full) {
         _full->set_exception(_ex);
@@ -2122,7 +2122,7 @@ bool queue_reader_handle::is_terminated() const {
 void queue_reader_handle::abort(std::exception_ptr ep) {
     _ex = std::move(ep);
     if (_reader) {
-        _reader->abort(_ex);
+        _reader->do_abort(_ex);
         _reader->_handle = nullptr;
         _reader = nullptr;
     }

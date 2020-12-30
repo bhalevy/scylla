@@ -602,6 +602,7 @@ private:
     std::exception_ptr _ex;
 
     void push_and_maybe_notify(mutation_fragment&& mf);
+    void do_abort(std::exception_ptr ep) noexcept;
 
 public:
     explicit queue_reader(schema_ptr s, reader_permit permit);
@@ -612,7 +613,6 @@ public:
     virtual future<> fast_forward_to(position_range, db::timeout_clock::time_point) override;
     future<> push(mutation_fragment&& mf);
     void push_end_of_stream();
-    void abort(std::exception_ptr ep);
 };
 
 /// Creates a compacting reader.
