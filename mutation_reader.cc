@@ -1717,6 +1717,8 @@ public:
     virtual future<> next_partition() override;
     virtual future<> fast_forward_to(const dht::partition_range& pr, db::timeout_clock::time_point timeout) override;
     virtual future<> fast_forward_to(position_range, db::timeout_clock::time_point timeout) override;
+    virtual future<> abort(std::exception_ptr ex) noexcept override;
+    virtual future<> close() noexcept override;
     bool done() const {
         return _reader && is_buffer_empty() && is_end_of_stream();
     }
@@ -1831,7 +1833,7 @@ future<> shard_reader::next_partition() {
     clear_buffer_to_next_partition();
     _pending_next_partition = is_buffer_empty();
   }
-  return make_ready_future<>();
+  return maybe_aborted_exception_future<>();
 }
 
 future<> shard_reader::fast_forward_to(const dht::partition_range& pr, db::timeout_clock::time_point timeout) {
@@ -1840,7 +1842,7 @@ future<> shard_reader::fast_forward_to(const dht::partition_range& pr, db::timeo
     if (!_reader && !_read_ahead) {
         // No need to fast-forward uncreated readers, they will be passed the new
         // range when created.
-        return make_ready_future<>();
+        return maybe_aborted_exception_future<>();
     }
 
     auto f = _read_ahead ? *std::exchange(_read_ahead, std::nullopt) : make_ready_future<>();
@@ -1859,11 +1861,29 @@ future<> shard_reader::fast_forward_to(position_range, db::timeout_clock::time_p
 }
 
 void shard_reader::read_ahead(db::timeout_clock::time_point timeout) {
+    check_aborted();
     if (_read_ahead || is_end_of_stream() || !is_buffer_empty()) {
         return;
     }
 
     _read_ahead.emplace(do_fill_buffer(timeout));
+}
+
+future<> shard_reader::abort(std::exception_ptr ex) noexcept {
+    impl::do_abort(ex);
+    // TODO: provide a way to abort read_ahead
+    auto f = _read_ahead ? *std::exchange(_read_ahead, std::nullopt) : make_ready_future<>();
+    return f.then([this, ex = std::move(ex)] () mutable {
+        return smp::submit_to(_shard, [this, ex = std::move(ex)] () mutable {
+            return _reader->abort(std::move(ex));
+        });
+    });
+}
+
+future<> shard_reader::close() noexcept {
+    stop();
+    // FIXME: wait for _lifecycle_policy to destroy the reader
+    return make_ready_future<>();
 }
 
 } // anonymous namespace
