@@ -2066,6 +2066,13 @@ future<> queue_reader::fast_forward_to(const dht::partition_range&, db::timeout_
 future<> queue_reader::fast_forward_to(position_range, db::timeout_clock::time_point) {
     return make_exception_future<>(make_backtraced_exception_ptr<std::bad_function_call>());
 }
+future<> queue_reader::abort(std::exception_ptr ex) noexcept {
+    do_abort(std::move(ex));
+    return make_ready_future<>();
+}
+future<> queue_reader::close() noexcept {
+    return make_ready_future<>();
+}
 future<> queue_reader::push(mutation_fragment&& mf) {
     push_and_maybe_notify(std::move(mf));
     if (!is_buffer_full()) {

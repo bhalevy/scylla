@@ -619,6 +619,8 @@ public:
     virtual future<> next_partition() override;
     virtual future<> fast_forward_to(const dht::partition_range&, db::timeout_clock::time_point) override;
     virtual future<> fast_forward_to(position_range, db::timeout_clock::time_point) override;
+    virtual future<> abort(std::exception_ptr ex) noexcept override;
+    virtual future<> close() noexcept override;
     future<> push(mutation_fragment&& mf);
     void push_end_of_stream();
 };
