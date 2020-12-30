@@ -316,6 +316,11 @@ public:
             }
         }
     };
+    struct trivially_abortable_impl : public impl {
+        trivially_abortable_impl(schema_ptr s, reader_permit permit) : impl(std::move(s), std::move(permit)) { }
+        virtual future<> abort(std::exception_ptr) noexcept override { return make_ready_future<>(); }
+        virtual future<> close() noexcept override { return make_ready_future<>(); }
+    };
 private:
     std::unique_ptr<impl> _impl;
 

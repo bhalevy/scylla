@@ -2000,7 +2000,7 @@ SEASTAR_THREAD_TEST_CASE(test_multishard_combining_reader_reading_empty_table) {
 // fine-grained control over which shard will fill the multishard reader's
 // buffer and how much read-ahead it launches and consequently when the
 // read-ahead terminates.
-class puppet_reader : public flat_mutation_reader::impl {
+class puppet_reader : public flat_mutation_reader::trivially_abortable_impl {
 public:
     struct control {
         promise<> buffer_filled;
@@ -2044,7 +2044,7 @@ private:
 
 public:
     puppet_reader(simple_schema s, control& ctrl, std::vector<fill_buffer_action> actions, std::vector<uint32_t> pkeys)
-        : impl(s.schema(), tests::make_permit())
+        : trivially_abortable_impl(s.schema(), tests::make_permit())
         , _s(std::move(s))
         , _ctrl(ctrl)
         , _actions(std::move(actions))
