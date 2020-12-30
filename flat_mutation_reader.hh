@@ -305,15 +305,11 @@ public:
         // Note: abort is intended to be synchronous in principle
         // It is returning a future to allow it to propagate the exception
         // across shards.
-        virtual future<> abort(std::exception_ptr) noexcept {
-            return make_ready_future<>();
-        }
+        virtual future<> abort(std::exception_ptr) noexcept = 0;
 
         // close should wait on any outstanding async actions
         // and on underlying resources close().
-        virtual future<> close() noexcept {
-            return make_ready_future<>();
-        }
+        virtual future<> close() noexcept = 0;
 
         size_t buffer_size() const {
             return _buffer_size;
