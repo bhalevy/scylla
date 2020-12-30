@@ -678,6 +678,12 @@ public:
             _reader->next_partition();
         }
     }
+    virtual future<> abort(std::exception_ptr ex) noexcept override {
+        return _reader.abort(std::move(ex));
+    }
+    virtual future<> close() noexcept override {
+        return _reader.close();
+    }
 };
 
 template<typename Generator>

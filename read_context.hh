@@ -110,6 +110,12 @@ public:
         _reader_creation_phase = phase;
         return make_ready_future<>();
     }
+    future<> abort(std::exception_ptr ex) noexcept {
+        return _reader.abort(std::move(ex));
+    }
+    future<> close() noexcept {
+        return _reader.close();
+    }
     utils::phased_barrier::phase_type creation_phase() const {
         return _reader_creation_phase;
     }

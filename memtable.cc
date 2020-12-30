@@ -487,6 +487,12 @@ public:
     virtual future<> fast_forward_to(position_range cr, db::timeout_clock::time_point timeout) override {
         throw std::runtime_error("This reader can't be fast forwarded to another partition.");
     };
+    virtual future<> abort(std::exception_ptr ex) noexcept override {
+        return _delegate.abort(std::move(ex));
+    }
+    virtual future<> close() noexcept override {
+        return _delegate.close();
+    }
 };
 
 void memtable::add_flushed_memory(uint64_t delta) {
@@ -638,6 +644,12 @@ public:
     }
     virtual future<> fast_forward_to(position_range, db::timeout_clock::time_point timeout) override {
         return make_exception_future<>(make_backtraced_exception_ptr<std::bad_function_call>());
+    }
+    future<> abort(std::exception_ptr ex) noexcept override {
+        return _partition_reader.abort(std::move(ex));
+    }
+    future<> close() noexcept {
+        return _partition_reader.close();
     }
 };
 
