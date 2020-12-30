@@ -91,6 +91,7 @@ public:
         bool _end_of_stream = false;
         schema_ptr _schema;
         reader_permit _permit;
+        std::exception_ptr _aborted;
         friend class flat_mutation_reader;
     protected:
         template<typename... Args>
@@ -116,6 +117,28 @@ public:
         const tracked_buffer& buffer() const {
             return _buffer;
         }
+        void do_abort(std::exception_ptr ex) noexcept {
+            _aborted = std::move(ex);
+        }
+        bool aborted() const noexcept {
+            return bool(_aborted);
+        }
+        std::exception_ptr get_aborted_exception() const noexcept {
+            return _aborted;
+        }
+        template <typename... T>
+        future<T...> aborted_exception_future() const noexcept {
+            return make_exception_future<T...>(get_aborted_exception());
+        }
+        template <typename... T>
+        future<T...> maybe_aborted_exception_future() const noexcept {
+            return !aborted() ? make_ready_future<T...>() : aborted_exception_future<T...>();
+        }
+        void check_aborted() {
+            if (_aborted) {
+                std::rethrow_exception(_aborted);
+            }
+        }
     public:
         impl(schema_ptr s, reader_permit permit) : _buffer(permit), _schema(std::move(s)), _permit(std::move(permit)) { }
         virtual ~impl() {}
@@ -127,6 +150,7 @@ public:
         bool is_buffer_full() const { return _buffer_size >= max_buffer_size_in_bytes; }
 
         mutation_fragment pop_mutation_fragment() {
+            check_aborted();
             auto mf = std::move(_buffer.front());
             _buffer.pop_front();
             _buffer_size -= mf.memory_usage();
@@ -134,12 +158,16 @@ public:
         }
 
         void unpop_mutation_fragment(mutation_fragment mf) {
+            check_aborted();
             const auto memory_usage = mf.memory_usage();
             _buffer.emplace_front(std::move(mf));
             _buffer_size += memory_usage;
         }
 
         future<mutation_fragment_opt> operator()(db::timeout_clock::time_point timeout) {
+            if (aborted()) {
+                return aborted_exception_future<mutation_fragment_opt>();
+            }
             if (is_buffer_empty()) {
                 if (is_end_of_stream()) {
                     return make_ready_future<mutation_fragment_opt>();
@@ -156,6 +184,10 @@ public:
         future<> consume_pausable(Consumer consumer, db::timeout_clock::time_point timeout) {
             return do_with(std::move(consumer), [this, timeout] (Consumer& consumer) {
                 return repeat([this, &consumer, timeout] {
+                    if (aborted()) {
+                        return aborted_exception_future<stop_iteration>();
+                    }
+
                     if (is_end_of_stream() && is_buffer_empty()) {
                         return make_ready_future<stop_iteration>(stop_iteration::yes);
                     }
@@ -181,6 +213,7 @@ public:
         // entirely and never reach the consumer.
         void consume_pausable_in_thread(Consumer consumer, Filter filter, db::timeout_clock::time_point timeout) {
             while (true) {
+                check_aborted();
                 if (need_preempt()) {
                     seastar::thread::yield();
                 }
@@ -296,6 +329,34 @@ public:
          */
         virtual future<> fast_forward_to(const dht::partition_range&, db::timeout_clock::time_point timeout) = 0;
         virtual future<> fast_forward_to(position_range, db::timeout_clock::time_point timeout) = 0;
+
+        // override abort() to propagate exceptions downstream
+        // abort may be called asynchronously to other api calls,
+        // such as fill_buffer().
+        //
+        // It is meant to be synchronous in nature, but it returns
+        // a future so it could be used to abort remote readers on
+        // other shards.
+        //
+        // After abort returns, other api calls should start returning
+        // the exception passed here and generate no further work
+        // otherwise.
+        //
+        // It is allowed to abort a reader more than once.
+        virtual future<> abort(std::exception_ptr ex) noexcept {
+            do_abort(std::move(ex));
+            return make_ready_future<>();
+        }
+
+        // close should wait on any outstanding async actions
+        // and on underlying resources' close().
+        //
+        // Once closed, the reader should be unusable.
+        //
+        // It is allowed to close a reader more than once.
+        virtual future<> close() noexcept {
+            return make_ready_future<>();
+        }
 
         size_t buffer_size() const {
             return _buffer_size;
@@ -463,6 +524,27 @@ public:
     // fragment before calling `fast_forward_to`.
     future<> fast_forward_to(position_range cr, db::timeout_clock::time_point timeout) {
         return _impl->fast_forward_to(std::move(cr), timeout);
+    }
+    // Aborts the reader with an exception \c ex
+    future<> abort(std::exception_ptr ex) noexcept {
+        if (_impl) {
+            return _impl->abort(std::move(ex));
+        }
+        return make_ready_future<>();
+    }
+    // Closes the reader asynchronously
+    future<> close() noexcept {
+        if (_impl) {
+            auto i = std::move(_impl);
+            return i->close().finally([i = std::move(i)] {});
+        }
+        return make_ready_future<>();
+    }
+    // Gently reassign the reader with a new implementation
+    future<> reassign(flat_mutation_reader&& o) noexcept {
+        return close().then([this, o = std::move(o)] () mutable {
+            _impl = std::move(o._impl);
+        });
     }
     bool is_end_of_stream() const { return _impl->is_end_of_stream(); }
     bool is_buffer_empty() const { return _impl->is_buffer_empty(); }

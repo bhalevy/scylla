@@ -2024,7 +2024,6 @@ private:
     queue_reader_handle* _handle = nullptr;
     std::optional<promise<>> _not_full;
     std::optional<promise<>> _full;
-    std::exception_ptr _ex;
 
 private:
     void push_and_maybe_notify(mutation_fragment&& mf) {
@@ -2046,8 +2045,8 @@ public:
         }
     }
     virtual future<> fill_buffer(db::timeout_clock::time_point) override {
-        if (_ex) {
-            return make_exception_future<>(_ex);
+        if (aborted()) {
+            return aborted_exception_future<>();
         }
         if (_end_of_stream || !is_buffer_empty()) {
             return make_ready_future<>();
@@ -2083,15 +2082,19 @@ public:
             _full.reset();
         }
     }
+    future<> abort(std::exception_ptr ex) noexcept override {
+        do_abort(ex);
+        return make_ready_future<>();
+    }
 };
 
 void queue_reader::do_abort(std::exception_ptr ep) noexcept {
-    _ex = std::move(ep);
+    impl::do_abort(std::move(ep));
     if (_full) {
-        _full->set_exception(_ex);
+        _full->set_exception(get_aborted_exception());
         _full.reset();
     } else if (_not_full) {
-        _not_full->set_exception(_ex);
+        _not_full->set_exception(get_aborted_exception());
         _not_full.reset();
     }
 }
