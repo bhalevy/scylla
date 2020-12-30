@@ -2017,82 +2017,70 @@ flat_mutation_reader make_multishard_combining_reader_for_tests(
             std::move(trace_state), fwd_mr);
 }
 
-class queue_reader final : public flat_mutation_reader::impl {
-    friend class queue_reader_handle;
-
-private:
-    queue_reader_handle* _handle = nullptr;
-    std::optional<promise<>> _not_full;
-    std::optional<promise<>> _full;
-    std::exception_ptr _ex;
-
-private:
-    void push_and_maybe_notify(mutation_fragment&& mf) {
-        push_mutation_fragment(std::move(mf));
-        if (_full && is_buffer_full()) {
-            _full->set_value();
-            _full.reset();
-        }
+void queue_reader::push_and_maybe_notify(mutation_fragment&& mf) {
+    push_mutation_fragment(std::move(mf));
+    if (_full && is_buffer_full()) {
+        _full->set_value();
+        _full.reset();
     }
+}
 
-public:
-    explicit queue_reader(schema_ptr s, reader_permit permit)
+queue_reader::queue_reader(schema_ptr s, reader_permit permit)
         : impl(std::move(s), std::move(permit)) {
+}
+queue_reader::~queue_reader() {
+    if (_handle) {
+        _handle->_reader = nullptr;
     }
-    ~queue_reader() {
-        if (_handle) {
-            _handle->_reader = nullptr;
-        }
+}
+future<> queue_reader::fill_buffer(db::timeout_clock::time_point)  {
+    if (_ex) {
+        return make_exception_future<>(_ex);
     }
-    virtual future<> fill_buffer(db::timeout_clock::time_point) override {
-        if (_ex) {
-            return make_exception_future<>(_ex);
-        }
-        if (_end_of_stream || !is_buffer_empty()) {
-            return make_ready_future<>();
-        }
-        if (_not_full) {
-            _not_full->set_value();
-            _not_full.reset();
-        }
-        _full.emplace();
-        return _full->get_future();
+    if (_end_of_stream || !is_buffer_empty()) {
+        return make_ready_future<>();
     }
-    virtual future<> next_partition() override {
-        return make_exception_future<>(make_backtraced_exception_ptr<std::bad_function_call>());
+    if (_not_full) {
+        _not_full->set_value();
+        _not_full.reset();
     }
-    virtual future<> fast_forward_to(const dht::partition_range&, db::timeout_clock::time_point) override {
-        return make_exception_future<>(make_backtraced_exception_ptr<std::bad_function_call>());
+    _full.emplace();
+    return _full->get_future();
+}
+future<> queue_reader::next_partition() {
+    return make_exception_future<>(make_backtraced_exception_ptr<std::bad_function_call>());
+}
+future<> queue_reader::fast_forward_to(const dht::partition_range&, db::timeout_clock::time_point) {
+    return make_exception_future<>(make_backtraced_exception_ptr<std::bad_function_call>());
+}
+future<> queue_reader::fast_forward_to(position_range, db::timeout_clock::time_point) {
+    return make_exception_future<>(make_backtraced_exception_ptr<std::bad_function_call>());
+}
+future<> queue_reader::push(mutation_fragment&& mf) {
+    push_and_maybe_notify(std::move(mf));
+    if (!is_buffer_full()) {
+        return make_ready_future<>();
     }
-    virtual future<> fast_forward_to(position_range, db::timeout_clock::time_point) override {
-        return make_exception_future<>(make_backtraced_exception_ptr<std::bad_function_call>());
+    _not_full.emplace();
+    return _not_full->get_future();
+}
+void queue_reader::push_end_of_stream() {
+    _end_of_stream = true;
+    if (_full) {
+        _full->set_value();
+        _full.reset();
     }
-    future<> push(mutation_fragment&& mf) {
-        push_and_maybe_notify(std::move(mf));
-        if (!is_buffer_full()) {
-            return make_ready_future<>();
-        }
-        _not_full.emplace();
-        return _not_full->get_future();
+}
+void queue_reader::abort(std::exception_ptr ep) {
+    _ex = std::move(ep);
+    if (_full) {
+        _full->set_exception(_ex);
+        _full.reset();
+    } else if (_not_full) {
+        _not_full->set_exception(_ex);
+        _not_full.reset();
     }
-    void push_end_of_stream() {
-        _end_of_stream = true;
-        if (_full) {
-            _full->set_value();
-            _full.reset();
-        }
-    }
-    void abort(std::exception_ptr ep) {
-        _ex = std::move(ep);
-        if (_full) {
-            _full->set_exception(_ex);
-            _full.reset();
-        } else if (_not_full) {
-            _not_full->set_exception(_ex);
-            _not_full.reset();
-        }
-    }
-};
+}
 
 void queue_reader_handle::abandon() {
     abort(std::make_exception_ptr<std::runtime_error>(std::runtime_error("Abandoned queue_reader_handle")));

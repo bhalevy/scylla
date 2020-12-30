@@ -594,6 +594,29 @@ public:
 
 std::pair<flat_mutation_reader, queue_reader_handle> make_queue_reader(schema_ptr s, reader_permit permit);
 
+class queue_reader final : public flat_mutation_reader::impl {
+    friend class queue_reader_handle;
+
+private:
+    queue_reader_handle* _handle = nullptr;
+    std::optional<promise<>> _not_full;
+    std::optional<promise<>> _full;
+    std::exception_ptr _ex;
+
+    void push_and_maybe_notify(mutation_fragment&& mf);
+
+public:
+    explicit queue_reader(schema_ptr s, reader_permit permit);
+    ~queue_reader();
+    virtual future<> fill_buffer(db::timeout_clock::time_point) override;
+    virtual future<> next_partition() override;
+    virtual future<> fast_forward_to(const dht::partition_range&, db::timeout_clock::time_point) override;
+    virtual future<> fast_forward_to(position_range, db::timeout_clock::time_point) override;
+    future<> push(mutation_fragment&& mf);
+    void push_end_of_stream();
+    void abort(std::exception_ptr ep);
+};
+
 /// Creates a compacting reader.
 ///
 /// The compaction is done with a \ref mutation_compactor, using compaction-type
