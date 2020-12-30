@@ -2034,6 +2034,7 @@ private:
             _full.reset();
         }
     }
+    void do_abort(std::exception_ptr ep) noexcept;
 
 public:
     explicit queue_reader(schema_ptr s, reader_permit permit)
@@ -2082,17 +2083,18 @@ public:
             _full.reset();
         }
     }
-    void abort(std::exception_ptr ep) {
-        _ex = std::move(ep);
-        if (_full) {
-            _full->set_exception(_ex);
-            _full.reset();
-        } else if (_not_full) {
-            _not_full->set_exception(_ex);
-            _not_full.reset();
-        }
-    }
 };
+
+void queue_reader::do_abort(std::exception_ptr ep) noexcept {
+    _ex = std::move(ep);
+    if (_full) {
+        _full->set_exception(_ex);
+        _full.reset();
+    } else if (_not_full) {
+        _not_full->set_exception(_ex);
+        _not_full.reset();
+    }
+}
 
 void queue_reader_handle::abandon() {
     abort(std::make_exception_ptr<std::runtime_error>(std::runtime_error("Abandoned queue_reader_handle")));
@@ -2148,7 +2150,7 @@ bool queue_reader_handle::is_terminated() const {
 void queue_reader_handle::abort(std::exception_ptr ep) {
     _ex = std::move(ep);
     if (_reader) {
-        _reader->abort(_ex);
+        _reader->do_abort(_ex);
         _reader->_handle = nullptr;
         _reader = nullptr;
     }
