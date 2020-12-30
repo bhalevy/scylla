@@ -717,6 +717,10 @@ class restricting_mutation_reader : public flat_mutation_reader::impl {
             fn(reader);
         }
     decltype(auto) with_reader(Function fn, db::timeout_clock::time_point timeout) {
+        if (aborted()) {
+            return aborted_exception_future<>();
+        }
+
         if (auto* state = std::get_if<admitted_state>(&_state)) {
             return fn(state->reader);
         }
@@ -753,6 +757,9 @@ public:
         }, timeout);
     }
     virtual future<> next_partition() override {
+        if (aborted()) {
+            return aborted_exception_future<>();
+        }
         clear_buffer_to_next_partition();
         if (!is_buffer_empty()) {
             return make_ready_future<>();
@@ -776,6 +783,19 @@ public:
         return with_reader([pr = std::move(pr), timeout] (flat_mutation_reader& reader) mutable {
             return reader.fast_forward_to(std::move(pr), timeout);
         }, timeout);
+    }
+    virtual future<> abort(std::exception_ptr ex) noexcept override {
+        impl::do_abort(ex);
+        if (auto* state = std::get_if<admitted_state>(&_state)) {
+            return state->reader.abort(std::move(ex));
+        }
+        return make_ready_future<>();
+    }
+    virtual future<> close() noexcept override {
+        if (auto* state = std::get_if<admitted_state>(&_state)) {
+            return state->reader.close();
+        }
+        return make_ready_future<>();
     }
 };
 
