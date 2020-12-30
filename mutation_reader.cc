@@ -985,6 +985,8 @@ public:
     virtual future<> next_partition() override;
     virtual future<> fast_forward_to(const dht::partition_range& pr, db::timeout_clock::time_point timeout) override;
     virtual future<> fast_forward_to(position_range pr, db::timeout_clock::time_point timeout) override;
+    virtual future<> abort(std::exception_ptr ex) noexcept override;
+    virtual future<> close() noexcept override;
 };
 
 foreign_reader::foreign_reader(schema_ptr schema,
@@ -997,17 +999,13 @@ foreign_reader::foreign_reader(schema_ptr schema,
 }
 
 foreign_reader::~foreign_reader() {
+    // FIXME: just assert that when the reader is always closed before destruction.
     if (!_read_ahead_future && !_reader) {
         return;
     }
     // Can't wait on this future directly. Right now we don't wait on it at all.
     // If this proves problematic we can collect these somewhere and wait on them.
-    (void)smp::submit_to(_reader.get_owner_shard(), [reader = std::move(_reader), read_ahead_future = std::move(_read_ahead_future)] () mutable {
-        if (read_ahead_future) {
-            return read_ahead_future->finally([r = std::move(reader)] {});
-        }
-        return make_ready_future<>();
-    });
+    (void)close();
 }
 
 future<> foreign_reader::fill_buffer(db::timeout_clock::time_point timeout) {
@@ -1057,6 +1055,29 @@ future<> foreign_reader::fast_forward_to(position_range pr, db::timeout_clock::t
     _end_of_stream = false;
     return forward_operation(timeout, [reader = _reader.get(), pr = std::move(pr), timeout] () {
         return reader->fast_forward_to(std::move(pr), timeout);
+    });
+}
+
+future<> foreign_reader::abort(std::exception_ptr ex) noexcept {
+    return smp::submit_to(_reader.get_owner_shard(), [reader = _reader.get(), ex = std::move(ex)] () mutable {
+        return reader->abort(std::move(ex));
+    });
+}
+
+future<> foreign_reader::close() noexcept {
+    if (!_reader) {
+        return make_ready_future<>();
+    }
+    return smp::submit_to(_reader.get_owner_shard(),
+            [reader = std::move(_reader), read_ahead_future = std::exchange(_read_ahead_future, nullptr)] () mutable {
+        auto close_reader = [reader = std::move(reader)] () mutable {
+            return reader.get()->close().finally([r = std::move(reader)] {});
+        };
+        if (read_ahead_future) {
+            return read_ahead_future->finally(std::move(close_reader));
+        } else {
+            return close_reader();
+        }
     });
 }
 
