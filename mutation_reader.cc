@@ -1713,6 +1713,8 @@ public:
     virtual future<> next_partition() override;
     virtual future<> fast_forward_to(const dht::partition_range& pr, db::timeout_clock::time_point timeout) override;
     virtual future<> fast_forward_to(position_range, db::timeout_clock::time_point timeout) override;
+    virtual future<> abort(std::exception_ptr ex) noexcept override;
+    virtual future<> close() noexcept override;
     bool done() const {
         return _reader && is_buffer_empty() && is_end_of_stream();
     }
@@ -1854,6 +1856,18 @@ void shard_reader::read_ahead(db::timeout_clock::time_point timeout) {
     }
 
     _read_ahead.emplace(do_fill_buffer(timeout));
+}
+
+future<> shard_reader::abort(std::exception_ptr ex) noexcept {
+    return smp::submit_to(_shard, [this, ex = std::move(ex)] () mutable {
+        return _reader->abort(std::move(ex));
+    });
+}
+
+future<> shard_reader::close() noexcept {
+    stop();
+    // FIXME: wait for _lifecycle_policy to destroy the reader
+    return make_ready_future<>();
 }
 
 } // anonymous namespace
