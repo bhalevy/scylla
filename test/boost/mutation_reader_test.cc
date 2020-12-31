@@ -2148,11 +2148,11 @@ SEASTAR_THREAD_TEST_CASE(test_stopping_reader_with_pending_read_ahead) {
         auto& remote_control = std::get<0>(remote_control_remote_reader);
         auto& remote_reader = std::get<1>(remote_control_remote_reader);
 
-            auto reader = make_foreign_reader(s.schema(), tests::make_permit(), std::move(remote_reader));
+        auto reader = make_foreign_reader(s.schema(), tests::make_permit(), std::move(remote_reader));
 
-            reader.fill_buffer(db::no_timeout).get();
+        reader.fill_buffer(db::no_timeout).get();
 
-            BOOST_REQUIRE(!reader.is_buffer_empty());
+        BOOST_REQUIRE(!reader.is_buffer_empty());
 
         BOOST_REQUIRE(!smp::submit_to(shard_of_interest, [remote_control = remote_control.get()] {
             return remote_control->destroyed;
