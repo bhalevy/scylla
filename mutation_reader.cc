@@ -999,13 +999,9 @@ foreign_reader::foreign_reader(schema_ptr schema,
 }
 
 foreign_reader::~foreign_reader() {
-    // FIXME: just assert that when the reader is always closed before destruction.
-    if (!_read_ahead_future && !_reader) {
-        return;
+    if (_read_ahead_future || _reader) {
+        mrlog.error("foreign_reader was not closed properly: read_ahead_future={} reader={}", bool(_read_ahead_future), bool(_reader));
     }
-    // Can't wait on this future directly. Right now we don't wait on it at all.
-    // If this proves problematic we can collect these somewhere and wait on them.
-    (void)close();
 }
 
 future<> foreign_reader::fill_buffer(db::timeout_clock::time_point timeout) {
