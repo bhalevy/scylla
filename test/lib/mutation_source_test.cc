@@ -440,10 +440,12 @@ static void test_streamed_mutation_forwarding_is_consistent_with_slicing(populat
         }
         mutation_opt fwd_m = builder->consume_end_of_stream();
         BOOST_REQUIRE(bool(fwd_m));
+        fwd_reader.close().get();
 
         mutation_opt sliced_m = read_mutation_from_flat_mutation_reader(sliced_reader, db::no_timeout).get0();
         BOOST_REQUIRE(bool(sliced_m));
         assert_that(*sliced_m).is_equal_to(*fwd_m, slice_with_ranges.row_ranges(*m.schema(), m.key()));
+        sliced_reader.close().get();
     }
 }
 
