@@ -1772,6 +1772,9 @@ future<> view_builder::do_build_step() {
                 initialize_reader_at_current_token(_current_step->second);
             }
             if (_current_step->second.build_status.empty()) {
+                if (auto r = std::move(_current_step->second.reader)) {
+                    r->close().get();
+                }
                 _current_step = _base_to_build_step.erase(_current_step);
             } else {
                 ++_current_step;
@@ -1973,6 +1976,7 @@ void view_builder::execute(build_step& step, exponential_backoff_retry r) {
             view_builder::consumer{*this, step, now});
     consumer.consume_new_partition(step.current_key); // Initialize the state in case we're resuming a partition
     auto reader = step.reader;   // reader may be reassigned in initialize_reader_at_current_token
+    auto close_reader = defer([reader] { reader->close().get(); });
     auto built = reader->consume_in_thread(std::move(consumer), db::no_timeout);
 
     _as.check();
