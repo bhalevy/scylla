@@ -36,14 +36,18 @@ future<> feed_writer(flat_mutation_reader&& rd, Writer&& wr) {
                 auto f2 = rd.is_buffer_empty() ? rd.fill_buffer(db::no_timeout) : make_ready_future<>();
                 return when_all_succeed(std::move(f1), std::move(f2)).discard_result();
             });
-        }).then_wrapped([&wr] (future<> f) {
+        }).then_wrapped([&rd, &wr] (future<> f) {
             if (f.failed()) {
                 auto ex = f.get_exception();
                 wr.abort(ex);
-                return make_exception_future<>(ex);
+                return rd.abort(ex).finally([ex = std::move(ex)] () mutable {
+                    return make_exception_future<>(std::move(ex));
+                });
             } else {
                 return wr.consume_end_of_stream();
             }
+        }).finally([&rd] {
+            return rd.close();
         });
     });
 }
