@@ -1173,8 +1173,8 @@ public:
     }
     virtual future<> abort(std::exception_ptr ex) noexcept override;
     virtual future<> close() noexcept override;
-    reader_concurrency_semaphore::inactive_read_handle inactive_read_handle() && {
-        return std::move(_irh);
+    reader_concurrency_semaphore::inactive_read_handle& inactive_read_handle() {
+        return _irh;
     }
     void pause() {
         if (_reader) {
@@ -1730,10 +1730,10 @@ future<> shard_reader::stop() noexcept {
     auto f = _read_ahead ? *std::exchange(_read_ahead, std::nullopt) : make_ready_future<>();
 
     return _lifecycle_policy->destroy_reader(_shard, f.then([this, r = std::move(_reader)] () mutable {
-        return smp::submit_to(_shard, [this, r = std::move(_reader)] () mutable {
+        return smp::submit_to(_shard, [this, r = std::move(r)] () mutable {
             auto ret = std::tuple(
-                    make_foreign(std::make_unique<reader_concurrency_semaphore::inactive_read_handle>(std::move(*_reader).inactive_read_handle())),
-                    make_foreign(std::make_unique<const flat_mutation_reader::tracked_buffer>(_reader->detach_buffer())));
+                    make_foreign(std::make_unique<reader_concurrency_semaphore::inactive_read_handle>(std::move(r->inactive_read_handle()))),
+                    make_foreign(std::make_unique<const flat_mutation_reader::tracked_buffer>(r->detach_buffer())));
             return r->close().then_wrapped([r = std::move(r), ret = std::move(ret)] (future<> f) mutable {
                 if (f.failed()) {
                     auto ex = f.get_exception();
