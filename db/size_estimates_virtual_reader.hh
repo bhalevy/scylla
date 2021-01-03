@@ -46,6 +46,9 @@ class size_estimates_mutation_reader final : public flat_mutation_reader::impl {
     flat_mutation_reader_opt _partition_reader;
 public:
     size_estimates_mutation_reader(database& db, schema_ptr, reader_permit, const dht::partition_range&, const query::partition_slice&, streamed_mutation::forwarding);
+    ~size_estimates_mutation_reader() {
+        assert(!_partition_reader && "size_estimates_mutation_reader was not closed");
+    }
 
     virtual future<> fill_buffer(db::timeout_clock::time_point) override;
     virtual future<> next_partition() override;
