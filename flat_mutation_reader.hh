@@ -404,7 +404,7 @@ public:
     flat_mutation_reader& operator=(const flat_mutation_reader&) = delete;
     flat_mutation_reader& operator=(flat_mutation_reader&& o) noexcept {
         if (_impl) {
-            fmr_logger.debug("{} {} overwritten by move-assign", _impl->description(), (void*)_impl.get());
+            on_internal_error_noexcept(fmr_logger, format("{} {} overwritten by move-assign", _impl->description(), (void*)_impl.get()));
         }
         _impl = std::move(o._impl);
         if (_impl) {
@@ -416,7 +416,7 @@ public:
     ~flat_mutation_reader() {
         if (_impl) {
             fmr_logger.trace("{} {} destroyed", _impl->description(), (void*)_impl.get());
-            fmr_logger.error("{} was not closed", _impl->description());
+            on_internal_error_noexcept(fmr_logger, format("{} was not closed", _impl->description()));
         }
     }
 
@@ -641,13 +641,10 @@ class flat_mutation_reader_opt {
 
     flat_mutation_reader_opt& assign(flat_mutation_reader_opt&& o) noexcept {
         if (_reader) {
-            try {
-                on_internal_error(fmr_logger, format("flat_mutation_reader_opt: {} reassigned without closing", _reader->description()));
-            } catch (...) {
-                (void)close().handle_exception([] (std::exception_ptr ex) {
-                    fmr_logger.warn("flat_mutation_reader_opt: failed auto-closing reader: {}. Ignored...", ex);
-                });
-            }
+            on_internal_error_noexcept(fmr_logger, format("flat_mutation_reader_opt: {} reassigned without closing", _reader->description()));
+            (void)close().handle_exception([] (std::exception_ptr ex) {
+                fmr_logger.warn("flat_mutation_reader_opt: failed auto-closing reader: {}. Ignored...", ex);
+            });
         }
         _reader = std::move(o._reader);
         return *this;
