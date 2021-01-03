@@ -612,6 +612,7 @@ private:
                                          std::move(gc_consumer));
 
             return seastar::async([cfc = std::move(cfc), reader = std::move(reader), this] () mutable {
+                auto close_reader = defer([&reader] { reader.close().get(); });
                 reader.consume_in_thread(std::move(cfc), db::no_timeout);
             });
         });
