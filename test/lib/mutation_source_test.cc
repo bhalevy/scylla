@@ -387,9 +387,11 @@ static void test_streamed_mutation_forwarding_is_consistent_with_slicing(populat
 
         flat_mutation_reader sliced_reader =
             ms.make_reader(m.schema(), tests::make_permit(), prange, slice_with_ranges);
+        auto close_sliced_reader = defer([&sliced_reader] { sliced_reader.close().get(); });
 
         flat_mutation_reader fwd_reader =
             ms.make_reader(m.schema(), tests::make_permit(), prange, full_slice, default_priority_class(), nullptr, streamed_mutation::forwarding::yes);
+        auto close_fwd_reader = defer([&fwd_reader] { fwd_reader.close().get(); });
 
         std::optional<mutation_rebuilder> builder{};
         struct consumer {
@@ -440,12 +442,10 @@ static void test_streamed_mutation_forwarding_is_consistent_with_slicing(populat
         }
         mutation_opt fwd_m = builder->consume_end_of_stream();
         BOOST_REQUIRE(bool(fwd_m));
-        fwd_reader.close().get();
 
         mutation_opt sliced_m = read_mutation_from_flat_mutation_reader(sliced_reader, db::no_timeout).get0();
         BOOST_REQUIRE(bool(sliced_m));
         assert_that(*sliced_m).is_equal_to(*fwd_m, slice_with_ranges.row_ranges(*m.schema(), m.key()));
-        sliced_reader.close().get();
     }
 }
 
@@ -1338,6 +1338,7 @@ void test_slicing_with_overlapping_range_tombstones(populate_fn_ex populate) {
     {
         auto slice = partition_slice_builder(*s).with_range(range).build();
         auto rd = ds.make_reader(s, tests::make_permit(), query::full_partition_range, slice);
+        auto close_rd = defer([&rd] { rd.close().get(); });
 
         auto prange = position_range(range);
         mutation result(m1.schema(), m1.decorated_key());
@@ -1357,6 +1358,7 @@ void test_slicing_with_overlapping_range_tombstones(populate_fn_ex populate) {
     {
         auto rd = ds.make_reader(s, tests::make_permit(), query::full_partition_range, s->full_slice(), default_priority_class(),
             nullptr, streamed_mutation::forwarding::yes);
+        auto close_rd = defer([&rd] { rd.close().get(); });
 
         auto prange = position_range(range);
         mutation result(m1.schema(), m1.decorated_key());

@@ -1008,6 +1008,14 @@ public:
         : reader_wrapper(semaphore, std::move(schema), std::move(sst), db::timeout_clock::now() + timeout_duration) {
     }
 
+    reader_wrapper(const reader_wrapper&) = delete;
+    reader_wrapper(reader_wrapper&&) = default;
+
+    // must be called in a seastar thread.
+    ~reader_wrapper() {
+        _reader.close().get();
+    }
+
     future<> operator()() {
         while (!_reader.is_buffer_empty()) {
             _reader.pop_mutation_fragment();
@@ -1401,6 +1409,7 @@ SEASTAR_TEST_CASE(test_fast_forwarding_combined_reader_is_consistent_with_slicin
         flat_mutation_reader rd = make_combined_reader(s, tests::make_permit(), std::move(readers),
             streamed_mutation::forwarding::yes,
             mutation_reader::forwarding::yes);
+        auto close_rd = defer([&rd] { rd.close().get(); });
 
         std::vector<query::clustering_range> ranges = gen.make_random_ranges(3);
 
@@ -1471,6 +1480,7 @@ SEASTAR_TEST_CASE(test_combined_reader_slicing_with_overlapping_range_tombstones
 
             auto rd = make_combined_reader(s, tests::make_permit(), std::move(readers),
                 streamed_mutation::forwarding::no, mutation_reader::forwarding::no);
+            auto close_rd = defer([&rd] { rd.close().get(); });
 
             auto prange = position_range(range);
             mutation result(m1.schema(), m1.decorated_key());
@@ -1496,6 +1506,7 @@ SEASTAR_TEST_CASE(test_combined_reader_slicing_with_overlapping_range_tombstones
 
             auto rd = make_combined_reader(s, tests::make_permit(), std::move(readers),
                 streamed_mutation::forwarding::yes, mutation_reader::forwarding::no);
+            auto close_rd = defer([&rd] { rd.close().get(); });
 
             auto prange = position_range(range);
             mutation result(m1.schema(), m1.decorated_key());
@@ -1541,7 +1552,9 @@ SEASTAR_TEST_CASE(test_combined_mutation_source_is_a_mutation_source) {
 
                 int source_index = 0;
                 for (auto&& m : muts) {
-                    flat_mutation_reader_from_mutations(tests::make_permit(), {m}).consume_pausable([&] (mutation_fragment&& mf) {
+                    auto rd = flat_mutation_reader_from_mutations(tests::make_permit(), {m});
+                    auto close_rd = defer([&rd] { rd.close().get(); });
+                    rd.consume_pausable([&] (mutation_fragment&& mf) {
                         mutation mf_m(m.schema(), m.decorated_key());
                         mf_m.partition().apply(*s, mf);
                         memtables[source_index++ % memtables.size()]->apply(mf_m);
@@ -3897,7 +3910,9 @@ SEASTAR_THREAD_TEST_CASE(clustering_combined_reader_mutation_source_test) {
             std::optional<std::pair<position_in_partition, position_in_partition>> bounds;
             mutation good(m.schema(), dk);
             std::optional<mutation> bad;
-            flat_mutation_reader_from_mutations(tests::make_permit(), {m}).consume_pausable([&] (mutation_fragment&& mf) {
+            auto rd = flat_mutation_reader_from_mutations(tests::make_permit(), {m});
+            auto close_rd = defer([&rd] { rd.close().get(); });
+            rd.consume_pausable([&] (mutation_fragment&& mf) {
                 if ((mf.is_partition_start() && mf.as_partition_start().partition_tombstone()) || mf.is_static_row()) {
                     if (!bad) {
                         bad = mutation{m.schema(), dk};
