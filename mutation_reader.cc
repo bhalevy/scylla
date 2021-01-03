@@ -1094,7 +1094,12 @@ public:
         return std::move(*_reader);
     }
     virtual void evict() override {
-        _reader = {};
+        if (_reader) {
+            auto r = std::move(_reader);
+            (void)r->close().handle_exception([r = std::move(r)] (std::exception_ptr ex) {
+                mrlog.warn("inactive_evictable_reader: closing reader failed: {}. Ignored...", ex);
+            });
+        }
     }
 };
 
