@@ -351,23 +351,17 @@ future<> read_context::destroy_reader(shard_id shard, future<stopped_reader> rea
 }
 
 future<> read_context::stop() {
-    auto pr = promise<>();
-    auto fut = pr.get_future();
-    auto gate_fut = _dismantling_gate.is_closed() ? make_ready_future<>() : _dismantling_gate.close();
-    // Forwarded to `fut`.
-    (void)gate_fut.then([this] {
-        for (shard_id shard = 0; shard != smp::count; ++shard) {
-            if (_readers[shard].state == reader_state::saving) {
-                // Move to the background.
-                (void)_db.invoke_on(shard, [rm = std::move(_readers[shard])] (database& db) mutable {
-                    rm.rparts->permit.semaphore().unregister_inactive_read(std::move(*rm.handle));
-                });
-            }
+    if (_dismantling_gate.is_closed()) {
+        co_return;
+    }
+    co_await _dismantling_gate.close();
+    for (shard_id shard = 0; shard != smp::count; ++shard) {
+        if (_readers[shard].state == reader_state::saving) {
+            co_await _db.invoke_on(shard, [rm = std::move(_readers[shard])] (database& db) mutable {
+                rm.rparts->permit.semaphore().unregister_inactive_read(std::move(*rm.handle));
+            });
         }
-    }).finally([pr = std::move(pr)] () mutable {
-        pr.set_value();
-    });
-    return fut;
+    }
 }
 
 read_context::dismantle_buffer_stats read_context::dismantle_combined_buffer(flat_mutation_reader::tracked_buffer combined_buffer,
