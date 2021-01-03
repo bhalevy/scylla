@@ -1706,6 +1706,7 @@ future<> sstable::write_components(
         const io_priority_class& pc) {
     assert_large_data_handler_is_running();
     return seastar::async([this, mr = std::move(mr), estimated_partitions, schema = std::move(schema), cfg, stats, &pc] () mutable {
+        auto close_reader = defer([&mr] { mr.close().get(); });
         auto wr = get_writer(*schema, estimated_partitions, cfg, stats, pc);
         mr.consume_in_thread(std::move(wr), db::no_timeout);
     }).finally([this] {
