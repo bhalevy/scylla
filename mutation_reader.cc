@@ -1741,13 +1741,18 @@ future<> shard_reader::stop() noexcept {
 
     auto f = _read_ahead ? *std::exchange(_read_ahead, std::nullopt) : make_ready_future<>();
 
-    return _lifecycle_policy->destroy_reader(_shard, f.then([this] {
-        return smp::submit_to(_shard, [this] {
+    return _lifecycle_policy->destroy_reader(_shard, f.then([this] () mutable {
+        return smp::submit_to(_shard, [this, r = std::move(_reader)] () mutable {
             auto ret = std::tuple(
-                    make_foreign(std::make_unique<reader_concurrency_semaphore::inactive_read_handle>(std::move(*_reader).inactive_read_handle())),
-                    make_foreign(std::make_unique<const flat_mutation_reader::tracked_buffer>(_reader->detach_buffer())));
-            _reader.reset();
-            return ret;
+                    make_foreign(std::make_unique<reader_concurrency_semaphore::inactive_read_handle>(std::move(*r).inactive_read_handle())),
+                    make_foreign(std::make_unique<const flat_mutation_reader::tracked_buffer>(r->detach_buffer())));
+            return r->close().then_wrapped([r = std::move(r), ret = std::move(ret)] (future<> f) mutable {
+                if (f.failed()) {
+                    auto ex = f.get_exception();
+                    mrlog.debug("shard_reader::stop: failed closing reader: {}. Ignored...", ex);
+                }
+                return std::move(ret);
+            });
         }).then([this] (std::tuple<foreign_ptr<std::unique_ptr<reader_concurrency_semaphore::inactive_read_handle>>,
                 foreign_ptr<std::unique_ptr<const flat_mutation_reader::tracked_buffer>>> remains) {
             auto&& [irh, remote_buffer] = remains;
