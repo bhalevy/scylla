@@ -1710,7 +1710,7 @@ public:
     shard_reader(const shard_reader&) = delete;
     shard_reader& operator=(const shard_reader&) = delete;
 
-    void stop() noexcept;
+    future<> stop() noexcept;
 
     const mutation_fragment& peek_buffer() const {
         return buffer().front();
@@ -1730,18 +1730,18 @@ public:
     }
 };
 
-void shard_reader::stop() noexcept {
+future<> shard_reader::stop() noexcept {
     // Nothing to do if there was no reader created, nor is there a background
     // read ahead in progress which will create one.
     if (!_reader && !_read_ahead) {
-        return;
+        return make_ready_future<>();
     }
 
     _stopped = true;
 
     auto f = _read_ahead ? *std::exchange(_read_ahead, std::nullopt) : make_ready_future<>();
 
-    (void)_lifecycle_policy->destroy_reader(_shard, f.then([this] {
+    return _lifecycle_policy->destroy_reader(_shard, f.then([this] {
         return smp::submit_to(_shard, [this] {
             auto ret = std::tuple(
                     make_foreign(std::make_unique<reader_concurrency_semaphore::inactive_read_handle>(std::move(*_reader).inactive_read_handle())),
@@ -1874,9 +1874,7 @@ future<> shard_reader::abort(std::exception_ptr ex) noexcept {
 }
 
 future<> shard_reader::close() noexcept {
-    stop();
-    // FIXME: wait for _lifecycle_policy to destroy the reader
-    return make_ready_future<>();
+    return stop();
 }
 
 } // anonymous namespace
@@ -2025,7 +2023,7 @@ multishard_combining_reader::multishard_combining_reader(
 
 multishard_combining_reader::~multishard_combining_reader() {
     for (auto& sr : _shard_readers) {
-        sr->stop();
+        (void)sr->stop();
     }
 }
 
