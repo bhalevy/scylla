@@ -619,6 +619,9 @@ static future<reconcilable_result> do_query_mutations(
             accounter = std::move(accounter)] (shared_ptr<read_context>& ctx) mutable {
         return ctx->lookup_readers().then([&ctx, s = std::move(s), &cmd, &ranges, trace_state, timeout,
                 accounter = std::move(accounter)] () mutable {
+            auto compaction_state = make_lw_shared<compact_for_mutation_query_state>(*s, cmd.timestamp, cmd.slice, cmd.get_row_limit(),
+                    cmd.partition_limit);
+
             auto ms = mutation_source([&] (schema_ptr s,
                     reader_permit permit,
                     const dht::partition_range& pr,
@@ -632,15 +635,14 @@ static future<reconcilable_result> do_query_mutations(
             auto reader = make_flat_multi_range_reader(s, ctx->permit(), std::move(ms), ranges,
                     cmd.slice, service::get_local_sstable_query_read_priority(), trace_state, mutation_reader::forwarding::no);
 
-            auto compaction_state = make_lw_shared<compact_for_mutation_query_state>(*s, cmd.timestamp, cmd.slice, cmd.get_row_limit(),
-                    cmd.partition_limit);
-
             return do_with(std::move(reader), std::move(compaction_state), [&, accounter = std::move(accounter), timeout] (
                         flat_mutation_reader& reader, lw_shared_ptr<compact_for_mutation_query_state>& compaction_state) mutable {
                 auto rrb = reconcilable_result_builder(*reader.schema(), cmd.slice, std::move(accounter));
                 return query::consume_page(reader, compaction_state, cmd.slice, std::move(rrb), cmd.get_row_limit(), cmd.partition_limit, cmd.timestamp,
                         timeout, *cmd.max_result_size).then([&] (consume_result&& result) mutable {
                     return make_ready_future<page_consume_result>(page_consume_result(std::move(result), reader.detach_buffer(), std::move(compaction_state)));
+                }).finally([&reader] {
+                    return reader.close();
                 });
             }).then_wrapped([&ctx] (future<page_consume_result>&& result_fut) {
                 if (result_fut.failed()) {
