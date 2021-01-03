@@ -395,7 +395,7 @@ public:
     flat_mutation_reader& operator=(const flat_mutation_reader&) = delete;
     flat_mutation_reader& operator=(flat_mutation_reader&& o) noexcept {
         if (_impl) {
-            fmr_logger.error("{} overwritten by move-assign", _impl->description());
+            on_internal_error_noexcept(fmr_logger, format("{} overwritten by move-assign", _impl->description()));
         }
         _impl = std::move(o._impl);
         return *this;
@@ -403,7 +403,7 @@ public:
 
     ~flat_mutation_reader() {
         if (_impl) {
-            fmr_logger.error("{} was not closed", _impl->description());
+            on_internal_error_noexcept(fmr_logger, format("{} was not closed", _impl->description()));
         }
     }
 
