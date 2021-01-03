@@ -1976,7 +1976,8 @@ future<> multishard_combining_reader::fast_forward_to(position_range pr, db::tim
 }
 
 future<> multishard_combining_reader::close() noexcept {
-    return parallel_for_each(std::move(_shard_readers), [] (lw_shared_ptr<shard_reader>& sr) {
+    auto shard_readers = std::move(_shard_readers);
+    return parallel_for_each(shard_readers, [] (lw_shared_ptr<shard_reader>& sr) {
         return sr->close();
     });
 }
