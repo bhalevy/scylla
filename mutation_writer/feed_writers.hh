@@ -57,21 +57,26 @@ future<> feed_writer(flat_mutation_reader&& rd, Writer&& wr) {
                 auto f2 = rd.is_buffer_empty() ? rd.fill_buffer(db::no_timeout) : make_ready_future<>();
                 return when_all_succeed(std::move(f1), std::move(f2)).discard_result();
             });
-        }).then_wrapped([&wr] (future<> f) {
+        }).then_wrapped([&rd, &wr] (future<> f) {
             if (f.failed()) {
                 auto ex = f.get_exception();
                 wr.abort(ex);
-                return wr.close().then_wrapped([ex = std::move(ex)] (future<> f) mutable {
+                return rd.abort(ex).then_wrapped([ex = std::move(ex), &rd, &wr] (future<> f) mutable {
+                  if (f.failed()) {
+                      ex = std::make_exception_ptr(seastar::nested_exception(f.get_exception(), std::move(ex)));
+                  }
+                  return when_all_succeed(rd.close(), wr.close()).then_wrapped([ex = std::move(ex)] (auto f) mutable {
                     if (f.failed()) {
                         // The consumer is expected to fail when aborted,
                         // so just ignore any exception.
                         (void)f.get_exception();
                     }
                     return make_exception_future<>(std::move(ex));
+                  });
                 });
             } else {
                 wr.consume_end_of_stream();
-                return wr.close();
+                return when_all_succeed(rd.close(), wr.close()).discard_result();
             }
         });
     });

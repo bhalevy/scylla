@@ -409,6 +409,7 @@ SEASTAR_THREAD_TEST_CASE(test_timestamp_based_splitting_mutation_writer_abort) {
 
     try {
         segregate_by_timestamp(flat_mutation_reader_from_mutations(tests::make_permit(), muts), classify_fn, std::move(consumer)).get();
+        BOOST_FAIL("Expected to fail");
     } catch (const test_bucket_writer::expected_exception&) {
         BOOST_TEST_PASSPOINT();
     } catch (const seastar::broken_promise&) {
