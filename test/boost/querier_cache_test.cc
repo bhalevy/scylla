@@ -170,6 +170,11 @@ public:
         }) {
     }
 
+    // Must be called from a seastar thread.
+    ~test_querier_cache() {
+        _cache.stop().get();
+    }
+
     explicit test_querier_cache(std::chrono::seconds entry_ttl = 24h)
         : test_querier_cache(test_querier_cache::make_value, entry_ttl) {
     }

@@ -410,6 +410,8 @@ public:
         querier_base& value() {
             return *_value;
         }
+
+        future<> close() noexcept;
     };
 
     struct key_of_entry {
@@ -498,6 +500,10 @@ public:
     ///
     /// Should be used when dropping a table.
     void evict_all_for_table(const utils::UUID& schema_id);
+
+    /// Gently stop the querier cache,
+    /// closing all readers.
+    future<> stop() noexcept;
 
     const stats& get_stats() const {
         return _stats;

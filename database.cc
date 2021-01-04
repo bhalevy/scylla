@@ -2015,6 +2015,8 @@ database::stop() {
         }
         return make_ready_future<>();
     }).then([this] {
+        return _querier_cache.stop();
+    }).then([this] {
         return _system_dirty_memory_manager.shutdown();
     }).then([this] {
         return _dirty_memory_manager.shutdown();
