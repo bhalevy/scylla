@@ -312,6 +312,8 @@ public:
     }
 };
 
+class querier_inactive_read;
+
 /// Special-purpose cache for saving queriers between pages.
 ///
 /// Queriers are saved at the end of the page and looked up at the beginning of
@@ -411,6 +413,10 @@ public:
             return *_value;
         }
 
+        operator bool() const noexcept {
+            return bool(_value);
+        }
+
         future<> close() noexcept;
     };
 
@@ -434,6 +440,7 @@ private:
     size_t _max_queriers_memory_usage;
     gate _closing_gate;
 
+    void with_closing_gate(noncopyable_function<future<>()> func);
     void close_entry(entry&& e);
 
     void scan_cache_entries();
@@ -444,6 +451,7 @@ private:
     template <typename Querier>
     std::optional<Querier> lookup_querier(querier_cache::index& index, utils::UUID key, const schema& s, dht::partition_ranges_view ranges, const query::partition_slice& slice, tracing::trace_state_ptr trace_state);
 
+    friend class querier_inactive_read;
 public:
     explicit querier_cache(size_t max_cache_size = 1'000'000, std::chrono::seconds entry_ttl = default_entry_ttl);
 
