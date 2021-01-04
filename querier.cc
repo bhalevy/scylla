@@ -22,8 +22,11 @@
 #include "querier.hh"
 
 #include "schema.hh"
+#include "log.hh"
 
 #include <boost/range/adaptor/map.hpp>
+
+static logging::logger qlogger("querier_cache");
 
 namespace query {
 
@@ -191,7 +194,7 @@ void querier_cache::scan_cache_entries() {
     while (it != end && it->is_expired(now)) {
         ++_stats.time_based_evictions;
         --_stats.population;
-        it->value().permit().semaphore().unregister_inactive_read(std::move(*it).get_inactive_handle());
+        it->value().permit().semaphore().destroy_inactive_read(std::move(*it).get_inactive_handle());
         it = _entries.erase(it);
     }
 }
@@ -234,6 +237,9 @@ public:
         : _entries(entries)
         , _pos(pos)
         , _stats(stats) {
+    }
+    virtual future<> close() noexcept override {
+        return make_ready_future<>();
     }
     virtual void evict() override {
         _entries.erase(_pos);
@@ -278,7 +284,7 @@ static void insert_querier(
         auto it = entries.begin();
         while (it != entries.end() && memory_usage >= max_queriers_memory_usage) {
             memory_usage -= it->value().memory_usage();
-            it->value().permit().semaphore().unregister_inactive_read(std::move(*it).get_inactive_handle());
+            it->value().permit().semaphore().destroy_inactive_read(std::move(*it).get_inactive_handle());
             it = entries.erase(it);
             --stats.population;
             ++stats.memory_based_evictions;
@@ -334,7 +340,7 @@ static std::optional<Querier> lookup_querier(
         throw std::runtime_error("lookup_querier(): found querier is not of the expected type");
     }
     auto q = std::move(*q_ptr);
-    q.permit().semaphore().unregister_inactive_read(std::move(*it).get_inactive_handle());
+    q.permit().semaphore().destroy_inactive_read(std::move(*it).get_inactive_handle());
     entries.erase(it);
     --stats.population;
 
@@ -387,7 +393,7 @@ bool querier_cache::evict_one() {
     ++_stats.resource_based_evictions;
     --_stats.population;
     auto& sem = _entries.front().value().permit().semaphore();
-    sem.unregister_inactive_read(std::move(_entries.front()).get_inactive_handle());
+    sem.destroy_inactive_read(std::move(_entries.front()).get_inactive_handle());
     _entries.pop_front();
 
     return true;
@@ -399,7 +405,7 @@ void querier_cache::evict_all_for_table(const utils::UUID& schema_id) {
     while (it != end) {
         if (it->value().schema().id() == schema_id) {
             --_stats.population;
-            it->value().permit().semaphore().unregister_inactive_read(std::move(*it).get_inactive_handle());
+            it->value().permit().semaphore().destroy_inactive_read(std::move(*it).get_inactive_handle());
             it = _entries.erase(it);
         } else {
             ++it;
