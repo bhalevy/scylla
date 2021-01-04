@@ -188,6 +188,15 @@ static can_use can_be_used_for_page(const Querier& q, const schema& s, const dht
 // The time-to-live of a cache-entry.
 const std::chrono::seconds querier_cache::default_entry_ttl{10};
 
+void querier_cache::close_entry(entry&& e) {
+    // close the entry in the background
+    (void)with_gate(_closing_gate, [e = std::move(e)] () mutable {
+        return e.close().handle_exception([e = std::move(e)] (std::exception_ptr ep) {
+            qlogger.warn("Failed closing querier_cache::entry: {}. Ignored...", ep);
+        });
+    });
+}
+
 void querier_cache::scan_cache_entries() {
     const auto now = lowres_clock::now();
 
@@ -196,7 +205,7 @@ void querier_cache::scan_cache_entries() {
     while (it != end && it->is_expired(now)) {
         ++_stats.time_based_evictions;
         --_stats.population;
-        it->value().permit().semaphore().destroy_inactive_read(std::move(*it).get_inactive_handle());
+        close_entry(std::move(*it));
         it = _entries.erase(it);
     }
 }
@@ -286,7 +295,7 @@ static void insert_querier(
         auto it = entries.begin();
         while (it != entries.end() && memory_usage >= max_queriers_memory_usage) {
             memory_usage -= it->value().memory_usage();
-            it->value().permit().semaphore().destroy_inactive_read(std::move(*it).get_inactive_handle());
+            close_entry(std::move(*it));
             it = entries.erase(it);
             --stats.population;
             ++stats.memory_based_evictions;
@@ -342,7 +351,7 @@ static std::optional<Querier> lookup_querier(
         throw std::runtime_error("lookup_querier(): found querier is not of the expected type");
     }
     auto q = std::move(*q_ptr);
-    q.permit().semaphore().destroy_inactive_read(std::move(*it).get_inactive_handle());
+    close_entry(std::move(*it));
     entries.erase(it);
     --stats.population;
 
@@ -354,6 +363,10 @@ static std::optional<Querier> lookup_querier(
 
     tracing::trace(trace_state, "Dropping querier because {}", cannot_use_reason(can_be_used));
     ++stats.drops;
+    // FIXME: return future to caller
+    (void)q.close().handle_exception([] (std::exception_ptr ep) {
+        qlogger.warn("lookup_querier failed to close querier: {}. Ignored...", ep);
+    });
     return std::nullopt;
 }
 
@@ -395,7 +408,7 @@ bool querier_cache::evict_one() {
     ++_stats.resource_based_evictions;
     --_stats.population;
     auto& sem = _entries.front().value().permit().semaphore();
-    sem.destroy_inactive_read(std::move(_entries.front()).get_inactive_handle());
+    close_entry(std::move(_entries.front()));
     _entries.pop_front();
 
     return true;
@@ -407,7 +420,7 @@ void querier_cache::evict_all_for_table(const utils::UUID& schema_id) {
     while (it != end) {
         if (it->value().schema().id() == schema_id) {
             --_stats.population;
-            it->value().permit().semaphore().destroy_inactive_read(std::move(*it).get_inactive_handle());
+            close_entry(std::move(*it));
             it = _entries.erase(it);
         } else {
             ++it;
