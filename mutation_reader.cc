@@ -1099,13 +1099,17 @@ public:
     flat_mutation_reader reader() && {
         return std::move(*_reader);
     }
-    virtual void evict() override {
-        if (_reader) {
-            auto r = std::move(_reader);
-            (void)r->close().handle_exception([r = std::move(r)] (std::exception_ptr ex) {
-                mrlog.warn("inactive_evictable_reader: closing reader failed: {}. Ignored...", ex);
-            });
+    virtual future<> close() noexcept override {
+        if (auto r = std::move(_reader)) {
+            return r->close().finally([r = std::move(r)] {});
         }
+        return make_ready_future<>();
+    }
+    virtual void evict() override {
+        // move to background as evict cannot wait on close
+        (void)close().handle_exception([] (std::exception_ptr ep) {
+            mrlog.warn("Failed evicting inactive_evictable_reader: {}. Ignored...", ep);
+        });
     }
 };
 

@@ -131,7 +131,7 @@ public:
         // Move to the background, waited via _operation_gate
         return reader.then([shard, this] (stopped_reader&& reader) {
             return smp::submit_to(shard, [handle = std::move(reader.handle), ctx = &*_contexts[shard]] () mutable {
-                ctx->semaphore->unregister_inactive_read(std::move(*handle));
+              return ctx->semaphore->close_inactive_read(std::move(*handle)).then([ctx] {
                 ctx->semaphore->broken(std::make_exception_ptr(broken_semaphore{}));
                 if (ctx->wait_future) {
                     return ctx->wait_future->then_wrapped([ctx = std::move(ctx)] (future<reader_permit::resource_units> f) mutable {
@@ -140,6 +140,7 @@ public:
                     });
                 }
                 return make_ready_future<>();
+              });
             });
         }).finally([zis = shared_from_this()] {});
     }

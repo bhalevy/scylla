@@ -260,7 +260,7 @@ public:
     future<> save_readers(flat_mutation_reader::tracked_buffer unconsumed_buffer, detached_compaction_state compaction_state,
             std::optional<clustering_key_prefix> last_ckey);
 
-    future<> stop();
+    future<> stop() noexcept;
 };
 
 std::string_view read_context::reader_state_to_string(reader_state rs) {
@@ -350,24 +350,18 @@ future<> read_context::destroy_reader(shard_id shard, future<stopped_reader> rea
     });
 }
 
-future<> read_context::stop() {
-    auto pr = promise<>();
-    auto fut = pr.get_future();
+future<> read_context::stop() noexcept {
     auto gate_fut = _dismantling_gate.is_closed() ? make_ready_future<>() : _dismantling_gate.close();
-    // Forwarded to `fut`.
-    (void)gate_fut.then([this] {
-        for (shard_id shard = 0; shard != smp::count; ++shard) {
+    return gate_fut.then([this] {
+        return parallel_for_each(smp::all_cpus(), [this] (shard_id shard) {
             if (_readers[shard].state == reader_state::saving) {
-                // Move to the background.
-                (void)_db.invoke_on(shard, [rm = std::move(_readers[shard])] (database& db) mutable {
-                    rm.rparts->permit.semaphore().unregister_inactive_read(std::move(*rm.handle));
+                return _db.invoke_on(shard, [rm = std::move(_readers[shard])] (database& db) mutable {
+                    return rm.rparts->permit.semaphore().close_inactive_read(std::move(*rm.handle));
                 });
             }
-        }
-    }).finally([pr = std::move(pr)] () mutable {
-        pr.set_value();
+            return make_ready_future<>();
+        });
     });
-    return fut;
 }
 
 read_context::dismantle_buffer_stats read_context::dismantle_combined_buffer(flat_mutation_reader::tracked_buffer combined_buffer,
