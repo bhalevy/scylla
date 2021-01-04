@@ -24,6 +24,9 @@
 #include "frozen_mutation.hh"
 #include "partition_snapshot_reader.hh"
 #include "partition_builder.hh"
+#include "log.hh"
+
+static logging::logger mtlog("memtable");
 
 namespace {
 
@@ -400,9 +403,10 @@ class scanning_reader final : public flat_mutation_reader::impl, private iterato
                 if (_delegate_range) {
                     _end_of_stream = true;
                 } else {
-                    _delegate = { };
+                    return close();
                 }
             }
+            return make_ready_future<>();
         });
     }
 
@@ -449,7 +453,13 @@ public:
                         bool digest_requested = _slice.options.contains<query::partition_slice::option::with_digest>();
                         auto mpsr = make_partition_snapshot_flat_reader(snp_schema, _permit, std::move(key_and_snp->first), std::move(cr),
                                         std::move(key_and_snp->second), digest_requested, region(), read_section(), mtbl(), streamed_mutation::forwarding::no);
+                      try {
                         mpsr.upgrade_schema(schema());
+                      } catch (...) {
+                        return mpsr.close().finally([mpsr = std::move(mpsr), ex = std::current_exception()] () mutable {
+                            return make_exception_future<>(std::move(ex));
+                        });
+                      }
                         _delegate = std::move(mpsr);
                     } else {
                         _end_of_stream = true;
@@ -464,7 +474,10 @@ public:
         clear_buffer_to_next_partition();
         if (is_buffer_empty()) {
             if (!_delegate_range) {
-                _delegate = {};
+                // FIXME discarded future
+                (void)close().handle_exception([] (std::exception_ptr ep) {
+                    mtlog.warn("scanning_reader::next_partition: failed closing reader: {}. Ignored...", ep);
+                });
             } else {
                 return _delegate->next_partition();
             }
@@ -477,8 +490,13 @@ public:
         if (_delegate_range) {
             return _delegate->fast_forward_to(pr, timeout);
         } else {
-            _delegate = {};
-            return iterator_reader::fast_forward_to(pr, timeout);
+            return close().then_wrapped([this, &pr, timeout] (future<> f) {
+                if (f.failed()) {
+                    auto ep = f.get_exception();
+                    mtlog.warn("scanning_reader::next_partition: failed closing reader: {}. Ignored...", ep);
+                }
+                return iterator_reader::fast_forward_to(pr, timeout);
+            });
         }
     }
     virtual future<> fast_forward_to(position_range cr, db::timeout_clock::time_point timeout) override {
