@@ -438,6 +438,12 @@ private:
 
     void scan_cache_entries();
 
+    template <typename Querier>
+    void insert_querier(querier_cache::index& index, utils::UUID key, Querier&& q, lowres_clock::time_point expires, tracing::trace_state_ptr trace_state);
+
+    template <typename Querier>
+    std::optional<Querier> lookup_querier(querier_cache::index& index, utils::UUID key, const schema& s, dht::partition_ranges_view ranges, const query::partition_slice& slice, tracing::trace_state_ptr trace_state);
+
 public:
     explicit querier_cache(size_t max_cache_size = 1'000'000, std::chrono::seconds entry_ttl = default_entry_ttl);
 

@@ -260,11 +260,8 @@ public:
 };
 
 template <typename Querier>
-static void insert_querier(
-        querier_cache::entries& entries,
+void querier_cache::insert_querier(
         querier_cache::index& index,
-        querier_cache::stats& stats,
-        size_t max_queriers_memory_usage,
         utils::UUID key,
         Querier&& q,
         lowres_clock::time_point expires,
@@ -276,6 +273,10 @@ static void insert_querier(
     if (q.is_reversed()) {
         return;
     }
+
+    auto& entries = _entries;
+    auto& stats = _stats;
+    auto max_queriers_memory_usage = _max_queriers_memory_usage;
 
     ++stats.inserts;
 
@@ -315,30 +316,31 @@ static void insert_querier(
 }
 
 void querier_cache::insert(utils::UUID key, data_querier&& q, tracing::trace_state_ptr trace_state) {
-    insert_querier(_entries, _data_querier_index, _stats, _max_queriers_memory_usage, key, std::move(q), lowres_clock::now() + _entry_ttl,
+    insert_querier(_data_querier_index, key, std::move(q), lowres_clock::now() + _entry_ttl,
             std::move(trace_state));
 }
 
 void querier_cache::insert(utils::UUID key, mutation_querier&& q, tracing::trace_state_ptr trace_state) {
-    insert_querier(_entries, _mutation_querier_index, _stats, _max_queriers_memory_usage, key, std::move(q), lowres_clock::now() + _entry_ttl,
+    insert_querier(_mutation_querier_index, key, std::move(q), lowres_clock::now() + _entry_ttl,
             std::move(trace_state));
 }
 
 void querier_cache::insert(utils::UUID key, shard_mutation_querier&& q, tracing::trace_state_ptr trace_state) {
-    insert_querier(_entries, _shard_mutation_querier_index, _stats, _max_queriers_memory_usage, key, std::move(q), lowres_clock::now() + _entry_ttl,
+    insert_querier(_shard_mutation_querier_index, key, std::move(q), lowres_clock::now() + _entry_ttl,
             std::move(trace_state));
 }
 
 template <typename Querier>
-static std::optional<Querier> lookup_querier(
-        querier_cache::entries& entries,
+std::optional<Querier> querier_cache::lookup_querier(
         querier_cache::index& index,
-        querier_cache::stats& stats,
         utils::UUID key,
         const schema& s,
         dht::partition_ranges_view ranges,
         const query::partition_slice& slice,
         tracing::trace_state_ptr trace_state) {
+    auto& entries = _entries;
+    auto& stats = _stats;
+
     auto it = find_querier(entries, index, key, ranges, trace_state);
     ++stats.lookups;
     if (it == entries.end()) {
@@ -375,7 +377,7 @@ std::optional<data_querier> querier_cache::lookup_data_querier(utils::UUID key,
         const dht::partition_range& range,
         const query::partition_slice& slice,
         tracing::trace_state_ptr trace_state) {
-    return lookup_querier<data_querier>(_entries, _data_querier_index, _stats, key, s, range, slice, std::move(trace_state));
+    return lookup_querier<data_querier>(_data_querier_index, key, s, range, slice, std::move(trace_state));
 }
 
 std::optional<mutation_querier> querier_cache::lookup_mutation_querier(utils::UUID key,
@@ -383,7 +385,7 @@ std::optional<mutation_querier> querier_cache::lookup_mutation_querier(utils::UU
         const dht::partition_range& range,
         const query::partition_slice& slice,
         tracing::trace_state_ptr trace_state) {
-    return lookup_querier<mutation_querier>(_entries, _mutation_querier_index, _stats, key, s, range, slice, std::move(trace_state));
+    return lookup_querier<mutation_querier>(_mutation_querier_index, key, s, range, slice, std::move(trace_state));
 }
 
 std::optional<shard_mutation_querier> querier_cache::lookup_shard_mutation_querier(utils::UUID key,
@@ -391,7 +393,7 @@ std::optional<shard_mutation_querier> querier_cache::lookup_shard_mutation_queri
         const dht::partition_range_vector& ranges,
         const query::partition_slice& slice,
         tracing::trace_state_ptr trace_state) {
-    return lookup_querier<shard_mutation_querier>(_entries, _shard_mutation_querier_index, _stats, key, s, ranges, slice,
+    return lookup_querier<shard_mutation_querier>(_shard_mutation_querier_index, key, s, ranges, slice,
             std::move(trace_state));
 }
 
