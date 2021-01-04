@@ -151,6 +151,10 @@ public:
 
     virtual ~querier_base() = default;
 
+    future<> close() noexcept {
+        return _reader.close();
+    }
+
     const ::schema& schema() const {
         return *_schema;
     }
