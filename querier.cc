@@ -19,6 +19,8 @@
  * along with Scylla.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include <seastar/core/coroutine.hh>
+
 #include "querier.hh"
 
 #include "schema.hh"
@@ -410,6 +412,19 @@ void querier_cache::evict_all_for_table(const utils::UUID& schema_id) {
         } else {
             ++it;
         }
+    }
+}
+
+future<> querier_cache::entry::close() noexcept {
+    if (auto q = std::move(_value)) {
+        co_await q->permit().semaphore().close_inactive_read(std::move(_handle));
+        co_await q->close();
+    }
+}
+
+future<> querier_cache::stop() noexcept {
+    for (auto&& e : _entries) {
+        co_await e.close();
     }
 }
 
