@@ -188,10 +188,17 @@ static can_use can_be_used_for_page(const Querier& q, const schema& s, const dht
 // The time-to-live of a cache-entry.
 const std::chrono::seconds querier_cache::default_entry_ttl{10};
 
+void querier_cache::with_closing_gate(noncopyable_function<future<>()> func) {
+    // run func in the background.
+    // waited on indirectly in querier_cache::stop() using _closing_gate
+    (void)with_gate(_closing_gate, [func = std::move(func)] () mutable {
+        return func();
+    });
+}
+
 void querier_cache::close_entry(entry&& e) {
-    // close the entry in the background
-    (void)with_gate(_closing_gate, [e = std::move(e)] () mutable {
-        return e.close().handle_exception([e = std::move(e)] (std::exception_ptr ep) {
+    with_closing_gate([e = std::move(e)] () mutable {
+        return e.close().handle_exception([] (std::exception_ptr ep) {
             qlogger.warn("Failed closing querier_cache::entry: {}. Ignored...", ep);
         });
     });
@@ -239,20 +246,27 @@ querier_cache::querier_cache(size_t max_cache_size, std::chrono::seconds entry_t
 }
 
 class querier_inactive_read : public reader_concurrency_semaphore::inactive_read {
+    querier_cache& _querier_cache;
     querier_cache::entries& _entries;
     querier_cache::entries::iterator _pos;
     querier_cache::stats& _stats;
 
 public:
-    querier_inactive_read(querier_cache::entries& entries, querier_cache::entries::iterator pos, querier_cache::stats& stats)
-        : _entries(entries)
+    querier_inactive_read(querier_cache& qc, querier_cache::entries& entries, querier_cache::entries::iterator pos, querier_cache::stats& stats)
+        : _querier_cache(qc)
+        , _entries(entries)
         , _pos(pos)
         , _stats(stats) {
     }
     virtual future<> close() noexcept override {
+        // Could have already been evicted
+        if (auto e = std::move(*_pos)) {
+            return e.close().finally([e = std::move(e)] {});
+        }
         return make_ready_future<>();
     }
     virtual void evict() override {
+        _querier_cache.close_entry(std::move(*_pos));
         _entries.erase(_pos);
         ++_stats.resource_based_evictions;
         --_stats.population;
@@ -309,7 +323,7 @@ void querier_cache::insert_querier(
     e.set_pos(--entries.end());
     ++stats.population;
 
-    if (auto irh = sem.register_inactive_read(std::make_unique<querier_inactive_read>(entries, e.pos(), stats))) {
+    if (auto irh = sem.register_inactive_read(std::make_unique<querier_inactive_read>(*this, entries, e.pos(), stats))) {
         e.set_inactive_handle(std::move(irh));
         index.insert(e);
     }
@@ -353,7 +367,12 @@ std::optional<Querier> querier_cache::lookup_querier(
         throw std::runtime_error("lookup_querier(): found querier is not of the expected type");
     }
     auto q = std::move(*q_ptr);
-    close_entry(std::move(*it));
+    auto& sem = q.permit().semaphore();
+    with_closing_gate([&sem, e = std::move(*it)] () mutable {
+        return sem.close_inactive_read(std::move(e).get_inactive_handle()).handle_exception([] (std::exception_ptr ep) {
+            qlogger.warn("Failed closing inactive reader: {}. Ignored...", ep);
+        });
+    });
     entries.erase(it);
     --stats.population;
 
@@ -365,9 +384,10 @@ std::optional<Querier> querier_cache::lookup_querier(
 
     tracing::trace(trace_state, "Dropping querier because {}", cannot_use_reason(can_be_used));
     ++stats.drops;
-    // FIXME: return future to caller
-    (void)q.close().handle_exception([] (std::exception_ptr ep) {
-        qlogger.warn("lookup_querier failed to close querier: {}. Ignored...", ep);
+    with_closing_gate([q = std::move(q)] () mutable {
+        return q.close().handle_exception([] (std::exception_ptr ep) {
+            qlogger.warn("lookup_querier failed to close querier: {}. Ignored...", ep);
+        });
     });
     return std::nullopt;
 }
@@ -432,14 +452,19 @@ void querier_cache::evict_all_for_table(const utils::UUID& schema_id) {
 
 future<> querier_cache::entry::close() noexcept {
     if (auto q = std::move(_value)) {
-        co_await q->permit().semaphore().close_inactive_read(std::move(_handle));
-        co_await q->close();
+        return do_with(std::move(q), [irh = std::move(_handle)] (std::unique_ptr<querier_base>& q) mutable {
+            return q->permit().semaphore().close_inactive_read(std::move(irh)).finally([&q] {
+                return q->close();
+            });
+        });
     }
+    return make_ready_future<>();
 }
 
 future<> querier_cache::stop() noexcept {
+    co_await _closing_gate.close();
     for (auto&& e : _entries) {
-        co_await e.close();
+        co_await e.close().finally([e = std::move(e)] {});
     }
 }
 
