@@ -2278,6 +2278,8 @@ future<> data_query(
             if (q.are_limits_reached() || builder.is_short_read()) {
                 cache_ctx.insert(std::move(q), std::move(trace_ptr));
             }
+        }).finally([&q] {
+            return q.close();
         });
     });
 }
@@ -2394,6 +2396,8 @@ static do_mutation_query(schema_ptr s,
                 cache_ctx.insert(std::move(q), std::move(trace_ptr));
             }
             return r;
+        }).finally([&q] {
+            return q.close();
         });
     });
 }
