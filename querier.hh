@@ -432,6 +432,9 @@ private:
     std::chrono::seconds _entry_ttl;
     stats _stats;
     size_t _max_queriers_memory_usage;
+    gate _closing_gate;
+
+    void close_entry(entry&& e);
 
     void scan_cache_entries();
 
