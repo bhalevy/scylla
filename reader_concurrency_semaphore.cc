@@ -410,6 +410,20 @@ std::unique_ptr<reader_concurrency_semaphore::inactive_read> reader_concurrency_
     return {};
 }
 
+future<> reader_concurrency_semaphore::close_inactive_read(inactive_read_handle irh) {
+    auto ir = unregister_inactive_read(std::move(irh));
+    if (ir) {
+        return ir->close().finally([ir = std::move(ir)] {});
+    }
+    return make_ready_future<>();
+}
+
+void reader_concurrency_semaphore::destroy_inactive_read(inactive_read_handle irh) {
+    (void)close_inactive_read(std::move(irh)).handle_exception([] (std::exception_ptr ep) {
+        rcslog.warn("Failed closing inactive_read: {}. Ignored...", ep);
+    });
+}
+
 bool reader_concurrency_semaphore::try_evict_one_inactive_read() {
     if (_inactive_reads.empty()) {
         return false;

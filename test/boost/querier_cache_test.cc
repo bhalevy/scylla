@@ -779,6 +779,9 @@ namespace {
 
 class inactive_read : public reader_concurrency_semaphore::inactive_read {
 public:
+    virtual future<> close() noexcept override {
+        return make_ready_future<>();
+    }
     virtual void evict() override {
     }
 };

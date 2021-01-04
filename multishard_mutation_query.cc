@@ -358,7 +358,7 @@ future<> read_context::stop() {
     for (shard_id shard = 0; shard != smp::count; ++shard) {
         if (_readers[shard].state == reader_state::saving) {
             co_await _db.invoke_on(shard, [rm = std::move(_readers[shard])] (database& db) mutable {
-                rm.rparts->permit.semaphore().unregister_inactive_read(std::move(*rm.handle));
+                return rm.rparts->permit.semaphore().close_inactive_read(std::move(*rm.handle));
             });
         }
     }
