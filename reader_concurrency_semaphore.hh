@@ -190,17 +190,6 @@ public:
     /// register call, is used to close the reader.
     future<> close_inactive_read(inactive_read_handle irh);
 
-    /// Destroy the previously registered inactive read and close it.
-    ///
-    /// If the read was not evicted, the inactive read object, passed in to the
-    /// register call, is used to close the reader.
-    ///
-    /// FIXME: This method does not wait on the future that the
-    /// inactive reader's close() returns.  If close failed, the failure is merely
-    /// logged and ignored.  It is implemented here for the convenience of
-    /// the querier cache that can not wait on futures on this path.
-    void destroy_inactive_read(inactive_read_handle irh);
-
     /// Try to evict an inactive read.
     ///
     /// Return true if an inactive read was evicted and false otherwise
