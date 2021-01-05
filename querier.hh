@@ -98,7 +98,9 @@ auto consume_page(flat_mutation_reader& reader,
             if (slice.options.contains(query::partition_slice::option::reversed)) {
                 return do_with(make_reversing_reader(reader, max_size),
                         [reader_consumer = std::move(reader_consumer), timeout] (flat_mutation_reader& reversing_reader) mutable {
-                    return reversing_reader.consume(std::move(reader_consumer), timeout);
+                    return reversing_reader.consume(std::move(reader_consumer), timeout).finally([&reversing_reader] {
+                        return reversing_reader.close();
+                    });
                 });
             }
             return reader.consume(std::move(reader_consumer), timeout);
