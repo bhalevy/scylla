@@ -218,6 +218,12 @@ public:
         _underlying_snapshot = {};
         _key = dk;
     }
+    future<> abort(std::exception_ptr ex) noexcept {
+        return _underlying.abort(std::move(ex));
+    }
+    future<> close() noexcept {
+        return _underlying.close();
+    }
 };
 
 }
