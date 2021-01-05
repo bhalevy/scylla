@@ -889,9 +889,16 @@ private:
             return stop_iteration::no;
         });
     }
-
-    future<stop_iteration> stop() const {
-        return make_ready_future<stop_iteration>(stop_iteration::yes);
+public:
+    future<stop_iteration> stop() {
+        return _updates.close().then([this] {
+            if (auto r = std::move(_existings)) {
+                return r->close().finally([r = std::move(r)] {});
+            }
+            return make_ready_future<>();
+        }).then([] {
+            return make_ready_future<stop_iteration>(stop_iteration::yes);
+        });
     }
 };
 
@@ -1045,7 +1052,9 @@ future<std::vector<frozen_mutation_and_schema>> generate_view_updates(
     }));
     auto builder = std::make_unique<view_update_builder>(base, std::move(vs), std::move(updates), std::move(existings), now);
     auto f = builder->build();
-    return f.finally([builder = std::move(builder)] { });
+    return f.finally([builder = std::move(builder)] () mutable {
+        return builder->stop().finally([builder = std::move(builder)] {});
+    });
 }
 
 query::clustering_row_ranges calculate_affected_clustering_ranges(const schema& base,
