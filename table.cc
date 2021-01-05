@@ -124,6 +124,8 @@ table::find_partition(schema_ptr s, reader_permit permit, const dht::decorated_k
                     return {};
                 }
                 return std::make_unique<const mutation_partition>(std::move(mo->partition()));
+            }).finally([&reader] {
+                return reader.close();
             });
         });
     });
@@ -282,6 +284,9 @@ table::for_all_partitions_slow(schema_ptr s, reader_permit permit, std::function
             : reader(cf.make_reader(std::move(s), std::move(permit)))
             , func(std::move(func))
         { }
+        future<> close() noexcept {
+            return reader.close();
+        }
     };
 
     return do_with(iteration_state(std::move(s), std::move(permit), *this, std::move(func)), [] (iteration_state& is) {
@@ -295,6 +300,8 @@ table::for_all_partitions_slow(schema_ptr s, reader_permit permit, std::function
             });
         }).then([&is] {
             return is.ok;
+        }).finally([&is] {
+            return is.close();
         });
     });
 }
