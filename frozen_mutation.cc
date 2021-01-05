@@ -277,6 +277,8 @@ future<> fragment_and_freeze(flat_mutation_reader mr, frozen_mutation_consumer_f
                 }
                 return std::move(*mfopt).consume(freezer);
             });
+        }).finally([&mr] {
+            return mr.close();
         });
     });
 }
