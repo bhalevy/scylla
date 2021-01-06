@@ -2075,6 +2075,8 @@ future<> multishard_combining_reader::abort(std::exception_ptr ex) noexcept {
 future<> multishard_combining_reader::close() noexcept {
     return parallel_for_each(_shard_readers, [] (lw_shared_ptr<shard_reader>& sr) {
         return sr->close();
+    }).finally([this] {
+        _shard_readers.clear();
     });
 }
 
