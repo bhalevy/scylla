@@ -841,9 +841,10 @@ SEASTAR_TEST_CASE(wrong_range) {
     return test_using_reusable_sst(uncompressed_schema(), "test/resource/sstables/wrongrange", 114, [] (auto sstp) {
         return do_with(make_dkey(uncompressed_schema(), "todata"), [sstp] (auto& key) {
             auto s = columns_schema();
-            auto rd = make_lw_shared<flat_mutation_reader>(sstp->read_row_flat(s, tests::make_permit(), key));
-            return read_mutation_from_flat_mutation_reader(*rd, db::no_timeout).then([sstp, s, &key, rd] (auto mutation) {
+            return with_flat_mutation_reader(sstp->read_row_flat(s, tests::make_permit(), key), [sstp, s, &key] (flat_mutation_reader& rd) {
+              return read_mutation_from_flat_mutation_reader(rd, db::no_timeout).then([sstp, s, &key] (auto mutation) {
                 return make_ready_future<>();
+              });
             });
         });
     });
@@ -978,6 +979,7 @@ static future<int> count_rows(sstable_ptr sstp, schema_ptr s, sstring key, sstri
         auto ps = make_partition_slice(*s, ck1, ck2);
         auto dkey = make_dkey(s, key.c_str());
         auto rd = sstp->read_row_flat(s, tests::make_permit(), dkey, ps);
+        auto close_rd = defer([&rd] { rd.close().get(); });
         auto mfopt = rd(db::no_timeout).get0();
         if (!mfopt) {
             return 0;
@@ -999,6 +1001,7 @@ static future<int> count_rows(sstable_ptr sstp, schema_ptr s, sstring key) {
     return seastar::async([sstp, s, key] () mutable {
         auto dkey = make_dkey(s, key.c_str());
         auto rd = sstp->read_row_flat(s, tests::make_permit(), dkey);
+        auto close_rd = defer([&rd] { rd.close().get(); });
         auto mfopt = rd(db::no_timeout).get0();
         if (!mfopt) {
             return 0;
@@ -1021,6 +1024,7 @@ static future<int> count_rows(sstable_ptr sstp, schema_ptr s, sstring ck1, sstri
     return seastar::async([sstp, s, ck1, ck2] () mutable {
         auto ps = make_partition_slice(*s, ck1, ck2);
         auto reader = sstp->read_range_rows_flat(s, tests::make_permit(), query::full_partition_range, ps);
+        auto close_reader = defer([&reader] { reader.close().get(); });
         int nrows = 0;
         auto mfopt = reader(db::no_timeout).get0();
         while (mfopt) {

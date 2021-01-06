@@ -76,13 +76,14 @@ private:
                  mutation_reader::forwarding::yes));
         }
         _memtables.push_back(new_memtable());
-        auto&& rd = make_combined_reader(new_mt->schema(), tests::make_permit(), std::move(readers));
+      with_flat_mutation_reader_in_thread(make_combined_reader(new_mt->schema(), tests::make_permit(), std::move(readers)), [&] (flat_mutation_reader& rd) {
         consume_partitions(rd, [&] (mutation&& m) {
             new_mt->apply(std::move(m));
             return stop_iteration::no;
         }, db::no_timeout).get();
         _memtables.erase(_memtables.begin(), _memtables.begin() + count);
         _memtables.push_back(new_mt);
+      });
     }
 public:
     memtable_snapshot_source(schema_ptr s)

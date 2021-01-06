@@ -859,6 +859,8 @@ SEASTAR_TEST_CASE(datafile_generation_11) {
                         // The clustered set
                         auto m = verifier(mutation);
                         verify_set(m);
+                    }).finally([rd] {
+                        return rd->close().finally([rd] {});
                     });
                 }).then([sstp, s, verifier] {
                     return do_with(make_dkey(s, "key2"), [sstp, s, verifier] (auto& key) {
@@ -868,6 +870,8 @@ SEASTAR_TEST_CASE(datafile_generation_11) {
                             BOOST_REQUIRE(!m.tomb);
                             BOOST_REQUIRE(m.cells.size() == 1);
                             BOOST_REQUIRE(m.cells[0].first == to_bytes("4"));
+                        }).finally([rd] {
+                            return rd->close().finally([rd] {});
                         });
                     });
                 });
@@ -902,6 +906,8 @@ SEASTAR_TEST_CASE(datafile_generation_12) {
                         for (auto& rt: mp.row_tombstones()) {
                             BOOST_REQUIRE(rt.tomb == tomb);
                         }
+                    }).finally([rd] {
+                        return rd->close().finally([rd] {});
                     });
                 });
             });
@@ -938,6 +944,8 @@ static future<> sstable_compression_test(compressor_ptr c, unsigned generation) 
                         for (auto& rt: mp.row_tombstones()) {
                             BOOST_REQUIRE(rt.tomb == tomb);
                         }
+                    }).finally([rd] {
+                        return rd->close().finally([rd] {});
                     });
                 });
             });
@@ -1195,6 +1203,8 @@ SEASTAR_TEST_CASE(compact) {
                         return read_mutation_from_flat_mutation_reader(*reader, db::no_timeout);
                     }).then([reader] (mutation_opt m) {
                         BOOST_REQUIRE(!m);
+                    }).finally([reader] {
+                        return reader->close();
                     });
                 });
             });
@@ -1331,7 +1341,7 @@ static future<> check_compacted_sstables(test_env& env, sstring tmpdir_path, uns
         auto reader = sstable_reader(sst, s); // reader holds sst and s alive.
         auto keys = make_lw_shared<std::vector<partition_key>>();
 
-        return do_with(std::move(reader), [generations, s, keys] (flat_mutation_reader& reader) {
+        return with_flat_mutation_reader(std::move(reader), [generations, s, keys] (flat_mutation_reader& reader) {
             return do_for_each(*generations, [&reader, keys] (unsigned long generation) mutable {
                 return read_mutation_from_flat_mutation_reader(reader, db::no_timeout).then([generation, keys] (mutation_opt m) {
                     BOOST_REQUIRE(m);
@@ -1422,6 +1432,8 @@ SEASTAR_TEST_CASE(datafile_generation_37) {
                         auto& row = mp.clustered_row(*s, clustering);
                         match_live_cell(row.cells(), *s, "cl2", data_value(to_bytes("cl2")));
                         return make_ready_future<>();
+                    }).finally([rd] {
+                        return rd->close().finally([rd] {});
                     });
                 });
             });
@@ -1456,6 +1468,8 @@ SEASTAR_TEST_CASE(datafile_generation_38) {
                         auto& row = mp.clustered_row(*s, clustering);
                         match_live_cell(row.cells(), *s, "cl3", data_value(to_bytes("cl3")));
                         return make_ready_future<>();
+                    }).finally([rd] {
+                        return rd->close().finally([rd] {});
                     });
                 });
             });
@@ -1491,6 +1505,8 @@ SEASTAR_TEST_CASE(datafile_generation_39) {
                         match_live_cell(row.cells(), *s, "cl1", data_value(data_value(to_bytes("cl1"))));
                         match_live_cell(row.cells(), *s, "cl2", data_value(data_value(to_bytes("cl2"))));
                         return make_ready_future<>();
+                    }).finally([rd] {
+                        return rd->close().finally([rd] {});
                     });
                 });
             });
@@ -1586,6 +1602,8 @@ SEASTAR_TEST_CASE(datafile_generation_41) {
                         BOOST_REQUIRE(mp.clustered_rows().calculate_size() == 1);
                         auto& c_row = *(mp.clustered_rows().begin());
                         BOOST_REQUIRE(c_row.row().deleted_at().tomb() == tomb);
+                    }).finally([rd] {
+                        return rd->close().finally([rd] {});
                     });
                 });
             });
@@ -1646,7 +1664,9 @@ SEASTAR_TEST_CASE(datafile_generation_47) {
                         }
                         return make_ready_future<stop_iteration>(stop_iteration::no);
                     });
-                }).then([sstp, reader, s] {});
+                }).finally([sstp, reader, s] {
+                    return reader->close();
+                });
             });
         }).then([sst, mt] {});
     });
@@ -2276,6 +2296,8 @@ SEASTAR_TEST_CASE(tombstone_purge_test) {
                 return (*reader)(db::no_timeout);
             }).then([reader, s] (mutation_fragment_opt m) {
                 BOOST_REQUIRE(!m);
+            }).finally([reader] {
+                return reader->close();
             }).get();
         };
 
@@ -2453,6 +2475,8 @@ SEASTAR_TEST_CASE(check_multi_schema) {
                     return (*reader)(db::no_timeout);
                 }).then([reader, s] (mutation_fragment_opt m) {
                     BOOST_REQUIRE(!m);
+                }).finally([reader] {
+                    return reader->close();
                 });
             });
             return make_ready_future<>();
@@ -2509,6 +2533,8 @@ SEASTAR_TEST_CASE(sstable_rewrite) {
                     return (*reader)(db::no_timeout);
                 }).then([reader] (mutation_fragment_opt m) {
                     BOOST_REQUIRE(!m);
+                }).finally([reader] {
+                    return reader->close();
                 });
             }).then([cf] {});
         }).then([sst, mt, s] {});
@@ -2519,6 +2545,7 @@ void test_sliced_read_row_presence(shared_sstable sst, schema_ptr s, const query
     std::vector<std::pair<partition_key, std::vector<clustering_key>>> expected)
 {
     auto reader = sst->as_mutation_source().make_reader(s, tests::make_permit(), query::full_partition_range, ps);
+    auto close_reader = defer([&reader] { reader.close().get(); });
 
     partition_key::equality pk_eq(*s);
     clustering_key::equality ck_eq(*s);
@@ -2750,6 +2777,7 @@ SEASTAR_TEST_CASE(test_counter_read) {
             auto sst = env.make_sstable(s, get_test_dir("counter_test", s), 5, version, big);
             sst->load().get();
             auto reader = sstable_reader(sst, s);
+            auto close_reader = defer([&reader] { reader.close().get(); });
 
             auto mfopt = reader(db::no_timeout).get0();
             BOOST_REQUIRE(mfopt);
@@ -4949,6 +4977,7 @@ SEASTAR_TEST_CASE(test_wrong_counter_shard_order) {
             auto sst = env.make_sstable(s, get_test_dir("wrong_counter_shard_order", s), 2, version, big);
             sst->load().get0();
             auto reader = sstable_reader(sst, s);
+            auto close_reader = defer([&reader] { reader.close().get(); });
 
             auto verify_row = [&s] (mutation_fragment_opt mfopt, int64_t expected_value) {
                 BOOST_REQUIRE(bool(mfopt));
@@ -6085,17 +6114,16 @@ SEASTAR_TEST_CASE(purged_tombstone_consumer_sstable_test) {
             for (auto&& sst : all) {
                 compacting->insert(std::move(sst));
             }
-            auto reader = compacting->make_range_sstable_reader(s,
+          with_flat_mutation_reader_in_thread(compacting->make_range_sstable_reader(s,
                 tests::make_permit(),
                 query::full_partition_range,
                 s->full_slice(),
                 service::get_local_compaction_priority(),
                 nullptr,
                 ::streamed_mutation::forwarding::no,
-                ::mutation_reader::forwarding::no);
-
-            auto r = std::move(reader);
+                ::mutation_reader::forwarding::no), [cfc = std::move(cfc)] (flat_mutation_reader& r) mutable {
             r.consume_in_thread(std::move(cfc), db::no_timeout);
+          });
 
             return {std::move(non_purged), std::move(purged_only)};
         };
@@ -6135,6 +6163,8 @@ SEASTAR_TEST_CASE(purged_tombstone_consumer_sstable_test) {
                 return (*reader)(db::no_timeout);
             }).then([reader, s] (mutation_fragment_opt m) {
                 BOOST_REQUIRE(!m);
+            }).finally([reader] {
+                return reader->close();
             }).get();
         };
 
@@ -6672,7 +6702,7 @@ SEASTAR_TEST_CASE(test_zero_estimated_partitions) {
             sst->write_components(std::move(mr), 0, s, cfg, encoding_stats{}).get();
             sst->load().get();
 
-            auto sst_mr = sst->as_mutation_source().make_reader(s, tests::make_permit(), query::full_partition_range, s->full_slice());
+          with_flat_mutation_reader_in_thread(sst->as_mutation_source().make_reader(s, tests::make_permit(), query::full_partition_range, s->full_slice()), [&mut] (flat_mutation_reader& sst_mr) {
             auto sst_mut = read_mutation_from_flat_mutation_reader(sst_mr, db::no_timeout).get0();
 
             // The real test here is that we don't assert() in
@@ -6681,6 +6711,7 @@ SEASTAR_TEST_CASE(test_zero_estimated_partitions) {
             BOOST_REQUIRE(sst_mr.is_buffer_empty());
             BOOST_REQUIRE(sst_mr.is_end_of_stream());
             BOOST_REQUIRE_EQUAL(mut, sst_mut);
+          });
         }
 
         return make_ready_future<>();
