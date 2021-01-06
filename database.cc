@@ -1989,11 +1989,19 @@ future<> stop_database(sharded<database>& sdb) {
         return sdb.invoke_on_all([](database& db) {
             return db.stop_large_data_handler();
         });
+    }).then([&sdb] {
+        return sdb.invoke_on_all([](database& db) {
+            return db.stop_querier_cache();
+        });
     });
 }
 
 future<> database::stop_large_data_handler() {
     return _large_data_handler->stop();
+}
+
+future<> database::stop_querier_cache() {
+    return _querier_cache.stop();
 }
 
 void database::revert_initial_system_read_concurrency_boost() {
@@ -2014,8 +2022,6 @@ database::stop() {
             return _commitlog->release();
         }
         return make_ready_future<>();
-    }).then([this] {
-        return _querier_cache.stop();
     }).then([this] {
         return _system_dirty_memory_manager.shutdown();
     }).then([this] {
