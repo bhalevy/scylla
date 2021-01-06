@@ -491,6 +491,7 @@ public:
     }
 
     void on_end_of_stream() {
+        _reader.close().get();
         _reader = make_empty_flat_reader(_schema, _permit);
         _reader_handle.reset();
     }
