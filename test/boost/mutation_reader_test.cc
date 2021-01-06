@@ -997,6 +997,7 @@ public:
             return flat_mutation_reader(std::move(tracker_ptr));
         });
 
+        _reader.close().get();
         _reader = make_restricted_flat_reader(std::move(ms), schema, semaphore.make_permit(schema.get(), "reader-wrapper"));
     }
 
@@ -2325,6 +2326,7 @@ SEASTAR_THREAD_TEST_CASE(test_multishard_combining_reader_destroyed_with_pending
         }));
 
         // Destroy reader.
+        reader.close().get();
         reader = flat_mutation_reader(nullptr);
 
         parallel_for_each(boost::irange(0u, smp::count), [&remote_controls] (unsigned shard) mutable {
@@ -2552,7 +2554,7 @@ SEASTAR_THREAD_TEST_CASE(test_multishard_combining_reader_non_strictly_monotonic
     // The test is meaningless if these requirements are not met.
     {
         auto fragments = make_fragments_with_non_monotonic_positions(s, s.make_pkey(pk), max_buffer_size, tombstone_deletion_time);
-        auto rd = make_flat_mutation_reader_from_fragments(s.schema(), tests::make_permit(), std::move(fragments));
+      with_flat_mutation_reader_in_thread(make_flat_mutation_reader_from_fragments(s.schema(), tests::make_permit(), std::move(fragments)), [&] (flat_mutation_reader& rd) {
         rd.set_max_buffer_size(max_buffer_size);
 
         rd.fill_buffer(db::no_timeout).get();
@@ -2585,6 +2587,7 @@ SEASTAR_THREAD_TEST_CASE(test_multishard_combining_reader_non_strictly_monotonic
         mf = rd.pop_mutation_fragment();
         BOOST_REQUIRE_EQUAL(mf.mutation_fragment_kind(), mutation_fragment::kind::clustering_row);
         BOOST_REQUIRE(mf.as_clustering_row().key().equal(*s.schema(), ckey));
+      });
     }
 
     test_reader_lifecycle_policy::operations_gate operations_gate;
@@ -2609,7 +2612,7 @@ SEASTAR_THREAD_TEST_CASE(test_multishard_combining_reader_non_strictly_monotonic
         };
 
         auto fragments = make_fragments_with_non_monotonic_positions(s, s.make_pkey(pk), max_buffer_size, tombstone_deletion_time);
-        auto rd = make_flat_mutation_reader_from_fragments(s.schema(), tests::make_permit(), std::move(fragments));
+      with_flat_mutation_reader_in_thread(make_flat_mutation_reader_from_fragments(s.schema(), tests::make_permit(), std::move(fragments)), [&] (flat_mutation_reader& rd) {
         auto mut_opt = read_mutation_from_flat_mutation_reader(rd, db::no_timeout).get0();
         BOOST_REQUIRE(mut_opt);
 
@@ -2621,6 +2624,7 @@ SEASTAR_THREAD_TEST_CASE(test_multishard_combining_reader_non_strictly_monotonic
                     s.schema()->full_slice(),
                     service::get_local_sstable_query_read_priority()))
                 .produces_partition(*mut_opt);
+      });
 
         return operations_gate.close();
     }).get();
@@ -2667,6 +2671,7 @@ SEASTAR_THREAD_TEST_CASE(test_multishard_streaming_reader) {
             }
             return std::nullopt;
         });
+        auto close_tested_reader = defer([&tested_reader] { tested_reader.close().get(); });
 
         auto reader_factory = [db = &env.db()] (
                 schema_ptr s,
@@ -2685,6 +2690,7 @@ SEASTAR_THREAD_TEST_CASE(test_multishard_streaming_reader) {
                 [&remote_partitioner] (const dht::decorated_key& pkey) {
                     return remote_partitioner.shard_of(pkey.token()) == 0;
                 });
+        auto close_reference_reader = defer([&reference_reader] { reference_reader.close().get(); });
 
         std::vector<mutation> reference_muts;
         while (auto mut_opt = read_mutation_from_flat_mutation_reader(reference_reader, db::no_timeout).get0()) {
@@ -2725,19 +2731,22 @@ SEASTAR_THREAD_TEST_CASE(test_queue_reader) {
 
         auto write_all = [] (queue_reader_handle& handle, const std::vector<mutation>& muts) {
             return async([&] {
-                auto reader = flat_mutation_reader_from_mutations(tests::make_permit(), muts);
+              with_flat_mutation_reader_in_thread(flat_mutation_reader_from_mutations(tests::make_permit(), muts), [&] (flat_mutation_reader& reader) {
                 while (auto mf_opt = reader(db::no_timeout).get0()) {
                     handle.push(std::move(*mf_opt)).get();
                 }
                 handle.push_end_of_stream();
+              });
             });
         };
 
         auto actual_muts = std::vector<mutation>{};
         actual_muts.reserve(20);
 
-        auto [reader, handle] = make_queue_reader(gen.schema(), tests::make_permit());
-
+        auto p = make_queue_reader(gen.schema(), tests::make_permit());
+        auto& reader = std::get<0>(p);
+        auto& handle = std::get<1>(p);
+        auto close_reader = defer([&reader] { reader.close().get(); });
         when_all_succeed(read_all(reader, actual_muts), write_all(handle, expected_muts)).get();
         BOOST_REQUIRE_EQUAL(actual_muts.size(), expected_muts.size());
         for (size_t i = 0; i < expected_muts.size(); ++i) {
@@ -2747,10 +2756,14 @@ SEASTAR_THREAD_TEST_CASE(test_queue_reader) {
 
     // abort() -- check that consumer is aborted
     {
-        auto [reader, handle] = make_queue_reader(gen.schema(), tests::make_permit());
+        auto p = make_queue_reader(gen.schema(), tests::make_permit());
+        auto& reader = std::get<0>(p);
+        auto& handle = std::get<1>(p);
+        auto close_reader = defer([&reader] { reader.close().get(); });
         auto fill_buffer_fut = reader.fill_buffer(db::no_timeout);
 
         auto expected_reader = flat_mutation_reader_from_mutations(tests::make_permit(), expected_muts);
+        auto close_expected_reader = defer([&expected_reader] { expected_reader.close().get(); });
 
         handle.push(std::move(*expected_reader(db::no_timeout).get0())).get();
 
@@ -2765,10 +2778,14 @@ SEASTAR_THREAD_TEST_CASE(test_queue_reader) {
 
     // abort() -- check that producer is aborted
     {
-        auto [reader, handle] = make_queue_reader(gen.schema(), tests::make_permit());
+        auto p = make_queue_reader(gen.schema(), tests::make_permit());
+        auto& reader = std::get<0>(p);
+        auto& handle = std::get<1>(p);
+        auto close_reader = defer([&reader] { reader.close().get(); });
         reader.set_max_buffer_size(1);
 
         auto expected_reader = flat_mutation_reader_from_mutations(tests::make_permit(), expected_muts);
+        auto close_expected_reader = defer([&expected_reader] { expected_reader.close().get(); });
 
         auto push_fut = make_ready_future<>();
         while (push_fut.available()) {
@@ -2786,11 +2803,14 @@ SEASTAR_THREAD_TEST_CASE(test_queue_reader) {
 
     // Detached handle
     {
-        auto [reader, handle] = make_queue_reader(gen.schema(), tests::make_permit());
+        auto p = make_queue_reader(gen.schema(), tests::make_permit());
+        auto& reader = std::get<0>(p);
+        auto& handle = std::get<1>(p);
         auto fill_buffer_fut = reader.fill_buffer(db::no_timeout);
 
         {
             auto throwaway_reader = std::move(reader);
+            throwaway_reader.close().get();
         }
 
         BOOST_REQUIRE_THROW(handle.push(mutation_fragment(*gen.schema(), tests::make_permit(), partition_end{})).get(), std::runtime_error);
@@ -2800,17 +2820,24 @@ SEASTAR_THREAD_TEST_CASE(test_queue_reader) {
 
     // Abandoned handle aborts, move-assignment
     {
-        auto [reader, handle] = make_queue_reader(gen.schema(), tests::make_permit());
+        auto p = make_queue_reader(gen.schema(), tests::make_permit());
+        auto& reader = std::get<0>(p);
+        auto& handle = std::get<1>(p);
+        auto close_reader = defer([&reader] { reader.close().get(); });
         auto fill_buffer_fut = reader.fill_buffer(db::no_timeout);
 
         auto expected_reader = flat_mutation_reader_from_mutations(tests::make_permit(), expected_muts);
+        auto close_expected_reader = defer([&expected_reader] { expected_reader.close().get(); });
 
         handle.push(std::move(*expected_reader(db::no_timeout).get0())).get();
 
         BOOST_REQUIRE(!fill_buffer_fut.available());
 
         {
-            auto [throwaway_reader, throwaway_handle] = make_queue_reader(gen.schema(), tests::make_permit());
+            auto p = make_queue_reader(gen.schema(), tests::make_permit());
+            auto& throwaway_reader = std::get<0>(p);
+            auto& throwaway_handle = std::get<1>(p);
+            auto close_throwaway_reader = defer([&throwaway_reader] { throwaway_reader.close().get(); });
             // Overwrite handle
             handle = std::move(throwaway_handle);
         }
@@ -2821,10 +2848,14 @@ SEASTAR_THREAD_TEST_CASE(test_queue_reader) {
 
     // Abandoned handle aborts, destructor
     {
-        auto [reader, handle] = make_queue_reader(gen.schema(), tests::make_permit());
+        auto p = make_queue_reader(gen.schema(), tests::make_permit());
+        auto& reader = std::get<0>(p);
+        auto& handle = std::get<1>(p);
+        auto close_reader = defer([&reader] { reader.close().get(); });
         auto fill_buffer_fut = reader.fill_buffer(db::no_timeout);
 
         auto expected_reader = flat_mutation_reader_from_mutations(tests::make_permit(), expected_muts);
+        auto close_expected_reader = defer([&expected_reader] { expected_reader.close().get(); });
 
         handle.push(std::move(*expected_reader(db::no_timeout).get0())).get();
 
@@ -2841,13 +2872,23 @@ SEASTAR_THREAD_TEST_CASE(test_queue_reader) {
 
     // Life-cycle, relies on ASAN for error reporting
     {
-        auto [reader, handle] = make_queue_reader(gen.schema(), tests::make_permit());
+        auto p = make_queue_reader(gen.schema(), tests::make_permit());
+        auto& reader = std::get<0>(p);
+        auto& handle = std::get<1>(p);
+        auto close_reader = defer([&reader] { reader.close().get(); });
         {
-            auto [throwaway_reader, throwaway_handle] = make_queue_reader(gen.schema(), tests::make_permit());
+            auto throwaway_p = make_queue_reader(gen.schema(), tests::make_permit());
+            auto& throwaway_reader = std::get<0>(throwaway_p);
+            auto& throwaway_handle = std::get<1>(throwaway_p);
+            auto close_throwaway_reader = defer([&throwaway_reader] { throwaway_reader.close().get(); });
             // Overwrite handle
             handle = std::move(throwaway_handle);
 
-            auto [another_throwaway_reader, another_throwaway_handle] = make_queue_reader(gen.schema(), tests::make_permit());
+            auto another_throwaway_p = make_queue_reader(gen.schema(), tests::make_permit());
+            auto& another_throwaway_reader = std::get<0>(another_throwaway_p);
+            auto& another_throwaway_handle = std::get<1>(another_throwaway_p);
+            auto close_another_throwaway_reader = defer([&another_throwaway_reader] { another_throwaway_reader.close().get(); });
+
             // Overwrite with moved-from handle (move assignment operator)
             another_throwaway_handle = std::move(throwaway_handle);
 
@@ -2858,7 +2899,10 @@ SEASTAR_THREAD_TEST_CASE(test_queue_reader) {
 
     // push_end_of_stream() detaches handle from reader, relies on ASAN for error reporting
     {
-        auto [reader, handle] = make_queue_reader(gen.schema(), tests::make_permit());
+        auto p = make_queue_reader(gen.schema(), tests::make_permit());
+        auto& reader = std::get<0>(p);
+        auto& handle = std::get<1>(p);
+        auto close_reader = defer([&reader] { reader.close().get(); });
         {
             auto throwaway_handle = std::move(handle);
             throwaway_handle.push_end_of_stream();
@@ -3204,14 +3248,15 @@ SEASTAR_THREAD_TEST_CASE(test_evictable_reader_trim_range_tombstones) {
     }
     second_buffer.emplace_back(*s.schema(), permit, partition_end{});
 
-    auto rd = create_evictable_reader_and_evict_after_first_buffer(s.schema(), permit, query::full_partition_range,
-            s.schema()->full_slice(), std::move(first_buffer), last_fragment_position, std::move(second_buffer), max_buffer_size);
+  with_flat_mutation_reader_in_thread(create_evictable_reader_and_evict_after_first_buffer(s.schema(), permit, query::full_partition_range,
+            s.schema()->full_slice(), std::move(first_buffer), last_fragment_position, std::move(second_buffer), max_buffer_size), [&] (flat_mutation_reader& rd) {
 
     rd.fill_buffer(db::no_timeout).get();
 
     const auto tri_cmp = position_in_partition::tri_compare(*s.schema());
 
     BOOST_REQUIRE(tri_cmp(last_fragment_position, rd.peek_buffer().position()) < 0);
+  });
 }
 
 namespace {
@@ -3230,8 +3275,8 @@ void check_evictable_reader_validation_is_triggered(
 
     testlog.info("check_evictable_reader_validation_is_triggered(): checking {} test case: {}", error_prefix.empty() ? "positive" : "negative", test_name);
 
-    auto rd = create_evictable_reader_and_evict_after_first_buffer(std::move(schema), std::move(permit), prange, slice, std::move(first_buffer),
-            last_fragment_position, std::move(second_buffer), max_buffer_size);
+  with_flat_mutation_reader_in_thread(create_evictable_reader_and_evict_after_first_buffer(std::move(schema), std::move(permit), prange, slice, std::move(first_buffer),
+            last_fragment_position, std::move(second_buffer), max_buffer_size), [&] (flat_mutation_reader& rd) {
 
     const bool fail = !error_prefix.empty();
 
@@ -3252,6 +3297,7 @@ void check_evictable_reader_validation_is_triggered(
     if (fail) {
         BOOST_FAIL(fmt::format("Expected exception not thrown"));
     }
+  });
 }
 
 }

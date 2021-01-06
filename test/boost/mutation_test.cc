@@ -92,8 +92,9 @@ static atomic_cell make_collection_member(data_type dt, T value) {
 static mutation_partition get_partition(memtable& mt, const partition_key& key) {
     auto dk = dht::decorate_key(*mt.schema(), key);
     auto range = dht::partition_range::make_singular(dk);
-    auto reader = mt.make_flat_reader(mt.schema(), tests::make_permit(), range);
-    auto mo = read_mutation_from_flat_mutation_reader(reader, db::no_timeout).get0();
+    auto mo = with_flat_mutation_reader(mt.make_flat_reader(mt.schema(), tests::make_permit(), range), [&] (flat_mutation_reader& reader) {
+        return read_mutation_from_flat_mutation_reader(reader, db::no_timeout);
+    }).get0();
     BOOST_REQUIRE(bool(mo));
     return std::move(mo->partition());
 }
@@ -439,8 +440,9 @@ SEASTAR_THREAD_TEST_CASE(test_large_collection_allocation) {
         mt->apply(make_mutation_with_collection(pk, std::move(cmd1)));
         mt->apply(make_mutation_with_collection(pk, std::move(cmd2))); // this should trigger a merge of the two collections
 
-        auto rd = mt->make_flat_reader(schema, tests::make_permit());
-        auto res_mut_opt = read_mutation_from_flat_mutation_reader(rd, db::no_timeout).get0();
+        auto res_mut_opt = with_flat_mutation_reader(mt->make_flat_reader(schema, tests::make_permit()), [&] (flat_mutation_reader& rd) {
+            return read_mutation_from_flat_mutation_reader(rd, db::no_timeout);
+        }).get0();
         BOOST_REQUIRE(res_mut_opt);
 
         res_mut_opt->partition().compact_for_query(*schema, gc_clock::now(), {query::full_clustering_range}, true, false,
@@ -2916,7 +2918,7 @@ void run_compaction_data_stream_split_test(const schema& schema, gc_clock::time_
 
     testlog.info("Original data: {}", create_stats(expected_mutations_summary));
 
-    auto reader = flat_mutation_reader_from_mutations(tests::make_permit(), std::move(mutations));
+  with_flat_mutation_reader_in_thread(flat_mutation_reader_from_mutations(tests::make_permit(), std::move(mutations)), [&] (flat_mutation_reader& reader) {
     auto get_max_purgeable = [] (const dht::decorated_key&) {
         return api::max_timestamp;
     };
@@ -2937,6 +2939,7 @@ void run_compaction_data_stream_split_test(const schema& schema, gc_clock::time_
     testlog.info("Merged data:   {}", create_stats(merged_partition_summaries));
 
     check_partition_summaries(schema, merged_partition_summaries, expected_mutations_summary);
+  });
 }
 
 } // anonymous namespace
