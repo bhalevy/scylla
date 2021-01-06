@@ -29,6 +29,7 @@
 #include <seastar/core/sleep.hh>
 #include <seastar/core/thread.hh>
 #include <seastar/testing/thread_test_case.hh>
+#include "utils/closeable.hh"
 
 using namespace std::chrono_literals;
 
