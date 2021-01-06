@@ -3192,8 +3192,9 @@ SEASTAR_THREAD_TEST_CASE(compact_deleted_row) {
      *   }
      * ]
      */
-    auto reader = compacted_sstable_reader(env, s, table_name, {1, 2});
-    mutation_opt m = read_mutation_from_flat_mutation_reader(reader, db::no_timeout).get0();
+    mutation_opt m = with_flat_mutation_reader(compacted_sstable_reader(env, s, table_name, {1, 2}), [&] (flat_mutation_reader& reader) {
+        return read_mutation_from_flat_mutation_reader(reader, db::no_timeout);
+    }).get0();
     BOOST_REQUIRE(m);
     BOOST_REQUIRE(m->key().equal(*s, partition_key::from_singular(*s, data_value(sstring("key")))));
     BOOST_REQUIRE(!m->partition().partition_tombstone());
@@ -3263,8 +3264,9 @@ SEASTAR_THREAD_TEST_CASE(compact_deleted_cell) {
      *]
      *
      */
-    auto reader = compacted_sstable_reader(env, s, table_name, {1, 2});
-    mutation_opt m = read_mutation_from_flat_mutation_reader(reader, db::no_timeout).get0();
+    mutation_opt m = with_flat_mutation_reader(compacted_sstable_reader(env, s, table_name, {1, 2}), [&] (flat_mutation_reader& reader) {
+        return read_mutation_from_flat_mutation_reader(reader, db::no_timeout);
+    }).get0();
     BOOST_REQUIRE(m);
     BOOST_REQUIRE(m->key().equal(*s, partition_key::from_singular(*s, data_value(sstring("key")))));
     BOOST_REQUIRE(!m->partition().partition_tombstone());

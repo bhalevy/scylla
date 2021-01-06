@@ -153,6 +153,8 @@ future<> combined::consume_all(flat_mutation_reader mr) const
             return stop_iteration::no;
         }, db::no_timeout).then([] {
             perf_tests::stop_measuring_time();
+        }).finally([&mr] {
+            return mr.close();
         });
     });
 }
