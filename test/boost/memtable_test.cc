@@ -87,8 +87,17 @@ SEASTAR_TEST_CASE(test_memtable_conforms_to_mutation_source) {
 
 SEASTAR_TEST_CASE(test_memtable_with_many_versions_conforms_to_mutation_source) {
     return seastar::async([] {
+        struct reader_holder {
+            flat_mutation_reader r;
+            reader_holder(flat_mutation_reader&& reader) noexcept : r(std::move(reader)) {}
+            reader_holder(reader_holder&& o) = default;
+            ~reader_holder() {
+                r.close().get();
+            }
+        };
+
         lw_shared_ptr<memtable> mt;
-        std::vector<flat_mutation_reader> readers;
+        std::vector<reader_holder> readers;
         std::deque<dht::partition_range> ranges_storage;
         run_mutation_source_tests([&] (schema_ptr s, const std::vector<mutation>& muts) {
             readers.clear();
@@ -100,7 +109,7 @@ SEASTAR_TEST_CASE(test_memtable_with_many_versions_conforms_to_mutation_source) 
                 flat_mutation_reader rd = mt->make_flat_reader(s, tests::make_permit(), ranges_storage.emplace_back(dht::partition_range::make_singular(m.decorated_key())));
                 rd.set_max_buffer_size(1);
                 rd.fill_buffer(db::no_timeout).get();
-                readers.push_back(std::move(rd));
+                readers.emplace_back(std::move(rd));
             }
 
             return mt->as_data_source();
@@ -251,6 +260,7 @@ SEASTAR_TEST_CASE(test_virtual_dirty_accounting_on_flush) {
 
         // Create a reader which will cause many partition versions to be created
         flat_mutation_reader_opt rd1 = mt->make_flat_reader(s, tests::make_permit());
+        auto close_rd1 = defer([&rd1] { rd1.close().get(); });
         rd1->set_max_buffer_size(1);
         rd1->fill_buffer(db::no_timeout).get();
 
@@ -273,7 +283,7 @@ SEASTAR_TEST_CASE(test_virtual_dirty_accounting_on_flush) {
         virtual_dirty_values.push_back(mgr.virtual_dirty_memory());
 
         while ((*rd1)(db::no_timeout).get0()) ;
-        rd1 = {};
+        rd1.close().get();
 
         logalloc::shard_tracker().full_compaction();
 
@@ -384,7 +394,7 @@ SEASTAR_TEST_CASE(test_segment_migration_during_flush) {
         std::vector<size_t> virtual_dirty_values;
         virtual_dirty_values.push_back(mgr.virtual_dirty_memory());
 
-        auto rd = mt->make_flush_reader(s, service::get_local_priority_manager().memtable_flush_priority());
+      with_flat_mutation_reader_in_thread(mt->make_flush_reader(s, service::get_local_priority_manager().memtable_flush_priority()), [&] (flat_mutation_reader& rd) {
 
         for (int i = 0; i < partitions; ++i) {
             auto mfopt = rd(db::no_timeout).get0();
@@ -401,6 +411,7 @@ SEASTAR_TEST_CASE(test_segment_migration_during_flush) {
 
         std::reverse(virtual_dirty_values.begin(), virtual_dirty_values.end());
         BOOST_REQUIRE(std::is_sorted(virtual_dirty_values.begin(), virtual_dirty_values.end()));
+      });
     });
 }
 
@@ -502,54 +513,52 @@ SEASTAR_TEST_CASE(test_hash_is_cached) {
         set_column(m, "v");
         mt->apply(m);
 
-        {
-            auto rd = mt->make_flat_reader(s, tests::make_permit());
+        with_flat_mutation_reader_in_thread(mt->make_flat_reader(s, tests::make_permit()), [] (flat_mutation_reader& rd) {
             rd(db::no_timeout).get0()->as_partition_start();
             clustering_row row = std::move(*rd(db::no_timeout).get0()).as_clustering_row();
             BOOST_REQUIRE(!row.cells().cell_hash_for(0));
-        }
+        });
 
         {
             auto slice = s->full_slice();
             slice.options.set<query::partition_slice::option::with_digest>();
-            auto rd = mt->make_flat_reader(s, tests::make_permit(), query::full_partition_range, slice);
+          with_flat_mutation_reader_in_thread(mt->make_flat_reader(s, tests::make_permit(), query::full_partition_range, slice), [&] (flat_mutation_reader& rd) {
             rd(db::no_timeout).get0()->as_partition_start();
             clustering_row row = std::move(*rd(db::no_timeout).get0()).as_clustering_row();
             BOOST_REQUIRE(row.cells().cell_hash_for(0));
+          });
         }
 
-        {
-            auto rd = mt->make_flat_reader(s, tests::make_permit());
+        with_flat_mutation_reader_in_thread(mt->make_flat_reader(s, tests::make_permit()), [&] (flat_mutation_reader& rd) {
             rd(db::no_timeout).get0()->as_partition_start();
             clustering_row row = std::move(*rd(db::no_timeout).get0()).as_clustering_row();
             BOOST_REQUIRE(row.cells().cell_hash_for(0));
-        }
+        });
 
         set_column(m, "v");
         mt->apply(m);
 
-        {
-            auto rd = mt->make_flat_reader(s, tests::make_permit());
+        with_flat_mutation_reader_in_thread(mt->make_flat_reader(s, tests::make_permit()), [&] (flat_mutation_reader& rd) {
             rd(db::no_timeout).get0()->as_partition_start();
             clustering_row row = std::move(*rd(db::no_timeout).get0()).as_clustering_row();
             BOOST_REQUIRE(!row.cells().cell_hash_for(0));
-        }
+        });
 
         {
             auto slice = s->full_slice();
             slice.options.set<query::partition_slice::option::with_digest>();
-            auto rd = mt->make_flat_reader(s, tests::make_permit(), query::full_partition_range, slice);
+          with_flat_mutation_reader_in_thread(mt->make_flat_reader(s, tests::make_permit(), query::full_partition_range, slice), [&] (flat_mutation_reader& rd) {
             rd(db::no_timeout).get0()->as_partition_start();
             clustering_row row = std::move(*rd(db::no_timeout).get0()).as_clustering_row();
             BOOST_REQUIRE(row.cells().cell_hash_for(0));
+          });
         }
 
-        {
-            auto rd = mt->make_flat_reader(s, tests::make_permit());
+        with_flat_mutation_reader_in_thread(mt->make_flat_reader(s, tests::make_permit()), [&] (flat_mutation_reader& rd) {
             rd(db::no_timeout).get0()->as_partition_start();
             clustering_row row = std::move(*rd(db::no_timeout).get0()).as_clustering_row();
             BOOST_REQUIRE(row.cells().cell_hash_for(0));
-        }
+        });
     });
 }
 

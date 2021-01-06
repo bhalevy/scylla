@@ -125,12 +125,14 @@ snapshot_source snapshot_source_from_snapshot(mutation_source src) {
 
 bool has_key(row_cache& cache, const dht::decorated_key& key) {
     auto range = dht::partition_range::make_singular(key);
-    auto reader = cache.make_reader(cache.schema(), tests::make_permit(), range);
-    auto mo = read_mutation_from_flat_mutation_reader(reader, db::no_timeout).get0();
+  return with_flat_mutation_reader(cache.make_reader(cache.schema(), tests::make_permit(), range), [&] (flat_mutation_reader& reader) {
+   return read_mutation_from_flat_mutation_reader(reader, db::no_timeout).then([] (mutation_opt mo) {
     if (!bool(mo)) {
         return false;
     }
     return !mo->partition().empty();
+   });
+  }).get0();
 }
 
 void verify_has(row_cache& cache, const dht::decorated_key& key) {
@@ -865,9 +867,10 @@ SEASTAR_TEST_CASE(test_eviction) {
 
         for (auto&& key : keys) {
             auto pr = dht::partition_range::make_singular(key);
-            auto rd = cache.make_reader(s, tests::make_permit(), pr);
+          with_flat_mutation_reader_in_thread(cache.make_reader(s, tests::make_permit(), pr), [] (flat_mutation_reader& rd) {
             rd.set_max_buffer_size(1);
             rd.fill_buffer(db::no_timeout).get();
+          });
         }
 
         while (tracker.partitions() > 0) {
@@ -903,7 +906,7 @@ SEASTAR_TEST_CASE(test_eviction_from_invalidated) {
         std::shuffle(keys.begin(), keys.end(), std::default_random_engine(random()));
 
         for (auto&& key : keys) {
-            cache.make_reader(s, tests::make_permit(), dht::partition_range::make_singular(key));
+            cache.make_reader(s, tests::make_permit(), dht::partition_range::make_singular(key)).close().get();
         }
 
         cache.invalidate(row_cache::external_updater([] {})).get();
@@ -934,9 +937,10 @@ SEASTAR_TEST_CASE(test_eviction_after_schema_change) {
 
         {
             auto pr = dht::partition_range::make_singular(m.decorated_key());
-            auto rd = cache.make_reader(s2, tests::make_permit(), pr);
+          with_flat_mutation_reader_in_thread(cache.make_reader(s2, tests::make_permit(), pr), [] (flat_mutation_reader& rd) {
             rd.set_max_buffer_size(1);
             rd.fill_buffer(db::no_timeout).get();
+          });
         }
 
         while (tracker.region().evict_some() == memory::reclaiming_result::reclaimed_something) ;
@@ -951,6 +955,7 @@ SEASTAR_TEST_CASE(test_eviction_after_schema_change) {
 
 void test_sliced_read_row_presence(flat_mutation_reader reader, schema_ptr s, std::deque<int> expected)
 {
+    auto close_reader = defer([&reader] { reader.close().get(); });
     clustering_key::equality ck_eq(*s);
 
     auto mfopt = reader(db::no_timeout).get0();
@@ -1170,7 +1175,7 @@ SEASTAR_TEST_CASE(test_update_failure) {
         memory_hog.clear();
 
         auto has_only = [&] (const partitions_type& partitions) {
-            auto reader = cache.make_reader(s, tests::make_permit(), query::full_partition_range);
+          with_flat_mutation_reader_in_thread(cache.make_reader(s, tests::make_permit(), query::full_partition_range), [&] (flat_mutation_reader& reader) {
             for (int i = 0; i < partition_count; i++) {
                 auto mopt = read_mutation_from_flat_mutation_reader(reader, db::no_timeout).get0();
                 if (!mopt) {
@@ -1181,6 +1186,7 @@ SEASTAR_TEST_CASE(test_update_failure) {
                 BOOST_REQUIRE(it->second.equal(*s, mopt->partition()));
             }
             BOOST_REQUIRE(!reader(db::no_timeout).get0());
+          });
         };
 
         if (failed) {
@@ -1586,6 +1592,7 @@ SEASTAR_TEST_CASE(test_mvcc) {
             auto m12 = m1 + m2;
 
             flat_mutation_reader_opt mt1_reader_opt;
+            auto close_mt1_reader_opt = defer([&mt1_reader_opt] { mt1_reader_opt.close().get(); });
             if (with_active_memtable_reader) {
                 mt1_reader_opt = mt1->make_flat_reader(s, tests::make_permit());
                 mt1_reader_opt->set_max_buffer_size(1);
@@ -2037,8 +2044,9 @@ static void populate_range(row_cache& cache,
     const query::clustering_range& r = query::full_clustering_range)
 {
     auto slice = partition_slice_builder(*cache.schema()).with_range(r).build();
-    auto rd = cache.make_reader(cache.schema(), tests::make_permit(), pr, slice);
+  with_flat_mutation_reader_in_thread(cache.make_reader(cache.schema(), tests::make_permit(), pr, slice), [] (flat_mutation_reader& rd) {
     consume_all(rd);
+  });
 }
 
 static void apply(row_cache& cache, memtable_snapshot_source& underlying, const mutation& m) {
@@ -2316,6 +2324,7 @@ SEASTAR_TEST_CASE(test_exception_safety_of_update_from_memtable) {
             populate_range(cache, population_range);
             auto rd1_v1 = assert_that(make_reader(population_range));
             flat_mutation_reader_opt snap;
+            auto close_snap = defer([&snap] { snap.close().get(); });
 
             auto d = defer([&] {
                 memory::scoped_critical_alloc_section dfg;
@@ -2382,7 +2391,7 @@ SEASTAR_TEST_CASE(test_exception_safety_of_reads) {
             auto&& ranges = slice.row_ranges(*s, mut.key());
 
             memory::with_allocation_failures([&] {
-                auto rd = cache.make_reader(s, tests::make_permit(), query::full_partition_range, slice);
+              with_flat_mutation_reader_in_thread(cache.make_reader(s, tests::make_permit(), query::full_partition_range, slice), [&] (flat_mutation_reader& rd) {
                 auto got_opt = read_mutation_from_flat_mutation_reader(rd, db::no_timeout).get0();
                 BOOST_REQUIRE(got_opt);
                 BOOST_REQUIRE(!read_mutation_from_flat_mutation_reader(rd, db::no_timeout).get0());
@@ -2390,6 +2399,7 @@ SEASTAR_TEST_CASE(test_exception_safety_of_reads) {
                 assert_that(*got_opt).is_equal_to(mut, ranges);
                 assert_that(cache.make_reader(s, tests::make_permit(), query::full_partition_range, slice))
                     .produces(mut, ranges);
+              });
             });
         };
 
@@ -2448,13 +2458,14 @@ SEASTAR_TEST_CASE(test_exception_safety_of_transitioning_from_underlying_read_to
                 populate_range(cache, pr, s.make_ckey_range(6, 10));
             }
 
-            auto rd = cache.make_reader(s.schema(), tests::make_permit(), pr, slice);
+          with_flat_mutation_reader_in_thread(cache.make_reader(s.schema(), tests::make_permit(), pr, slice), [&] (flat_mutation_reader& rd) {
             auto got_opt = read_mutation_from_flat_mutation_reader(rd, db::no_timeout).get0();
             BOOST_REQUIRE(got_opt);
             auto mfopt = rd(db::no_timeout).get0();
             BOOST_REQUIRE(!mfopt);
 
             assert_that(*got_opt).is_equal_to(mut);
+          });
         });
     });
 }
@@ -2695,6 +2706,17 @@ SEASTAR_TEST_CASE(test_random_row_population) {
             std::unique_ptr<query::partition_slice> slice;
             flat_mutation_reader reader;
             mutation result;
+
+            read() = delete;
+            read(std::unique_ptr<query::partition_slice> slice_, flat_mutation_reader reader_, mutation result_) noexcept
+                    : slice(std::move(slice_))
+                    , reader(std::move(reader_))
+                    , result(std::move(result_))
+            { }
+            read(read&& o) = default;
+            ~read() {
+                reader.close().get();
+            }
         };
 
         std::vector<read> readers;
@@ -2705,18 +2727,18 @@ SEASTAR_TEST_CASE(test_random_row_population) {
         }
 
         while (!readers.empty()) {
-            auto i = readers.begin();
-            while (i != readers.end()) {
+            std::vector<read> remaining_readers;
+            for (auto i = readers.begin(); i != readers.end(); i++) {
                 auto mfo = i->reader(db::no_timeout).get0();
                 if (!mfo) {
                     auto&& ranges = i->slice->row_ranges(*s.schema(), pk.key());
                     assert_that(i->result).is_equal_to(m1, ranges);
-                    i = readers.erase(i);
                 } else {
                     i->result.apply(*mfo);
-                    ++i;
+                    remaining_readers.emplace_back(std::move(*i));
                 }
             }
+            readers = std::move(remaining_readers);
         }
 
         check_continuous(cache, pr, query::clustering_range::make({s.make_ckey(0)}, {s.make_ckey(9)}));
@@ -2794,6 +2816,7 @@ SEASTAR_TEST_CASE(test_continuity_is_populated_when_read_overlaps_with_older_ver
 
         {
             auto rd1 = make_reader(); // to keep the old version around
+            auto close_rd1 = defer([&rd1] { rd1.close().get(); });
 
             populate_range(cache, pr, query::clustering_range::make({s.make_ckey(2)}, {s.make_ckey(4)}));
 
@@ -2834,6 +2857,7 @@ SEASTAR_TEST_CASE(test_continuity_is_populated_when_read_overlaps_with_older_ver
             populate_range(cache, pr, s.make_ckey_range(8, 8));
 
             auto rd1 = make_reader(); // to keep the old version around
+            auto close_rd1 = defer([&rd1] { rd1.close().get(); });
 
             apply(m3);
 
@@ -2852,6 +2876,7 @@ SEASTAR_TEST_CASE(test_continuity_is_populated_when_read_overlaps_with_older_ver
             populate_range(cache, pr, query::clustering_range::make_singular(s.make_ckey(7)));
 
             auto rd1 = make_reader(); // to keep the old version around
+            auto close_rd1 = defer([&rd1] { rd1.close().get(); });
 
             apply(m4);
 
@@ -3029,6 +3054,7 @@ SEASTAR_TEST_CASE(test_concurrent_setting_of_continuity_on_read_upper_bound) {
 
         {
             auto rd1 = make_rd(); // to keep the old version around
+            auto close_rd1 = defer([&rd1] { rd1.close().get(); });
 
             populate_range(cache, pr, s.make_ckey_range(0, 0));
             populate_range(cache, pr, s.make_ckey_range(3, 3));
@@ -3095,6 +3121,7 @@ SEASTAR_TEST_CASE(test_tombstone_merging_of_overlapping_tombstones_in_many_versi
         populate_range(cache, pr, s.make_ckey_range(0, 3));
 
         auto rd1 = make_reader();
+        auto close_rd1 = defer([&rd1] { rd1.close().get(); });
 
         apply(cache, underlying, m2);
 
@@ -3151,8 +3178,9 @@ SEASTAR_TEST_CASE(test_concurrent_reads_and_eviction) {
                         .with_ranges(gen.make_random_ranges(1))
                         .build();
 
-                    auto rd = make_reader(slice);
-                    auto actual_opt = read_mutation_from_flat_mutation_reader(rd, db::no_timeout).get0();
+                    auto actual_opt = with_flat_mutation_reader(make_reader(slice), [] (flat_mutation_reader& rd) {
+                        return read_mutation_from_flat_mutation_reader(rd, db::no_timeout);
+                    }).get0();
                     BOOST_REQUIRE(actual_opt);
                     auto actual = *actual_opt;
 
@@ -3337,55 +3365,53 @@ SEASTAR_TEST_CASE(test_hash_is_cached) {
 
         row_cache cache(s, snapshot_source([&] { return underlying(); }), tracker);
 
-        {
-            auto rd = cache.make_reader(s, tests::make_permit());
+        with_flat_mutation_reader_in_thread(cache.make_reader(s, tests::make_permit()), [] (flat_mutation_reader& rd) {
             rd(db::no_timeout).get0()->as_partition_start();
             clustering_row row = std::move(*rd(db::no_timeout).get0()).as_clustering_row();
             BOOST_REQUIRE(!row.cells().cell_hash_for(0));
-        }
+        });
 
         {
             auto slice = s->full_slice();
             slice.options.set<query::partition_slice::option::with_digest>();
-            auto rd = cache.make_reader(s, tests::make_permit(), query::full_partition_range, slice);
+          with_flat_mutation_reader_in_thread(cache.make_reader(s, tests::make_permit(), query::full_partition_range, slice), [] (flat_mutation_reader& rd) {
             rd(db::no_timeout).get0()->as_partition_start();
             clustering_row row = std::move(*rd(db::no_timeout).get0()).as_clustering_row();
             BOOST_REQUIRE(row.cells().cell_hash_for(0));
+          });
         }
 
-        {
-            auto rd = cache.make_reader(s, tests::make_permit());
+        with_flat_mutation_reader_in_thread(cache.make_reader(s, tests::make_permit()), [] (flat_mutation_reader& rd) {
             rd(db::no_timeout).get0()->as_partition_start();
             clustering_row row = std::move(*rd(db::no_timeout).get0()).as_clustering_row();
             BOOST_REQUIRE(row.cells().cell_hash_for(0));
-        }
+        });
 
         auto mt = make_lw_shared<memtable>(s);
         mt->apply(make_new_mutation(s, mut.key()));
         cache.update(row_cache::external_updater([&] { }), *mt).get();
 
-        {
-            auto rd = cache.make_reader(s, tests::make_permit());
+        with_flat_mutation_reader_in_thread(cache.make_reader(s, tests::make_permit()), [] (flat_mutation_reader& rd) {
             rd(db::no_timeout).get0()->as_partition_start();
             clustering_row row = std::move(*rd(db::no_timeout).get0()).as_clustering_row();
             BOOST_REQUIRE(!row.cells().cell_hash_for(0));
-        }
+        });
 
         {
             auto slice = s->full_slice();
             slice.options.set<query::partition_slice::option::with_digest>();
-            auto rd = cache.make_reader(s, tests::make_permit(), query::full_partition_range, slice);
+          with_flat_mutation_reader_in_thread(cache.make_reader(s, tests::make_permit(), query::full_partition_range, slice), [] (flat_mutation_reader& rd) {
             rd(db::no_timeout).get0()->as_partition_start();
             clustering_row row = std::move(*rd(db::no_timeout).get0()).as_clustering_row();
             BOOST_REQUIRE(row.cells().cell_hash_for(0));
+          });
         }
 
-        {
-            auto rd = cache.make_reader(s, tests::make_permit());
+        with_flat_mutation_reader_in_thread(cache.make_reader(s, tests::make_permit()), [] (flat_mutation_reader& rd) {
             rd(db::no_timeout).get0()->as_partition_start();
             clustering_row row = std::move(*rd(db::no_timeout).get0()).as_clustering_row();
             BOOST_REQUIRE(row.cells().cell_hash_for(0));
-        }
+        });
     });
 }
 
@@ -3599,7 +3625,7 @@ SEASTAR_TEST_CASE(test_reading_progress_with_small_buffer_and_invalidation) {
         populate_range(cache, pkr, s.make_ckey_range(4, 7));
         populate_range(cache, pkr, s.make_ckey_range(3, 7));
 
-        auto rd3 = cache.make_reader(s.schema(), tests::make_permit(), pkr);
+      with_flat_mutation_reader_in_thread(cache.make_reader(s.schema(), tests::make_permit(), pkr), [&] (flat_mutation_reader& rd3) {
         rd3.set_max_buffer_size(1);
 
         while (!rd3.is_end_of_stream()) {
@@ -3611,5 +3637,6 @@ SEASTAR_TEST_CASE(test_reading_progress_with_small_buffer_and_invalidation) {
         }
 
         assert_that(result).is_equal_to(m1);
+      });
     });
 }
