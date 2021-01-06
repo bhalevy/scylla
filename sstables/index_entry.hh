@@ -400,7 +400,6 @@ class promoted_index {
     deletion_time _del_time;
     uint32_t _promoted_index_size;
     std::unique_ptr<clustered_index_cursor> _cursor;
-    bool _reader_closed = false;
 public:
     promoted_index(const schema& s, deletion_time del_time, uint32_t promoted_index_size, std::unique_ptr<clustered_index_cursor> index)
             : _del_time{del_time}
