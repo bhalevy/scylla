@@ -197,8 +197,8 @@ future<> send_mutation_fragments(lw_shared_ptr<send_info> si) {
                     return sink(frozen_mutation_fragment(bytes_ostream()), stream_mutation_fragments_cmd::error).then([ep = std::move(ep)] () mutable {
                         return make_exception_future<>(std::move(ep));
                     });
-                }).finally([&sink] () mutable {
-                    return sink.close();
+                }).finally([&sink, si] () mutable {
+                    return when_all_succeed(sink.close(), si->reader.close()).discard_result();
                 });
             });
         }();
