@@ -29,6 +29,7 @@
 #include <seastar/core/sleep.hh>
 #include <seastar/core/thread.hh>
 #include <seastar/testing/thread_test_case.hh>
+#include <seastar/util/closeable.hh>
 
 using namespace std::chrono_literals;
 
@@ -743,9 +744,9 @@ SEASTAR_THREAD_TEST_CASE(test_immediate_evict_on_insert) {
 
 SEASTAR_THREAD_TEST_CASE(test_unique_inactive_read_handle) {
     reader_concurrency_semaphore sem1(reader_concurrency_semaphore::no_limits{}, "sem1");
-    auto stop_sem1 = auto_stopper(sem1);
+    auto stop_sem1 = deferred_stop(sem1);
     reader_concurrency_semaphore sem2(reader_concurrency_semaphore::no_limits{}, ""); // to see the message for an unnamed semaphore
-    auto stop_sem2 = auto_stopper(sem2);
+    auto stop_sem2 = deferred_stop(sem2);
 
     auto schema = schema_builder("ks", "cf")
         .with_column("pk", int32_type, column_kind::partition_key)
