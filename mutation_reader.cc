@@ -1094,8 +1094,8 @@ public:
         return std::move(*_reader);
     }
     virtual future<> close() noexcept override {
-        if (auto r = std::move(_reader)) {
-            return r->close().finally([r = std::move(r)] {});
+        if (_reader) {
+            return std::move(*_reader).close();
         }
         return make_ready_future<>();
     }
@@ -1555,7 +1555,10 @@ evictable_reader::evictable_reader(
 }
 
 evictable_reader::~evictable_reader() {
-    try_resume();
+    auto reader_opt = try_resume();
+    if (reader_opt) {
+        on_internal_error(mrlog, "evictable_reader was not closed");
+    }
 }
 
 future<> evictable_reader::fill_buffer(db::timeout_clock::time_point timeout) {
@@ -1570,9 +1573,15 @@ future<> evictable_reader::fill_buffer(db::timeout_clock::time_point timeout) {
             [this, pending_next_partition, timeout] (flat_mutation_reader& reader) mutable {
       auto maybe_next_partition = pending_next_partition ? reader.next_partition() : make_ready_future<>();
       return maybe_next_partition.then([this, timeout, &reader] {
-        return fill_buffer(reader, timeout).then([this, &reader] {
+        return fill_buffer(reader, timeout).then_wrapped([this, &reader] (future<> f) {
+            if (f.failed()) {
+                return std::move(reader).close().finally([ex = f.get_exception()] () mutable {
+                    return make_exception_future<>(std::move(ex));
+                });
+            }
             _end_of_stream = reader.is_end_of_stream() && reader.is_buffer_empty();
             maybe_pause(std::move(reader));
+            return make_ready_future<>();
         });
       });
     });
@@ -1610,11 +1619,17 @@ future<> evictable_reader::fast_forward_to(const dht::partition_range& pr, db::t
 }
 
 future<> evictable_reader::abort(std::exception_ptr ex) noexcept {
-    return _reader.abort(std::move(ex));
+    auto abort_reader = _reader.abort(ex);
+    auto reader_opt = try_resume();
+    auto abort_reader_opt = reader_opt.abort(ex);
+    return when_all_succeed(std::move(abort_reader), std::move(abort_reader_opt)).discard_result();
 }
 
 future<> evictable_reader::close() noexcept {
-    return _reader.close();
+    auto close_reader = _reader.close();
+    auto reader_opt = try_resume();
+    auto close_reader_opt = reader_opt.close();
+    return when_all_succeed(std::move(close_reader), std::move(close_reader_opt)).discard_result();
 }
 
 evictable_reader_handle::evictable_reader_handle(evictable_reader& r) : _r(&r)
