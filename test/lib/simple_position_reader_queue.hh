@@ -42,6 +42,7 @@ struct simple_position_reader_queue : public position_reader_queue {
     using container_t = std::vector<reader_bounds>;
     container_t _rs;
     container_t::iterator _it;
+    std::exception_ptr _ex;
 
     simple_position_reader_queue(const schema& s, std::vector<reader_bounds> rs)
         // precondition: rs sorted w.r.t lower.
@@ -52,6 +53,10 @@ struct simple_position_reader_queue : public position_reader_queue {
     virtual ~simple_position_reader_queue() override = default;
 
     virtual std::vector<reader_and_upper_bound> pop(position_in_partition_view bound) override {
+        if (_ex) {
+            std::rethrow_exception(_ex);
+        }
+
         if (empty(bound)) {
             return {};
         }
@@ -69,5 +74,18 @@ struct simple_position_reader_queue : public position_reader_queue {
 
     virtual bool empty(position_in_partition_view bound) const override {
         return _it == _rs.end() || _cmp(bound, _it->lower) < 0;
+    }
+
+    virtual future<> abort(std::exception_ptr ex) noexcept override {
+        _ex = std::move(ex);
+        return parallel_for_each(_it, _rs.end(), [this] (reader_bounds& rb) {
+            return rb.r.abort(_ex);
+        });
+    }
+
+    virtual future<> close() noexcept override {
+        return parallel_for_each(_it, _rs.end(), [] (reader_bounds& rb) {
+            return rb.r.close();
+        });
     }
 };
