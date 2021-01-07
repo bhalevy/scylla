@@ -2576,6 +2576,12 @@ class clustering_order_reader_merger {
         return _gallop_mode_hits >= _gallop_mode_entering_threshold;
     }
 
+    future<> erase_reader(reader_iterator it) noexcept {
+        return std::move(it->reader).close().then([this, it = std::move(it)] {
+            _all_readers.erase(it);
+        });
+    }
+
     // Retrieve the next fragment from the reader pointed to by `it`.
     // The function assumes that we're not in galloping mode, `it` is in `_unpeeked_readers`,
     // and all fragments previously returned from the reader have already been returned by operator().
@@ -2593,7 +2599,7 @@ class clustering_order_reader_merger {
                 // Otherwise it may start returning fragments later, so we save it for the moment
                 // in _halted_readers and will bring it back when we get fast-forwarded.
                 if (_cmp(it->upper_bound, _pr_end) < 0) {
-                    _all_readers.erase(it);
+                    return erase_reader(std::move(it));
                 } else {
                     _halted_readers.push_back(it);
                 }
@@ -2632,7 +2638,7 @@ class clustering_order_reader_merger {
             }
 
             if (mf->is_end_of_partition()) {
-                _all_readers.erase(it);
+                return erase_reader(std::move(it));
             } else {
                 _peeked_readers.emplace_back(it);
                 boost::range::push_heap(_peeked_readers, _peeked_cmp);
@@ -2658,6 +2664,7 @@ class clustering_order_reader_merger {
     // Otherwise, the reader is pushed onto _peeked_readers and we retry in non-galloping mode.
     future<mutation_fragment_batch> peek_galloping_reader(db::timeout_clock::time_point timeout) {
         return _galloping_reader->reader.peek(timeout).then([this, timeout] (mutation_fragment* mf) {
+            bool erase = false;
             if (mf) {
                 if (mf->is_partition_start()) {
                     on_internal_error(mrlog, format(
@@ -2673,7 +2680,7 @@ class clustering_order_reader_merger {
                 }
 
                 if (mf->is_end_of_partition()) {
-                    _all_readers.erase(_galloping_reader);
+                    erase = true;
                 } else {
                     if (_reader_queue->empty(mf->position())
                             && (_peeked_readers.empty()
@@ -2693,17 +2700,21 @@ class clustering_order_reader_merger {
             } else {
                 // See comment in `peek_reader`.
                 if (_cmp(_galloping_reader->upper_bound, _pr_end) < 0) {
-                    _all_readers.erase(_galloping_reader);
+                    erase = true;
                 } else {
                     _halted_readers.push_back(_galloping_reader);
                 }
             }
 
+            auto f = erase ? erase_reader(std::move(_galloping_reader)) : make_ready_future<>();
+
             // The galloping reader has either been removed, halted, or lost with the other readers.
             // Proceed with the normal path.
+          return f.then([this, timeout] {
             _galloping_reader = {};
             _gallop_mode_hits = 0;
             return (*this)(timeout);
+          });
         });
     }
 
@@ -2848,25 +2859,14 @@ public:
         for (auto& r : _all_readers) {
             co_await r.reader.abort(ex);
         }
-        if (!_reader_queue->empty(_pr_end)) {
-            auto rs = _reader_queue->pop(_pr_end);
-            for (auto& r: rs) {
-                co_await r.reader.abort(ex);
-                _all_readers.push_front(std::move(r));
-            }
-        }
+        co_await _reader_queue->abort(std::move(ex));
     }
 
     future<> close() noexcept {
         for (auto& r : _all_readers) {
             co_await r.reader.close();
         }
-        if (!_reader_queue->empty(_pr_end)) {
-            auto rs = _reader_queue->pop(_pr_end);
-            for (auto& r: rs) {
-                co_await r.reader.close();
-            }
-        }
+        co_await _reader_queue->close();
     }
 };
 
