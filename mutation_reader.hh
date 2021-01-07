@@ -698,6 +698,12 @@ public:
 
     // Return the next batch of readers from `pref(b)`.
     virtual std::vector<reader_and_upper_bound> pop(position_in_partition_view bound) = 0;
+
+    // Abort all readers in queue
+    virtual future<> abort(std::exception_ptr ex) noexcept = 0;
+
+    // Close all readers in queue
+    virtual future<> close() noexcept = 0;
 };
 
 flat_mutation_reader make_clustering_combined_reader(schema_ptr schema,

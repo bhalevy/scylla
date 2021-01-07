@@ -511,6 +511,14 @@ public:
     virtual bool empty(position_in_partition_view bound) const override {
         return _it == _end || _cmp(_it->first, bound) > 0;
     }
+
+    virtual future<> abort(std::exception_ptr ex) noexcept override {
+        return make_ready_future<>();
+    }
+
+    virtual future<> close() noexcept override {
+        return make_ready_future<>();
+    }
 };
 
 std::unique_ptr<position_reader_queue> time_series_sstable_set::make_min_position_reader_queue(

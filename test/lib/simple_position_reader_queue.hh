@@ -70,4 +70,17 @@ struct simple_position_reader_queue : public position_reader_queue {
     virtual bool empty(position_in_partition_view bound) const override {
         return _it == _rs.end() || _cmp(bound, _it->lower) < 0;
     }
+
+
+    virtual future<> abort(std::exception_ptr ex) noexcept override {
+        return parallel_for_each(_rs, [ex] (reader_bounds& rb) {
+            return rb.r.abort(ex);
+        });
+    }
+
+    virtual future<> close() noexcept override {
+        return parallel_for_each(_rs, [] (reader_bounds& rb) {
+            return rb.r.close();
+        });
+    }
 };
