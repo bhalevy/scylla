@@ -1162,10 +1162,10 @@ private:
     flat_mutation_reader resume_or_create_reader();
     void maybe_validate_partition_start(const flat_mutation_reader::tracked_buffer& buffer);
     void validate_position_in_partition(position_in_partition_view pos) const;
-    bool should_drop_fragment(const mutation_fragment& mf);
+    bool should_drop_fragment(const mutation_fragment& mf) noexcept;
     bool maybe_trim_range_tombstone(mutation_fragment& mf) const;
-    future<> do_fill_buffer(flat_mutation_reader& reader, db::timeout_clock::time_point timeout);
-    future<> fill_buffer(flat_mutation_reader& reader, db::timeout_clock::time_point timeout);
+    future<> do_fill_buffer(flat_mutation_reader& reader, db::timeout_clock::time_point timeout) noexcept;
+    future<> fill_buffer(flat_mutation_reader& reader, db::timeout_clock::time_point timeout) noexcept;
 
 public:
     evictable_reader(
@@ -1408,7 +1408,7 @@ void evictable_reader::validate_position_in_partition(position_in_partition_view
     }
 }
 
-bool evictable_reader::should_drop_fragment(const mutation_fragment& mf) {
+bool evictable_reader::should_drop_fragment(const mutation_fragment& mf) noexcept {
     if (_drop_partition_start && mf.is_partition_start()) {
         _drop_partition_start = false;
         return true;
@@ -1453,7 +1453,7 @@ bool evictable_reader::maybe_trim_range_tombstone(mutation_fragment& mf) const {
     return true;
 }
 
-future<> evictable_reader::do_fill_buffer(flat_mutation_reader& reader, db::timeout_clock::time_point timeout) {
+future<> evictable_reader::do_fill_buffer(flat_mutation_reader& reader, db::timeout_clock::time_point timeout) noexcept {
     if (!_drop_partition_start && !_drop_static_row) {
         auto fill_buf_fut = reader.fill_buffer(timeout);
         if (_validate_partition_key) {
@@ -1474,7 +1474,7 @@ future<> evictable_reader::do_fill_buffer(flat_mutation_reader& reader, db::time
     });
 }
 
-future<> evictable_reader::fill_buffer(flat_mutation_reader& reader, db::timeout_clock::time_point timeout) {
+future<> evictable_reader::fill_buffer(flat_mutation_reader& reader, db::timeout_clock::time_point timeout) noexcept {
     return do_fill_buffer(reader, timeout).then([this, &reader, timeout] {
         if (reader.is_buffer_empty()) {
             return make_ready_future<>();
