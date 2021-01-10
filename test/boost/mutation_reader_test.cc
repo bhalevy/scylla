@@ -2182,7 +2182,8 @@ SEASTAR_THREAD_TEST_CASE(test_stopping_reader_with_pending_read_ahead) {
             });
         });
 
-        smp::submit_to(shard_of_interest, [remote_control = remote_control.get()] {
+        smp::submit_to(shard_of_interest, [&, remote_control = remote_control.get()] {
+            buffer_filled = true;
             remote_control->buffer_filled.set_value();
         }).get0();
 
