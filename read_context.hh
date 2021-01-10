@@ -74,7 +74,7 @@ public:
             _reader_creation_phase = phase;
         }
         clogger.debug("autoupdating_underlying_reader::move_to_next_partition: reader={}", _reader->description());
-        _reader->next_partition();
+      return _reader->next_partition().then([this, timeout] {
         clogger.debug("autoupdating_underlying_reader::move_to_next_partition: is_end_of_stream={} is_buffer_empty={}", _reader->is_end_of_stream(), _reader->is_buffer_empty());
         if (_reader->is_end_of_stream() && _reader->is_buffer_empty()) {
             return make_ready_future<mutation_fragment_opt>();
@@ -88,6 +88,7 @@ public:
             }
             return std::move(mfopt);
         });
+      });
     }
     future<> fast_forward_to(dht::partition_range&& range, db::timeout_clock::time_point timeout) {
         auto snapshot_and_phase = _cache.snapshot_of(dht::ring_position_view::for_range_start(_range));

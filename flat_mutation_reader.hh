@@ -124,7 +124,7 @@ public:
         impl(schema_ptr s, reader_permit permit, sstring description) : _buffer(permit), _schema(std::move(s)), _permit(std::move(permit)), _description(std::move(description)) { }
         virtual ~impl() {}
         virtual future<> fill_buffer(db::timeout_clock::time_point) = 0;
-        virtual void next_partition() = 0;
+        virtual future<> next_partition() = 0;
 
         bool is_end_of_stream() const { return _end_of_stream; }
         bool is_buffer_empty() const { return _buffer.empty(); }
@@ -197,7 +197,7 @@ public:
                 }
                 auto mf = pop_mutation_fragment();
                 if (mf.is_partition_start() && !filter(mf.as_partition_start().key())) {
-                    next_partition();
+                    next_partition().get();
                     continue;
                 }
                 if (!filter(mf)) {
@@ -253,7 +253,9 @@ public:
                     if (_consumer.consume_end_of_partition()) {
                         return make_ready_future<stop_iteration>(stop_iteration::yes);
                     }
-                    _reader.next_partition();
+                    return _reader.next_partition().then([] {
+                        return make_ready_future<stop_iteration>(stop_iteration::no);
+                    });
                 }
                 return make_ready_future<stop_iteration>(stop_iteration::no);
             }
@@ -479,7 +481,7 @@ public:
     //
     // Can be used to skip over entire partitions if interleaved with
     // `operator()()` calls.
-    void next_partition() { _impl->next_partition(); }
+    future<> next_partition() { return _impl->next_partition(); }
 
     future<> fill_buffer(db::timeout_clock::time_point timeout) { return _impl->fill_buffer(timeout); }
 
@@ -732,11 +734,12 @@ flat_mutation_reader transform(flat_mutation_reader r, T t) {
                 }
             });
         }
-        virtual void next_partition() override {
+        virtual future<> next_partition() override {
             clear_buffer_to_next_partition();
             if (is_buffer_empty()) {
-                _reader.next_partition();
+                return _reader.next_partition();
             }
+            return make_ready_future<>();
         }
         virtual future<> fast_forward_to(const dht::partition_range& pr, db::timeout_clock::time_point timeout) override {
             clear_buffer();
@@ -780,12 +783,13 @@ public:
         forward_buffer_to(pr.start());
         return to_reference(_underlying).fast_forward_to(std::move(pr), timeout);
     }
-    virtual void next_partition() override {
+    virtual future<> next_partition() override {
         clear_buffer_to_next_partition();
         if (is_buffer_empty()) {
-            to_reference(_underlying).next_partition();
+            return to_reference(_underlying).next_partition();
         }
         _end_of_stream = to_reference(_underlying).is_end_of_stream() && to_reference(_underlying).is_buffer_empty();
+        return make_ready_future<>();
     }
     virtual future<> fast_forward_to(const dht::partition_range& pr, db::timeout_clock::time_point timeout) override {
         _end_of_stream = false;
