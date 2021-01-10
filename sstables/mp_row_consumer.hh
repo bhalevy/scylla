@@ -72,7 +72,7 @@ protected:
     std::optional<dht::decorated_key> _current_partition_key;
 public:
     mp_row_consumer_reader(schema_ptr s, reader_permit permit, shared_sstable sst)
-        : impl(std::move(s), std::move(permit))
+        : impl(std::move(s), std::move(permit), "mp_row_consumer_reader")
         , _sst(std::move(sst))
     { }
 
