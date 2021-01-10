@@ -49,7 +49,7 @@ public:
     static constexpr uint64_t CLUSTERING_ROW_COUNT = 4500ULL * 1000ULL * 1000ULL;
 
     enormous_table_reader(schema_ptr schema, const dht::partition_range& prange, const query::partition_slice& slice)
-        : trivially_abortable_impl(schema, tests::make_permit())
+        : trivially_abortable_impl(schema, tests::make_permit(), "enormous_table_reader")
         , _schema(std::move(schema))
         , _slice(slice)
     {

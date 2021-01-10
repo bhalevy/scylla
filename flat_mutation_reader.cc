@@ -148,7 +148,7 @@ flat_mutation_reader make_reversing_reader(flat_mutation_reader& original, query
         }
     public:
         explicit partition_reversing_mutation_reader(flat_mutation_reader& mr, query::max_result_size max_size)
-            : flat_mutation_reader::impl(mr.schema(), mr.permit())
+            : flat_mutation_reader::impl(mr.schema(), mr.permit(), "partition_reversing_mutation_reader")
             , _source(&mr)
             , _range_tombstones(*_schema)
             , _max_size(max_size)
@@ -239,7 +239,7 @@ flat_mutation_reader make_forwardable(flat_mutation_reader m) {
             });
         }
     public:
-        reader(flat_mutation_reader r) : impl(r.schema(), r.permit()), _underlying(std::move(r)), _current({
+        reader(flat_mutation_reader r) : impl(r.schema(), r.permit(), format("make_forwardable({})", r.description())), _underlying(std::move(r)), _current({
             position_in_partition(position_in_partition::partition_start_tag_t()),
             position_in_partition(position_in_partition::after_static_row_tag_t())
         }) { }
@@ -329,7 +329,7 @@ flat_mutation_reader make_nonforwardable(flat_mutation_reader r, bool single_par
         }
     public:
         reader(flat_mutation_reader r, bool single_partition)
-            : impl(r.schema(), r.permit())
+            : impl(r.schema(), r.permit(), "make_nonforwardable::reader")
             , _underlying(std::move(r))
             , _single_partition(single_partition)
         { }
@@ -367,7 +367,7 @@ flat_mutation_reader make_nonforwardable(flat_mutation_reader r, bool single_par
 
 class empty_flat_reader final : public flat_mutation_reader::trivially_abortable_impl {
 public:
-    empty_flat_reader(schema_ptr s, reader_permit permit) : trivially_abortable_impl(std::move(s), std::move(permit)) { _end_of_stream = true; }
+    empty_flat_reader(schema_ptr s, reader_permit permit) : trivially_abortable_impl(std::move(s), std::move(permit), "empty_flat_reader") { _end_of_stream = true; }
     virtual future<> fill_buffer(db::timeout_clock::time_point timeout) override { return make_ready_future<>(); }
     virtual future<> next_partition() override { return make_ready_future<>(); }
     virtual future<> fast_forward_to(const dht::partition_range& pr, db::timeout_clock::time_point timeout) override { return make_ready_future<>(); };
@@ -527,7 +527,7 @@ flat_mutation_reader_from_mutations(reader_permit permit, std::vector<mutation> 
         }
     public:
         reader(schema_ptr s, reader_permit permit, std::vector<mutation>&& mutations, const dht::partition_range& pr)
-            : trivially_abortable_impl(s, std::move(permit))
+            : trivially_abortable_impl(s, std::move(permit), "flat_mutation_reader_from_mutations")
             , _mutations(std::move(mutations))
             , _cur(find_first_partition(_mutations, pr))
             , _end(find_last_partition(_mutations, pr))
@@ -620,7 +620,7 @@ public:
             const query::partition_slice& slice,
             const io_priority_class& pc,
             tracing::trace_state_ptr trace_state)
-        : impl(s, std::move(permit))
+        : impl(s, std::move(permit), "forwardable_empty_mutation_reader")
         , _source(std::move(source))
         , _slice(slice)
         , _pc(pc)
@@ -691,7 +691,7 @@ public:
             const query::partition_slice& slice,
             const io_priority_class& pc,
             tracing::trace_state_ptr trace_state)
-        : impl(s, std::move(permit))
+        : impl(s, std::move(permit), "flat_multi_range_mutation_reader")
         , _generator(std::move(generator))
         , _reader(source.make_reader(s, _permit, first_range, slice, pc, trace_state, streamed_mutation::forwarding::no, mutation_reader::forwarding::yes))
     {
@@ -848,7 +848,7 @@ make_flat_mutation_reader_from_fragments(schema_ptr schema, reader_permit permit
 
     public:
         reader(schema_ptr schema, reader_permit permit, std::deque<mutation_fragment> fragments, const dht::partition_range& pr)
-                : flat_mutation_reader::trivially_abortable_impl(std::move(schema), std::move(permit))
+                : flat_mutation_reader::trivially_abortable_impl(std::move(schema), std::move(permit), "flat_mutation_reader_from_fragments")
                 , _fragments(std::move(fragments))
                 , _pr(&pr)
                 , _cmp(*_schema) {
@@ -921,7 +921,7 @@ class generating_reader final : public flat_mutation_reader::trivially_abortable
     std::function<future<mutation_fragment_opt> ()> _get_next_fragment;
 public:
     generating_reader(schema_ptr s, reader_permit permit, std::function<future<mutation_fragment_opt> ()> get_next_fragment)
-        : trivially_abortable_impl(std::move(s), std::move(permit)), _get_next_fragment(std::move(get_next_fragment))
+        : trivially_abortable_impl(std::move(s), std::move(permit), "generating_reader"), _get_next_fragment(std::move(get_next_fragment))
     { }
     virtual future<> fill_buffer(db::timeout_clock::time_point) override {
         return do_until([this] { return is_end_of_stream() || is_buffer_full(); }, [this] {

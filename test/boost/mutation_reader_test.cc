@@ -911,7 +911,7 @@ class tracking_reader : public flat_mutation_reader::impl {
     std::size_t _ff_count{0};
 public:
     tracking_reader(schema_ptr schema, reader_permit permit, lw_shared_ptr<sstables::sstable> sst)
-        : impl(schema, permit)
+        : impl(schema, permit, "mutation_reader_test::tracking_reader")
         , _reader(sst->read_range_rows_flat(
                         schema,
                         permit,
@@ -2045,7 +2045,7 @@ private:
 
 public:
     puppet_reader(simple_schema s, control& ctrl, std::vector<fill_buffer_action> actions, std::vector<uint32_t> pkeys)
-        : trivially_abortable_impl(s.schema(), tests::make_permit())
+        : trivially_abortable_impl(s.schema(), tests::make_permit(), "mutation_reader_test::puppet_reader")
         , _s(std::move(s))
         , _ctrl(ctrl)
         , _actions(std::move(actions))
@@ -2972,7 +2972,7 @@ SEASTAR_THREAD_TEST_CASE(test_manual_paused_evictable_reader_is_mutation_source)
                 const io_priority_class& pc,
                 tracing::trace_state_ptr trace_state,
                 mutation_reader::forwarding fwd_mr)
-            : impl(mt.schema(), tests::make_permit()), _reader(nullptr) {
+            : impl(mt.schema(), tests::make_permit(), "mutation_reader_test::maybe_pausing_reader"), _reader(nullptr) {
             std::tie(_reader, _handle) = make_manually_paused_evictable_reader(mt.as_data_source(), mt.schema(), permit, pr, ps, pc,
                     std::move(trace_state), fwd_mr);
         }
@@ -3768,7 +3768,7 @@ SEASTAR_THREAD_TEST_CASE(clustering_combined_reader_mutation_source_test) {
 
         multi_partition_reader(schema_ptr s, reader_permit permit,
                 container_t readers, const dht::partition_range& range)
-            : impl(std::move(s), std::move(permit))
+            : impl(std::move(s), std::move(permit), "mutation_reader_test::multi_partition_reader")
             , _range(range), _readers(std::move(readers))
             , _it(std::partition_point(_readers.begin(), _readers.end(), [this, cmp = dht::ring_position_comparator(*_schema)]
                     (auto& r) { return _range.get().before(r.first, cmp); }))
