@@ -87,18 +87,18 @@ public:
     virtual future<> fill_buffer(db::timeout_clock::time_point timeout) override {
         while (!is_buffer_full() && !is_end_of_stream()) {
             co_await _rd.fill_buffer(timeout);
-                while (!_rd.is_buffer_empty()) {
-                    auto mf = _rd.pop_mutation_fragment();
-                    if (mf.is_partition_start()) {
-                        auto& dk = mf.as_partition_start().key();
-                        if (!_filter(dk)) {
-                            _rd.next_partition();
-                            continue;
-                        }
+            while (!_rd.is_buffer_empty()) {
+                auto mf = _rd.pop_mutation_fragment();
+                if (mf.is_partition_start()) {
+                    auto& dk = mf.as_partition_start().key();
+                    if (!_filter(dk)) {
+                        _rd.next_partition();
+                        continue;
                     }
-                    push_mutation_fragment(std::move(mf));
                 }
-                _end_of_stream = _rd.is_end_of_stream();
+                push_mutation_fragment(std::move(mf));
+            }
+            _end_of_stream = _rd.is_end_of_stream();
         }
     }
     virtual void next_partition() override {
