@@ -629,8 +629,9 @@ public:
                 return stop_iteration(is_buffer_full());
             }, timeout).then([this] {
                 if (_partition_reader->is_end_of_stream() && _partition_reader->is_buffer_empty()) {
-                    _partition_reader = std::nullopt;
+                    return _partition_reader.close();
                 }
+                return make_ready_future<>();
             });
         });
     }

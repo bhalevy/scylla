@@ -611,7 +611,13 @@ class flat_mutation_reader_opt {
 
     flat_mutation_reader_opt& assign(flat_mutation_reader_opt&& o) noexcept {
         if (_reader) {
-            fmr_logger.error("flat_mutation_reader_opt: {} reassigned without closing", _reader->description());
+            try {
+                on_internal_error(fmr_logger, format("flat_mutation_reader_opt: {} reassigned without closing", _reader->description()));
+            } catch (...) {
+                (void)close().handle_exception([] (std::exception_ptr ex) {
+                    fmr_logger.warn("flat_mutation_reader_opt: failed auto-closing reader: {}. Ignored...", ex);
+                });
+            }
         }
         _reader = std::move(o._reader);
         return *this;
