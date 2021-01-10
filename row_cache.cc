@@ -924,11 +924,13 @@ cache_entry& row_cache::lookup(const dht::decorated_key& key) {
 
 mutation_source& row_cache::snapshot_for_phase(phase_type phase) {
     if (phase == _underlying_phase) {
+        clogger.debug("snapshot_for_phase: underlying");
         return _underlying;
     } else {
         if (phase + 1 < _underlying_phase) {
             throw std::runtime_error(format("attempted to read from retired phase {} (current={})", phase, _underlying_phase));
         }
+        clogger.debug("snapshot_for_phase: prev");
         return *_prev_snapshot;
     }
 }

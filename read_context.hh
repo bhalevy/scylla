@@ -54,13 +54,16 @@ public:
         _last_key = std::move(_new_last_key);
         auto start = population_range_start();
         auto phase = _cache.phase_of(start);
-        if (!_reader || _reader_creation_phase != phase) {
+        auto refresh_reader = make_ready_future<>();
+        fmr_logger.debug("move_to_next_partition: reader_opt={} reader={} new phase={}", bool(_reader), bool(*_reader), _reader_creation_phase != phase);
+        if (!_reader || !*_reader || _reader_creation_phase != phase) {
             if (_last_key) {
                 auto cmp = dht::ring_position_comparator(*_cache._schema);
                 auto&& new_range = _range.split_after(*_last_key, cmp);
                 if (!new_range) {
-                    _reader = {};
+                  return close().then([] {
                     return make_ready_future<mutation_fragment_opt>();
+                  });
                 }
                 _range = std::move(*new_range);
                 _last_key = {};
@@ -68,12 +71,15 @@ public:
             if (_reader) {
                 ++_cache._tracker._stats.underlying_recreations;
             }
-            auto& snap = _cache.snapshot_for_phase(phase);
-            _reader = {}; // See issue #2644
-            _reader = _cache.create_underlying_reader(_read_context, snap, _range);
-            _reader_creation_phase = phase;
+            refresh_reader = close().then([this, phase] {
+                auto& snap = _cache.snapshot_for_phase(phase);
+                _reader = _cache.create_underlying_reader(_read_context, snap, _range);
+                fmr_logger.debug("move_to_next_partition: created underlying reader");
+                _reader_creation_phase = phase;
+            });
         }
         clogger.debug("autoupdating_underlying_reader::move_to_next_partition: reader={}", _reader->description());
+     return refresh_reader.then([this, timeout] {
       return _reader->next_partition().then([this, timeout] {
         clogger.debug("autoupdating_underlying_reader::move_to_next_partition: is_end_of_stream={} is_buffer_empty={}", _reader->is_end_of_stream(), _reader->is_buffer_empty());
         if (_reader->is_end_of_stream() && _reader->is_buffer_empty()) {
@@ -89,6 +95,7 @@ public:
             return std::move(mfopt);
         });
       });
+     });
     }
     future<> fast_forward_to(dht::partition_range&& range, db::timeout_clock::time_point timeout) {
         auto snapshot_and_phase = _cache.snapshot_of(dht::ring_position_view::for_range_start(_range));
@@ -104,12 +111,12 @@ public:
                 return _reader->fast_forward_to(_range, timeout);
             } else {
                 ++_cache._tracker._stats.underlying_recreations;
-                _reader = {}; // See issue #2644
             }
         }
+      return close().then([this, &snapshot, phase] {
         _reader = _cache.create_underlying_reader(_read_context, snapshot, _range);
         _reader_creation_phase = phase;
-        return make_ready_future<>();
+      });
     }
     future<> abort(std::exception_ptr ex) noexcept {
         return _reader.abort(std::move(ex));
