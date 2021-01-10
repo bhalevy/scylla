@@ -166,7 +166,7 @@ public:
         , _pc(pc)
         , _trace_state(std::move(trace_state))
         , _fwd_mr(fwd_mr)
-        , _range_query(!range.is_singular() || !range.start()->value().has_key())
+        , _range_query(is_range_query(range))
         , _underlying(_cache, *this)
     {
         ++_cache._tracker._stats.reads;
@@ -192,6 +192,7 @@ public:
     const io_priority_class& pc() const { return _pc; }
     tracing::trace_state_ptr trace_state() const { return _trace_state; }
     mutation_reader::forwarding fwd_mr() const { return _fwd_mr; }
+    static bool is_range_query(const dht::partition_range& range) { return !range.is_singular() || !range.start()->value().has_key(); }
     bool is_range_query() const { return _range_query; }
     autoupdating_underlying_reader& underlying() { return _underlying; }
     row_cache::phase_type phase() const { return _phase; }
