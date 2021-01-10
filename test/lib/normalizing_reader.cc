@@ -24,7 +24,7 @@
 #include <seastar/core/future-util.hh>
 
 normalizing_reader::normalizing_reader(flat_mutation_reader rd)
-    : impl(rd.schema(), rd.permit())
+    : impl(rd.schema(), rd.permit(), "normalizing_reader")
     , _rd(std::move(rd))
     , _range_tombstones(*_rd.schema(), tests::make_permit())
 {}

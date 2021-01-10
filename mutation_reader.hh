@@ -80,7 +80,7 @@ class filtering_reader : public flat_mutation_reader::impl {
     static_assert(std::is_same<bool, std::result_of_t<MutationFilter(const dht::decorated_key&)>>::value, "bad MutationFilter signature");
 public:
     filtering_reader(flat_mutation_reader rd, MutationFilter&& filter)
-        : impl(rd.schema(), rd.permit())
+        : impl(rd.schema(), rd.permit(), "filtering_reader")
         , _rd(std::move(rd))
         , _filter(std::forward<MutationFilter>(filter)) {
     }

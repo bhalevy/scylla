@@ -275,7 +275,7 @@ public:
                               query::clustering_key_filter_ranges crr, bool digest_requested,
                               logalloc::region& region, logalloc::allocating_section& read_section,
                               boost::any pointer_to_container, Args&&... args)
-        : trivially_abortable_impl(std::move(s), std::move(permit))
+        : trivially_abortable_impl(std::move(s), std::move(permit), "partition_snapshot_flat_reader")
         , MemoryAccounter(std::forward<Args>(args)...)
         , _container_guard(std::move(pointer_to_container))
         , _ck_ranges(std::move(crr))

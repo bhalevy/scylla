@@ -390,7 +390,7 @@ private:
 public:
     single_partition_populating_reader(row_cache& cache,
             lw_shared_ptr<read_context> context)
-        : impl(context->schema(), context->permit())
+        : impl(context->schema(), context->permit(), "single_partition_populating_reader")
         , _cache(cache)
         , _read_context(std::move(context))
     { }
@@ -660,7 +660,7 @@ public:
     scanning_and_populating_reader(row_cache& cache,
                                    const dht::partition_range& range,
                                    lw_shared_ptr<read_context> context)
-        : impl(context->schema(), context->permit())
+        : impl(context->schema(), context->permit(), "scanning_and_populating_reader")
         , _pr(&range)
         , _cache(cache)
         , _read_context(std::move(context))

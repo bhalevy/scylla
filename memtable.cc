@@ -416,7 +416,7 @@ public:
                      const query::partition_slice& slice,
                      const io_priority_class& pc,
                      mutation_reader::forwarding fwd_mr)
-         : impl(s, std::move(permit))
+         : impl(s, std::move(permit), "scanning_reader")
          , iterator_reader(s, std::move(m), range)
          , _pc(pc)
          , _slice(slice)
@@ -572,7 +572,7 @@ class flush_reader final : public flat_mutation_reader::impl, private iterator_r
     flush_memory_accounter _flushed_memory;
 public:
     flush_reader(schema_ptr s, reader_permit permit, lw_shared_ptr<memtable> m)
-        : impl(s, std::move(permit))
+        : impl(s, std::move(permit), "flush_reader")
         , iterator_reader(std::move(s), m, query::full_partition_range)
         , _flushed_memory(*m)
     {}

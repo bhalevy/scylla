@@ -262,7 +262,7 @@ public:
             reader_permit permit,
             streamed_mutation::forwarding fwd_sm,
             Producer&& producer)
-        : impl(std::move(schema), std::move(permit))
+        : impl(std::move(schema), std::move(permit), "merging_reader")
         , _merger(_schema, std::move(producer))
         , _fwd_sm(fwd_sm) {}
 
@@ -736,7 +736,7 @@ public:
             tracing::trace_state_ptr trace_state,
             streamed_mutation::forwarding fwd,
             mutation_reader::forwarding fwd_mr)
-        : impl(s, permit)
+        : impl(s, permit, "restricting_mutation_reader")
         , _state(pending_state{
                 mutation_source_and_params{std::move(ms), std::move(s), std::move(permit), range, slice, pc, std::move(trace_state), fwd, fwd_mr}}) {
     }
@@ -925,7 +925,7 @@ foreign_reader::foreign_reader(schema_ptr schema,
         reader_permit permit,
         foreign_unique_ptr<flat_mutation_reader> reader,
         streamed_mutation::forwarding fwd_sm)
-    : impl(std::move(schema), std::move(permit))
+    : impl(std::move(schema), std::move(permit), format("foreign_reader({})", reader->description()))
     , _reader(std::move(reader))
     , _fwd_sm(fwd_sm) {
 }
@@ -1453,7 +1453,7 @@ evictable_reader::evictable_reader(
         const io_priority_class& pc,
         tracing::trace_state_ptr trace_state,
         mutation_reader::forwarding fwd_mr)
-    : impl(std::move(schema), std::move(permit))
+    : impl(std::move(schema), std::move(permit), "evictable_reader")
     , _auto_pause(ap)
     , _ms(std::move(ms))
     , _pr(&pr)
@@ -1593,7 +1593,7 @@ public:
             const io_priority_class& pc,
             tracing::trace_state_ptr trace_state,
             mutation_reader::forwarding fwd_mr)
-        : impl(std::move(schema), std::move(permit))
+        : impl(std::move(schema), std::move(permit), "shard_reader")
         , _lifecycle_policy(std::move(lifecycle_policy))
         , _shard(shard)
         , _pr(&pr)
@@ -1895,7 +1895,7 @@ multishard_combining_reader::multishard_combining_reader(
         const io_priority_class& pc,
         tracing::trace_state_ptr trace_state,
         mutation_reader::forwarding fwd_mr)
-    : impl(std::move(s), std::move(permit)), _sharder(sharder) {
+    : impl(std::move(s), std::move(permit), "multishard_combining_reader"), _sharder(sharder) {
 
     on_partition_range_change(pr);
 
@@ -2012,7 +2012,7 @@ void queue_reader::push_and_maybe_notify(mutation_fragment&& mf) {
 }
 
 queue_reader::queue_reader(schema_ptr s, reader_permit permit)
-        : impl(std::move(s), std::move(permit)) {
+        : impl(std::move(s), std::move(permit), "queue_reader") {
 }
 queue_reader::~queue_reader() {
     if (_handle) {
@@ -2207,7 +2207,7 @@ private:
 public:
     compacting_reader(flat_mutation_reader source, gc_clock::time_point compaction_time,
             std::function<api::timestamp_type(const dht::decorated_key&)> get_max_purgeable)
-        : impl(source.schema(), source.permit())
+        : impl(source.schema(), source.permit(), format("compacting_reader({})", source.description()))
         , _reader(std::move(source))
         , _compactor(*_schema, compaction_time, get_max_purgeable)
         , _last_uncompacted_partition_start(dht::decorated_key(dht::minimum_token(), partition_key::make_empty()), tombstone{}) {
