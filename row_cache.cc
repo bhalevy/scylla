@@ -377,7 +377,7 @@ private:
             } else if (phase == _cache.phase_of(_read_context->range().start()->value())) {
                 _reader = _cache._read_section(_cache._tracker.region(), [&] {
                     cache_entry& e = _cache.find_or_create_incomplete(mfopt->as_partition_start(), phase);
-                    return e.read(_cache, *_read_context, phase);
+                    return e.read(_cache, _read_context, phase);
                 });
             } else {
                 _cache._tracker.on_mispopulate();
@@ -473,7 +473,7 @@ class range_populating_reader {
     row_cache& _cache;
     autoupdating_underlying_reader& _reader;
     std::optional<row_cache::previous_entry_pointer> _last_key;
-    read_context& _read_context;
+    lw_shared_ptr<read_context> _read_context;
 private:
     bool can_set_continuity() const {
         return _last_key && _reader.creation_phase() == _cache.phase_of(_reader.population_range_start());
@@ -506,10 +506,10 @@ private:
         }
     }
 public:
-    range_populating_reader(row_cache& cache, read_context& ctx)
+    range_populating_reader(row_cache& cache, lw_shared_ptr<read_context> ctx)
         : _cache(cache)
-        , _reader(ctx.underlying())
-        , _read_context(ctx)
+        , _reader(ctx->underlying())
+        , _read_context(std::move(ctx))
     {}
 
     using read_result = std::tuple<flat_mutation_reader_opt, mutation_fragment_opt>;
@@ -540,7 +540,7 @@ public:
                     _cache._tracker.on_mispopulate();
                     _last_key = row_cache::previous_entry_pointer(key);
                     return make_ready_future<read_result>(
-                            read_result(read_directly_from_underlying(_read_context), std::move(mfopt)));
+                            read_result(read_directly_from_underlying(*_read_context), std::move(mfopt)));
                 }
             }
         });
@@ -560,15 +560,11 @@ public:
     }
 
     future<> abort(std::exception_ptr ex) noexcept {
-        auto abort_read_context = _read_context.abort(ex);
-        auto abort_reader = _reader.abort(ex);
-        return when_all_succeed(std::move(abort_read_context), std::move(abort_reader)).discard_result();
+        return _reader.abort(ex);
     }
 
     future<> close() noexcept {
-        auto close_read_context = _read_context.close();
-        auto close_reader = _reader.close();
-        return when_all_succeed(std::move(close_read_context), std::move(close_reader)).discard_result();
+        return _reader.close();
     }
 };
 
@@ -587,7 +583,7 @@ private:
     flat_mutation_reader read_from_entry(cache_entry& ce) {
         _cache.upgrade_entry(ce);
         _cache.on_partition_hit();
-        return ce.read(_cache, *_read_context);
+        return ce.read(_cache, _read_context);
     }
 
     static dht::ring_position_view as_ring_position_view(const std::optional<dht::partition_range::bound>& lower_bound) {
@@ -655,6 +651,7 @@ private:
             return make_ready_future<flat_mutation_reader_opt>(std::move(fro));
         }
         clogger.trace("scanning_and_populating_reader: fast_forward secondary");
+        assert(!fro);
         return _secondary_reader.fast_forward_to(std::move(_secondary_range), timeout).then([this, timeout] {
             return read_from_secondary(timeout);
         });
@@ -687,9 +684,6 @@ private:
             }
         });
     }
-    void on_end_of_stream() {
-        _reader = {};
-    }
 public:
     scanning_and_populating_reader(row_cache& cache,
                                    const dht::partition_range& range,
@@ -699,7 +693,7 @@ public:
         , _cache(cache)
         , _read_context(std::move(context))
         , _primary(cache, range)
-        , _secondary_reader(cache, *_read_context)
+        , _secondary_reader(cache, _read_context)
         , _lower_bound(range.start())
     { }
     virtual future<> fill_buffer(db::timeout_clock::time_point timeout) override {
@@ -710,8 +704,9 @@ public:
             } else {
                 return fill_buffer_from(*_reader, timeout).then([this] (bool reader_finished) {
                     if (reader_finished) {
-                        on_end_of_stream();
+                      return _reader.close();
                     }
+                    return make_ready_future<>();
                 });
             }
         });
@@ -727,28 +722,24 @@ public:
     }
     virtual future<> fast_forward_to(const dht::partition_range& pr, db::timeout_clock::time_point timeout) override {
         clear_buffer();
-        _reader = {};
+      return _reader.close().then([this, &pr] {
         _end_of_stream = false;
         _secondary_in_progress = false;
         _advance_primary = false;
         _pr = &pr;
         _primary = partition_range_cursor{_cache, pr};
         _lower_bound = pr.start();
-        return make_ready_future<>();
+      });
     }
     virtual future<> fast_forward_to(position_range cr, db::timeout_clock::time_point timeout) override {
         return make_exception_future<>(make_backtraced_exception_ptr<std::bad_function_call>());
     }
 
     virtual future<> abort(std::exception_ptr ex) noexcept override {
-        auto abort_secondary_reader = _secondary_reader.abort(ex);
-        auto abort_reader = _reader.abort(std::move(ex));
-        return when_all_succeed(std::move(abort_secondary_reader), std::move(abort_reader)).discard_result();
+        return when_all_succeed(_secondary_reader.abort(ex), _reader.abort(std::move(ex))).discard_result();
     }
     virtual future<> close() noexcept override {
-        auto close_secondary_reader = _secondary_reader.close();
-        auto close_reader = _reader.close();
-        return when_all_succeed(std::move(close_secondary_reader), std::move(close_reader)).discard_result();
+        return when_all_succeed(_secondary_reader.close(), _reader.close()).discard_result();
     }
 };
 
@@ -767,9 +758,10 @@ row_cache::make_reader(schema_ptr s,
                        streamed_mutation::forwarding fwd,
                        mutation_reader::forwarding fwd_mr)
 {
-    auto ctx = make_lw_shared<read_context>(*this, s, std::move(permit), range, slice, pc, trace_state, fwd_mr);
-
-    if (!ctx->is_range_query() && !fwd_mr) {
+    auto make_context = [&] {
+        return make_lw_shared<read_context>(*this, s, std::move(permit), range, slice, pc, trace_state, fwd_mr);
+    };
+    if (!read_context::is_range_query(range) && !fwd_mr) {
         tracing::trace(trace_state, "Querying cache for range {} and slice {}",
                 range, seastar::value_of([&slice] { return slice.get_all_ranges(); }));
         clogger.debug("Querying cache for range {} and slice {}",
@@ -777,7 +769,7 @@ row_cache::make_reader(schema_ptr s,
         auto mr = _read_section(_tracker.region(), [&] {
             return with_linearized_managed_bytes([&] {
                 dht::ring_position_comparator cmp(*_schema);
-                auto&& pos = ctx->range().start()->value();
+                auto&& pos = range.start()->value();
                 partitions_type::bound_hint hint;
                 auto i = _partitions.lower_bound(pos, cmp, hint);
                 if (i != _partitions.end() && hint.match) {
@@ -785,15 +777,15 @@ row_cache::make_reader(schema_ptr s,
                     upgrade_entry(e);
                     on_partition_hit();
                     clogger.debug("Range {} found in cache: returning cache_flat_mutation_reader", range);
-                    return e.read(*this, *ctx);
+                    return e.read(*this, make_context());
                 } else if (i->continuous()) {
                     clogger.debug("returning make_empty_flat_reader");
-                    return make_empty_flat_reader(std::move(s), ctx->permit());
+                    return make_empty_flat_reader(std::move(s), std::move(permit));
                 } else {
                     tracing::trace(trace_state, "Range {} not found in cache", range);
                     clogger.debug("Range {} not found in cache: returning single_partition_populating_reader", range);
                     on_partition_miss();
-                    return make_flat_mutation_reader<single_partition_populating_reader>(*this, std::move(ctx));
+                    return make_flat_mutation_reader<single_partition_populating_reader>(*this, make_context());
                 }
             });
         });
@@ -809,7 +801,7 @@ row_cache::make_reader(schema_ptr s,
             range, seastar::value_of([&slice] { return slice.get_all_ranges(); }));
     clogger.debug("Scanning cache for range {} and slice {}",
             range, seastar::value_of([&slice] { return slice.get_all_ranges(); }));
-    auto mr = make_scanning_reader(range, std::move(ctx));
+    auto mr = make_scanning_reader(range, make_context());
     if (fwd == streamed_mutation::forwarding::yes) {
         return make_forwardable(std::move(mr));
     } else {
@@ -1305,24 +1297,24 @@ void rows_entry::on_evicted(cache_tracker& tracker) noexcept {
     }
 }
 
-flat_mutation_reader cache_entry::read(row_cache& rc, read_context& reader) {
+flat_mutation_reader cache_entry::read(row_cache& rc, lw_shared_ptr<read_context> reader) {
     auto source_and_phase = rc.snapshot_of(_key);
-    reader.enter_partition(_key, source_and_phase.snapshot, source_and_phase.phase);
-    return do_read(rc, reader);
+    reader->enter_partition(_key, source_and_phase.snapshot, source_and_phase.phase);
+    return do_read(rc, std::move(reader));
 }
 
-flat_mutation_reader cache_entry::read(row_cache& rc, read_context& reader, row_cache::phase_type phase) {
-    reader.enter_partition(_key, phase);
-    return do_read(rc, reader);
+flat_mutation_reader cache_entry::read(row_cache& rc, lw_shared_ptr<read_context> reader, row_cache::phase_type phase) {
+    reader->enter_partition(_key, phase);
+    return do_read(rc, std::move(reader));
 }
 
 // Assumes reader is in the corresponding partition
-flat_mutation_reader cache_entry::do_read(row_cache& rc, read_context& reader) {
-    auto snp = _pe.read(rc._tracker.region(), rc._tracker.cleaner(), _schema, &rc._tracker, reader.phase());
-    auto ckr = query::clustering_key_filter_ranges::get_ranges(*_schema, reader.slice(), _key.key());
-    auto r = make_cache_flat_mutation_reader(_schema, _key, std::move(ckr), rc, reader.shared_from_this(), std::move(snp));
+flat_mutation_reader cache_entry::do_read(row_cache& rc, lw_shared_ptr<read_context> reader) {
+    auto snp = _pe.read(rc._tracker.region(), rc._tracker.cleaner(), _schema, &rc._tracker, reader->phase());
+    auto ckr = query::clustering_key_filter_ranges::get_ranges(*_schema, reader->slice(), _key.key());
+    auto r = make_cache_flat_mutation_reader(_schema, _key, std::move(ckr), rc, reader, std::move(snp));
     r.upgrade_schema(rc.schema());
-    r.upgrade_schema(reader.schema());
+    r.upgrade_schema(reader->schema());
     return r;
 }
 

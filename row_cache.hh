@@ -74,7 +74,7 @@ class cache_entry {
     } _flags{};
     friend class size_calculator;
 
-    flat_mutation_reader do_read(row_cache&, cache::read_context& reader);
+    flat_mutation_reader do_read(row_cache&, lw_shared_ptr<cache::read_context> reader);
 public:
     friend class row_cache;
     friend class cache_tracker;
@@ -142,8 +142,8 @@ public:
     partition_entry& partition() { return _pe; }
     const schema_ptr& schema() const noexcept { return _schema; }
     schema_ptr& schema() noexcept { return _schema; }
-    flat_mutation_reader read(row_cache&, cache::read_context&);
-    flat_mutation_reader read(row_cache&, cache::read_context&, utils::phased_barrier::phase_type);
+    flat_mutation_reader read(row_cache&, lw_shared_ptr<cache::read_context>);
+    flat_mutation_reader read(row_cache&, lw_shared_ptr<cache::read_context>, utils::phased_barrier::phase_type);
     bool continuous() const noexcept { return _flags._continuous; }
     void set_continuous(bool value) noexcept { _flags._continuous = value; }
 
