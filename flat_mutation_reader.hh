@@ -163,7 +163,9 @@ public:
                     co_await fill_buffer(timeout);
                     continue;
                 }
-                auto consume_done = consumer(pop_mutation_fragment());
+                auto consume_done = co_await futurize_invoke([&consumer, mf = pop_mutation_fragment()] () mutable {
+                    return consumer(std::move(mf));
+                });
                 if (consume_done) {
                     co_return;
                 }
@@ -193,7 +195,13 @@ public:
                     next_partition();
                     continue;
                 }
-                if (filter(mf) && (consumer(std::move(mf)) == stop_iteration::yes)) {
+                if (!filter(mf)) {
+                    continue;
+                }
+                auto consume_done = futurize_invoke([&consumer, mf = std::move(mf)] () mutable {
+                    return consumer(std::move(mf));
+                }).get0();
+                if (consume_done) {
                     return;
                 }
             }
