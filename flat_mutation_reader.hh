@@ -92,6 +92,7 @@ public:
         schema_ptr _schema;
         reader_permit _permit;
         std::exception_ptr _aborted;
+        sstring _description;
         friend class flat_mutation_reader;
     protected:
         template<typename... Args>
@@ -140,7 +141,7 @@ public:
             }
         }
     public:
-        impl(schema_ptr s, reader_permit permit) : _buffer(permit), _schema(std::move(s)), _permit(std::move(permit)) { }
+        impl(schema_ptr s, reader_permit permit, sstring description) : _buffer(permit), _schema(std::move(s)), _permit(std::move(permit)), _description(std::move(description)) { }
         virtual ~impl() {}
         virtual future<> fill_buffer(db::timeout_clock::time_point) = 0;
         virtual future<> next_partition() = 0;
@@ -379,6 +380,10 @@ public:
                 other._buffer_size += std::exchange(_buffer_size, 0);
             }
         }
+
+        const sstring& description() const noexcept {
+            return _description;
+        }
     };
 private:
     std::unique_ptr<impl> _impl;
@@ -609,6 +614,10 @@ public:
             do_upgrade_schema(s);
         }
     }
+
+    const sstring& description() const noexcept {
+        return _impl ? _impl->description() : "null";
+    }
 };
 
 using flat_mutation_reader_opt = optimized_optional<flat_mutation_reader>;
@@ -678,7 +687,7 @@ flat_mutation_reader transform(flat_mutation_reader r, T t) {
         };
     public:
         transforming_reader(flat_mutation_reader&& r, T&& t)
-            : impl(t(r.schema()), r.permit())
+            : impl(t(r.schema()), r.permit(), format("transforming_reader({})", r.description()))
             , _reader(std::move(r))
             , _t(std::move(t))
         {}
@@ -720,7 +729,7 @@ template <typename Underlying>
 class delegating_reader : public flat_mutation_reader::impl {
     Underlying _underlying;
 public:
-    delegating_reader(Underlying&& r) : impl(to_reference(r).schema(), to_reference(r).permit()), _underlying(std::forward<Underlying>(r)) { }
+    delegating_reader(Underlying&& r) : impl(to_reference(r).schema(), to_reference(r).permit(), format("delegating_reader({})", to_reference(r).description())), _underlying(std::forward<Underlying>(r)) { }
     virtual future<> fill_buffer(db::timeout_clock::time_point timeout) override {
         if (is_buffer_full()) {
             return make_ready_future<>();
