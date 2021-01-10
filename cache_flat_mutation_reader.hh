@@ -700,17 +700,16 @@ bool cache_flat_mutation_reader::can_populate() const {
 
 future<> cache_flat_mutation_reader::abort(std::exception_ptr ex) noexcept {
     clogger.trace("csm {}: abort: {}: _underlying={}", fmt::ptr(this), ex, _underlying != nullptr);
-    return _underlying ? _underlying->abort(std::move(ex)) : make_ready_future<>();
+    return _underlying_holder.abort(ex).then([this, ex = std::move(ex)] () mutable {
+        return _read_context->abort(std::move(ex));
+    });
 }
 
 future<> cache_flat_mutation_reader::close() noexcept {
     clogger.trace("csm {}: close: _underlying={}", fmt::ptr(this), _underlying != nullptr);
-    if (_underlying) {
-        _underlying = nullptr;
-        auto r = std::move(_underlying_holder);
-        return r->close().finally([r = std::move(r)] {});
-    }
-    return make_ready_future<>();
+    return _underlying_holder.close().then([this] {
+        return _read_context->close();
+    });
 }
 
 } // namespace cache
