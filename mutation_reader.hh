@@ -85,8 +85,8 @@ public:
         , _filter(std::forward<MutationFilter>(filter)) {
     }
     virtual future<> fill_buffer(db::timeout_clock::time_point timeout) override {
-        return do_until([this] { return is_buffer_full() || is_end_of_stream(); }, [this, timeout] {
-            return _rd.fill_buffer(timeout).then([this] {
+        while (!is_buffer_full() && !is_end_of_stream()) {
+            co_await _rd.fill_buffer(timeout);
                 while (!_rd.is_buffer_empty()) {
                     auto mf = _rd.pop_mutation_fragment();
                     if (mf.is_partition_start()) {
@@ -99,8 +99,7 @@ public:
                     push_mutation_fragment(std::move(mf));
                 }
                 _end_of_stream = _rd.is_end_of_stream();
-            });
-        });
+        }
     }
     virtual void next_partition() override {
         clear_buffer_to_next_partition();
