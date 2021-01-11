@@ -641,15 +641,16 @@ public:
                 return stop_iteration(is_buffer_full());
             }, timeout).then([this] {
                 if (_partition_reader->is_end_of_stream() && _partition_reader->is_buffer_empty()) {
-                    _partition_reader = std::nullopt;
+                    return _partition_reader->close();
                 }
+                return make_ready_future<>();
             });
         });
     }
     virtual future<> next_partition() override {
         clear_buffer_to_next_partition();
         if (is_buffer_empty()) {
-            _partition_reader = std::nullopt;
+            return _partition_reader->close();
         }
         return make_ready_future<>();
     }
@@ -739,7 +740,9 @@ memtable::apply(memtable& mt, reader_permit permit) {
         return consume_partitions(rd, [self = this->shared_from_this(), &rd] (mutation&& m) {
             self->apply(m);
             return stop_iteration::no;
-        }, db::no_timeout);
+        }, db::no_timeout).finally([&rd] {
+            return rd.close();
+        });
     });
 }
 
