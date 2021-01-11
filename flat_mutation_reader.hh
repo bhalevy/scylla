@@ -340,15 +340,35 @@ public:
     class partition_range_forwarding_tag;
     using partition_range_forwarding = bool_class<partition_range_forwarding_tag>;
 
-    flat_mutation_reader(std::unique_ptr<impl> impl) noexcept : _impl(std::move(impl)) {}
+    flat_mutation_reader(std::unique_ptr<impl> impl) noexcept : _impl(std::move(impl)) {
+        if (_impl) {
+            fmr_logger.trace("{} {} created", _impl->description(), (void*)_impl.get());
+        }
+    }
     flat_mutation_reader(const flat_mutation_reader&) = delete;
-    flat_mutation_reader(flat_mutation_reader&&) = default;
+    flat_mutation_reader(flat_mutation_reader&& o) noexcept
+            : _impl(std::move(o._impl))
+    {
+        if (_impl) {
+            fmr_logger.trace("{} {} moved", _impl->description(), (void*)_impl.get());
+        }
+    }
 
     flat_mutation_reader& operator=(const flat_mutation_reader&) = delete;
-    flat_mutation_reader& operator=(flat_mutation_reader&&) = default;
+    flat_mutation_reader& operator=(flat_mutation_reader&& o) noexcept {
+        if (_impl) {
+            fmr_logger.debug("{} {} overwritten by move-assign", _impl->description(), (void*)_impl.get());
+        }
+        _impl = std::move(o._impl);
+        if (_impl) {
+            fmr_logger.trace("{} {} move-assigned", _impl->description(), (void*)_impl.get());
+        }
+        return *this;
+    }
 
     ~flat_mutation_reader() {
         if (_impl) {
+            fmr_logger.trace("{} {} destroyed", _impl->description(), (void*)_impl.get());
             fmr_logger.error("{} was not closed", _impl->description());
         }
     }
