@@ -337,10 +337,12 @@ public:
     }
 
     flat_reader_assertions& produces_partition(const mutation& m) {
+        testlog.trace("produces partition");
         return produces(m);
     }
 
     flat_reader_assertions& produces(const mutation& m, const std::optional<query::clustering_row_ranges>& ck_ranges = {}) {
+        testlog.trace("produces ck_ranges");
         auto mo = read_mutation_from_flat_mutation_reader(_reader, db::no_timeout).get0();
         if (!mo) {
             BOOST_FAIL(format("Expected {}, but got end of stream, at: {}", m, seastar::current_backtrace()));
@@ -351,6 +353,7 @@ public:
     }
 
     flat_reader_assertions& produces(const dht::decorated_key& dk) {
+        testlog.trace("produces decorated_key {}", dk);
         produces_partition_start(dk);
         next_partition();
         return *this;
@@ -358,6 +361,7 @@ public:
 
     template<typename Range>
     flat_reader_assertions& produces(const Range& range) {
+        testlog.trace("produces range");
         for (auto&& m : range) {
             produces(m);
         }
@@ -461,6 +465,7 @@ public:
     }
 
     future<> fill_buffer() {
+        testlog.trace("fill_buffer");
         return _reader.fill_buffer(db::no_timeout);
     }
 
@@ -475,5 +480,6 @@ public:
 
 inline
 flat_reader_assertions assert_that(flat_mutation_reader r) {
+    testlog.trace("assert_that");
     return { std::move(r) };
 }
