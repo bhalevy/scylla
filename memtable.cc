@@ -747,7 +747,9 @@ memtable::apply(memtable& mt, reader_permit permit) {
         return consume_partitions(rd, [self = this->shared_from_this(), &rd] (mutation&& m) {
             self->apply(m);
             return stop_iteration::no;
-        }, db::no_timeout);
+        }, db::no_timeout).finally([&rd] {
+            return rd.close();
+        });
     });
 }
 
