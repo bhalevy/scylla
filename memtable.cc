@@ -656,7 +656,7 @@ public:
     virtual future<> next_partition() override {
         clear_buffer_to_next_partition();
         if (is_buffer_empty()) {
-            _partition_reader = std::nullopt;
+            return _partition_reader.close();
         }
         return make_ready_future<>();
     }
