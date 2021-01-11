@@ -695,7 +695,9 @@ public:
         , _primary(cache, range)
         , _secondary_reader(cache, _read_context)
         , _lower_bound(range.start())
-    { }
+    {
+        clogger.trace("scanning_and_populating_reader {}: created", (void*)this);
+    }
     virtual future<> fill_buffer(db::timeout_clock::time_point timeout) override {
         clogger.trace("scanning_and_populating_reader: fill_buffer");
         return do_until([this] { return is_end_of_stream() || is_buffer_full(); }, [this, timeout] {
@@ -739,7 +741,10 @@ public:
         return when_all_succeed(_secondary_reader.abort(ex), _reader.abort(std::move(ex))).discard_result();
     }
     virtual future<> close() noexcept override {
-        return when_all_succeed(_secondary_reader.close(), _reader.close()).discard_result();
+        clogger.trace("scanning_and_populating_reader {}: close begin", (void*)this);
+        return when_all_succeed(_secondary_reader.close(), _reader.close()).discard_result().finally([this] {
+            clogger.trace("scanning_and_populating_reader {}: close done", (void*)this);
+        });
     }
 };
 
