@@ -27,8 +27,11 @@
 #include "partition_version.hh"
 #include "tracing/tracing.hh"
 #include "row_cache.hh"
+#include "log.hh"
 
 namespace cache {
+
+extern logging::logger clogger;
 
 /*
 * Represent a flat reader to the underlying source.
@@ -70,12 +73,15 @@ public:
             _reader = _cache.create_underlying_reader(_read_context, snap, _range);
             _reader_creation_phase = phase;
         }
+        clogger.debug("autoupdating_underlying_reader::move_to_next_partition: reader={}", _reader->description());
         _reader->next_partition();
-
+        clogger.debug("autoupdating_underlying_reader::move_to_next_partition: is_end_of_stream={} is_buffer_empty={}", _reader->is_end_of_stream(), _reader->is_buffer_empty());
         if (_reader->is_end_of_stream() && _reader->is_buffer_empty()) {
             return make_ready_future<mutation_fragment_opt>();
         }
+        clogger.debug("autoupdating_underlying_reader::move_to_next_partition: calling reader()");
         return (*_reader)(timeout).then([this] (auto&& mfopt) {
+            clogger.debug("autoupdating_underlying_reader::move_to_next_partition: read mfopt={}", bool(mfopt));
             if (mfopt) {
                 assert(mfopt->is_partition_start());
                 _new_last_key = mfopt->as_partition_start().key();
