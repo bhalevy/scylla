@@ -1346,15 +1346,22 @@ SEASTAR_TEST_CASE(test_cache_population_and_update_race) {
         });
         cache_tracker tracker;
 
+        testlog.debug("test_cache_population_and_update_race: make memtable");
         auto mt1 = make_lw_shared<memtable>(s);
+        testlog.debug("test_cache_population_and_update_race: make ring");
         auto ring = make_ring(s, 3);
+        int i = 0;
         for (auto&& m : ring) {
+            testlog.debug("test_cache_population_and_update_race: mt1->apply {}", i); i++;
             mt1->apply(m);
         }
+        testlog.debug("test_cache_population_and_update_race: apply mt1");
         memtables.apply(*mt1);
 
+        testlog.debug("test_cache_population_and_update_race: make row_cache");
         row_cache cache(s, cache_source, tracker);
 
+        testlog.debug("test_cache_population_and_update_race: update ring2");
         auto mt2 = make_lw_shared<memtable>(s);
         auto ring2 = updated_ring(ring);
         for (auto&& m : ring2) {
@@ -1363,11 +1370,13 @@ SEASTAR_TEST_CASE(test_cache_population_and_update_race) {
 
         thr.block();
 
+        testlog.debug("test_cache_population_and_update_race: make rd1");
         auto m0_range = dht::partition_range::make_singular(ring[0].ring_position());
         auto rd1 = cache.make_reader(s, tests::make_permit(), m0_range);
         rd1.set_max_buffer_size(1);
         auto rd1_fill_buffer = rd1.fill_buffer(db::no_timeout);
 
+        testlog.debug("test_cache_population_and_update_race: make rd2");
         auto rd2 = cache.make_reader(s, tests::make_permit());
         rd2.set_max_buffer_size(1);
         auto rd2_fill_buffer = rd2.fill_buffer(db::no_timeout);
@@ -1379,6 +1388,7 @@ SEASTAR_TEST_CASE(test_cache_population_and_update_race) {
         mt2_copy->apply(*mt2, tests::make_permit()).get();
         auto update_future = cache.update(row_cache::external_updater([&] { memtables.apply(mt2_copy); }), *mt2);
 
+        testlog.debug("test_cache_population_and_update_race: make rd3");
         auto rd3 = cache.make_reader(s, tests::make_permit());
 
         // rd2, which is in progress, should not prevent forward progress of update()
@@ -1390,8 +1400,10 @@ SEASTAR_TEST_CASE(test_cache_population_and_update_race) {
 
         // Reads started before memtable flush should return previous value, otherwise this test
         // doesn't trigger the conditions it is supposed to protect against.
+        testlog.debug("test_cache_population_and_update_race: assert rd1");
         assert_that(std::move(rd1)).produces(ring[0]);
 
+        testlog.debug("test_cache_population_and_update_race: assert rd2");
         assert_that(std::move(rd2)).produces(ring[0])
             .produces(ring2[1])
             .produces(ring2[2])
@@ -1399,6 +1411,7 @@ SEASTAR_TEST_CASE(test_cache_population_and_update_race) {
 
         // Reads started after update was started but before previous populations completed
         // should already see the new data
+        testlog.debug("test_cache_population_and_update_race: assert rd3");
         assert_that(std::move(rd3))
                 .produces(ring2[0])
                 .produces(ring2[1])
@@ -1406,6 +1419,7 @@ SEASTAR_TEST_CASE(test_cache_population_and_update_race) {
                 .produces_end_of_stream();
 
         // Reads started after flush should see new data
+        testlog.debug("test_cache_population_and_update_race: assert make_reader");
         assert_that(cache.make_reader(s, tests::make_permit()))
                 .produces(ring2[0])
                 .produces(ring2[1])
