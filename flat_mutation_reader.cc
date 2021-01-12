@@ -213,6 +213,16 @@ future<bool> flat_mutation_reader::impl::fill_buffer_from(Source& source, db::ti
 
 template future<bool> flat_mutation_reader::impl::fill_buffer_from<flat_mutation_reader>(flat_mutation_reader&, db::timeout_clock::time_point);
 
+void flat_mutation_reader::close_in_background(std::unique_ptr<flat_mutation_reader::impl> impl) noexcept {
+    // FIXME: future is discarded.
+    //
+    // Delete this function once we make sure all readers are explicitly close
+    // before they are destroyed.
+    (void)impl->close().handle_exception([impl = std::move(impl)] (std::exception_ptr ep) {
+        fmr_logger.error("Failed closing {} in background: {}. Ignoring since there is nothing else we can do here.", impl->description(), ep);
+    });
+}
+
 flat_mutation_reader& to_reference(reference_wrapper<flat_mutation_reader>& wrapper) {
     return wrapper.get();
 }

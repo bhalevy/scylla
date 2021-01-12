@@ -35,8 +35,11 @@
 #include <seastar/core/file.hh>
 #include "db/timeout_clock.hh"
 #include "reader_permit.hh"
+#include "log.hh"
 
 #include <deque>
+
+extern logging::logger fmr_logger;
 
 using seastar::future;
 
@@ -398,6 +401,25 @@ public:
     using partition_range_forwarding = bool_class<partition_range_forwarding_tag>;
 
     flat_mutation_reader(std::unique_ptr<impl> impl) noexcept : _impl(std::move(impl)) {}
+    flat_mutation_reader(const flat_mutation_reader&) = delete;
+    flat_mutation_reader(flat_mutation_reader&&) = default;
+
+    flat_mutation_reader& operator=(const flat_mutation_reader&) = delete;
+    flat_mutation_reader& operator=(flat_mutation_reader&& o) noexcept {
+        if (_impl) {
+            fmr_logger.error("{} overwritten by move-assign", _impl->description());
+            close_in_background(std::move(_impl));
+        }
+        _impl = std::move(o._impl);
+        return *this;
+    }
+
+    ~flat_mutation_reader() {
+        if (_impl) {
+            fmr_logger.error("{} was not closed", _impl->description());
+            close_in_background(std::move(_impl));
+        }
+    }
 
     future<mutation_fragment_opt> operator()(db::timeout_clock::time_point timeout) {
         return _impl->operator()(timeout);
@@ -551,6 +573,7 @@ public:
             _impl = std::move(o._impl);
         });
     }
+    static void close_in_background(std::unique_ptr<flat_mutation_reader::impl>) noexcept;
     bool is_end_of_stream() const { return _impl->is_end_of_stream(); }
     bool is_buffer_empty() const { return _impl->is_buffer_empty(); }
     bool is_buffer_full() const { return _impl->is_buffer_full(); }
