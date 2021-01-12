@@ -35,8 +35,11 @@
 #include <seastar/core/file.hh>
 #include "db/timeout_clock.hh"
 #include "reader_permit.hh"
+#include "log.hh"
 
 #include <deque>
+
+extern logging::logger fmr_logger;
 
 using seastar::future;
 
@@ -339,6 +342,17 @@ public:
     using partition_range_forwarding = bool_class<partition_range_forwarding_tag>;
 
     flat_mutation_reader(std::unique_ptr<impl> impl) noexcept : _impl(std::move(impl)) {}
+    flat_mutation_reader(const flat_mutation_reader&) = delete;
+    flat_mutation_reader(flat_mutation_reader&&) = default;
+
+    flat_mutation_reader& operator=(const flat_mutation_reader&) = delete;
+    flat_mutation_reader& operator=(flat_mutation_reader&&) = default;
+
+    ~flat_mutation_reader() {
+        if (_impl) {
+            fmr_logger.error("{} was not closed", _impl->description());
+        }
+    }
 
     future<mutation_fragment_opt> operator()(db::timeout_clock::time_point timeout) {
         return _impl->operator()(timeout);
