@@ -2258,19 +2258,13 @@ future<> queue_reader_handle::push(mutation_fragment mf) {
     return _reader->push(std::move(mf));
 }
 
-void queue_reader_handle::move_reader_to_close() noexcept {
-    assert(!_reader_to_close);
-    _reader_to_close = _reader;
-    _reader->_handle = nullptr;
-    _reader = nullptr;
-}
-
 void queue_reader_handle::push_end_of_stream() {
     if (!_reader) {
         throw std::runtime_error("Dangling queue_reader_handle");
     }
     _reader->push_end_of_stream();
-    move_reader_to_close();
+    _reader->_handle = nullptr;
+    _reader = nullptr;
 }
 
 bool queue_reader_handle::is_terminated() const {
@@ -2281,15 +2275,9 @@ void queue_reader_handle::abort(std::exception_ptr ep) {
     _ex = std::move(ep);
     if (_reader) {
         _reader->do_abort(_ex);
-        move_reader_to_close();
+        _reader->_handle = nullptr;
+        _reader = nullptr;
     }
-}
-
-future<> queue_reader_handle::close() noexcept {
-    if (_reader) {
-        move_reader_to_close();
-    }
-    return _reader_to_close ? std::exchange(_reader_to_close, nullptr)->close() : make_ready_future<>();
 }
 
 std::pair<flat_mutation_reader, queue_reader_handle> make_queue_reader(schema_ptr s, reader_permit permit) {

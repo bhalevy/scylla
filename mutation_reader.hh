@@ -570,7 +570,6 @@ class queue_reader_handle {
 
 private:
     queue_reader* _reader = nullptr;
-    queue_reader* _reader_to_close = nullptr;
     std::exception_ptr _ex;
 
 private:
@@ -578,7 +577,6 @@ private:
 
     void abandon();
 
-    void move_reader_to_close() noexcept;
 public:
     queue_reader_handle(queue_reader_handle&& o);
     ~queue_reader_handle();
@@ -595,8 +593,6 @@ public:
     ///
     /// All future operations on the handle or the reader will raise `ep`.
     void abort(std::exception_ptr ep);
-
-    future<> close() noexcept;
 
     /// Checks if the queue is already terminated with either a success or failure (abort)
     bool is_terminated() const;
