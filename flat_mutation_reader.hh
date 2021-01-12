@@ -333,7 +333,6 @@ private:
     std::unique_ptr<impl> _impl;
 
     flat_mutation_reader() = default;
-    explicit operator bool() const noexcept { return bool(_impl); }
     friend class optimized_optional<flat_mutation_reader>;
     void do_upgrade_schema(const schema_ptr&);
 public:
@@ -353,6 +352,8 @@ public:
             fmr_logger.error("{} was not closed", _impl->description());
         }
     }
+
+    explicit operator bool() const noexcept { return bool(_impl); }
 
     future<mutation_fragment_opt> operator()(db::timeout_clock::time_point timeout) {
         return _impl->operator()(timeout);
@@ -566,7 +567,56 @@ public:
     }
 };
 
-using flat_mutation_reader_opt = optimized_optional<flat_mutation_reader>;
+// An optional, noncopyable flat_mutation_reader.
+// Protected against reassignment without closing.
+class flat_mutation_reader_opt {
+    optimized_optional<flat_mutation_reader> _reader = {};
+
+    flat_mutation_reader_opt& assign(flat_mutation_reader_opt&& o) noexcept {
+        if (_reader) {
+            fmr_logger.error("flat_mutation_reader_opt: {} reassigned without closing", _reader->description());
+        }
+        _reader = std::move(o._reader);
+        return *this;
+    }
+public:
+    flat_mutation_reader_opt() = default;
+    flat_mutation_reader_opt(std::nullopt_t) noexcept { };
+    flat_mutation_reader_opt(const flat_mutation_reader_opt& reader) = delete;
+    flat_mutation_reader_opt(flat_mutation_reader_opt&&) = default;
+    flat_mutation_reader_opt(flat_mutation_reader reader) noexcept : _reader(std::move(reader)) { }
+
+    flat_mutation_reader_opt& operator=(const flat_mutation_reader_opt&) = delete;
+    flat_mutation_reader_opt& operator=(std::nullopt_t) noexcept {
+        return assign(flat_mutation_reader_opt());
+    }
+    flat_mutation_reader_opt& operator=(flat_mutation_reader_opt&& o) noexcept {
+        return assign(std::move(o));
+    }
+
+    explicit operator bool() const noexcept {
+        return bool(_reader);
+    }
+
+    flat_mutation_reader* operator->() noexcept { return &*_reader; }
+    const flat_mutation_reader* operator->() const noexcept { return &*_reader; }
+
+    flat_mutation_reader& operator*() noexcept { return *_reader; }
+    const flat_mutation_reader& operator*() const noexcept { return *_reader; }
+
+    future<> abort(std::exception_ptr ex) noexcept {
+        return _reader ? _reader->abort(std::move(ex)) : make_ready_future<>();
+    }
+
+    future<> close() noexcept {
+        if (_reader) {
+            auto r = std::move(_reader);
+            _reader = {};
+            return r->close();
+        }
+        return make_ready_future<>();
+    }
+};
 
 template<typename Impl, typename... Args>
 flat_mutation_reader make_flat_mutation_reader(Args &&... args) {
