@@ -41,6 +41,7 @@ public:
         flat_mutation_reader reader,
         std::function<future<> (flat_mutation_reader reader)> consumer);
     future<> consume();
+    future<> close() noexcept;
 };
 
 // The multishard_writer class gets mutation_fragments generated from
@@ -75,6 +76,7 @@ public:
         flat_mutation_reader producer,
         std::function<future<> (flat_mutation_reader)> consumer);
     future<uint64_t> operator()();
+    future<> close() noexcept;
 };
 
 shard_writer::shard_writer(schema_ptr s,
@@ -92,6 +94,10 @@ future<> shard_writer::consume() {
         }
         return make_ready_future<>();
     });
+}
+
+future<> shard_writer::close() noexcept {
+    return _reader.close();
 }
 
 multishard_writer::multishard_writer(
@@ -194,12 +200,26 @@ future<uint64_t> multishard_writer::operator()() {
     });
 }
 
+future<> multishard_writer::close() noexcept {
+    auto close_shard_writers = parallel_for_each(_shard_writers, [this] (foreign_ptr<std::unique_ptr<shard_writer>>& foreign_writer) {
+        if (foreign_writer) {
+            return smp::submit_to(foreign_writer.get_owner_shard(), [writer = std::move(foreign_writer.get())] () mutable {
+                return writer->close().finally([writer = std::move(writer)] {});
+            });
+        }
+        return make_ready_future<>();
+    });
+    return when_all_succeed(_producer.close(), std::move(close_shard_writers)).discard_result();
+}
+
 future<uint64_t> distribute_reader_and_consume_on_shards(schema_ptr s,
     flat_mutation_reader producer,
     std::function<future<> (flat_mutation_reader)> consumer,
     utils::phased_barrier::operation&& op) {
     return do_with(multishard_writer(std::move(s), std::move(producer), std::move(consumer)), std::move(op), [] (multishard_writer& writer, utils::phased_barrier::operation&) {
-        return writer();
+        return writer().finally([&writer] {
+            return writer.close();
+        });
     });
 }
 
