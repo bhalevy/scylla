@@ -34,6 +34,20 @@
 
 logging::logger fmr_logger("flat_mutation_reader");
 
+flat_mutation_reader& flat_mutation_reader::operator=(flat_mutation_reader&& o) noexcept {
+    if (_impl) {
+        fmr_logger.warn("{} [{}] overwritten by move-assign. Backtrace: {}", _impl->description(), fmt::ptr(_impl.get()), current_backtrace());
+    }
+    _impl = std::move(o._impl);
+    return *this;
+}
+
+flat_mutation_reader::~flat_mutation_reader() {
+    if (_impl) {
+        fmr_logger.warn("{} [{}] was not closed. Backtrace: {}", _impl->description(), fmt::ptr(_impl.get()), current_backtrace());
+    }
+}
+
 static size_t compute_buffer_size(const schema& s, const flat_mutation_reader::tracked_buffer& buffer)
 {
     return boost::accumulate(
