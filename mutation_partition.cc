@@ -41,6 +41,7 @@
 #include "types/map.hh"
 #include "compaction_garbage_collector.hh"
 #include "utils/exceptions.hh"
+#include <seastar/core/coroutine.hh>
 
 logging::logger mplog("mutation_partition");
 
@@ -2633,13 +2634,16 @@ future<mutation_opt> counter_write_query(schema_ptr s, const mutation_source& so
         { }
     };
 
-    // do_with() doesn't support immovable objects
-    auto r_a_r = std::make_unique<range_and_reader>(s, source, std::move(permit), dk, slice, std::move(trace_ptr));
+    auto range = dht::partition_range::make_singular(dk);
+    auto reader = source.make_reader(s, std::move(permit), range, slice, service::get_local_sstable_query_read_priority(),
+            std::move(trace_ptr), streamed_mutation::forwarding::no,
+            mutation_reader::forwarding::no);
+  return with_flat_mutation_reader(std::move(reader), [s, &slice, timeout] (flat_mutation_reader& reader) mutable {
     auto cwqrb = counter_write_query_result_builder(*s);
     auto cfq = make_stable_flattened_mutations_consumer<compact_for_query<emit_only_live_rows::yes, counter_write_query_result_builder>>(
             *s, gc_clock::now(), slice, query::max_rows, query::max_partitions, std::move(cwqrb));
-    auto f = r_a_r->reader.consume(std::move(cfq), timeout);
-    return f.finally([r_a_r = std::move(r_a_r)] { });
+    return reader.consume(std::move(cfq), timeout);
+  });
 }
 
 mutation_cleaner_impl::~mutation_cleaner_impl() {
