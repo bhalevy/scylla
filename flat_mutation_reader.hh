@@ -23,6 +23,7 @@
 
 #include <seastar/util/bool_class.hh>
 #include <seastar/core/future.hh>
+#include <seastar/core/coroutine.hh>
 
 #include "dht/i_partitioner.hh"
 #include "position_in_partition.hh"
@@ -797,3 +798,14 @@ make_generating_reader(schema_ptr s, reader_permit permit, std::function<future<
 /// FIXME: reversing should be done in the sstable layer, see #1413.
 flat_mutation_reader
 make_reversing_reader(flat_mutation_reader& original, query::max_result_size max_size);
+
+template <typename Func>
+requires std::invocable<Func, flat_mutation_reader&> && std::is_nothrow_move_constructible_v<Func>
+inline std::invoke_result_t<Func, flat_mutation_reader&>
+with_flat_mutation_reader(flat_mutation_reader fmr, Func func) noexcept {
+    return do_with(std::move(fmr), [func = std::move(func)] (flat_mutation_reader& fmr) mutable {
+        return func(fmr).finally([&fmr] {
+            return fmr.close();
+        });
+    });
+}

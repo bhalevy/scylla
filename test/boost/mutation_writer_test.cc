@@ -334,7 +334,7 @@ SEASTAR_THREAD_TEST_CASE(test_timestamp_based_splitting_mutation_writer) {
     std::unordered_map<int64_t, std::vector<mutation>> buckets;
 
     auto consumer = [&] (flat_mutation_reader bucket_reader) {
-        return do_with(std::move(bucket_reader), [&] (flat_mutation_reader& rd) {
+        return with_flat_mutation_reader(std::move(bucket_reader), [&] (flat_mutation_reader& rd) {
             return rd.consume(test_bucket_writer(random_schema.schema(), classify_fn, buckets), db::no_timeout);
         });
     };
@@ -402,7 +402,7 @@ SEASTAR_THREAD_TEST_CASE(test_timestamp_based_splitting_mutation_writer_abort) {
     int throw_after = tests::random::get_int(muts.size() - 1);
     testlog.info("Will raise exception after {}/{} mutations", throw_after, muts.size());
     auto consumer = [&] (flat_mutation_reader bucket_reader) {
-        return do_with(std::move(bucket_reader), [&] (flat_mutation_reader& rd) {
+        return with_flat_mutation_reader(std::move(bucket_reader), [&] (flat_mutation_reader& rd) {
             return rd.consume(test_bucket_writer(random_schema.schema(), classify_fn, buckets, throw_after), db::no_timeout);
         });
     };

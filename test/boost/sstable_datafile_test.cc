@@ -1332,7 +1332,7 @@ static future<> check_compacted_sstables(test_env& env, sstring tmpdir_path, uns
         auto reader = sstable_reader(sst, s); // reader holds sst and s alive.
         auto keys = make_lw_shared<std::vector<partition_key>>();
 
-        return do_with(std::move(reader), [generations, s, keys] (flat_mutation_reader& reader) {
+        return with_flat_mutation_reader(std::move(reader), [generations, s, keys] (flat_mutation_reader& reader) {
             return do_for_each(*generations, [&reader, keys] (unsigned long generation) mutable {
                 return read_mutation_from_flat_mutation_reader(reader, db::no_timeout).then([generation, keys] (mutation_opt m) {
                     BOOST_REQUIRE(m);
