@@ -1107,3 +1107,19 @@ void mutation_fragment_stream_validating_filter::on_end_of_stream() {
                 _validator.previous_mutation_fragment_kind()));
     }
 }
+
+// safely close the flat_mutation_reader following completion of a function that used it.
+void with_flat_mutation_reader_close(flat_mutation_reader& fmr, std::exception_ptr func_err) {
+    try {
+        fmr.close().get();
+    } catch (...) {
+        if (!func_err) {
+            throw;
+        } else {
+            throw seastar::nested_exception(std::current_exception(), std::move(func_err));
+        }
+    }
+    if (func_err) {
+        std::rethrow_exception(std::move(func_err));
+    }
+}

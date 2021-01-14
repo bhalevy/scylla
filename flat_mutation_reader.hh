@@ -798,3 +798,43 @@ make_generating_reader(schema_ptr s, reader_permit permit, std::function<future<
 /// FIXME: reversing should be done in the sstable layer, see #1413.
 flat_mutation_reader
 make_reversing_reader(flat_mutation_reader& original, query::max_result_size max_size);
+
+template <typename Func>
+requires requires (Func f, flat_mutation_reader& fmr) { f(fmr); } && std::is_nothrow_move_constructible_v<Func>
+inline auto with_flat_mutation_reader(flat_mutation_reader fmr, Func func) noexcept {
+    return do_with(std::move(fmr), [func = std::move(func)] (flat_mutation_reader& fmr) mutable {
+        return futurize_invoke(func, fmr).finally([&fmr] {
+            return fmr.close();
+        });
+    });
+}
+
+void with_flat_mutation_reader_close(flat_mutation_reader& fmr, std::exception_ptr func_err);
+
+template <typename Func, typename return_type = std::invoke_result_t<Func, flat_mutation_reader&>>
+inline
+std::enable_if_t<std::is_same_v<return_type, void>, void>
+with_flat_mutation_reader_in_thread(flat_mutation_reader fmr, Func func) {
+    std::exception_ptr ex;
+    try {
+        func(fmr);
+    } catch (...) {
+        ex = std::current_exception();
+    }
+    with_flat_mutation_reader_close(fmr, std::move(ex));
+}
+
+template <typename Func, typename return_type = std::invoke_result_t<Func, flat_mutation_reader&>>
+inline
+std::enable_if_t<!std::is_same_v<return_type, void>, return_type>
+with_flat_mutation_reader_in_thread(flat_mutation_reader fmr, Func func) {
+    std::exception_ptr ex;
+    return_type ret;
+    try {
+        ret = func(fmr);
+    } catch (...) {
+        ex = std::current_exception();
+    }
+    with_flat_mutation_reader_close(fmr, std::move(ex));
+    return ret;
+}
