@@ -190,6 +190,16 @@ public:
     virtual future<> fast_forward_to(position_range pr, db::timeout_clock::time_point timeout) override {
         return make_exception_future<>(make_backtraced_exception_ptr<std::bad_function_call>());
     }
+    virtual future<> abort(std::exception_ptr ex) noexcept {
+        auto abort_read_context = _read_context_holder ?  _read_context_holder->abort(ex) : make_ready_future<>();
+        auto abort_underlying = _underlying_holder->abort(std::move(ex));
+        return when_all_succeed(std::move(abort_read_context), std::move(abort_underlying)).discard_result();
+    }
+    virtual future<> close() noexcept {
+        auto close_read_context = _read_context_holder ?  _read_context_holder->close() : make_ready_future<>();
+        auto close_underlying = _underlying_holder->close();
+        return when_all_succeed(std::move(close_read_context), std::move(close_underlying)).discard_result();
+    }
 };
 
 inline

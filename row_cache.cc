@@ -429,10 +429,10 @@ public:
     }
     virtual future<> abort(std::exception_ptr ex) noexcept override {
         impl::do_abort(ex);
-        return _reader->abort(std::move(ex));
+        return when_all_succeed(_reader->abort(ex), _read_context->abort(ex)).discard_result();
     }
     virtual future<> close() noexcept override {
-        return _reader->close();
+        return when_all_succeed(_reader->close(), _read_context->close()).discard_result();
     }
 };
 
@@ -552,6 +552,14 @@ public:
         }
 
         return _reader.fast_forward_to(std::move(pr), timeout);
+    }
+
+    future<> abort(std::exception_ptr ex) noexcept {
+        return _reader.abort(std::move(ex));
+    }
+
+    future<> close() noexcept {
+        return _reader.close();
     }
 };
 
@@ -708,10 +716,10 @@ public:
     }
     virtual future<> abort(std::exception_ptr ex) noexcept override {
         impl::do_abort(ex);
-        return _reader->abort(std::move(ex));
+        return when_all_succeed(_reader->abort(ex), _secondary_reader.abort(ex), _read_context->abort(ex)).discard_result();
     }
     virtual future<> close() noexcept override {
-        return _reader->close();
+        return when_all_succeed(_reader->close(), _secondary_reader.close(), _read_context->close()).discard_result();
     }
 };
 
