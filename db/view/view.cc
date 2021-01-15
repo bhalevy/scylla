@@ -1452,7 +1452,7 @@ view_builder::build_step& view_builder::get_or_create_build_step(utils::UUID bas
 future<> view_builder::initialize_reader_at_current_token(build_step& step) {
     step.pslice = make_partition_slice(*step.base->schema());
     step.prange = dht::partition_range(dht::ring_position::starting_at(step.current_token()), dht::ring_position::max());
-    step.reader = step.base->get_sstable_set().make_local_shard_sstable_reader(
+    auto reader = step.base->get_sstable_set().make_local_shard_sstable_reader(
             step.base->schema(),
             _permit,
             step.prange,
@@ -1461,7 +1461,10 @@ future<> view_builder::initialize_reader_at_current_token(build_step& step) {
             nullptr,
             streamed_mutation::forwarding::no,
             mutation_reader::forwarding::no);
-    return make_ready_future<>();
+    auto close_reader = step.reader ? step.reader->close() : make_ready_future<>();
+    return close_reader.then([&step, reader = std::move(reader)] () mutable {
+        step.reader = std::move(reader);
+    });
 }
 
 void view_builder::load_view_status(view_builder::view_build_status status, std::unordered_set<utils::UUID>& loaded_views) {
