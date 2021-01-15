@@ -310,8 +310,11 @@ public:
             const dht::partition_range& lookup_range,
             const query::partition_slice& lookup_slice) {
 
-        _cache.lookup_data_querier(make_cache_key(lookup_key), lookup_schema, lookup_range, lookup_slice, nullptr);
+        auto q = _cache.lookup_data_querier(make_cache_key(lookup_key), lookup_schema, lookup_range, lookup_slice, nullptr);
         BOOST_REQUIRE_EQUAL(_cache.get_stats().lookups, ++_expected_stats.lookups);
+        if (q) {
+            q->close().get();
+        }
         return *this;
     }
 
@@ -320,8 +323,11 @@ public:
             const dht::partition_range& lookup_range,
             const query::partition_slice& lookup_slice) {
 
-        _cache.lookup_mutation_querier(make_cache_key(lookup_key), lookup_schema, lookup_range, lookup_slice, nullptr);
+        auto q = _cache.lookup_mutation_querier(make_cache_key(lookup_key), lookup_schema, lookup_range, lookup_slice, nullptr);
         BOOST_REQUIRE_EQUAL(_cache.get_stats().lookups, ++_expected_stats.lookups);
+        if (q) {
+            q->close().get();
+        }
         return *this;
     }
 
