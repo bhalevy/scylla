@@ -744,6 +744,13 @@ public:
         clear_buffer();
         return _underlying->fast_forward_to(pr, timeout);
     }
+    virtual future<> abort(std::exception_ptr ex) noexcept override {
+        return _underlying->abort(std::move(ex));
+    }
+    virtual future<> close() noexcept override {
+        // close _underlying reader only if we own it.
+        return _underlying_holder->close();
+    }
 };
 flat_mutation_reader make_delegating_reader(flat_mutation_reader&);
 
