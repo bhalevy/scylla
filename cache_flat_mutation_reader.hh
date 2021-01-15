@@ -83,7 +83,19 @@ class cache_flat_mutation_reader final : public flat_mutation_reader::impl {
     position_in_partition_view _upper_bound;
 
     state _state = state::before_static_row;
-    lw_shared_ptr<read_context> _read_context;
+
+    // cache_flat_mutation_reader may be constructed either
+    // with a read_context&, where it knows that the read_context
+    // is owned externally, by the caller.  In this case
+    // _read_context_holder would be disengaged.
+    // Or, it could be constructed with a std::unique_ptr<read_context>,
+    // in which case it assumes ownership of the read_context
+    // and it is now responsible for closing it.
+    // In this case, _read_context_holder would be engaged
+    // and _read_context will reference its content.
+    std::unique_ptr<read_context> _read_context_holder;
+    read_context& _read_context;
+
     partition_snapshot_row_cursor _next_row;
     bool _next_row_in_range = false;
 
@@ -100,7 +112,7 @@ class cache_flat_mutation_reader final : public flat_mutation_reader::impl {
     bool _lower_bound_changed = false;
 
     // Points to the underlying reader conforming to _schema,
-    // either to *_underlying_holder or _read_context->underlying().underlying().
+    // either to *_underlying_holder or _read_context.underlying().underlying().
     flat_mutation_reader* _underlying = nullptr;
     flat_mutation_reader_opt _underlying_holder;
 
@@ -144,10 +156,10 @@ public:
     cache_flat_mutation_reader(schema_ptr s,
                                dht::decorated_key dk,
                                query::clustering_key_filter_ranges&& crr,
-                               lw_shared_ptr<read_context> ctx,
+                               read_context& ctx,
                                partition_snapshot_ptr snp,
                                row_cache& cache)
-        : flat_mutation_reader::impl(std::move(s), ctx->permit())
+        : flat_mutation_reader::impl(std::move(s), ctx.permit())
         , _snp(std::move(snp))
         , _position_cmp(*_schema)
         , _ck_ranges(std::move(crr))
@@ -156,11 +168,24 @@ public:
         , _lsa_manager(cache)
         , _lower_bound(position_in_partition::before_all_clustered_rows())
         , _upper_bound(position_in_partition_view::before_all_clustered_rows())
-        , _read_context(std::move(ctx))
+        , _read_context_holder()
+        , _read_context(ctx)    // ctx is owned by the caller, who's responsible for closing it.
         , _next_row(*_schema, *_snp)
     {
         clogger.trace("csm {}: table={}.{}", fmt::ptr(this), _schema->ks_name(), _schema->cf_name());
         push_mutation_fragment(*_schema, _permit, partition_start(std::move(dk), _snp->partition_tombstone()));
+    }
+    cache_flat_mutation_reader(schema_ptr s,
+                               dht::decorated_key dk,
+                               query::clustering_key_filter_ranges&& crr,
+                               std::unique_ptr<read_context> unique_ctx,
+                               partition_snapshot_ptr snp,
+                               row_cache& cache)
+        : cache_flat_mutation_reader(s, std::move(dk), std::move(crr), *unique_ctx, std::move(snp), cache)
+    {
+        // Assume ownership of the read_context.
+        // It is our responsibility to close it now.
+        _read_context_holder = std::move(unique_ctx);
     }
     cache_flat_mutation_reader(const cache_flat_mutation_reader&) = delete;
     cache_flat_mutation_reader(cache_flat_mutation_reader&&) = delete;
@@ -185,16 +210,16 @@ public:
 inline
 future<> cache_flat_mutation_reader::process_static_row(db::timeout_clock::time_point timeout) {
     if (_snp->static_row_continuous()) {
-        _read_context->cache().on_row_hit();
+        _read_context.cache().on_row_hit();
         static_row sr = _lsa_manager.run_in_read_section([this] {
-            return _snp->static_row(_read_context->digest_requested());
+            return _snp->static_row(_read_context.digest_requested());
         });
         if (!sr.empty()) {
             push_mutation_fragment(mutation_fragment(*_schema, _permit, std::move(sr)));
         }
         return make_ready_future<>();
     } else {
-        _read_context->cache().on_row_miss();
+        _read_context.cache().on_row_miss();
         return ensure_underlying(timeout).then([this, timeout] {
             return (*_underlying)(timeout).then([this] (mutation_fragment_opt&& sr) {
                 if (sr) {
@@ -245,8 +270,8 @@ future<> cache_flat_mutation_reader::ensure_underlying(db::timeout_clock::time_p
     if (_underlying) {
         return make_ready_future<>();
     }
-    return _read_context->ensure_underlying(timeout).then([this, timeout] {
-        flat_mutation_reader& ctx_underlying = _read_context->underlying().underlying();
+    return _read_context.ensure_underlying(timeout).then([this, timeout] {
+        flat_mutation_reader& ctx_underlying = _read_context.underlying().underlying();
         if (ctx_underlying.schema() != _schema) {
             _underlying_holder = make_delegating_reader(ctx_underlying);
             _underlying_holder->upgrade_schema(_schema);
@@ -313,7 +338,7 @@ future<> cache_flat_mutation_reader::read_from_underlying(db::timeout_clock::tim
     return consume_mutation_fragments_until(*_underlying,
         [this] { return _state != state::reading_from_underlying || is_buffer_full(); },
         [this] (mutation_fragment mf) {
-            _read_context->cache().on_row_miss();
+            _read_context.cache().on_row_miss();
             maybe_add_to_cache(mf);
             add_to_buffer(std::move(mf));
         },
@@ -322,7 +347,7 @@ future<> cache_flat_mutation_reader::read_from_underlying(db::timeout_clock::tim
             _lsa_manager.run_in_update_section([this] {
                 auto same_pos = _next_row.maybe_refresh();
                 if (!same_pos) {
-                    _read_context->cache().on_mispopulate(); // FIXME: Insert dummy entry at _upper_bound.
+                    _read_context.cache().on_mispopulate(); // FIXME: Insert dummy entry at _upper_bound.
                     _next_row_in_range = !after_current_range(_next_row.position());
                     if (!_next_row.continuous()) {
                         start_reading_from_underlying();
@@ -380,7 +405,7 @@ future<> cache_flat_mutation_reader::read_from_underlying(db::timeout_clock::tim
                             });
                         }
                     } else {
-                        _read_context->cache().on_mispopulate();
+                        _read_context.cache().on_mispopulate();
                     }
                     try {
                         move_to_next_range();
@@ -433,7 +458,7 @@ void cache_flat_mutation_reader::maybe_update_continuity() {
             maybe_drop_last_entry();
         });
     } else {
-        _read_context->cache().on_mispopulate();
+        _read_context.cache().on_mispopulate();
     }
 }
 
@@ -453,7 +478,7 @@ void cache_flat_mutation_reader::maybe_add_to_cache(const clustering_row& cr) {
     if (!can_populate()) {
         _last_row = nullptr;
         _population_range_starts_before_all_rows = false;
-        _read_context->cache().on_mispopulate();
+        _read_context.cache().on_mispopulate();
         return;
     }
     clogger.trace("csm {}: populate({})", fmt::ptr(this), clustering_row::printer(*_schema, cr));
@@ -461,7 +486,7 @@ void cache_flat_mutation_reader::maybe_add_to_cache(const clustering_row& cr) {
         mutation_partition& mp = _snp->version()->partition();
         rows_entry::tri_compare cmp(*_schema);
 
-        if (_read_context->digest_requested()) {
+        if (_read_context.digest_requested()) {
             cr.cells().prepare_hash(*_schema, column_kind::regular_column);
         }
         auto new_entry = alloc_strategy_unique_ptr<rows_entry>(
@@ -481,7 +506,7 @@ void cache_flat_mutation_reader::maybe_add_to_cache(const clustering_row& cr) {
             clogger.trace("csm {}: set_continuous({})", fmt::ptr(this), e.position());
             e.set_continuous(true);
         } else {
-            _read_context->cache().on_mispopulate();
+            _read_context.cache().on_mispopulate();
         }
         with_allocator(standard_allocator(), [&] {
             _last_row = partition_snapshot_row_weakref(*_snp, it, true);
@@ -579,7 +604,7 @@ void cache_flat_mutation_reader::move_to_range(query::clustering_row_ranges::con
                 _snp->tracker()->insert(*it);
                 _last_row = partition_snapshot_row_weakref(*_snp, it, true);
             } else {
-                _read_context->cache().on_mispopulate();
+                _read_context.cache().on_mispopulate();
             }
         }
         start_reading_from_underlying();
@@ -606,7 +631,7 @@ void cache_flat_mutation_reader::maybe_drop_last_entry() noexcept {
             && _snp->at_oldest_version()) {
 
         with_allocator(_snp->region().allocator(), [&] {
-            _last_row->on_evicted(_read_context->cache()._tracker);
+            _last_row->on_evicted(_read_context.cache()._tracker);
         });
         _last_row = nullptr;
 
@@ -655,8 +680,8 @@ void cache_flat_mutation_reader::add_to_buffer(mutation_fragment&& mf) {
 inline
 void cache_flat_mutation_reader::add_to_buffer(const partition_snapshot_row_cursor& row) {
     if (!row.dummy()) {
-        _read_context->cache().on_row_hit();
-        if (_read_context->digest_requested()) {
+        _read_context.cache().on_row_hit();
+        if (_read_context.digest_requested()) {
             row.latest_row().cells().prepare_hash(*_schema, column_kind::regular_column);
         }
         add_clustering_row_to_buffer(mutation_fragment(*_schema, _permit, row.row()));
@@ -666,7 +691,7 @@ void cache_flat_mutation_reader::add_to_buffer(const partition_snapshot_row_curs
             _lower_bound = row.position();
             _lower_bound_changed = true;
         }
-        _read_context->cache()._tracker.on_dummy_row_hit();
+        _read_context.cache()._tracker.on_dummy_row_hit();
     }
 }
 
@@ -709,7 +734,7 @@ void cache_flat_mutation_reader::maybe_add_to_cache(const range_tombstone& rt) {
             _snp->version()->partition().row_tombstones().apply_monotonically(*_schema, rt);
         });
     } else {
-        _read_context->cache().on_mispopulate();
+        _read_context.cache().on_mispopulate();
     }
 }
 
@@ -717,15 +742,15 @@ inline
 void cache_flat_mutation_reader::maybe_add_to_cache(const static_row& sr) {
     if (can_populate()) {
         clogger.trace("csm {}: populate({})", fmt::ptr(this), static_row::printer(*_schema, sr));
-        _read_context->cache().on_static_row_insert();
+        _read_context.cache().on_static_row_insert();
         _lsa_manager.run_in_update_section_with_allocator([&] {
-            if (_read_context->digest_requested()) {
+            if (_read_context.digest_requested()) {
                 sr.cells().prepare_hash(*_schema, column_kind::static_column);
             }
             _snp->version()->partition().static_row().apply(*_schema, column_kind::static_column, sr.cells());
         });
     } else {
-        _read_context->cache().on_mispopulate();
+        _read_context.cache().on_mispopulate();
     }
 }
 
@@ -735,24 +760,38 @@ void cache_flat_mutation_reader::maybe_set_static_row_continuous() {
         clogger.trace("csm {}: set static row continuous", fmt::ptr(this));
         _snp->version()->partition().set_static_row_continuous(true);
     } else {
-        _read_context->cache().on_mispopulate();
+        _read_context.cache().on_mispopulate();
     }
 }
 
 inline
 bool cache_flat_mutation_reader::can_populate() const {
-    return _snp->at_latest_version() && _read_context->cache().phase_of(_read_context->key()) == _read_context->phase();
+    return _snp->at_latest_version() && _read_context.cache().phase_of(_read_context.key()) == _read_context.phase();
 }
 
 } // namespace cache
 
+// pass a reference to ctx to cache_flat_mutation_reader
+// keeping its ownership at caller's.
 inline flat_mutation_reader make_cache_flat_mutation_reader(schema_ptr s,
                                                             dht::decorated_key dk,
                                                             query::clustering_key_filter_ranges crr,
                                                             row_cache& cache,
-                                                            lw_shared_ptr<cache::read_context> ctx,
+                                                            cache::read_context& ctx,
                                                             partition_snapshot_ptr snp)
 {
     return make_flat_mutation_reader<cache::cache_flat_mutation_reader>(
-        std::move(s), std::move(dk), std::move(crr), std::move(ctx), std::move(snp), cache);
+        std::move(s), std::move(dk), std::move(crr), ctx, std::move(snp), cache);
+}
+
+// transfer ownership of ctx to cache_flat_mutation_reader
+inline flat_mutation_reader make_cache_flat_mutation_reader(schema_ptr s,
+                                                            dht::decorated_key dk,
+                                                            query::clustering_key_filter_ranges crr,
+                                                            row_cache& cache,
+                                                            std::unique_ptr<cache::read_context> unique_ctx,
+                                                            partition_snapshot_ptr snp)
+{
+    return make_flat_mutation_reader<cache::cache_flat_mutation_reader>(
+        std::move(s), std::move(dk), std::move(crr), std::move(unique_ctx), std::move(snp), cache);
 }
