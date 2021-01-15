@@ -84,7 +84,10 @@ future<> view_update_generator::start() {
                                 mutation_reader::forwarding fwd_mr) {
                         return make_restricted_range_sstable_reader(std::move(ssts), s, std::move(permit), pr, ps, pc, std::move(ts), fwd_ms, fwd_mr);
                     });
-                    auto [staging_sstable_reader, staging_sstable_reader_handle] = make_manually_paused_evictable_reader(
+                    // clang 11 fails with: error: 'staging_sstable_reader' in capture list does not name a variable
+                    // when using structured bindings, hence std::get<> below.
+                    // See http://www.open-std.org/jtc1/sc22/wg21/docs/papers/2019/p1091r3.html
+                    auto p = make_manually_paused_evictable_reader(
                             std::move(ms),
                             s,
                             permit,
@@ -93,6 +96,9 @@ future<> view_update_generator::start() {
                             service::get_local_streaming_priority(),
                             nullptr,
                             ::mutation_reader::forwarding::no);
+                    auto& staging_sstable_reader = std::get<0>(p);
+                    auto& staging_sstable_reader_handle = std::get<1>(p);
+                    auto close_reader = defer([&staging_sstable_reader] { staging_sstable_reader.close().get(); });
 
                     inject_failure("view_update_generator_consume_staging_sstable");
                     auto result = staging_sstable_reader.consume_in_thread(view_updating_consumer(s, std::move(permit), *t, sstables, _as, staging_sstable_reader_handle), db::no_timeout);
