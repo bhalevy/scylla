@@ -1425,7 +1425,7 @@ public:
     void revert_initial_system_read_concurrency_boost();
     future<> stop();
     future<> close_tables(table_kind kind_to_close);
-
+    future<> stop_querier_cache();
     future<> stop_large_data_handler();
     unsigned shard_of(const mutation& m);
     unsigned shard_of(const frozen_mutation& m);
