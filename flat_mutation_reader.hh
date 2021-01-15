@@ -790,6 +790,10 @@ public:
         clear_buffer();
         return _underlying->fast_forward_to(pr, timeout);
     }
+    virtual future<> abort(std::exception_ptr ex) noexcept override {
+        impl::do_abort(ex);
+        return _underlying->abort(std::move(ex));
+    }
 };
 flat_mutation_reader make_delegating_reader(flat_mutation_reader&);
 
