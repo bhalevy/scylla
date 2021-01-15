@@ -234,12 +234,8 @@ void flat_mutation_reader::close_in_background(std::unique_ptr<flat_mutation_rea
     });
 }
 
-flat_mutation_reader& to_reference(reference_wrapper<flat_mutation_reader>& wrapper) {
-    return wrapper.get();
-}
-
 flat_mutation_reader make_delegating_reader(flat_mutation_reader& r) {
-    return make_flat_mutation_reader<delegating_reader<reference_wrapper<flat_mutation_reader>>>(ref(r));
+    return make_flat_mutation_reader<delegating_reader>(r);
 }
 
 flat_mutation_reader make_forwardable(flat_mutation_reader m) {
