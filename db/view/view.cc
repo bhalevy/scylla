@@ -1776,8 +1776,10 @@ future<> view_builder::do_build_step() {
             } catch (...) {
                 ++_current_step->second.base->cf_stats()->view_building_paused;
                 ++_stats.steps_failed;
+                auto ex = std::current_exception();
+                _current_step->second.reader->abort(ex).get();
                 auto base = _current_step->second.base->schema();
-                vlogger.warn("Error executing build step for base {}.{}: {}", base->ks_name(), base->cf_name(), std::current_exception());
+                vlogger.warn("Error executing build step for base {}.{}: {}", base->ks_name(), base->cf_name(), ex);
                 r.retry(_as).get();
                 initialize_reader_at_current_token(_current_step->second).get();
             }
