@@ -269,8 +269,9 @@ future<> size_estimates_mutation_reader::fill_buffer(db::timeout_clock::time_poi
             return stop_iteration(is_buffer_full());
         }, timeout).then([this] {
             if (_partition_reader->is_end_of_stream() && _partition_reader->is_buffer_empty()) {
-                _partition_reader = std::nullopt;
+                return _partition_reader->close();
             }
+            return make_ready_future<>();
         });
     });
 }
@@ -278,7 +279,7 @@ future<> size_estimates_mutation_reader::fill_buffer(db::timeout_clock::time_poi
 future<> size_estimates_mutation_reader::next_partition() {
     clear_buffer_to_next_partition();
     if (is_buffer_empty()) {
-        _partition_reader = std::nullopt;
+        return _partition_reader->close();
     }
     return make_ready_future<>();
 }
@@ -287,9 +288,8 @@ future<> size_estimates_mutation_reader::fast_forward_to(const dht::partition_ra
     clear_buffer();
     _prange = &pr;
     _keyspaces = std::nullopt;
-    _partition_reader = std::nullopt;
     _end_of_stream = false;
-    return make_ready_future<>();
+    return _partition_reader->close();
 }
 
 future<> size_estimates_mutation_reader::fast_forward_to(position_range pr, db::timeout_clock::time_point timeout) {
