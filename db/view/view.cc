@@ -1414,7 +1414,11 @@ future<> view_builder::stop() {
             return _sem.wait();
         }).then([this] {
             _sem.broken();
-            return _build_step.join();
+            return _build_step.join().then([this] {
+                return parallel_for_each(_base_to_build_step, [] (std::pair<const utils::UUID, db::view::view_builder::build_step>& p) {
+                    return p.second.reader->close();
+                });
+            });
         }).handle_exception_type([] (const broken_semaphore&) {
             // ignored
         }).handle_exception_type([] (const semaphore_timed_out&) {
