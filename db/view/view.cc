@@ -1782,6 +1782,7 @@ future<> view_builder::do_build_step() {
                 initialize_reader_at_current_token(_current_step->second).get();
             }
             if (_current_step->second.build_status.empty()) {
+                _current_step->second.reader->close().get();
                 _current_step = _base_to_build_step.erase(_current_step);
             } else {
                 ++_current_step;
