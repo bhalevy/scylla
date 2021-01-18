@@ -519,6 +519,10 @@ public:
             _reader_handle->pause();
         }
     }
+
+    future<> close() noexcept {
+        return _reader.close();
+    }
 };
 
 class repair_writer : public enable_lw_shared_from_this<repair_writer> {
@@ -858,7 +862,8 @@ public:
         auto f1 = _sink_source_for_get_full_row_hashes.close();
         auto f2 = _sink_source_for_get_row_diff.close();
         auto f3 = _sink_source_for_put_row_diff.close();
-        return when_all_succeed(std::move(gate_future), std::move(f1), std::move(f2), std::move(f3)).discard_result().finally([this] {
+        auto close_reader = _repair_reader.close();
+        return when_all_succeed(std::move(gate_future), std::move(f1), std::move(f2), std::move(f3), std::move(close_reader)).discard_result().finally([this] {
             return _repair_writer->wait_for_writer_done();
         });
     }
