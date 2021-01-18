@@ -2306,23 +2306,30 @@ SEASTAR_THREAD_TEST_CASE(test_multishard_combining_reader_destroyed_with_pending
         }));
 
         // Destroy reader.
-        reader = flat_mutation_reader(nullptr);
-
-        parallel_for_each(boost::irange(0u, smp::count), [&remote_controls] (unsigned shard) mutable {
-            return smp::submit_to(shard, [control = remote_controls.at(shard).get()] {
-                control->buffer_filled.set_value();
-            });
-        }).get();
-
-        BOOST_REQUIRE(eventually_true([&] {
+        auto buffers_filled = false;
+        auto destroyed_after_close = reader.close().then([&] {
+            // close shuold wait on readahead and complete
+            // only after `remote_control->buffer_filled.set_value()`
+            // is executed below.
+            BOOST_REQUIRE(buffers_filled);
             return map_reduce(boost::irange(0u, smp::count), [&] (unsigned shard) {
                     return smp::submit_to(shard, [&remote_controls, shard] {
                         return remote_controls.at(shard)->destroyed;
                     });
                 },
                 true,
-                std::logical_and<bool>()).get0();
-        }));
+                std::logical_and<bool>());
+        });
+
+        parallel_for_each(boost::irange(0u, smp::count), [&remote_controls] (unsigned shard) mutable {
+            return smp::submit_to(shard, [control = remote_controls.at(shard).get()] {
+                control->buffer_filled.set_value();
+            });
+        }).then([&] {
+            buffers_filled = true;
+        }).get();
+
+        BOOST_REQUIRE(destroyed_after_close.get0());
 
         return operations_gate.close();
     }).get();
