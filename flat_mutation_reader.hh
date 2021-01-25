@@ -221,6 +221,7 @@ public:
                 if (need_preempt()) {
                     seastar::thread::yield();
                 }
+                check_aborted();
                 if (is_buffer_empty()) {
                     if (is_end_of_stream()) {
                         return;
@@ -716,7 +717,7 @@ flat_mutation_reader transform(flat_mutation_reader r, T t) {
         {}
         virtual future<> fill_buffer(db::timeout_clock::time_point timeout) override {
             if (_end_of_stream) {
-                return make_ready_future<>();
+                return maybe_aborted_exception_future<>();
             }
             return _reader.consume_pausable(consumer{this}, timeout).then([this] {
                 if (_reader.is_end_of_stream() && _reader.is_buffer_empty()) {
@@ -755,7 +756,7 @@ public:
     delegating_reader(Underlying&& r) : impl(to_reference(r).schema(), to_reference(r).permit(), format("delegating_reader({})", to_reference(r).description())), _underlying(std::forward<Underlying>(r)) { }
     virtual future<> fill_buffer(db::timeout_clock::time_point timeout) override {
         if (is_buffer_full()) {
-            return make_ready_future<>();
+            return maybe_aborted_exception_future<>();
         }
         return to_reference(_underlying).fill_buffer(timeout).then([this] {
             _end_of_stream = to_reference(_underlying).is_end_of_stream();

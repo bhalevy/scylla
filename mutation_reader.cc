@@ -591,6 +591,7 @@ future<> mutation_reader_merger::fast_forward_to(position_range pr, db::timeout_
 template <FragmentProducer P>
 future<> merging_reader<P>::fill_buffer(db::timeout_clock::time_point timeout) {
     return repeat([this, timeout] {
+        check_aborted();
         return _merger(timeout).then([this] (mutation_fragment_opt mfo) {
             if (!mfo) {
                 _end_of_stream = true;
@@ -952,7 +953,7 @@ foreign_reader::~foreign_reader() {
 
 future<> foreign_reader::fill_buffer(db::timeout_clock::time_point timeout) {
     if (_end_of_stream || is_buffer_full()) {
-        return make_ready_future();
+        return maybe_aborted_exception_future<>();
     }
 
     return forward_operation(timeout, [reader = _reader.get(), timeout] () {
@@ -1725,6 +1726,9 @@ future<> shard_reader::do_fill_buffer(db::timeout_clock::time_point timeout) {
 }
 
 future<> shard_reader::fill_buffer(db::timeout_clock::time_point timeout) {
+    if (aborted()) {
+        return aborted_exception_future<>();
+    }
     if (_read_ahead) {
         return *std::exchange(_read_ahead, std::nullopt);
     }
@@ -1926,7 +1930,7 @@ multishard_combining_reader::~multishard_combining_reader() {
 
 future<> multishard_combining_reader::fill_buffer(db::timeout_clock::time_point timeout) {
     _crossed_shards = false;
-    return do_until([this] { return is_buffer_full() || is_end_of_stream(); }, [this, timeout] {
+    return do_until([this] { check_aborted(); return is_buffer_full() || is_end_of_stream(); }, [this, timeout] {
         auto& reader = *_shard_readers[_current_shard];
 
         if (reader.is_buffer_empty()) {
@@ -2244,7 +2248,7 @@ public:
         , _last_uncompacted_partition_start(dht::decorated_key(dht::minimum_token(), partition_key::make_empty()), tombstone{}) {
     }
     virtual future<> fill_buffer(db::timeout_clock::time_point timeout) override {
-        return do_until([this] { return is_end_of_stream() || is_buffer_full(); }, [this, timeout] {
+        return do_until([this] { check_aborted(); return is_end_of_stream() || is_buffer_full(); }, [this, timeout] {
             return _reader.fill_buffer(timeout).then([this, timeout] {
                 if (_reader.is_buffer_empty()) {
                     _end_of_stream = _reader.is_end_of_stream();

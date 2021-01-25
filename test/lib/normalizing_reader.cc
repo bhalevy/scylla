@@ -30,7 +30,7 @@ normalizing_reader::normalizing_reader(flat_mutation_reader rd)
 {}
 
 future<> normalizing_reader::fill_buffer(db::timeout_clock::time_point timeout) {
-    return do_until([this] { return is_buffer_full() || is_end_of_stream(); }, [this, timeout] {
+    return do_until([this] { check_aborted(); return is_buffer_full() || is_end_of_stream(); }, [this, timeout] {
         return _rd.fill_buffer(timeout).then([this] {
             position_in_partition::less_compare less{*_rd.schema()};
             while (!_rd.is_buffer_empty()) {

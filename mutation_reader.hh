@@ -85,7 +85,7 @@ public:
         , _filter(std::forward<MutationFilter>(filter)) {
     }
     virtual future<> fill_buffer(db::timeout_clock::time_point timeout) override {
-        return do_until([this] { return is_buffer_full() || is_end_of_stream(); }, [this, timeout] {
+        return do_until([this] { check_aborted(); return is_buffer_full() || is_end_of_stream(); }, [this, timeout] {
             return _rd.fill_buffer(timeout).then([this] {
                 return do_until([this] { return _rd.is_buffer_empty(); }, [this] {
                     auto mf = _rd.pop_mutation_fragment();

@@ -260,7 +260,7 @@ future<> size_estimates_mutation_reader::get_next_partition() {
 }
 
 future<> size_estimates_mutation_reader::fill_buffer(db::timeout_clock::time_point timeout) {
-    return do_until([this, timeout] { return is_end_of_stream() || is_buffer_full(); }, [this, timeout] {
+    return do_until([this, timeout] { check_aborted(); return is_end_of_stream() || is_buffer_full(); }, [this, timeout] {
         if (!_partition_reader) {
             return get_next_partition();
         }

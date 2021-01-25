@@ -395,14 +395,16 @@ public:
 
     virtual future<> fill_buffer(db::timeout_clock::time_point timeout) override {
         if (!_reader) {
+          return maybe_aborted_exception_future<>().then([this, timeout] {
             return create_reader(timeout).then([this, timeout] {
                 if (_end_of_stream) {
                     return make_ready_future<>();
                 }
                 return fill_buffer(timeout);
             });
+          });
         }
-        return do_until([this] { return is_end_of_stream() || is_buffer_full(); }, [this, timeout] {
+        return do_until([this] { check_aborted(); return is_end_of_stream() || is_buffer_full(); }, [this, timeout] {
             return fill_buffer_from(*_reader, timeout).then([this] (bool reader_finished) {
                 if (reader_finished) {
                     _end_of_stream = true;
@@ -664,7 +666,7 @@ public:
         , _lower_bound(range.start())
     { }
     virtual future<> fill_buffer(db::timeout_clock::time_point timeout) override {
-        return do_until([this] { return is_end_of_stream() || is_buffer_full(); }, [this, timeout] {
+        return do_until([this] { check_aborted(); return is_end_of_stream() || is_buffer_full(); }, [this, timeout] {
             if (!_reader) {
                 return read_next_partition(timeout);
             } else {

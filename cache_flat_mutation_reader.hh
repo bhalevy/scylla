@@ -213,6 +213,9 @@ void cache_flat_mutation_reader::touch_partition() {
 
 inline
 future<> cache_flat_mutation_reader::fill_buffer(db::timeout_clock::time_point timeout) {
+    if (aborted()) {
+        return aborted_exception_future<>();
+    }
     if (_state == state::before_static_row) {
         auto after_static_row = [this, timeout] {
             if (_ck_ranges_curr == _ck_ranges_end) {
@@ -233,7 +236,7 @@ future<> cache_flat_mutation_reader::fill_buffer(db::timeout_clock::time_point t
         }
     }
     clogger.trace("csm {}: fill_buffer(), range={}, lb={}", fmt::ptr(this), *_ck_ranges_curr, _lower_bound);
-    return do_until([this] { return _end_of_stream || is_buffer_full(); }, [this, timeout] {
+    return do_until([this] { check_aborted(); return _end_of_stream || is_buffer_full(); }, [this, timeout] {
         return do_fill_buffer(timeout);
     });
 }

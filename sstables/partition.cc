@@ -407,6 +407,9 @@ public:
         });
     }
     virtual future<> fill_buffer(db::timeout_clock::time_point timeout) override {
+        if (aborted()) {
+            return aborted_exception_future<>();
+        }
         if (_end_of_stream) {
             return make_ready_future<>();
         }
@@ -420,7 +423,7 @@ public:
                 }
             });
         }
-        return do_until([this] { return is_end_of_stream() || is_buffer_full(); }, [this] {
+        return do_until([this] { check_aborted(); return is_end_of_stream() || is_buffer_full(); }, [this] {
             if (_partition_finished) {
                 if (_before_partition) {
                     return read_partition();
@@ -428,7 +431,7 @@ public:
                     return read_next_partition();
                 }
             } else {
-                return do_until([this] { return is_buffer_full() || _partition_finished || _end_of_stream; }, [this] {
+                return do_until([this] { check_aborted(); return is_buffer_full() || _partition_finished || _end_of_stream; }, [this] {
                     _consumer.push_ready_fragments();
                     if (is_buffer_full() || _partition_finished || _end_of_stream) {
                         return make_ready_future<>();

@@ -292,7 +292,7 @@ public:
 
     virtual future<> fill_buffer(db::timeout_clock::time_point timeout) override {
       // FIXME: indentation
-      return do_until([this] { return is_end_of_stream() || is_buffer_full(); }, [this, timeout] {
+      return do_until([this] { check_aborted(); return is_end_of_stream() || is_buffer_full(); }, [this, timeout] {
         _reader.with_reserve([&] {
             if (!_static_row_done) {
                 push_static_row();

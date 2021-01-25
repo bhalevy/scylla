@@ -3821,6 +3821,7 @@ SEASTAR_THREAD_TEST_CASE(clustering_combined_reader_mutation_source_test) {
 
         virtual future<> fill_buffer(db::timeout_clock::time_point timeout) override {
             while (!is_buffer_full()) {
+                check_aborted();
                 auto mfo = co_await next_fragment(timeout);
                 if (!mfo) {
                     _end_of_stream = true;

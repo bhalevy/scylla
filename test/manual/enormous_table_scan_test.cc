@@ -61,9 +61,9 @@ public:
 
     virtual future<> fill_buffer(db::timeout_clock::time_point timeout) override {
         if (!_partition_in_range) {
-            return make_ready_future<>();
+            return maybe_aborted_exception_future<>();
         }
-        return do_until([this] { return is_end_of_stream() || is_buffer_full(); }, [this] {
+        return do_until([this] { check_aborted(); return is_end_of_stream() || is_buffer_full(); }, [this] {
             auto int_to_ck = [this] (int64_t i) -> clustering_key {
                 auto ck_data = data_value(i).serialize_nonnull();
                 return clustering_key::from_single_value(*_schema, std::move(ck_data));

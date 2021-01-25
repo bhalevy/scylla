@@ -422,7 +422,7 @@ public:
      { }
 
     virtual future<> fill_buffer(db::timeout_clock::time_point timeout) override {
-        return do_until([this] { return is_end_of_stream() || is_buffer_full(); }, [this, timeout] {
+        return do_until([this] { check_aborted(); return is_end_of_stream() || is_buffer_full(); }, [this, timeout] {
             if (!_delegate) {
                 _delegate_range = get_delegate_range();
                 if (_delegate_range) {
@@ -604,7 +604,7 @@ private:
     }
 public:
     virtual future<> fill_buffer(db::timeout_clock::time_point timeout) override {
-        return do_until([this] { return is_end_of_stream() || is_buffer_full(); }, [this, timeout] {
+        return do_until([this] { check_aborted(); return is_end_of_stream() || is_buffer_full(); }, [this, timeout] {
             if (!_partition_reader) {
                 get_next_partition();
                 if (!_partition_reader) {
