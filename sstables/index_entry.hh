@@ -170,7 +170,7 @@ public:
     };
 
     virtual ~clustered_index_cursor() {};
-    virtual future<> close() = 0;
+    virtual future<> close() noexcept = 0;
 
     // Advances the cursor to given position. When the cursor has more accurate information about
     // location of the fragments from the range [pos, +inf) in the data file (since it was last advanced)
