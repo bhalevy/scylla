@@ -439,7 +439,7 @@ private:
     std::optional<index_bound> _upper_bound;
 
 private:
-    static future<> reset_clustered_cursor(index_bound& bound) {
+    static future<> reset_clustered_cursor(index_bound& bound) noexcept {
         if (bound.clustered_cursor) {
             return bound.clustered_cursor->close().then([&bound] {
                 bound.clustered_cursor.reset();
@@ -700,7 +700,7 @@ private:
         return _sstable->data_size();
     }
 
-    static future<> close(index_bound& b) {
+    static future<> close(index_bound& b) noexcept {
         return reset_clustered_cursor(b);
     }
 public:
@@ -897,12 +897,11 @@ public:
 
     const shared_sstable& sstable() const { return _sstable; }
 
-    future<> close() {
-        return close(_lower_bound).then([this] {
-            if (_upper_bound) {
-                return close(*_upper_bound);
-            }
-            return make_ready_future<>();
+    future<> close() noexcept {
+        auto close_lower_bound = close(_lower_bound);
+        auto close_upper_bound = _upper_bound ? close(*_upper_bound) : make_ready_future<>();
+        return when_all_succeed(std::move(close_lower_bound), std::move(close_upper_bound)).discard_result().handle_exception([] (std::exception_ptr ep) {
+            sstlog.warn("Failed closing index_reader: {}. Ignored since the reader is already done.", ep);
         });
     }
 };
