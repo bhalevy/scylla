@@ -220,6 +220,9 @@ public:
         _underlying_snapshot = {};
         _key = dk;
     }
+    future<> close() noexcept {
+        return _underlying.close();
+    }
 };
 
 }
