@@ -123,15 +123,22 @@ public:
 
     ~data_consume_context() {
         if (_ctx) {
-            auto f = _ctx->close();
-            //FIXME: discarded future.
-            (void)f.handle_exception([ctx = std::move(_ctx), sst = std::move(_sst)](auto) {});
+            (void)close().handle_exception([] (std::exception_ptr ep) {
+                sstlog.warn("data_consume_rows_context: failed closing context in destructor: {}. Ignored.", ep);
+            });
         }
     }
 
     data_consume_context(data_consume_context &&) noexcept = default;
 
     data_consume_context &operator=(data_consume_context &&) noexcept = default;
+
+    future<> close() noexcept {
+        if (_ctx) {
+            return _ctx->close().finally([_ctx = std::move(_ctx), sst = std::move(_sst)] {});
+        }
+        return make_ready_future<>();
+    }
 };
 
 template <typename DataConsumeRowsContext>
