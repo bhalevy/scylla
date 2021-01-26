@@ -167,15 +167,12 @@ public:
     sstable_mutation_reader(sstable_mutation_reader&&) = delete;
     sstable_mutation_reader(const sstable_mutation_reader&) = delete;
     ~sstable_mutation_reader() {
-        _monitor.on_read_completed();
-        auto close = [this] (std::unique_ptr<index_reader>& ptr) {
-            if (ptr) {
-                auto f = ptr->close();
-                // FIXME: discarded future.
-                (void)f.handle_exception([index = std::move(ptr)] (auto&&) { });
-            }
-        };
-        close(_index_reader);
+        if (_context || _index_reader) {
+            sstlog.warn("sstable_mutation_reader was not closed. Closing in the background. Backtrace: {}", current_backtrace());
+            (void)close().handle_exception([] (std::exception_ptr ep) {
+                sstlog.warn("Failed background closing of sstable_mutation_reader: {}. Ignored.", ep);
+            });
+        }
     }
 private:
     static bool will_likely_slice(const query::partition_slice& slice) {
@@ -445,6 +442,19 @@ public:
         } else {
             _end_of_stream = true;
             return make_ready_future<>();
+        }
+    }
+    virtual future<> close() noexcept override {
+        auto ir = std::move(_index_reader); // get _index_reader since we may be closing in the background from the destructor.
+
+        if (_context) {
+            _monitor.on_read_completed();
+            auto context = std::move(_context);
+            co_await context->close();
+        }
+
+        if (ir) {
+            co_await ir->close();
         }
     }
 };
