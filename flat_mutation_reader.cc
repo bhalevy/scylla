@@ -313,6 +313,9 @@ flat_mutation_reader make_forwardable(flat_mutation_reader m) {
             };
             return _underlying.fast_forward_to(pr, timeout);
         }
+        virtual future<> close() noexcept override {
+            return _underlying.close();
+        }
     };
     return make_flat_mutation_reader<reader>(std::move(m));
 }
@@ -375,6 +378,9 @@ flat_mutation_reader make_nonforwardable(flat_mutation_reader r, bool single_par
             _end_of_stream = false;
             clear_buffer();
             return _underlying.fast_forward_to(pr, timeout);
+        }
+        virtual future<> close() noexcept override {
+            return _underlying.close();
         }
     };
     return make_flat_mutation_reader<reader>(std::move(r), single_partition);
