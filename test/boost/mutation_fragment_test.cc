@@ -397,13 +397,14 @@ SEASTAR_TEST_CASE(test_schema_upgrader_is_equivalent_with_mutation_upgrade) {
             if (m1.schema()->version() != m2.schema()->version()) {
                 // upgrade m1 to m2's schema
 
-                auto reader = transform(flat_mutation_reader_from_mutations(tests::make_permit(), {m1}), schema_upgrader(m2.schema()));
+              with_flat_mutation_reader_in_thread(transform(flat_mutation_reader_from_mutations(tests::make_permit(), {m1}), schema_upgrader(m2.schema())), [&m1, &m2] (flat_mutation_reader& reader) {
                 auto from_upgrader = read_mutation_from_flat_mutation_reader(reader, db::no_timeout).get0();
 
                 auto regular = m1;
                 regular.upgrade(m2.schema());
 
                 assert_that(from_upgrader).has_mutation().is_equal_to(regular);
+              });
             }
         });
     });
