@@ -547,6 +547,9 @@ public:
 
         return _reader.fast_forward_to(std::move(pr), timeout);
     }
+    future<> close() noexcept {
+        return _reader.close();
+    }
 };
 
 class scanning_and_populating_reader final : public flat_mutation_reader::impl {
