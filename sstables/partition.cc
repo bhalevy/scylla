@@ -168,14 +168,6 @@ public:
     sstable_mutation_reader(const sstable_mutation_reader&) = delete;
     ~sstable_mutation_reader() {
         _monitor.on_read_completed();
-        auto close = [this] (std::unique_ptr<index_reader>& ptr) {
-            if (ptr) {
-                auto f = ptr->close();
-                // FIXME: discarded future.
-                (void)f.handle_exception([index = std::move(ptr)] (auto&&) { });
-            }
-        };
-        close(_index_reader);
     }
 private:
     static bool will_likely_slice(const query::partition_slice& slice) {
@@ -446,6 +438,11 @@ public:
             _end_of_stream = true;
             return make_ready_future<>();
         }
+    }
+    virtual future<> close() noexcept override {
+        auto close_context = _context ? _context->close().finally([ctx = std::move(_context)] {}) : make_ready_future<>();
+        auto close_index_reader = _index_reader ? _index_reader->close().finally([ir = std::move(_index_reader)] {}) : make_ready_future<>();
+        return when_all_succeed(std::move(close_context), std::move(close_index_reader)).discard_result();
     }
 };
 
