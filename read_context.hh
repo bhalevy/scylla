@@ -107,6 +107,9 @@ public:
         _reader_creation_phase = phase;
       });
     }
+    future<> close() noexcept {
+        return _reader->close();
+    }
     utils::phased_barrier::phase_type creation_phase() const {
         return _reader_creation_phase;
     }
