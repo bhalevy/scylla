@@ -657,10 +657,11 @@ private:
         _read_next_partition = false;
         return (_secondary_in_progress ? read_from_secondary(timeout) : read_from_primary(timeout)).then([this] (auto&& fropt) {
             if (bool(fropt)) {
-                _reader = std::move(fropt);
+                return _reader->reassign(std::move(*fropt));
             } else {
                 _end_of_stream = true;
             }
+            return make_ready_future<>();
         });
     }
 public:
@@ -684,6 +685,7 @@ public:
                     if (reader_finished) {
                         _read_next_partition = true;
                     }
+                    return make_ready_future<>();
                 });
             }
         });
@@ -697,17 +699,22 @@ public:
     }
     virtual future<> fast_forward_to(const dht::partition_range& pr, db::timeout_clock::time_point timeout) override {
         clear_buffer();
-        _reader = {};
         _end_of_stream = false;
         _secondary_in_progress = false;
         _advance_primary = false;
         _pr = &pr;
         _primary = partition_range_cursor{_cache, pr};
         _lower_bound = pr.start();
-        return make_ready_future<>();
+        return _reader->close();
     }
     virtual future<> fast_forward_to(position_range cr, db::timeout_clock::time_point timeout) override {
         return make_exception_future<>(make_backtraced_exception_ptr<std::bad_function_call>());
+    }
+    virtual future<> close() noexcept override {
+        auto close_reader = _reader ? _reader->close() : make_ready_future<>();
+        auto close_secondary_reader = _secondary_reader.close();
+        auto close_read_context = _read_context->close();
+        return when_all_succeed(std::move(close_reader), std::move(close_secondary_reader), std::move(close_read_context)).discard_result();
     }
 };
 
