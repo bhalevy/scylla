@@ -393,7 +393,7 @@ SEASTAR_TEST_CASE(test_segment_migration_during_flush) {
         std::vector<size_t> virtual_dirty_values;
         virtual_dirty_values.push_back(mgr.virtual_dirty_memory());
 
-        auto rd = mt->make_flush_reader(s, service::get_local_priority_manager().memtable_flush_priority());
+      with_flat_mutation_reader_in_thread(mt->make_flush_reader(s, service::get_local_priority_manager().memtable_flush_priority()), [&] (flat_mutation_reader& rd) {
 
         for (int i = 0; i < partitions; ++i) {
             auto mfopt = rd(db::no_timeout).get0();
@@ -407,6 +407,7 @@ SEASTAR_TEST_CASE(test_segment_migration_during_flush) {
         }
 
         BOOST_REQUIRE(!rd(db::no_timeout).get0());
+      });
 
         std::reverse(virtual_dirty_values.begin(), virtual_dirty_values.end());
         BOOST_REQUIRE(std::is_sorted(virtual_dirty_values.begin(), virtual_dirty_values.end()));
