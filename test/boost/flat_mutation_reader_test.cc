@@ -593,8 +593,9 @@ void test_flat_stream(schema_ptr s, std::vector<mutation> muts, reversed_partiti
             return fmr.consume_in_thread(std::move(fsc), db::no_timeout);
         } else {
             if (reversed) {
-                auto reverse_reader = make_reversing_reader(fmr, query::max_result_size(size_t(1) << 20));
-                return reverse_reader.consume(std::move(fsc), db::no_timeout).get0();
+              return with_flat_mutation_reader(make_reversing_reader(fmr, query::max_result_size(size_t(1) << 20)), [fsc = std::move(fsc)] (flat_mutation_reader& reverse_reader) mutable {
+                return reverse_reader.consume(std::move(fsc), db::no_timeout);
+              }).get0();
             }
             return fmr.consume(std::move(fsc), db::no_timeout).get0();
         }
@@ -822,6 +823,12 @@ SEASTAR_THREAD_TEST_CASE(test_reverse_reader_memory_limit) {
         const uint64_t hard_limit = size_t(1) << 18;
         auto reader = flat_mutation_reader_from_mutations(tests::make_permit(), {mut});
         auto reverse_reader = make_reversing_reader(reader, query::max_result_size(size_t(1) << 10, hard_limit));
+        auto close_readers = defer([&] {
+            // need to close both readers since the reverse_reader
+            // doesn't own the reader passed to it by ref.
+            reverse_reader.close().get();
+            reader.close().get();
+        });
 
         try {
             reverse_reader.consume(phony_consumer{}, db::no_timeout).get();
