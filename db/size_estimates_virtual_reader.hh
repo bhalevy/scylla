@@ -51,6 +51,7 @@ public:
     virtual future<> next_partition() override;
     virtual future<> fast_forward_to(const dht::partition_range&, db::timeout_clock::time_point) override;
     virtual future<> fast_forward_to(position_range, db::timeout_clock::time_point) override;
+    virtual future<> close() noexcept override;
 private:
     future<> get_next_partition();
 
