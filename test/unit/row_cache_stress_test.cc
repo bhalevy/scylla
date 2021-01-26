@@ -132,6 +132,15 @@ struct table {
         dht::partition_range pr;
         query::partition_slice slice;
         flat_mutation_reader rd;
+
+        reader(dht::partition_range pr_, query::partition_slice slice_, flat_mutation_reader rd_) noexcept
+            : pr(std::move(pr_))
+            , slice(std::move(slice_))
+            , rd(std::move(rd_))
+        { }
+        ~reader() {
+            rd.close().get();
+        }
     };
 
     void alter_schema() {
@@ -145,7 +154,7 @@ struct table {
 
     std::unique_ptr<reader> make_reader(dht::partition_range pr, query::partition_slice slice) {
         testlog.trace("making reader, pk={} ck={}", pr, slice);
-        auto r = std::make_unique<reader>(reader{std::move(pr), std::move(slice), make_empty_flat_reader(s.schema(), tests::make_permit())});
+        auto r = std::make_unique<reader>(std::move(pr), std::move(slice), make_empty_flat_reader(s.schema(), tests::make_permit()));
         std::vector<flat_mutation_reader> rd;
         if (prev_mt) {
             rd.push_back(prev_mt->make_flat_reader(s.schema(), tests::make_permit(), r->pr, r->slice, default_priority_class(), nullptr,
@@ -155,7 +164,7 @@ struct table {
             streamed_mutation::forwarding::no, mutation_reader::forwarding::no));
         rd.push_back(cache.make_reader(s.schema(), tests::make_permit(), r->pr, r->slice, default_priority_class(), nullptr,
             streamed_mutation::forwarding::no, mutation_reader::forwarding::no));
-        r->rd = make_combined_reader(s.schema(), tests::make_permit(), std::move(rd), streamed_mutation::forwarding::no, mutation_reader::forwarding::no);
+        r->rd.reassign(make_combined_reader(s.schema(), tests::make_permit(), std::move(rd), streamed_mutation::forwarding::no, mutation_reader::forwarding::no)).get();
         return r;
     }
 
@@ -329,6 +338,7 @@ int main(int argc, char** argv) {
                     testlog.trace("{}: starting read", id);
                     auto rd = t.make_single_key_reader(pk, ck_range);
                     auto row_count = rd->rd.consume(validating_consumer(t, id, t.s.schema()), db::no_timeout).get0();
+                    rd->rd.close().get();
                     if (row_count != len) {
                         throw std::runtime_error(format("Expected {:d} fragments, got {:d}", len, row_count));
                     }
