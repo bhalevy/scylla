@@ -671,6 +671,9 @@ public:
         }
         return make_ready_future<>();
     }
+    virtual future<> close() noexcept override {
+        return _reader->close();
+    }
 };
 
 template<typename Generator>
