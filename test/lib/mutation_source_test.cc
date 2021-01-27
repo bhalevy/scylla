@@ -387,9 +387,11 @@ static void test_streamed_mutation_forwarding_is_consistent_with_slicing(populat
 
         flat_mutation_reader sliced_reader =
             ms.make_reader(m.schema(), tests::make_permit(), prange, slice_with_ranges);
+        auto close_sliced_reader = defer([&sliced_reader] { sliced_reader.close().get(); });
 
         flat_mutation_reader fwd_reader =
             ms.make_reader(m.schema(), tests::make_permit(), prange, full_slice, default_priority_class(), nullptr, streamed_mutation::forwarding::yes);
+        auto close_fwd_reader = defer([&fwd_reader] { fwd_reader.close().get(); });
 
         std::optional<mutation_rebuilder> builder{};
         struct consumer {
@@ -1336,6 +1338,7 @@ void test_slicing_with_overlapping_range_tombstones(populate_fn_ex populate) {
     {
         auto slice = partition_slice_builder(*s).with_range(range).build();
         auto rd = ds.make_reader(s, tests::make_permit(), query::full_partition_range, slice);
+        auto close_rd = defer([&rd] { rd.close().get(); });
 
         auto prange = position_range(range);
         mutation result(m1.schema(), m1.decorated_key());
@@ -1355,6 +1358,7 @@ void test_slicing_with_overlapping_range_tombstones(populate_fn_ex populate) {
     {
         auto rd = ds.make_reader(s, tests::make_permit(), query::full_partition_range, s->full_slice(), default_priority_class(),
             nullptr, streamed_mutation::forwarding::yes);
+        auto close_rd = defer([&rd] { rd.close().get(); });
 
         auto prange = position_range(range);
         mutation result(m1.schema(), m1.decorated_key());
@@ -2338,6 +2342,7 @@ static void compare_readers(const schema& s, flat_mutation_reader& authority, fl
 void compare_readers(const schema& s, flat_mutation_reader authority, flat_mutation_reader tested) {
     auto assertions = assert_that(std::move(tested));
     compare_readers(s, authority, assertions);
+    authority.close().get();
 }
 
 void compare_readers(const schema& s, flat_mutation_reader authority, flat_mutation_reader tested, const std::vector<position_range>& fwd_ranges) {
@@ -2348,4 +2353,5 @@ void compare_readers(const schema& s, flat_mutation_reader authority, flat_mutat
         assertions.fast_forward_to(r);
         compare_readers(s, authority, assertions);
     }
+    authority.close().get();
 }
