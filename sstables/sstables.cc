@@ -1715,8 +1715,10 @@ future<> sstable::write_components(
         const io_priority_class& pc) {
     assert_large_data_handler_is_running();
     return seastar::async([this, mr = std::move(mr), estimated_partitions, schema = std::move(schema), cfg, stats, &pc] () mutable {
+      return with_flat_mutation_reader_in_thread(std::move(mr), [this, estimated_partitions, schema = std::move(schema), cfg, stats = std::move(stats), &pc] (flat_mutation_reader& mr) mutable {
         auto wr = get_writer(*schema, estimated_partitions, cfg, stats, pc);
         mr.consume_in_thread(std::move(wr), db::no_timeout);
+      });
     }).finally([this] {
         assert_large_data_handler_is_running();
     });
