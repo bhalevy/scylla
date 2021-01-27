@@ -217,7 +217,7 @@ public:
                 gc_clock::now(), db::no_timeout, query::max_result_size(std::numeric_limits<uint64_t>::max())).get0();
         auto&& dk = dk_ck.first;
         auto&& ck = dk_ck.second;
-        _cache.insert(cache_key, std::move(querier), nullptr);
+        _cache.insert(cache_key, std::move(querier), nullptr).get();
 
         // Either no keys at all (nothing read) or at least partition key.
         BOOST_REQUIRE((dk && ck) || !ck);

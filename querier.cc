@@ -231,19 +231,19 @@ struct querier_utils {
 };
 
 template <typename Querier>
-static void insert_querier(
+static future<> insert_querier(
         utils::UUID key,
         querier_cache::index& index,
         querier_cache::stats& stats,
         Querier&& q,
         std::chrono::seconds ttl,
-        tracing::trace_state_ptr trace_state) {
+        tracing::trace_state_ptr trace_state) noexcept {
     // FIXME: see #3159
     // In reverse mode flat_mutation_reader drops any remaining rows of the
     // current partition when the page ends so it cannot be reused across
     // pages.
     if (q.is_reversed()) {
-        return;
+        return make_ready_future<>();
     }
 
     ++stats.inserts;
@@ -254,7 +254,7 @@ static void insert_querier(
 
     auto irh = sem.register_inactive_read(querier_utils::get_reader(q));
     if (!irh) {
-        return;
+        return make_ready_future<>();
     }
   try {
     auto cleanup_irh = defer([&] {
@@ -295,18 +295,19 @@ static void insert_querier(
     // drop the querier.
     qlogger.warn("Failed to insert querier into index: {}. Ignored as if it was evicted upon registration", std::current_exception());
   }
+    return make_ready_future<>();
 }
 
-void querier_cache::insert(utils::UUID key, data_querier&& q, tracing::trace_state_ptr trace_state) {
-    insert_querier(key, _data_querier_index, _stats, std::move(q), _entry_ttl, std::move(trace_state));
+future<> querier_cache::insert(utils::UUID key, data_querier&& q, tracing::trace_state_ptr trace_state) noexcept {
+    return insert_querier(key, _data_querier_index, _stats, std::move(q), _entry_ttl, std::move(trace_state));
 }
 
-void querier_cache::insert(utils::UUID key, mutation_querier&& q, tracing::trace_state_ptr trace_state) {
-    insert_querier(key, _mutation_querier_index, _stats, std::move(q), _entry_ttl, std::move(trace_state));
+future<> querier_cache::insert(utils::UUID key, mutation_querier&& q, tracing::trace_state_ptr trace_state) noexcept {
+    return insert_querier(key, _mutation_querier_index, _stats, std::move(q), _entry_ttl, std::move(trace_state));
 }
 
-void querier_cache::insert(utils::UUID key, shard_mutation_querier&& q, tracing::trace_state_ptr trace_state) {
-    insert_querier(key, _shard_mutation_querier_index, _stats, std::move(q), _entry_ttl, std::move(trace_state));
+future<> querier_cache::insert(utils::UUID key, shard_mutation_querier&& q, tracing::trace_state_ptr trace_state) noexcept {
+    return insert_querier(key, _shard_mutation_querier_index, _stats, std::move(q), _entry_ttl, std::move(trace_state));
 }
 
 template <typename Querier>
@@ -422,22 +423,25 @@ querier_cache_context::querier_cache_context(querier_cache& cache, utils::UUID k
     , _is_first_page(is_first_page) {
 }
 
-void querier_cache_context::insert(data_querier&& q, tracing::trace_state_ptr trace_state) {
+future<> querier_cache_context::insert(data_querier&& q, tracing::trace_state_ptr trace_state) noexcept {
     if (_cache && _key != utils::UUID{}) {
-        _cache->insert(_key, std::move(q), std::move(trace_state));
+        return _cache->insert(_key, std::move(q), std::move(trace_state));
     }
+    return make_ready_future<>();
 }
 
-void querier_cache_context::insert(mutation_querier&& q, tracing::trace_state_ptr trace_state) {
+future<> querier_cache_context::insert(mutation_querier&& q, tracing::trace_state_ptr trace_state) noexcept {
     if (_cache && _key != utils::UUID{}) {
-        _cache->insert(_key, std::move(q), std::move(trace_state));
+        return _cache->insert(_key, std::move(q), std::move(trace_state));
     }
+    return make_ready_future<>();
 }
 
-void querier_cache_context::insert(shard_mutation_querier&& q, tracing::trace_state_ptr trace_state) {
+future<> querier_cache_context::insert(shard_mutation_querier&& q, tracing::trace_state_ptr trace_state) noexcept {
     if (_cache && _key != utils::UUID{}) {
-        _cache->insert(_key, std::move(q), std::move(trace_state));
+        return _cache->insert(_key, std::move(q), std::move(trace_state));
     }
+    return make_ready_future<>();
 }
 
 future<std::optional<data_querier>> querier_cache_context::lookup_data_querier(const schema& s,

@@ -377,11 +377,11 @@ public:
     querier_cache(querier_cache&&) = delete;
     querier_cache& operator=(querier_cache&&) = delete;
 
-    void insert(utils::UUID key, data_querier&& q, tracing::trace_state_ptr trace_state);
+    future<> insert(utils::UUID key, data_querier&& q, tracing::trace_state_ptr trace_state) noexcept;
 
-    void insert(utils::UUID key, mutation_querier&& q, tracing::trace_state_ptr trace_state);
+    future<> insert(utils::UUID key, mutation_querier&& q, tracing::trace_state_ptr trace_state) noexcept;
 
-    void insert(utils::UUID key, shard_mutation_querier&& q, tracing::trace_state_ptr trace_state);
+    future<> insert(utils::UUID key, shard_mutation_querier&& q, tracing::trace_state_ptr trace_state) noexcept;
 
     /// Lookup a data querier in the cache.
     ///
@@ -449,9 +449,9 @@ class querier_cache_context {
 public:
     querier_cache_context() = default;
     querier_cache_context(querier_cache& cache, utils::UUID key, query::is_first_page is_first_page);
-    void insert(data_querier&& q, tracing::trace_state_ptr trace_state);
-    void insert(mutation_querier&& q, tracing::trace_state_ptr trace_state);
-    void insert(shard_mutation_querier&& q, tracing::trace_state_ptr trace_state);
+    future<> insert(data_querier&& q, tracing::trace_state_ptr trace_state) noexcept;
+    future<> insert(mutation_querier&& q, tracing::trace_state_ptr trace_state) noexcept;
+    future<> insert(shard_mutation_querier&& q, tracing::trace_state_ptr trace_state) noexcept;
     future<std::optional<data_querier>> lookup_data_querier(const schema& s,
             const dht::partition_range& range,
             const query::partition_slice& slice,

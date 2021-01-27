@@ -2190,7 +2190,7 @@ future<> data_query(
     auto qrb = query_result_builder(*s, builder);
     co_await q.consume_page(std::move(qrb), row_limit, partition_limit, query_time, timeout, class_config.max_memory_for_unlimited_query);
     if (q.are_limits_reached() || builder.is_short_read()) {
-        cache_ctx.insert(std::move(q), std::move(trace_ptr));
+        co_await cache_ctx.insert(std::move(q), std::move(trace_ptr));
     }
 }
 
@@ -2331,7 +2331,7 @@ static do_mutation_query(schema_ptr s,
     auto rrb = reconcilable_result_builder(*s, slice, std::move(accounter));
     auto r = co_await q.consume_page(std::move(rrb), row_limit, partition_limit, query_time, timeout, class_config.max_memory_for_unlimited_query);
     if (q.are_limits_reached() || r.is_short_read()) {
-        cache_ctx.insert(std::move(q), std::move(trace_ptr));
+        co_await cache_ctx.insert(std::move(q), std::move(trace_ptr));
     }
     co_return r;
 }
