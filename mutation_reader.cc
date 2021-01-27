@@ -942,8 +942,6 @@ public:
             foreign_unique_ptr<flat_mutation_reader> reader,
             streamed_mutation::forwarding fwd_sm = streamed_mutation::forwarding::no);
 
-    ~foreign_reader();
-
     // this is captured.
     foreign_reader(const foreign_reader&) = delete;
     foreign_reader& operator=(const foreign_reader&) = delete;
@@ -954,6 +952,7 @@ public:
     virtual future<> next_partition() override;
     virtual future<> fast_forward_to(const dht::partition_range& pr, db::timeout_clock::time_point timeout) override;
     virtual future<> fast_forward_to(position_range pr, db::timeout_clock::time_point timeout) override;
+    virtual future<> close() noexcept override;
 };
 
 foreign_reader::foreign_reader(schema_ptr schema,
@@ -963,20 +962,6 @@ foreign_reader::foreign_reader(schema_ptr schema,
     : impl(std::move(schema), std::move(permit), format("foreign_reader({})", reader->description()))
     , _reader(std::move(reader))
     , _fwd_sm(fwd_sm) {
-}
-
-foreign_reader::~foreign_reader() {
-    if (!_read_ahead_future && !_reader) {
-        return;
-    }
-    // Can't wait on this future directly. Right now we don't wait on it at all.
-    // If this proves problematic we can collect these somewhere and wait on them.
-    (void)smp::submit_to(_reader.get_owner_shard(), [reader = std::move(_reader), read_ahead_future = std::move(_read_ahead_future)] () mutable {
-        if (read_ahead_future) {
-            return read_ahead_future->finally([r = std::move(reader)] {});
-        }
-        return make_ready_future<>();
-    });
 }
 
 future<> foreign_reader::fill_buffer(db::timeout_clock::time_point timeout) {
@@ -1028,6 +1013,19 @@ future<> foreign_reader::fast_forward_to(position_range pr, db::timeout_clock::t
     return forward_operation(timeout, [reader = _reader.get(), pr = std::move(pr), timeout] () {
         return reader->fast_forward_to(std::move(pr), timeout);
     });
+}
+
+future<> foreign_reader::close() noexcept {
+    if (!_reader) {
+        return make_ready_future<>();
+    }    
+    return smp::submit_to(_reader.get_owner_shard(),
+        [reader = std::move(_reader), read_ahead_future = std::exchange(_read_ahead_future, nullptr)] () mutable -> future<> {
+        if (read_ahead_future) {
+            co_await std::move(*read_ahead_future.get());
+        }
+        co_return co_await reader.get()->close();
+    });  
 }
 
 flat_mutation_reader make_foreign_reader(schema_ptr schema,
