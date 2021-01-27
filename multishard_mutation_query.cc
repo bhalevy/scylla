@@ -19,6 +19,7 @@
  * along with Scylla.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include <seastar/core/coroutine.hh>
 #include "schema_registry.hh"
 #include "service/priority_manager.hh"
 #include "multishard_mutation_query.hh"
@@ -457,12 +458,12 @@ read_context::dismantle_buffer_stats read_context::dismantle_compaction_state(de
 future<> read_context::save_reader(shard_id shard, const dht::decorated_key& last_pkey, const std::optional<clustering_key_prefix>& last_ckey) {
   return do_with(std::exchange(_readers[shard], {}), [this, shard, &last_pkey, &last_ckey] (reader_meta& rm) mutable {
     return _db.invoke_on(shard, [this, query_uuid = _cmd.query_uuid, query_ranges = _ranges, &rm,
-            &last_pkey, &last_ckey, gts = tracing::global_trace_state_ptr(_trace_state)] (database& db) mutable {
+            &last_pkey, &last_ckey, gts = tracing::global_trace_state_ptr(_trace_state)] (database& db) mutable -> future<> {
         try {
             flat_mutation_reader_opt reader = rm.rparts->permit.semaphore().unregister_inactive_read(std::move(*rm.handle));
 
             if (!reader) {
-                return make_ready_future<>();
+                co_return;
             }
 
             auto& buffer = *rm.buffer;
@@ -492,13 +493,11 @@ future<> read_context::save_reader(shard_id shard, const dht::decorated_key& las
 
             db.get_stats().multishard_query_unpopped_fragments += fragments;
             db.get_stats().multishard_query_unpopped_bytes += (size_after - size_before);
-            return make_ready_future<>();
         } catch (...) {
             // We don't want to fail a read just because of a failure to
             // save any of the readers.
             mmq_log.debug("Failed to save reader: {}", std::current_exception());
             ++db.get_stats().multishard_query_failed_reader_saves;
-            return make_ready_future<>();
         }
     }).handle_exception([this, shard] (std::exception_ptr e) {
         // We don't want to fail a read just because of a failure to
@@ -518,14 +517,14 @@ future<> read_context::lookup_readers() {
 
     return parallel_for_each(boost::irange(0u, smp::count), [this] (shard_id shard) {
         return _db.invoke_on(shard, [this, shard, cmd = &_cmd, ranges = &_ranges, gs = global_schema_ptr(_schema),
-                gts = tracing::global_trace_state_ptr(_trace_state)] (database& db) mutable {
+                gts = tracing::global_trace_state_ptr(_trace_state)] (database& db) mutable -> future<reader_meta> {
             auto schema = gs.get();
             auto querier_opt = db.get_querier_cache().lookup_shard_mutation_querier(cmd->query_uuid, *schema, *ranges, cmd->slice, gts.get());
             auto& table = db.find_column_family(schema);
             auto& semaphore = this->semaphore();
 
             if (!querier_opt) {
-                return reader_meta(reader_state::inexistent);
+                co_return reader_meta(reader_state::inexistent);
             }
 
             auto& q = *querier_opt;
@@ -540,7 +539,7 @@ future<> read_context::lookup_readers() {
             }
 
             auto handle = pause(semaphore, std::move(q).reader());
-            return reader_meta(
+            co_return reader_meta(
                     reader_state::successful_lookup,
                     reader_meta::remote_parts(q.permit(), std::move(q).reader_range(), std::move(q).reader_slice(), table.read_in_progress()),
                     std::move(handle));
