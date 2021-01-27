@@ -489,7 +489,7 @@ future<> read_context::save_reader(shard_id shard, const dht::decorated_key& las
                     last_pkey,
                     last_ckey);
 
-            db.get_querier_cache().insert(query_uuid, std::move(querier), gts.get());
+            co_await db.get_querier_cache().insert(query_uuid, std::move(querier), gts.get());
 
             db.get_stats().multishard_query_unpopped_fragments += fragments;
             db.get_stats().multishard_query_unpopped_bytes += (size_after - size_before);
