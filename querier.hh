@@ -396,29 +396,29 @@ public:
     /// The found querier is checked for a matching position and schema version.
     /// The start position of the querier is checked against the start position
     /// of the page using the `range' and `slice'.
-    std::optional<data_querier> lookup_data_querier(utils::UUID key,
+    future<std::optional<data_querier>> lookup_data_querier(utils::UUID key,
             const schema& s,
             const dht::partition_range& range,
             const query::partition_slice& slice,
-            tracing::trace_state_ptr trace_state);
+            tracing::trace_state_ptr trace_state) noexcept;
 
     /// Lookup a mutation querier in the cache.
     ///
     /// See \ref lookup_data_querier().
-    std::optional<mutation_querier> lookup_mutation_querier(utils::UUID key,
+    future<std::optional<mutation_querier>> lookup_mutation_querier(utils::UUID key,
             const schema& s,
             const dht::partition_range& range,
             const query::partition_slice& slice,
-            tracing::trace_state_ptr trace_state);
+            tracing::trace_state_ptr trace_state) noexcept;
 
     /// Lookup a shard mutation querier in the cache.
     ///
     /// See \ref lookup_data_querier().
-    std::optional<shard_mutation_querier> lookup_shard_mutation_querier(utils::UUID key,
+    future<std::optional<shard_mutation_querier>> lookup_shard_mutation_querier(utils::UUID key,
             const schema& s,
             const dht::partition_range_vector& ranges,
             const query::partition_slice& slice,
-            tracing::trace_state_ptr trace_state);
+            tracing::trace_state_ptr trace_state) noexcept;
 
     /// Change the ttl of cache entries
     ///
@@ -452,18 +452,18 @@ public:
     void insert(data_querier&& q, tracing::trace_state_ptr trace_state);
     void insert(mutation_querier&& q, tracing::trace_state_ptr trace_state);
     void insert(shard_mutation_querier&& q, tracing::trace_state_ptr trace_state);
-    std::optional<data_querier> lookup_data_querier(const schema& s,
+    future<std::optional<data_querier>> lookup_data_querier(const schema& s,
             const dht::partition_range& range,
             const query::partition_slice& slice,
-            tracing::trace_state_ptr trace_state);
-    std::optional<mutation_querier> lookup_mutation_querier(const schema& s,
+            tracing::trace_state_ptr trace_state) noexcept;
+    future<std::optional<mutation_querier>> lookup_mutation_querier(const schema& s,
             const dht::partition_range& range,
             const query::partition_slice& slice,
-            tracing::trace_state_ptr trace_state);
-    std::optional<shard_mutation_querier> lookup_shard_mutation_querier(const schema& s,
+            tracing::trace_state_ptr trace_state) noexcept;
+    future<std::optional<shard_mutation_querier>> lookup_shard_mutation_querier(const schema& s,
             const dht::partition_range_vector& ranges,
             const query::partition_slice& slice,
-            tracing::trace_state_ptr trace_state);
+            tracing::trace_state_ptr trace_state) noexcept;
 };
 
 } // namespace query
