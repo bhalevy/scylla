@@ -324,7 +324,7 @@ public:
     }
 
     test_querier_cache& evict_all_for_table() {
-        _cache.evict_all_for_table(get_schema()->id());
+        _cache.evict_all_for_table(get_schema()->id()).get();
         return *this;
     }
 
