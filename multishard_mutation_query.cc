@@ -24,6 +24,7 @@
 #include "multishard_mutation_query.hh"
 #include "database.hh"
 #include "db/config.hh"
+#include <seastar/core/coroutine.hh>
 
 #include <boost/range/adaptor/reversed.hpp>
 
@@ -518,14 +519,14 @@ future<> read_context::lookup_readers() {
 
     return parallel_for_each(boost::irange(0u, smp::count), [this] (shard_id shard) {
         return _db.invoke_on(shard, [this, shard, cmd = &_cmd, ranges = &_ranges, gs = global_schema_ptr(_schema),
-                gts = tracing::global_trace_state_ptr(_trace_state)] (database& db) mutable {
+                gts = tracing::global_trace_state_ptr(_trace_state)] (database& db) mutable -> future<reader_meta> {
             auto schema = gs.get();
-            auto querier_opt = db.get_querier_cache().lookup_shard_mutation_querier(cmd->query_uuid, *schema, *ranges, cmd->slice, gts.get());
+            auto querier_opt = co_await db.get_querier_cache().lookup_shard_mutation_querier(cmd->query_uuid, *schema, *ranges, cmd->slice, gts.get());
             auto& table = db.find_column_family(schema);
             auto& semaphore = this->semaphore();
 
             if (!querier_opt) {
-                return reader_meta(reader_state::inexistent);
+                co_return reader_meta(reader_state::inexistent);
             }
 
             auto& q = *querier_opt;
@@ -540,7 +541,7 @@ future<> read_context::lookup_readers() {
             }
 
             auto handle = pause(semaphore, std::move(q).reader());
-            return reader_meta(
+            co_return reader_meta(
                     reader_state::successful_lookup,
                     reader_meta::remote_parts(q.permit(), std::move(q).reader_range(), std::move(q).reader_slice(), table.read_in_progress()),
                     std::move(handle));
