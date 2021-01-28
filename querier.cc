@@ -310,7 +310,7 @@ void querier_cache::insert(utils::UUID key, shard_mutation_querier&& q, tracing:
 }
 
 template <typename Querier>
-static std::optional<Querier> lookup_querier(
+static future<std::optional<Querier>> lookup_querier(
         querier_cache::index& index,
         querier_cache::stats& stats,
         utils::UUID key,
@@ -322,7 +322,7 @@ static std::optional<Querier> lookup_querier(
     ++stats.lookups;
     if (!base_ptr) {
         ++stats.misses;
-        return std::nullopt;
+        co_return std::nullopt;
     }
 
     auto* q_ptr = dynamic_cast<Querier*>(base_ptr.get());
@@ -340,35 +340,35 @@ static std::optional<Querier> lookup_querier(
     const auto can_be_used = can_be_used_for_page(q, s, ranges.front(), slice);
     if (can_be_used == can_use::yes) {
         tracing::trace(trace_state, "Reusing querier");
-        return std::optional<Querier>(std::move(q));
+        co_return std::make_optional<Querier>(std::move(q));
     }
 
     tracing::trace(trace_state, "Dropping querier because {}", cannot_use_reason(can_be_used));
     ++stats.drops;
-    return std::nullopt;
+    co_return std::nullopt;
 }
 
-std::optional<data_querier> querier_cache::lookup_data_querier(utils::UUID key,
+future<std::optional<data_querier>> querier_cache::lookup_data_querier(utils::UUID key,
         const schema& s,
         const dht::partition_range& range,
         const query::partition_slice& slice,
-        tracing::trace_state_ptr trace_state) {
+        tracing::trace_state_ptr trace_state) noexcept {
     return lookup_querier<data_querier>(_data_querier_index, _stats, key, s, range, slice, std::move(trace_state));
 }
 
-std::optional<mutation_querier> querier_cache::lookup_mutation_querier(utils::UUID key,
+future<std::optional<mutation_querier>> querier_cache::lookup_mutation_querier(utils::UUID key,
         const schema& s,
         const dht::partition_range& range,
         const query::partition_slice& slice,
-        tracing::trace_state_ptr trace_state) {
+        tracing::trace_state_ptr trace_state) noexcept {
     return lookup_querier<mutation_querier>(_mutation_querier_index, _stats, key, s, range, slice, std::move(trace_state));
 }
 
-std::optional<shard_mutation_querier> querier_cache::lookup_shard_mutation_querier(utils::UUID key,
+future<std::optional<shard_mutation_querier>> querier_cache::lookup_shard_mutation_querier(utils::UUID key,
         const schema& s,
         const dht::partition_range_vector& ranges,
         const query::partition_slice& slice,
-        tracing::trace_state_ptr trace_state) {
+        tracing::trace_state_ptr trace_state) noexcept {
     return lookup_querier<shard_mutation_querier>(_shard_mutation_querier_index, _stats, key, s, ranges, slice,
             std::move(trace_state));
 }
@@ -440,34 +440,34 @@ void querier_cache_context::insert(shard_mutation_querier&& q, tracing::trace_st
     }
 }
 
-std::optional<data_querier> querier_cache_context::lookup_data_querier(const schema& s,
+future<std::optional<data_querier>> querier_cache_context::lookup_data_querier(const schema& s,
         const dht::partition_range& range,
         const query::partition_slice& slice,
-        tracing::trace_state_ptr trace_state) {
+        tracing::trace_state_ptr trace_state) noexcept {
     if (_cache && _key != utils::UUID{} && !_is_first_page) {
         return _cache->lookup_data_querier(_key, s, range, slice, std::move(trace_state));
     }
-    return std::nullopt;
+    return make_ready_future<std::optional<data_querier>>();
 }
 
-std::optional<mutation_querier> querier_cache_context::lookup_mutation_querier(const schema& s,
+future<std::optional<mutation_querier>> querier_cache_context::lookup_mutation_querier(const schema& s,
         const dht::partition_range& range,
         const query::partition_slice& slice,
-        tracing::trace_state_ptr trace_state) {
+        tracing::trace_state_ptr trace_state) noexcept {
     if (_cache && _key != utils::UUID{} && !_is_first_page) {
         return _cache->lookup_mutation_querier(_key, s, range, slice, std::move(trace_state));
     }
-    return std::nullopt;
+    return make_ready_future<std::optional<mutation_querier>>();
 }
 
-std::optional<shard_mutation_querier> querier_cache_context::lookup_shard_mutation_querier(const schema& s,
+future<std::optional<shard_mutation_querier>> querier_cache_context::lookup_shard_mutation_querier(const schema& s,
         const dht::partition_range_vector& ranges,
         const query::partition_slice& slice,
-        tracing::trace_state_ptr trace_state) {
+        tracing::trace_state_ptr trace_state) noexcept {
     if (_cache && _key != utils::UUID{} && !_is_first_page) {
         return _cache->lookup_shard_mutation_querier(_key, s, ranges, slice, std::move(trace_state));
     }
-    return std::nullopt;
+    return make_ready_future<std::optional<shard_mutation_querier>>();
 }
 
 } // namespace query

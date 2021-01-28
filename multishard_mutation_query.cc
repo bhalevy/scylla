@@ -519,7 +519,7 @@ future<> read_context::lookup_readers() {
         return _db.invoke_on(shard, [this, shard, cmd = &_cmd, ranges = &_ranges, gs = global_schema_ptr(_schema),
                 gts = tracing::global_trace_state_ptr(_trace_state)] (database& db) mutable -> future<reader_meta> {
             auto schema = gs.get();
-            auto querier_opt = db.get_querier_cache().lookup_shard_mutation_querier(cmd->query_uuid, *schema, *ranges, cmd->slice, gts.get());
+            auto querier_opt = co_await db.get_querier_cache().lookup_shard_mutation_querier(cmd->query_uuid, *schema, *ranges, cmd->slice, gts.get());
             auto& table = db.find_column_family(schema);
             auto& semaphore = this->semaphore();
 
