@@ -2011,7 +2011,7 @@ future<> data_query(
         co_return;
     }
 
-    auto querier_opt = cache_ctx.lookup_data_querier(*s, range, slice, trace_ptr);
+    auto querier_opt = co_await cache_ctx.lookup_data_querier(*s, range, slice, trace_ptr);
     auto q = querier_opt
             ? std::move(*querier_opt)
             : query::data_querier(source, s, class_config.semaphore.make_permit(s.get(), "data-query"), range, slice,
@@ -2156,7 +2156,7 @@ static do_mutation_query(schema_ptr s,
         co_return reconcilable_result();
     }
 
-    auto querier_opt = cache_ctx.lookup_mutation_querier(*s, range, slice, trace_ptr);
+    auto querier_opt = co_await cache_ctx.lookup_mutation_querier(*s, range, slice, trace_ptr);
     auto q = querier_opt
             ? std::move(*querier_opt)
             : query::mutation_querier(source, s, class_config.semaphore.make_permit(s.get(), "mutation-query"), range, slice,
