@@ -1766,8 +1766,7 @@ table::query(schema_ptr s,
     auto qs = query_state(std::move(s), cmd, opts, partition_ranges, std::move(accounter));
     while (qs.current_partition_range != qs.range_end) {
         auto&& range = *qs.current_partition_range++;
-        auto ms = as_mutation_source();
-        co_await data_query(qs.schema, ms, range, qs.cmd.slice, qs.remaining_rows(),
+        co_await data_query(qs.schema, as_mutation_source(), range, qs.cmd.slice, qs.remaining_rows(),
                             qs.remaining_partitions(), qs.cmd.timestamp, qs.builder, timeout, class_config, trace_state, cache_ctx);
     }
     _stats.reads.mark(lc);
