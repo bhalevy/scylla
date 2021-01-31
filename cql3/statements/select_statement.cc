@@ -383,15 +383,15 @@ select_statement::do_execute(service::storage_proxy& proxy,
             co_await p->fetch_page(builder, page_size, now, timeout);
         }
         co_return co_await builder.with_thread_if_needed([this, p = std::move(p), &builder, restrictions_need_filtering] () mutable {
-                            auto rs = builder.build();
-                            if (restrictions_need_filtering) {
-                                _stats.filtered_rows_read_total += p->stats().rows_read_total;
-                                _stats.filtered_rows_matched_total += rs->size();
-                            }
-                            update_stats_rows_read(rs->size());
-                            auto msg = ::make_shared<cql_transport::messages::result_message::rows>(result(std::move(rs)));
-                            return shared_ptr<cql_transport::messages::result_message>(std::move(msg));
-                        });
+            auto rs = builder.build();
+            if (restrictions_need_filtering) {
+                _stats.filtered_rows_read_total += p->stats().rows_read_total;
+                _stats.filtered_rows_matched_total += rs->size();
+            }
+            update_stats_rows_read(rs->size());
+            auto msg = ::make_shared<cql_transport::messages::result_message::rows>(result(std::move(rs)));
+            return shared_ptr<cql_transport::messages::result_message>(std::move(msg));
+        });
     }
 
     if (needs_post_query_ordering()) {
@@ -403,28 +403,28 @@ select_statement::do_execute(service::storage_proxy& proxy,
     if (_selection->is_trivial() && !restrictions_need_filtering && !_per_partition_limit) {
         auto generator = co_await p->fetch_page_generator(page_size, now, timeout, _stats);
         shared_ptr<cql3::metadata> meta;
-                if (!p->is_exhausted()) {
-                    meta = make_shared<metadata>(*_selection->get_result_metadata());
-                    meta->set_paging_state(p->state());
-                } else {
-                    meta = _selection->get_result_metadata();
-                }
+        if (!p->is_exhausted()) {
+            meta = make_shared<metadata>(*_selection->get_result_metadata());
+            meta->set_paging_state(p->state());
+        } else {
+            meta = _selection->get_result_metadata();
+        }
 
         co_return make_shared<cql_transport::messages::result_message::rows>(result(std::move(generator), std::move(meta)));
     }
 
     auto rs = co_await p->fetch_page(page_size, now, timeout);
 
-                if (!p->is_exhausted()) {
-                    rs->get_metadata().set_paging_state(p->state());
-                }
+    if (!p->is_exhausted()) {
+        rs->get_metadata().set_paging_state(p->state());
+    }
 
-                if (restrictions_need_filtering) {
-                    _stats.filtered_rows_read_total += p->stats().rows_read_total;
-                    _stats.filtered_rows_matched_total += rs->size();
-                }
-                update_stats_rows_read(rs->size());
-                co_return ::make_shared<cql_transport::messages::result_message::rows>(result(std::move(rs)));
+    if (restrictions_need_filtering) {
+        _stats.filtered_rows_read_total += p->stats().rows_read_total;
+        _stats.filtered_rows_matched_total += rs->size();
+    }
+    update_stats_rows_read(rs->size());
+    co_return ::make_shared<cql_transport::messages::result_message::rows>(result(std::move(rs)));
 }
 
 template<typename KeyType>
