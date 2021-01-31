@@ -110,6 +110,8 @@ void trim_clustering_row_ranges_to(const schema& s, clustering_row_ranges& range
             reversed ? position_in_partition_view::after_key(full_key) : position_in_partition_view::before_key(full_key), reversed);
 }
 
+static_assert(std::is_nothrow_move_constructible_v<partition_slice>);
+
 partition_slice::partition_slice(clustering_row_ranges row_ranges,
     query::column_id_vector static_columns,
     query::column_id_vector regular_columns,
@@ -153,10 +155,6 @@ partition_slice::partition_slice(clustering_row_ranges ranges, const schema& s, 
         } // else clustering or partition key column - skip, these are controlled by options
     }
 }
-
-partition_slice::partition_slice(partition_slice&&) = default;
-
-partition_slice& partition_slice::operator=(partition_slice&& other) noexcept = default;
 
 // Only needed because selection_statement::execute does copies of its read_command
 // in the map-reduce op.

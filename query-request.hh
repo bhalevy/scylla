@@ -180,10 +180,10 @@ public:
         uint64_t partition_row_limit = partition_max_rows);
     partition_slice(clustering_row_ranges ranges, const schema& schema, const column_set& mask, option_set options);
     partition_slice(const partition_slice&);
-    partition_slice(partition_slice&&);
+    partition_slice(partition_slice&&) = default;
     ~partition_slice();
 
-    partition_slice& operator=(partition_slice&& other) noexcept;
+    partition_slice& operator=(partition_slice&& other) = default;
 
     const clustering_row_ranges& row_ranges(const schema&, const partition_key&) const;
     void set_range(const schema&, const partition_key&, clustering_row_ranges);
