@@ -141,7 +141,7 @@ public:
 
     const sstring& column_family() const;
 
-    query::partition_slice make_partition_slice(const query_options& options) const;
+    future<query::partition_slice> make_partition_slice(const query_options& options) const;
 
     ::shared_ptr<restrictions::statement_restrictions> get_restrictions() const;
 
@@ -241,7 +241,7 @@ private:
             gc_clock::time_point now,
             lw_shared_ptr<const service::pager::paging_state> paging_state) const;
 
-    lw_shared_ptr<query::read_command>
+    future<lw_shared_ptr<query::read_command>>
     prepare_command_for_base_query(service::storage_proxy& proxy, const query_options& options, service::query_state& state, gc_clock::time_point now,
             bool use_paging) const;
 
