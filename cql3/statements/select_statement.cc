@@ -508,8 +508,8 @@ indexed_table_select_statement::do_execute_base_query(
     uint32_t queried_ranges_count = partition_ranges.size();
     service::query_ranges_to_vnodes_generator ranges_to_vnodes(proxy.get_token_metadata_ptr(), _schema, std::move(partition_ranges));
 
-        query::result_merger merger(cmd->get_row_limit() * queried_ranges_count, query::max_partitions);
-        size_t concurrency = 1;
+    query::result_merger merger(cmd->get_row_limit() * queried_ranges_count, query::max_partitions);
+    size_t concurrency = 1;
     do {
             // Starting with 1 range, we check if the result was a short read, and if not,
             // we continue exponentially, asking for 2x more ranges than before
@@ -546,8 +546,8 @@ indexed_table_select_statement::do_execute_base_query(
             }
             concurrency *= 2;
         auto qr = co_await proxy.query(_schema, command, std::move(prange), options.get_consistency(), {timeout, state.get_permit(), state.get_client_state(), state.get_trace_state()});
-                auto is_short_read = qr.query_result->is_short_read();
-                merger(std::move(qr.query_result));
+        auto is_short_read = qr.query_result->is_short_read();
+        merger(std::move(qr.query_result));
         if (is_short_read) {
             break;
         }
