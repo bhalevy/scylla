@@ -508,24 +508,9 @@ indexed_table_select_statement::do_execute_base_query(
     uint32_t queried_ranges_count = partition_ranges.size();
     service::query_ranges_to_vnodes_generator ranges_to_vnodes(proxy.get_token_metadata_ptr(), _schema, std::move(partition_ranges));
 
-    struct base_query_state {
-        query::result_merger merger;
-        service::query_ranges_to_vnodes_generator ranges_to_vnodes;
+        query::result_merger merger(cmd->get_row_limit() * queried_ranges_count, query::max_partitions);
         size_t concurrency = 1;
-        base_query_state(uint64_t row_limit, service::query_ranges_to_vnodes_generator&& ranges_to_vnodes_)
-                : merger(row_limit, query::max_partitions)
-                , ranges_to_vnodes(std::move(ranges_to_vnodes_))
-                {}
-        base_query_state(base_query_state&&) = default;
-        base_query_state(const base_query_state&) = delete;
-    };
-
-    base_query_state query_state{cmd->get_row_limit() * queried_ranges_count, std::move(ranges_to_vnodes)};
-    return do_with(std::move(query_state), [this, &proxy, &state, &options, cmd, timeout] (auto&& query_state) {
-        auto& merger = query_state.merger;
-        auto& ranges_to_vnodes = query_state.ranges_to_vnodes;
-        auto& concurrency = query_state.concurrency;
-        return repeat([this, &ranges_to_vnodes, &merger, &proxy, &state, &options, &concurrency, cmd, timeout]() {
+    do {
             // Starting with 1 range, we check if the result was a short read, and if not,
             // we continue exponentially, asking for 2x more ranges than before
             dht::partition_range_vector prange = ranges_to_vnodes(concurrency);
@@ -560,18 +545,16 @@ indexed_table_select_statement::do_execute_base_query(
                 }
             }
             concurrency *= 2;
-            return proxy.query(_schema, command, std::move(prange), options.get_consistency(), {timeout, state.get_permit(), state.get_client_state(), state.get_trace_state()})
-            .then([&ranges_to_vnodes, &merger] (service::storage_proxy::coordinator_query_result qr) {
+        auto qr = co_await proxy.query(_schema, command, std::move(prange), options.get_consistency(), {timeout, state.get_permit(), state.get_client_state(), state.get_trace_state()});
                 auto is_short_read = qr.query_result->is_short_read();
                 merger(std::move(qr.query_result));
-                return stop_iteration(is_short_read || ranges_to_vnodes.empty());
-            });
-        }).then([&merger]() {
-            return merger.get();
-        });
-    }).then([cmd] (foreign_ptr<lw_shared_ptr<query::result>> result) mutable {
-        return make_ready_future<value_type>(value_type(std::move(result), std::move(cmd)));
-    });
+        if (is_short_read) {
+            break;
+        }
+    } while (!ranges_to_vnodes.empty());
+
+    auto result = merger.get();
+    co_return value_type(std::move(result), std::move(cmd));
 }
 
 future<shared_ptr<cql_transport::messages::result_message>>
