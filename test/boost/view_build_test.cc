@@ -846,7 +846,7 @@ SEASTAR_THREAD_TEST_CASE(test_view_update_generator_buffering) {
                     mutation_reader::forwarding fwd_mr) {
             return make_restricted_flat_reader(mt->as_data_source(), s, std::move(permit), pr, ps, pc, std::move(ts), fwd_ms, fwd_mr);
         });
-        auto [staging_reader, staging_reader_handle] = make_manually_paused_evictable_reader(
+        auto p = make_manually_paused_evictable_reader(
                 std::move(ms),
                 schema,
                 permit,
@@ -855,6 +855,9 @@ SEASTAR_THREAD_TEST_CASE(test_view_update_generator_buffering) {
                 service::get_local_streaming_priority(),
                 nullptr,
                 ::mutation_reader::forwarding::no);
+        auto& staging_reader = std::get<0>(p);
+        auto& staging_reader_handle = std::get<1>(p);
+        auto close_staging_reader = defer([&staging_reader] { staging_reader.close().get(); });
 
         std::vector<mutation> collected_muts;
 
