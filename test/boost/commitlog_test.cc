@@ -643,15 +643,14 @@ SEASTAR_TEST_CASE(test_commitlog_replay_invalid_key){
             rp.recover(paths, db::commitlog::descriptor::FILENAME_PREFIX).get();
         }
 
-        {
-            auto rd = mt.make_flat_reader(s, tests::make_permit());
+        with_flat_mutation_reader_in_thread(mt.make_flat_reader(s, tests::make_permit()), [] (flat_mutation_reader& rd) {
             auto mopt = read_mutation_from_flat_mutation_reader(rd, db::no_timeout).get0();
             BOOST_REQUIRE(mopt);
 
             mopt = {};
             mopt = read_mutation_from_flat_mutation_reader(rd, db::no_timeout).get0();
             BOOST_REQUIRE(!mopt);
-        }
+        });
     });
 }
 
