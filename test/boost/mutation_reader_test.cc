@@ -2743,11 +2743,12 @@ SEASTAR_THREAD_TEST_CASE(test_queue_reader) {
 
         auto write_all = [] (queue_reader_handle& handle, const std::vector<mutation>& muts) {
             return async([&] {
-                auto reader = flat_mutation_reader_from_mutations(tests::make_permit(), muts);
+              with_flat_mutation_reader_in_thread(flat_mutation_reader_from_mutations(tests::make_permit(), muts), [&] (flat_mutation_reader& reader) {
                 while (auto mf_opt = reader(db::no_timeout).get0()) {
                     handle.push(std::move(*mf_opt)).get();
                 }
                 handle.push_end_of_stream();
+              });
             });
         };
 
