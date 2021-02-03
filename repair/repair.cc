@@ -51,6 +51,7 @@
 #include <seastar/util/defer.hh>
 #include <seastar/core/metrics_registration.hh>
 #include <seastar/core/coroutine.hh>
+#include <seastar/util/closeable.hh>
 
 logging::logger rlogger("repair");
 
@@ -626,13 +627,15 @@ future<partition_checksum> partition_checksum::compute_legacy(flat_mutation_read
             });
         }).then([&checksum] {
             return checksum;
+        }).finally([&reader] {
+            return reader.close();
         });
     });
 }
 
 future<partition_checksum> partition_checksum::compute_streamed(flat_mutation_reader m)
 {
-    return do_with(std::move(m), [] (auto& m) {
+    return with_closeable(std::move(m), [] (auto& m) {
         return m.consume(partition_hasher(*m.schema()), db::no_timeout);
     });
 }
