@@ -645,6 +645,7 @@ SEASTAR_TEST_CASE(test_commitlog_replay_invalid_key){
 
         {
             auto rd = mt.make_flat_reader(s, tests::make_permit());
+            auto close_rd = defer([&rd] { rd.close().get(); });
             auto mopt = read_mutation_from_flat_mutation_reader(rd, db::no_timeout).get0();
             BOOST_REQUIRE(mopt);
 
