@@ -268,8 +268,9 @@ public:
 
 future<> fragment_and_freeze(flat_mutation_reader mr, frozen_mutation_consumer_fn c, size_t fragment_size)
 {
+  return with_flat_mutation_reader(std::move(mr), [c = std::move(c), fragment_size] (flat_mutation_reader& mr) mutable {
     fragmenting_mutation_freezer freezer(*mr.schema(), c, fragment_size);
-    return do_with(std::move(mr), std::move(freezer), [] (auto& mr, auto& freezer) {
+    return do_with(std::move(freezer), [&mr] (auto& freezer) {
         return repeat([&] {
             return mr(db::no_timeout).then([&] (auto mfopt) {
                 if (!mfopt) {
@@ -279,4 +280,5 @@ future<> fragment_and_freeze(flat_mutation_reader mr, frozen_mutation_consumer_f
             });
         });
     });
+  });
 }
