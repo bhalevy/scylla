@@ -339,13 +339,6 @@ void reader_concurrency_semaphore::expiry_handler::operator()(entry& e) noexcept
     maybe_dump_reader_permit_diagnostics(_semaphore, *_semaphore._permit_list, "timed out");
 }
 
-reader_concurrency_semaphore::inactive_read::inactive_read(flat_mutation_reader reader)
-    : reader(std::make_unique<flat_mutation_reader>(std::move(reader))) {
-}
-
-reader_concurrency_semaphore::inactive_read::~inactive_read() {
-}
-
 void reader_concurrency_semaphore::signal(const resources& r) noexcept {
     _resources += r;
     while (!_wait_list.empty() && has_available_units(_wait_list.front().res)) {
@@ -390,7 +383,8 @@ reader_concurrency_semaphore::inactive_read_handle reader_concurrency_semaphore:
     // Implies _inactive_reads.empty(), we don't queue new readers before
     // evicting all inactive reads.
     if (_wait_list.empty()) {
-        inactive_read ir(std::move(reader));
+        inactive_read ir;
+        ir.reader = std::move(reader);
         ir.notify_handler = std::move(notify_handler);
         const auto [it, _] = _inactive_reads.emplace(_next_id++, std::move(ir));
         (void)_;
@@ -413,7 +407,7 @@ reader_concurrency_semaphore::inactive_read_handle reader_concurrency_semaphore:
     return inactive_read_handle();
 }
 
-std::unique_ptr<flat_mutation_reader> reader_concurrency_semaphore::unregister_inactive_read(inactive_read_handle irh) {
+flat_mutation_reader_opt reader_concurrency_semaphore::unregister_inactive_read(inactive_read_handle irh) {
     if (irh && irh._sem != this) {
         throw std::runtime_error(fmt::format(
                     "reader_concurrency_semaphore::unregister_inactive_read(): "
