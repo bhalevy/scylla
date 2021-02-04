@@ -22,10 +22,13 @@
 #include "querier.hh"
 
 #include "schema.hh"
+#include "log.hh"
 
 #include <boost/range/adaptor/map.hpp>
 
 namespace query {
+
+logging::logger qlogger("querier_cache");
 
 enum class can_use {
     yes,
@@ -246,7 +249,7 @@ static void insert_querier(
     tracing::trace(trace_state, "Caching querier with key {}", key);
 
     auto& sem = q.permit().semaphore();
-
+  try {
     auto irh = sem.register_inactive_read(querier_utils::get_reader(q));
     if (!irh) {
         return;
@@ -282,6 +285,9 @@ static void insert_querier(
     querier_utils::set_inactive_read_handle(*it->second, std::move(irh));
     cleanup_index.cancel();
     cleanup_irh.cancel();
+  } catch (...) {
+    qlogger.warn("Failed to insert querier into index: {}. Ignored as if it was evicted upon registration", std::current_exception());
+  }
 }
 
 void querier_cache::insert(utils::UUID key, data_querier&& q, tracing::trace_state_ptr trace_state) {
