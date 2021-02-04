@@ -397,12 +397,12 @@ reader_concurrency_semaphore::inactive_read_handle reader_concurrency_semaphore:
         ir.notify_handler = std::move(notify_handler);
         ++_stats.inactive_reads;
         try {
-        if (ttl != std::chrono::duration_values<std::chrono::seconds>::max()) {
-            it->second.ttl_timer.emplace([this, it = it] {
-                evict(it, evict_reason::time);
-            });
-            it->second.ttl_timer->arm(lowres_clock::now() + ttl);
-        }
+            if (ttl != std::chrono::duration_values<std::chrono::seconds>::max()) {
+                it->second.ttl_timer.emplace([this, it = it] {
+                    evict(it, evict_reason::time);
+                });
+                it->second.ttl_timer->arm(lowres_clock::now() + ttl);
+            }
         } catch (...) {
             evict(it, evict_reason::error);
             throw;
