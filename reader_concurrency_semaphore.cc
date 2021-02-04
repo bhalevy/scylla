@@ -373,13 +373,7 @@ reader_concurrency_semaphore::~reader_concurrency_semaphore() {
     broken(std::make_exception_ptr(broken_semaphore{}));
 }
 
-reader_concurrency_semaphore::inactive_read_handle reader_concurrency_semaphore::register_inactive_read(flat_mutation_reader reader,
-        eviction_notify_handler notify_handler) {
-    return register_inactive_read(std::move(reader), std::chrono::duration_values<std::chrono::seconds>::max(), std::move(notify_handler));
-}
-
-reader_concurrency_semaphore::inactive_read_handle reader_concurrency_semaphore::register_inactive_read(flat_mutation_reader reader,
-        std::chrono::seconds ttl, eviction_notify_handler notify_handler) {
+reader_concurrency_semaphore::inactive_read_handle reader_concurrency_semaphore::register_inactive_read(flat_mutation_reader reader) {
     // Implies _inactive_reads.empty(), we don't queue new readers before
     // evicting all inactive reads.
     if (_wait_list.empty()) {
@@ -389,24 +383,24 @@ reader_concurrency_semaphore::inactive_read_handle reader_concurrency_semaphore:
         auto it = --_inactive_reads.end();
         inactive_read& ir = *it;
         ir.reader = std::move(reader);
-        ir.notify_handler = std::move(notify_handler);
-        if (ttl != std::chrono::duration_values<std::chrono::seconds>::max()) {
-            it->ttl_timer.emplace([this, it = it] {
-                evict(it, evict_reason::time);
-            });
-            it->ttl_timer->arm(lowres_clock::now() + ttl);
-        }
         ++_stats.inactive_reads;
         return inactive_read_handle(*this, it);
     }
 
-    // The evicted reader will release its permit, hopefully allowing us to
-    // admit some readers from the _wait_list.
-    if (notify_handler) {
-        notify_handler(evict_reason::permit);
-    }
     ++_stats.permit_based_evictions;
     return inactive_read_handle();
+}
+
+void reader_concurrency_semaphore::set_notify_handler(inactive_read_handle& irh, eviction_notify_handler&& handler, std::optional<std::chrono::seconds> ttl) {
+    auto it = *irh._it;
+    auto& ir = *it;
+    ir.notify_handler = std::move(handler);
+    if (ttl) {
+        ir.ttl_timer.emplace([this, it = it] {
+            evict(it, evict_reason::time);
+        });
+        ir.ttl_timer->arm(lowres_clock::now() + *ttl);
+    }
 }
 
 flat_mutation_reader_opt reader_concurrency_semaphore::unregister_inactive_read(inactive_read_handle irh) {
