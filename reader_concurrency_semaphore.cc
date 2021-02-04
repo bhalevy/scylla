@@ -383,18 +383,30 @@ reader_concurrency_semaphore::inactive_read_handle reader_concurrency_semaphore:
     // Implies _inactive_reads.empty(), we don't queue new readers before
     // evicting all inactive reads.
     if (_wait_list.empty()) {
-        inactive_read ir;
+        inactive_reads_type::iterator it;
+        try {
+            std::tie(it, std::ignore) = _inactive_reads.emplace(_next_id++, inactive_read());
+        } catch (...) {
+            if (notify_handler) {
+                notify_handler(evict_reason::error);
+            }
+            throw;
+        }
+        inactive_read& ir = it->second;
         ir.reader = std::move(reader);
         ir.notify_handler = std::move(notify_handler);
-        const auto [it, _] = _inactive_reads.emplace(_next_id++, std::move(ir));
-        (void)_;
+        ++_stats.inactive_reads;
+        try {
         if (ttl != std::chrono::duration_values<std::chrono::seconds>::max()) {
             it->second.ttl_timer.emplace([this, it = it] {
                 evict(it, evict_reason::time);
             });
             it->second.ttl_timer->arm(lowres_clock::now() + ttl);
         }
-        ++_stats.inactive_reads;
+        } catch (...) {
+            evict(it, evict_reason::error);
+            throw;
+        }
         return inactive_read_handle(*this, it->first);
     }
 
@@ -449,6 +461,7 @@ reader_concurrency_semaphore::inactive_reads_type::iterator reader_concurrency_s
             ++_stats.time_based_evictions;
             break;
         case evict_reason::manual:
+        case evict_reason::error:
             break;
     }
     --_stats.inactive_reads;

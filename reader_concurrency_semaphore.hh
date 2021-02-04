@@ -58,6 +58,7 @@ public:
         permit, // evicted due to permit shortage
         time, // evicted due to expiring ttl
         manual, // evicted manually via `try_evict_one_inactive_read()`
+        error, // register_inactive_read failed
     };
 
     using eviction_notify_handler = noncopyable_function<void(evict_reason)>;

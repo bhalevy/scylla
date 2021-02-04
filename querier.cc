@@ -261,6 +261,7 @@ static void insert_querier(
                 ++stats.time_based_evictions;
                 break;
             case reader_concurrency_semaphore::evict_reason::manual:
+            case reader_concurrency_semaphore::evict_reason::error:
                 break;
         }
         --stats.population;
