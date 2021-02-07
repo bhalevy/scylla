@@ -396,7 +396,7 @@ private:
     explicit evictable_reader_handle(evictable_reader& r);
 
 public:
-    void pause();
+    future<> pause() noexcept;
 };
 
 /// Make a manually-paused evictable reader.
@@ -443,7 +443,7 @@ public:
 protected:
     // Helpers for implementations, who might wish to provide the semaphore in
     // other ways than through the official `semaphore()` override.
-    static reader_concurrency_semaphore::inactive_read_handle pause(reader_concurrency_semaphore& sem, flat_mutation_reader reader);
+    static future<reader_concurrency_semaphore::inactive_read_handle> pause(reader_concurrency_semaphore& sem, flat_mutation_reader reader) noexcept;
 
 public:
     /// Create an appropriate reader on the shard it is called on.
@@ -499,7 +499,7 @@ public:
     /// This is just a helper method, it uses the semaphore returned by
     /// `semaphore()` for the actual pausing.
     /// \see semaphore()
-    reader_concurrency_semaphore::inactive_read_handle pause(flat_mutation_reader reader);
+    future<reader_concurrency_semaphore::inactive_read_handle> pause(flat_mutation_reader reader) noexcept;
 
     /// Try to resume the reader.
     ///

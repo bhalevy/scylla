@@ -243,7 +243,7 @@ static future<> insert_querier(
     // current partition when the page ends so it cannot be reused across
     // pages.
     if (q.is_reversed()) {
-        return make_ready_future<>();
+        co_return;
     }
 
     ++stats.inserts;
@@ -252,9 +252,9 @@ static future<> insert_querier(
 
     auto& sem = q.permit().semaphore();
 
-    auto irh = sem.register_inactive_read(querier_utils::get_reader(q));
+    auto irh = co_await sem.register_inactive_read(querier_utils::get_reader(q));
     if (!irh) {
-        return make_ready_future<>();
+        co_return;
     }
   try {
     auto cleanup_irh = defer([&] {
@@ -295,7 +295,6 @@ static future<> insert_querier(
     // drop the querier.
     qlogger.warn("Failed to insert querier into index: {}. Ignored as if it was evicted upon registration", std::current_exception());
   }
-    return make_ready_future<>();
 }
 
 future<> querier_cache::insert(utils::UUID key, data_querier&& q, tracing::trace_state_ptr trace_state) noexcept {

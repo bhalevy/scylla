@@ -2076,8 +2076,9 @@ future<bool> check_needs_view_update_path(db::system_distributed_keyspace& sys_d
 const size_t view_updating_consumer::buffer_size_soft_limit{1 * 1024 * 1024};
 const size_t view_updating_consumer::buffer_size_hard_limit{2 * 1024 * 1024};
 
+// must be called from a seastar thread.
 void view_updating_consumer::do_flush_buffer() {
-    _staging_reader_handle.pause();
+    _staging_reader_handle.pause().get();
 
     if (_buffer.front().partition().empty()) {
         // If we flushed mid-partition we can have an empty mutation if we

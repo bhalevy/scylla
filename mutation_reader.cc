@@ -1076,8 +1076,8 @@ private:
     flat_mutation_reader_opt _reader;
 
 private:
-    void do_pause(flat_mutation_reader reader);
-    void maybe_pause(flat_mutation_reader reader);
+    future<> do_pause(flat_mutation_reader reader) noexcept;
+    future<> maybe_pause(flat_mutation_reader reader) noexcept;
     flat_mutation_reader_opt try_resume();
     void update_next_position(flat_mutation_reader& reader);
     void adjust_partition_slice();
@@ -1120,24 +1120,26 @@ public:
     reader_concurrency_semaphore::inactive_read_handle inactive_read_handle() && {
         return std::move(_irh);
     }
-    void pause() {
+    future<> pause() noexcept {
         if (_reader) {
-            do_pause(std::move(*_reader));
+            return do_pause(std::move(*_reader));
         }
+        return make_ready_future<>();
     }
 };
 
-void evictable_reader::do_pause(flat_mutation_reader reader) {
-    assert(!_irh);
-    _irh = _permit.semaphore().register_inactive_read(std::move(reader));
+future<> evictable_reader::do_pause(flat_mutation_reader reader) noexcept {
+    return _permit.semaphore().register_inactive_read(std::move(reader)).then([this] (reader_concurrency_semaphore::inactive_read_handle irh) {
+        assert(!_irh);
+        _irh = std::move(irh);
+    });
 }
 
-void evictable_reader::maybe_pause(flat_mutation_reader reader) {
+future<> evictable_reader::maybe_pause(flat_mutation_reader reader) noexcept {
     if (_auto_pause) {
-        do_pause(std::move(reader));
-    } else {
-        _reader = std::move(reader);
+        return do_pause(std::move(reader));
     }
+    return _reader->reassign(std::move(reader));
 }
 
 flat_mutation_reader_opt evictable_reader::try_resume() {
@@ -1495,7 +1497,7 @@ future<> evictable_reader::fill_buffer(db::timeout_clock::time_point timeout) {
     return do_with(resume_or_create_reader(), [this, timeout] (flat_mutation_reader& reader) mutable {
         return fill_buffer(reader, timeout).then([this, &reader] {
             _end_of_stream = reader.is_end_of_stream() && reader.is_buffer_empty();
-            maybe_pause(std::move(reader));
+            return maybe_pause(std::move(reader));
         });
     });
 }
@@ -1508,7 +1510,7 @@ future<> evictable_reader::next_partition() {
     }
     auto reader = resume_or_create_reader();
     co_await reader.next_partition();
-    maybe_pause(std::move(reader));
+    co_return co_await maybe_pause(std::move(reader));
 }
 
 future<> evictable_reader::fast_forward_to(const dht::partition_range& pr, db::timeout_clock::time_point timeout) {
@@ -1527,7 +1529,7 @@ future<> evictable_reader::fast_forward_to(const dht::partition_range& pr, db::t
     if (auto reader_opt = try_resume()) {
         auto f = reader_opt->fast_forward_to(pr, timeout);
         return f.then([this, reader = std::move(*reader_opt)] () mutable {
-            maybe_pause(std::move(reader));
+            return maybe_pause(std::move(reader));
         });
     }
     return make_ready_future<>();
@@ -1536,8 +1538,8 @@ future<> evictable_reader::fast_forward_to(const dht::partition_range& pr, db::t
 evictable_reader_handle::evictable_reader_handle(evictable_reader& r) : _r(&r)
 { }
 
-void evictable_reader_handle::evictable_reader_handle::pause() {
-    _r->pause();
+future<> evictable_reader_handle::evictable_reader_handle::pause() noexcept {
+    return _r->pause();
 }
 
 flat_mutation_reader make_auto_paused_evictable_reader(
@@ -1988,13 +1990,13 @@ future<> multishard_combining_reader::close() noexcept {
     });
 }
 
-reader_concurrency_semaphore::inactive_read_handle
-reader_lifecycle_policy::pause(reader_concurrency_semaphore& sem, flat_mutation_reader reader) {
+future<reader_concurrency_semaphore::inactive_read_handle>
+reader_lifecycle_policy::pause(reader_concurrency_semaphore& sem, flat_mutation_reader reader) noexcept {
     return sem.register_inactive_read(std::move(reader));
 }
 
-reader_concurrency_semaphore::inactive_read_handle
-reader_lifecycle_policy::pause(flat_mutation_reader reader) {
+future<reader_concurrency_semaphore::inactive_read_handle>
+reader_lifecycle_policy::pause(flat_mutation_reader reader) noexcept {
     return pause(semaphore(), std::move(reader));
 }
 

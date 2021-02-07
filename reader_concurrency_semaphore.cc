@@ -23,6 +23,7 @@
 #include <seastar/core/print.hh>
 #include <seastar/util/lazy.hh>
 #include <seastar/util/log.hh>
+#include <seastar/core/coroutine.hh>
 
 #include "reader_concurrency_semaphore.hh"
 #include "utils/exceptions.hh"
@@ -376,7 +377,7 @@ reader_concurrency_semaphore::~reader_concurrency_semaphore() {
     broken(std::make_exception_ptr(broken_semaphore{}));
 }
 
-reader_concurrency_semaphore::inactive_read_handle reader_concurrency_semaphore::register_inactive_read(flat_mutation_reader reader) noexcept {
+future<reader_concurrency_semaphore::inactive_read_handle> reader_concurrency_semaphore::register_inactive_read(flat_mutation_reader reader) noexcept {
     // Implies _inactive_reads.empty(), we don't queue new readers before
     // evicting all inactive reads.
     if (_wait_list.empty()) {
@@ -385,7 +386,7 @@ reader_concurrency_semaphore::inactive_read_handle reader_concurrency_semaphore:
         auto& ir = *irp;
         _inactive_reads.push_back(ir);
         ++_stats.inactive_reads;
-        return inactive_read_handle(*this, std::move(irp));
+        co_return inactive_read_handle(*this, std::move(irp));
       } catch (...) {
         // It is okay to swallow the exception since
         // we're allowed to drop the reader upon registration
@@ -397,7 +398,8 @@ reader_concurrency_semaphore::inactive_read_handle reader_concurrency_semaphore:
     } else {
         ++_stats.permit_based_evictions;
     }
-    return inactive_read_handle();
+    co_await reader.close();
+    co_return inactive_read_handle();
 }
 
 void reader_concurrency_semaphore::set_notify_handler(inactive_read_handle& irh, eviction_notify_handler&& notify_handler, std::optional<std::chrono::seconds> ttl_opt) {
