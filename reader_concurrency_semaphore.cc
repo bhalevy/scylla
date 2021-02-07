@@ -444,6 +444,13 @@ flat_mutation_reader_opt reader_concurrency_semaphore::try_evict_one_inactive_re
     return evict(_inactive_reads.begin(), reason);
 }
 
+future<> reader_concurrency_semaphore::evict_all_inactive_reads() noexcept {
+    while (!_inactive_reads.empty()) {
+        auto reader = evict(_inactive_reads.begin(), evict_reason::manual);
+        co_await reader.close();
+    }
+}
+
 reader_concurrency_semaphore::inactive_read::~inactive_read() {
     if (irh_ptr) {
         irh_ptr->_it.reset();
