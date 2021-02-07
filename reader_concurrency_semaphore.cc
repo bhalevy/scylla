@@ -424,6 +424,7 @@ flat_mutation_reader_opt reader_concurrency_semaphore::unregister_inactive_read(
     if (auto opt_it = std::exchange(irh._it, std::nullopt)) {
         auto it = *opt_it;
         auto& ir = *it;
+        assert(ir.irh_ptr == &irh);
         auto reader = std::move(ir.reader);
         _inactive_reads.erase(it);
         --_stats.inactive_reads;
@@ -438,6 +439,12 @@ bool reader_concurrency_semaphore::try_evict_one_inactive_read() {
     }
     evict(_inactive_reads.begin(), evict_reason::manual);
     return true;
+}
+
+reader_concurrency_semaphore::inactive_read::~inactive_read() {
+    if (irh_ptr) {
+        irh_ptr->_it.reset();
+    }
 }
 
 reader_concurrency_semaphore::inactive_reads_type::iterator reader_concurrency_semaphore::evict(inactive_reads_type::iterator it, evict_reason reason) {
