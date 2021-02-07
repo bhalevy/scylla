@@ -419,7 +419,8 @@ flat_mutation_reader_opt reader_concurrency_semaphore::unregister_inactive_read(
                     reinterpret_cast<uintptr_t>(irh._sem)));
     }
 
-    if (auto it = _inactive_reads.find(irh._id); it != _inactive_reads.end()) {
+    if (auto opt_it = std::exchange(irh._it, std::nullopt)) {
+        auto it = *opt_it;
         auto ir = std::move(it->second);
         _inactive_reads.erase(it);
         --_stats.inactive_reads;
