@@ -385,19 +385,19 @@ reader_concurrency_semaphore::inactive_read_handle reader_concurrency_semaphore:
     if (_wait_list.empty()) {
         // create an empty inactive_read first so if failed,
         // the reader can be easily closed.
-        const auto [it, _] = _inactive_reads.emplace(_next_id++, inactive_read());
-        (void)_;
-        inactive_read& ir = it->second;
+        _inactive_reads.emplace_back();
+        auto it = --_inactive_reads.end();
+        inactive_read& ir = *it;
         ir.reader = std::move(reader);
         ir.notify_handler = std::move(notify_handler);
         if (ttl != std::chrono::duration_values<std::chrono::seconds>::max()) {
-            it->second.ttl_timer.emplace([this, it = it] {
+            it->ttl_timer.emplace([this, it = it] {
                 evict(it, evict_reason::time);
             });
-            it->second.ttl_timer->arm(lowres_clock::now() + ttl);
+            it->ttl_timer->arm(lowres_clock::now() + ttl);
         }
         ++_stats.inactive_reads;
-        return inactive_read_handle(*this, it, it->first);
+        return inactive_read_handle(*this, it);
     }
 
     // The evicted reader will release its permit, hopefully allowing us to
@@ -423,10 +423,11 @@ flat_mutation_reader_opt reader_concurrency_semaphore::unregister_inactive_read(
 
     if (auto opt_it = std::exchange(irh._it, std::nullopt)) {
         auto it = *opt_it;
-        auto ir = std::move(it->second);
+        auto& ir = *it;
+        auto reader = std::move(ir.reader);
         _inactive_reads.erase(it);
         --_stats.inactive_reads;
-        return std::move(ir.reader);
+        return std::move(reader);
     }
     return {};
 }
@@ -440,7 +441,7 @@ bool reader_concurrency_semaphore::try_evict_one_inactive_read() {
 }
 
 reader_concurrency_semaphore::inactive_reads_type::iterator reader_concurrency_semaphore::evict(inactive_reads_type::iterator it, evict_reason reason) {
-    auto ir = std::move(it->second);
+    auto& ir = *it;
     if (ir.notify_handler) {
         ir.notify_handler(reason);
     }
