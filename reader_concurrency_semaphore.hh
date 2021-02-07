@@ -62,6 +62,8 @@ public:
 
     using eviction_notify_handler = noncopyable_function<void(evict_reason)>;
 
+    class inactive_read_handle;
+
     struct stats {
         // The number of inactive reads evicted to free up permits.
         uint64_t permit_based_evictions = 0;
@@ -100,10 +102,13 @@ private:
         flat_mutation_reader reader;
         eviction_notify_handler notify_handler;
         std::optional<timer<lowres_clock>> ttl_timer;
+        inactive_read_handle* irh_ptr = nullptr;
 
         explicit inactive_read(flat_mutation_reader reader) noexcept
             : reader(std::move(reader))
         { }
+        inactive_read(inactive_read&&) = default;
+        ~inactive_read();
     };
 
     using inactive_reads_type = std::list<inactive_read>;
@@ -131,17 +136,33 @@ public:
         explicit inactive_read_handle(reader_concurrency_semaphore& sem, inactive_reads_type::iterator it) noexcept
             : _sem(&sem)
             , _it(it)
-        { }
+        {
+            it->irh_ptr = this;
+        }
     public:
         inactive_read_handle() = default;
         inactive_read_handle(inactive_read_handle&& o) noexcept
             : _sem(std::exchange(o._sem, nullptr))
             , _it(std::exchange(o._it, std::nullopt))
         {
+            if (_it) {
+                assert((*_it)->irh_ptr == &o);
+                (*_it)->irh_ptr = this;
+            }
+        }
+        ~inactive_read_handle() {
+            if (_it) {
+                assert((*_it)->irh_ptr == this);
+                (*_it)->irh_ptr = nullptr;
+            }
         }
         inactive_read_handle& operator=(inactive_read_handle&& o) noexcept {
             _sem = std::exchange(o._sem, nullptr);
             _it = std::exchange(o._it, std::nullopt);
+            if (_it) {
+                assert((*_it)->irh_ptr == &o);
+                (*_it)->irh_ptr = this;
+            }
             return *this;
         }
         explicit operator bool() const noexcept {
