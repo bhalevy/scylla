@@ -404,7 +404,8 @@ void reader_concurrency_semaphore::set_notify_handler(inactive_read_handle& irh,
     ir.notify_handler = std::move(handler);
     if (ttl) {
         ir.ttl_timer.emplace([this, it = it] {
-            evict(it, evict_reason::time);
+            auto reader = evict(it, evict_reason::time);
+            // TODO: reader.close();
         });
         ir.ttl_timer->arm(lowres_clock::now() + *ttl);
     }
@@ -434,12 +435,11 @@ flat_mutation_reader_opt reader_concurrency_semaphore::unregister_inactive_read(
     return {};
 }
 
-bool reader_concurrency_semaphore::try_evict_one_inactive_read(evict_reason reason) {
+flat_mutation_reader_opt reader_concurrency_semaphore::try_evict_one_inactive_read(evict_reason reason) {
     if (_inactive_reads.empty()) {
-        return false;
+        return flat_mutation_reader_opt();
     }
-    evict(_inactive_reads.begin(), reason);
-    return true;
+    return evict(_inactive_reads.begin(), reason);
 }
 
 reader_concurrency_semaphore::inactive_read::~inactive_read() {
@@ -448,7 +448,7 @@ reader_concurrency_semaphore::inactive_read::~inactive_read() {
     }
 }
 
-reader_concurrency_semaphore::inactive_reads_type::iterator reader_concurrency_semaphore::evict(inactive_reads_type::iterator it, evict_reason reason) {
+flat_mutation_reader reader_concurrency_semaphore::evict(inactive_reads_type::iterator it, evict_reason reason) {
     auto& ir = *it;
     if (ir.notify_handler) {
         ir.notify_handler(reason);
@@ -464,7 +464,9 @@ reader_concurrency_semaphore::inactive_reads_type::iterator reader_concurrency_s
             break;
     }
     --_stats.inactive_reads;
-    return _inactive_reads.erase(it);
+    auto&& reader = *std::move(ir.reader);
+    _inactive_reads.erase(it);
+    return std::move(reader);
 }
 
 bool reader_concurrency_semaphore::has_available_units(const resources& r) const {
@@ -490,9 +492,12 @@ future<reader_permit::resource_units> reader_concurrency_semaphore::do_wait_admi
                         format("{}: restricted mutation reader queue overload", _name))));
     }
     auto r = resources(1, static_cast<ssize_t>(memory));
-    auto it = _inactive_reads.begin();
-    while (!may_proceed(r) && it != _inactive_reads.end()) {
-        it = evict(it, evict_reason::permit);
+    while (!may_proceed(r)) {
+        if (auto reader_opt = try_evict_one_inactive_read(evict_reason::permit)) {
+            // TODO: co_await reader_opt->close();
+        } else {
+            break;
+        }
     }
     if (may_proceed(r)) {
         permit.on_admission();
