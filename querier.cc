@@ -384,10 +384,13 @@ future<bool> querier_cache::evict_one() noexcept {
             co_return false;
         }
         auto it = idx.begin();
-        it->second->permit().semaphore().unregister_inactive_read(querier_utils::get_inactive_read_handle(*it->second));
+        auto reader_opt = it->second->permit().semaphore().unregister_inactive_read(querier_utils::get_inactive_read_handle(*it->second));
         idx.erase(it);
         ++_stats.resource_based_evictions;
         --_stats.population;
+        if (reader_opt) {
+            co_await reader_opt->close();
+        }
         co_return true;
     };
 
@@ -398,16 +401,22 @@ future<bool> querier_cache::evict_one() noexcept {
 
 future<> querier_cache::evict_all_for_table(const utils::UUID& schema_id) noexcept {
     auto evict_from_index = [this, schema_id] (index& idx) -> future<> {
+        auto fut = make_ready_future<>();
         for (auto it = idx.begin(); it != idx.end();) {
             if (it->second->schema().id() == schema_id) {
-                it->second->permit().semaphore().unregister_inactive_read(querier_utils::get_inactive_read_handle(*it->second));
+                auto reader_opt = it->second->permit().semaphore().unregister_inactive_read(querier_utils::get_inactive_read_handle(*it->second));
                 it = idx.erase(it);
                 --_stats.population;
+                if (reader_opt) {
+                    fut = fut.finally([reader_opt = std::move(reader_opt)] () mutable {
+                        return reader_opt->close();
+                    });
+                }
             } else {
                 ++it;
             }
         }
-        co_return;
+        return std::move(fut);
     };
 
     return when_all_succeed(evict_from_index(_data_querier_index),
