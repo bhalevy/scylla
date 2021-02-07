@@ -383,6 +383,7 @@ reader_concurrency_semaphore::inactive_read_handle reader_concurrency_semaphore:
     // Implies _inactive_reads.empty(), we don't queue new readers before
     // evicting all inactive reads.
     if (_wait_list.empty()) {
+        inactive_read_handle irh;
         inactive_read ir(std::move(reader));
         ir.notify_handler = std::move(notify_handler);
         const auto [it, _] = _inactive_reads.emplace(_next_id++, std::move(ir));
@@ -394,7 +395,7 @@ reader_concurrency_semaphore::inactive_read_handle reader_concurrency_semaphore:
             it->second.ttl_timer->arm(lowres_clock::now() + ttl);
         }
         ++_stats.inactive_reads;
-        return inactive_read_handle(*this, it->first);
+        return inactive_read_handle(*this, it, it->first);
     }
 
     // The evicted reader will release its permit, hopefully allowing us to
