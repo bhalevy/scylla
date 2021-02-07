@@ -106,7 +106,7 @@ private:
         { }
     };
 
-    using inactive_reads_type = std::map<uint64_t, inactive_read>;
+    using inactive_reads_type = std::list<inactive_read>;
 
 private:
     const resources _initial_resources;
@@ -117,7 +117,6 @@ private:
     sstring _name;
     size_t _max_queue_length = std::numeric_limits<size_t>::max();
     std::function<void()> _prethrow_action;
-    uint64_t _next_id = 1;
     inactive_reads_type _inactive_reads;
     stats _stats;
     std::unique_ptr<permit_list> _permit_list;
@@ -126,31 +125,27 @@ public:
     class inactive_read_handle {
         reader_concurrency_semaphore* _sem = nullptr;
         std::optional<inactive_reads_type::iterator> _it = {};
-        uint64_t _id = 0;
 
         friend class reader_concurrency_semaphore;
 
-        explicit inactive_read_handle(reader_concurrency_semaphore& sem, inactive_reads_type::iterator it, uint64_t id) noexcept
+        explicit inactive_read_handle(reader_concurrency_semaphore& sem, inactive_reads_type::iterator it) noexcept
             : _sem(&sem)
             , _it(it)
-            , _id(id)
         { }
     public:
         inactive_read_handle() = default;
         inactive_read_handle(inactive_read_handle&& o) noexcept
             : _sem(std::exchange(o._sem, nullptr))
             , _it(std::exchange(o._it, std::nullopt))
-            , _id(std::exchange(o._id, 0))
         {
         }
         inactive_read_handle& operator=(inactive_read_handle&& o) noexcept {
             _sem = std::exchange(o._sem, nullptr);
             _it = std::exchange(o._it, std::nullopt);
-            _id = std::exchange(o._id, 0);
             return *this;
         }
         explicit operator bool() const noexcept {
-            return bool(_id);
+            return bool(_it);
         }
     };
 
