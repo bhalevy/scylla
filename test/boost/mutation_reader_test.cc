@@ -3013,10 +3013,11 @@ SEASTAR_THREAD_TEST_CASE(test_manual_paused_evictable_reader_is_mutation_source)
         std::optional<evictable_reader_handle> _handle;
 
     private:
-        void maybe_pause() {
+        future<> maybe_pause() noexcept {
             if (!tests::random::get_int(0, 4)) {
-                _handle->pause();
+                return _handle->pause();
             }
+            return make_ready_future<>();
         }
 
     public:
@@ -3037,7 +3038,7 @@ SEASTAR_THREAD_TEST_CASE(test_manual_paused_evictable_reader_is_mutation_source)
                 _end_of_stream = _reader.is_end_of_stream();
                 _reader.move_buffer_content_to(*this);
             }).then([this] {
-                maybe_pause();
+                return maybe_pause();
             });
         }
         virtual future<> next_partition() override {
@@ -3052,7 +3053,7 @@ SEASTAR_THREAD_TEST_CASE(test_manual_paused_evictable_reader_is_mutation_source)
             clear_buffer();
             _end_of_stream = false;
             return _reader.fast_forward_to(pr, timeout).then([this] {
-                maybe_pause();
+                return maybe_pause();
             });
         }
         virtual future<> fast_forward_to(position_range pr, db::timeout_clock::time_point timeout) override {
@@ -3184,7 +3185,7 @@ flat_mutation_reader create_evictable_reader_and_evict_after_first_buffer(
 
     rd.detach_buffer();
 
-    handle.pause();
+    handle.pause().get();
 
     while(permit.semaphore().try_evict_one_inactive_read());
 

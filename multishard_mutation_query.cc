@@ -538,7 +538,7 @@ future<> read_context::lookup_readers() {
                         reinterpret_cast<uintptr_t>(&semaphore)));
             }
 
-            auto handle = pause(semaphore, std::move(q).reader());
+            auto handle = co_await pause(semaphore, std::move(q).reader());
             co_return reader_meta(
                     reader_state::successful_lookup,
                     reader_meta::remote_parts(q.permit(), std::move(q).reader_range(), std::move(q).reader_slice(), table.read_in_progress()),

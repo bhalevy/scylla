@@ -513,10 +513,11 @@ public:
         }
     }
 
-    void pause() {
+    future<> pause() noexcept {
         if (_reader_handle) {
-            _reader_handle->pause();
+            return _reader_handle->pause();
         }
+        return make_ready_future<>();
     }
 };
 
@@ -1188,8 +1189,9 @@ private:
                     _repair_reader.on_end_of_stream();
                     return make_exception_future<value_type>(fut.get_exception());
                 }
-                _repair_reader.pause();
+              return _repair_reader.pause().then([&cur_rows, &new_rows_size] {
                 return make_ready_future<value_type>(value_type(std::move(cur_rows), new_rows_size));
+              });
             });
         });
     }
