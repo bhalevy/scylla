@@ -152,7 +152,7 @@ private:
     std::unique_ptr<permit_list> _permit_list;
 
 private:
-    void evict(inactive_read&, evict_reason reason);
+    [[nodiscard]] flat_mutation_reader evict(inactive_read&, evict_reason reason);
 
     bool has_available_units(const resources& r) const;
 
@@ -225,9 +225,9 @@ public:
 
     /// Try to evict an inactive read.
     ///
-    /// Return true if an inactive read was evicted and false otherwise
+    /// Return an enganged flat_mutation_reader_opt if an inactive read was evicted and unengaged flat_mutation_reader_opt otherwise
     /// (if there was no reader to evict).
-    bool try_evict_one_inactive_read(evict_reason = evict_reason::manual);
+    flat_mutation_reader_opt try_evict_one_inactive_read(evict_reason = evict_reason::manual);
 
     void clear_inactive_reads() {
         _inactive_reads.clear();

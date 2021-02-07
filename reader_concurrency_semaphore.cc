@@ -407,7 +407,8 @@ void reader_concurrency_semaphore::set_notify_handler(inactive_read_handle& irh,
     ir.notify_handler = std::move(notify_handler);
     if (ttl_opt) {
         ir.ttl_timer.set_callback([this, &ir] {
-            evict(ir, evict_reason::time);
+            auto reader = evict(ir, evict_reason::time);
+            // TODO: reader.close();
         });
         ir.ttl_timer.arm(lowres_clock::now() + *ttl_opt);
     }
@@ -434,15 +435,14 @@ flat_mutation_reader_opt reader_concurrency_semaphore::unregister_inactive_read(
     return std::move(irp->reader);
 }
 
-bool reader_concurrency_semaphore::try_evict_one_inactive_read(evict_reason reason) {
+flat_mutation_reader_opt reader_concurrency_semaphore::try_evict_one_inactive_read(evict_reason reason) {
     if (_inactive_reads.empty()) {
-        return false;
+        return flat_mutation_reader_opt();
     }
-    evict(_inactive_reads.front(), reason);
-    return true;
+    return evict(_inactive_reads.front(), reason);
 }
 
-void reader_concurrency_semaphore::evict(inactive_read& ir, evict_reason reason) {
+flat_mutation_reader reader_concurrency_semaphore::evict(inactive_read& ir, evict_reason reason) {
     auto reader = std::move(ir.reader);
     ir.unlink();
     if (auto notify_handler = std::move(ir.notify_handler)) {
@@ -461,6 +461,7 @@ void reader_concurrency_semaphore::evict(inactive_read& ir, evict_reason reason)
             break;
     }
     --_stats.inactive_reads;
+    return std::move(reader);
 }
 
 bool reader_concurrency_semaphore::has_available_units(const resources& r) const {
@@ -487,7 +488,9 @@ future<reader_permit::resource_units> reader_concurrency_semaphore::do_wait_admi
     }
     auto r = resources(1, static_cast<ssize_t>(memory));
     while (!may_proceed(r)) {
-        if (!try_evict_one_inactive_read(evict_reason::permit)) {
+        if (auto reader_opt = try_evict_one_inactive_read(evict_reason::permit)) {
+            // TODO: co_await reader_opt->close();
+        } else {
             break;
         }
     }
