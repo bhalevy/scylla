@@ -383,10 +383,11 @@ future<bool> querier_cache::evict_one() noexcept {
             co_return false;
         }
         auto it = idx.begin();
-        it->second->permit().semaphore().unregister_inactive_read(querier_utils::get_inactive_read_handle(*it->second));
+        auto reader_opt = it->second->permit().semaphore().unregister_inactive_read(querier_utils::get_inactive_read_handle(*it->second));
         idx.erase(it);
         ++_stats.resource_based_evictions;
         --_stats.population;
+        co_await reader_opt->close();
         co_return true;
     };
 
@@ -399,9 +400,10 @@ future<> querier_cache::evict_all_for_table(const utils::UUID& schema_id) noexce
     auto evict_from_index = [this, schema_id] (index& idx) -> future<> {
         for (auto it = idx.begin(); it != idx.end();) {
             if (it->second->schema().id() == schema_id) {
-                it->second->permit().semaphore().unregister_inactive_read(querier_utils::get_inactive_read_handle(*it->second));
+                auto reader_opt = it->second->permit().semaphore().unregister_inactive_read(querier_utils::get_inactive_read_handle(*it->second));
                 it = idx.erase(it);
                 --_stats.population;
+                co_await reader_opt->close();
             } else {
                 ++it;
             }
