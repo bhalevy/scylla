@@ -405,7 +405,9 @@ void reader_concurrency_semaphore::set_notify_handler(inactive_read_handle& irh,
     if (ttl) {
         ir.ttl_timer.emplace([this, it = it] {
             auto reader = evict(it, evict_reason::time);
-            // TODO: reader.close();
+            (void)reader.close().handle_exception([] (std::exception_ptr ep) {
+                rcslog.warn("Closing ttl-expired inactive reader failed: {}. Ignored since the timer callback has nobody to return this error to.", ep);
+            });
         });
         ir.ttl_timer->arm(lowres_clock::now() + *ttl);
     }
@@ -487,27 +489,27 @@ future<reader_permit::resource_units> reader_concurrency_semaphore::do_wait_admi
             _prethrow_action();
         }
         maybe_dump_reader_permit_diagnostics(*this, *_permit_list, "wait queue overloaded");
-        return make_exception_future<reader_permit::resource_units>(
+        co_return co_await make_exception_future<reader_permit::resource_units>(
                 std::make_exception_ptr(std::runtime_error(
                         format("{}: restricted mutation reader queue overload", _name))));
     }
     auto r = resources(1, static_cast<ssize_t>(memory));
     while (!may_proceed(r)) {
         if (auto reader_opt = try_evict_one_inactive_read(evict_reason::permit)) {
-            // TODO: co_await reader_opt->close();
+            co_await reader_opt->close();
         } else {
             break;
         }
     }
     if (may_proceed(r)) {
         permit.on_admission();
-        return make_ready_future<reader_permit::resource_units>(reader_permit::resource_units(std::move(permit), r));
+        co_return reader_permit::resource_units(std::move(permit), r);
     }
     promise<reader_permit::resource_units> pr;
     auto fut = pr.get_future();
     permit.on_waiting();
     _wait_list.push_back(entry(std::move(pr), std::move(permit), r), timeout);
-    return fut;
+    co_return co_await std::move(fut);
 }
 
 reader_permit reader_concurrency_semaphore::make_permit(const schema* const schema, const char* const op_name) {
