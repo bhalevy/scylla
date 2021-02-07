@@ -373,10 +373,11 @@ reader_concurrency_semaphore::~reader_concurrency_semaphore() {
     broken(std::make_exception_ptr(broken_semaphore{}));
 }
 
-reader_concurrency_semaphore::inactive_read_handle reader_concurrency_semaphore::register_inactive_read(flat_mutation_reader reader) {
+reader_concurrency_semaphore::inactive_read_handle reader_concurrency_semaphore::register_inactive_read(flat_mutation_reader reader) noexcept {
     // Implies _inactive_reads.empty(), we don't queue new readers before
     // evicting all inactive reads.
     if (_wait_list.empty()) {
+      try {
         // create an empty inactive_read first so if failed,
         // the reader can be easily closed.
         _inactive_reads.emplace_back();
@@ -385,9 +386,13 @@ reader_concurrency_semaphore::inactive_read_handle reader_concurrency_semaphore:
         ir.reader = std::move(reader);
         ++_stats.inactive_reads;
         return inactive_read_handle(*this, it);
+      } catch (...) {
+        // swallow the error and return an empty i_r_h
+        rcslog.warn("Registering inactive read failed: {}. Ignored as if it was evicted.", std::current_exception());
+      }
+    } else {
+        ++_stats.permit_based_evictions;
     }
-
-    ++_stats.permit_based_evictions;
     return inactive_read_handle();
 }
 
