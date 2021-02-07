@@ -397,7 +397,7 @@ reader_concurrency_semaphore::inactive_read_handle reader_concurrency_semaphore:
             it->second.ttl_timer->arm(lowres_clock::now() + ttl);
         }
         ++_stats.inactive_reads;
-        return inactive_read_handle(*this, it->first);
+        return inactive_read_handle(*this, it, it->first);
     }
 
     // The evicted reader will release its permit, hopefully allowing us to
