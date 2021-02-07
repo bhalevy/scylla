@@ -1631,6 +1631,7 @@ public:
     virtual future<> next_partition() override;
     virtual future<> fast_forward_to(const dht::partition_range& pr, db::timeout_clock::time_point timeout) override;
     virtual future<> fast_forward_to(position_range, db::timeout_clock::time_point timeout) override;
+    virtual future<> close() noexcept override;
     bool done() const {
         return _reader && is_buffer_empty() && is_end_of_stream();
     }
@@ -1668,6 +1669,15 @@ void shard_reader::stop() noexcept {
             return reader_lifecycle_policy::stopped_reader{std::move(irh), std::move(buffer)};
         });
     }).finally([zis = shared_from_this()] {}));
+}
+
+future<> shard_reader::close() noexcept {
+    auto f = _read_ahead ? *std::exchange(_read_ahead, std::nullopt) : make_ready_future<>();
+    return f.finally([this] {
+        return smp::submit_to(_shard, [this] {
+            return _reader->close();
+        });
+    });
 }
 
 future<> shard_reader::do_fill_buffer(db::timeout_clock::time_point timeout) {
