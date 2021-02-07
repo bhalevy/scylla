@@ -229,9 +229,7 @@ public:
     /// (if there was no reader to evict).
     flat_mutation_reader_opt try_evict_one_inactive_read(evict_reason = evict_reason::manual);
 
-    void clear_inactive_reads() {
-        _inactive_reads.clear();
-    }
+    future<> evict_all_inactive_reads() noexcept;
 
     const stats& get_stats() const {
         return _stats;

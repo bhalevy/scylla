@@ -444,6 +444,13 @@ flat_mutation_reader_opt reader_concurrency_semaphore::try_evict_one_inactive_re
     return evict(_inactive_reads.front(), reason);
 }
 
+future<> reader_concurrency_semaphore::evict_all_inactive_reads() noexcept {
+    while (!_inactive_reads.empty()) {
+        auto reader = evict(_inactive_reads.front(), evict_reason::manual);
+        co_await reader.close();
+    }
+}
+
 flat_mutation_reader reader_concurrency_semaphore::evict(inactive_read& ir, evict_reason reason) {
     auto reader = std::move(ir.reader);
     ir.unlink();
