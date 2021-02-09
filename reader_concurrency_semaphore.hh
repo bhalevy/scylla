@@ -150,6 +150,7 @@ private:
     inactive_reads_type _inactive_reads;
     stats _stats;
     std::unique_ptr<permit_list> _permit_list;
+    gate _close_reader_gate;
 
 private:
     [[nodiscard]] flat_mutation_reader evict(inactive_read&, evict_reason reason);
@@ -159,6 +160,9 @@ private:
     bool may_proceed(const resources& r) const;
 
     future<reader_permit::resource_units> do_wait_admission(reader_permit permit, size_t memory, db::timeout_clock::time_point timeout);
+
+    // closes reader in the background.
+    void close_reader(flat_mutation_reader&& reader);
 
 public:
     struct no_limits { };
