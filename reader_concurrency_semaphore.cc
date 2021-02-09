@@ -421,7 +421,7 @@ reader_concurrency_semaphore::reader_concurrency_semaphore(no_limits, sstring na
 reader_concurrency_semaphore::~reader_concurrency_semaphore() {
     // FIXME: assert(_stopped) once all reader_concurrency_semaphore:s
     // are properly closed (needs de-static-fying tests::the_semaphore)
-    assert(_inactive_reads.empty());
+    assert(_inactive_reads.empty() && !_close_readers_gate.get_count());
     broken();
 }
 
@@ -452,6 +452,7 @@ reader_concurrency_semaphore::inactive_read_handle reader_concurrency_semaphore:
     } else {
         ++_stats.permit_based_evictions;
     }
+    close_reader(std::move(reader));
     return inactive_read_handle();
 }
 
@@ -497,6 +498,8 @@ bool reader_concurrency_semaphore::try_evict_one_inactive_read(evict_reason reas
 
 void reader_concurrency_semaphore::clear_inactive_reads() {
     while (!_inactive_reads.empty()) {
+        auto& ir = _inactive_reads.front();
+        close_reader(std::move(ir.reader));
         // Destroying the read unlinks it too.
         std::unique_ptr<inactive_read> _(&*_inactive_reads.begin());
     }
@@ -510,6 +513,7 @@ future<> reader_concurrency_semaphore::stop() noexcept {
     assert(!_stopped);
     _stopped = true;
     clear_inactive_reads();
+    co_await _close_readers_gate.close();
     broken(std::make_exception_ptr(stopped_exception()));
     co_return;
 }
@@ -535,6 +539,15 @@ void reader_concurrency_semaphore::evict(inactive_read& ir, evict_reason reason)
             break;
     }
     --_stats.inactive_reads;
+    close_reader(std::move(ir.reader));
+}
+
+void reader_concurrency_semaphore::close_reader(flat_mutation_reader&& reader) {
+    // It is safe to discard the future since it is waited on indirectly
+    // by closing the _close_readers_gate in stop().
+    (void)with_gate(_close_readers_gate, [reader = std::move(reader)] () mutable {
+        return reader.close();
+    });
 }
 
 bool reader_concurrency_semaphore::has_available_units(const resources& r) const {
