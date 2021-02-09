@@ -947,7 +947,9 @@ SEASTAR_THREAD_TEST_CASE(test_reader_concurrency_semaphore_destroyed_permit_rele
         auto units2 = permit.consume_memory(1024);
 
         auto handle = semaphore.register_inactive_read(make_empty_flat_reader(s.schema(), permit));
-        BOOST_REQUIRE(semaphore.try_evict_one_inactive_read());
+        auto reader_opt = semaphore.try_evict_one_inactive_read();
+        BOOST_REQUIRE(reader_opt);
+        reader_opt->close().get();
     }
     BOOST_REQUIRE(semaphore.available_resources() == initial_resources);
 
@@ -966,7 +968,9 @@ SEASTAR_THREAD_TEST_CASE(test_reader_concurrency_semaphore_destroyed_permit_rele
         auto units2 = permit.consume_memory(1024);
 
         auto handle = semaphore.register_inactive_read(make_empty_flat_reader(s.schema(), permit));
-        BOOST_REQUIRE(semaphore.try_evict_one_inactive_read());
+        auto reader_opt = semaphore.try_evict_one_inactive_read();
+        BOOST_REQUIRE(reader_opt);
+        reader_opt->close().get();
     }
     BOOST_REQUIRE(semaphore.available_resources() == initial_resources);
 }
@@ -3355,7 +3359,9 @@ flat_mutation_reader create_evictable_reader_and_evict_after_first_buffer(
 
     handle.pause();
 
-    while(permit.semaphore().try_evict_one_inactive_read());
+    while (auto reader_opt = permit.semaphore().try_evict_one_inactive_read()) {
+        reader_opt->close().get();
+    }
 
     return std::move(rd);
 }
@@ -3849,7 +3855,9 @@ SEASTAR_THREAD_TEST_CASE(test_evictable_reader_recreate_before_fast_forward_to) 
     reader_assert.produces(pkeys[2]);
 
     handle.pause();
-    BOOST_REQUIRE(semaphore.try_evict_one_inactive_read());
+    auto reader_opt = permit.semaphore().try_evict_one_inactive_read();
+    BOOST_REQUIRE(reader_opt);
+    reader_opt->close().get();
 
     reader_assert.produces_end_of_stream();
 
