@@ -1672,11 +1672,14 @@ void shard_reader::stop() noexcept {
 }
 
 future<> shard_reader::close() noexcept {
-    auto f = _read_ahead ? *std::exchange(_read_ahead, std::nullopt) : make_ready_future<>();
-    return f.finally([this] {
-        return smp::submit_to(_shard, [this] {
-            return _reader->close();
-        });
+    auto read_ahead = _read_ahead ? *std::exchange(_read_ahead, std::nullopt) : make_ready_future<>();
+    return read_ahead.finally([this] {
+        if (_reader) {
+            return smp::submit_to(_shard, [reader = std::move(_reader)] {
+                return reader->close();
+            });
+        }
+        return make_ready_future<>();
     });
 }
 
