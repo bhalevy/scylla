@@ -23,6 +23,7 @@
 #include <seastar/core/print.hh>
 #include <seastar/util/lazy.hh>
 #include <seastar/util/log.hh>
+#include <seastar/core/coroutine.hh>
 
 #include "reader_concurrency_semaphore.hh"
 #include "utils/exceptions.hh"
@@ -373,10 +374,12 @@ reader_concurrency_semaphore::reader_concurrency_semaphore(no_limits, sstring na
             std::move(name)) {}
 
 reader_concurrency_semaphore::~reader_concurrency_semaphore() {
+    assert(_wait_list.empty() && _inactive_reads.empty());
     broken();
 }
 
 reader_concurrency_semaphore::inactive_read_handle reader_concurrency_semaphore::register_inactive_read(flat_mutation_reader reader) noexcept {
+    assert(!_stopped);
     // Implies _inactive_reads.empty(), we don't queue new readers before
     // evicting all inactive reads.
     if (_wait_list.empty()) {
@@ -401,6 +404,7 @@ reader_concurrency_semaphore::inactive_read_handle reader_concurrency_semaphore:
 }
 
 void reader_concurrency_semaphore::set_notify_handler(inactive_read_handle& irh, eviction_notify_handler&& notify_handler, std::optional<std::chrono::seconds> ttl_opt) {
+    assert(!_stopped);
     auto& ir = *irh._irp;
     ir.notify_handler = std::move(notify_handler);
     if (ttl_opt) {
@@ -426,6 +430,7 @@ flat_mutation_reader_opt reader_concurrency_semaphore::unregister_inactive_read(
                     reinterpret_cast<uintptr_t>(irh._sem)));
     }
 
+    assert(!_stopped);
     --_stats.inactive_reads;
     auto irp = std::move(irh._irp);
     irp->unlink();
@@ -438,6 +443,16 @@ bool reader_concurrency_semaphore::try_evict_one_inactive_read(evict_reason reas
     }
     evict(_inactive_reads.front(), reason);
     return true;
+}
+
+future<> reader_concurrency_semaphore::stop() noexcept {
+    assert(!_stopped);
+    _stopped = true;
+    while (!_inactive_reads.empty()) {
+        evict(_inactive_reads.front(), evict_reason::manual);
+    }
+    broken(std::make_exception_ptr(stopped_exception()));
+    co_return;
 }
 
 void reader_concurrency_semaphore::evict(inactive_read& ir, evict_reason reason) {
@@ -471,8 +486,13 @@ bool reader_concurrency_semaphore::may_proceed(const resources& r) const {
     return _wait_list.empty() && (has_available_units(r) || _resources.count == _initial_resources.count);
 }
 
+std::runtime_error reader_concurrency_semaphore::stopped_exception() {
+    return std::runtime_error(format("{} was stopped", _name));
+}
+
 future<reader_permit::resource_units> reader_concurrency_semaphore::do_wait_admission(reader_permit permit, size_t memory,
         db::timeout_clock::time_point timeout) {
+    assert(!_stopped);
     if (_wait_list.size() >= _max_queue_length) {
         _stats.total_reads_shed_due_to_overload++;
         if (_prethrow_action) {

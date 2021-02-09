@@ -22,6 +22,7 @@
 
 #include <seastar/core/thread.hh>
 #include <seastar/testing/test_case.hh>
+#include <seastar/testing/thread_test_case.hh>
 
 #include "test/lib/mutation_source_test.hh"
 #include "mutation_fragment.hh"
@@ -411,12 +412,13 @@ SEASTAR_TEST_CASE(test_schema_upgrader_is_equivalent_with_mutation_upgrade) {
     });
 }
 
-SEASTAR_TEST_CASE(test_mutation_fragment_mutate_exception_safety) {
+SEASTAR_THREAD_TEST_CASE(test_mutation_fragment_mutate_exception_safety) {
     struct dummy_exception { };
 
     simple_schema s;
 
     reader_concurrency_semaphore sem(1, 100, get_name());
+    auto stop_sem = defer([&sem] { sem.stop().get(); });
     auto permit = sem.make_permit(s.schema().get(), get_name());
 
     const auto available_res = sem.available_resources();
@@ -469,6 +471,4 @@ SEASTAR_TEST_CASE(test_mutation_fragment_mutate_exception_safety) {
         } catch (dummy_exception&) { }
         BOOST_REQUIRE(available_res == sem.available_resources());
     }
-
-    return make_ready_future<>();
 }

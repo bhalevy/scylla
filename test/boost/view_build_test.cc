@@ -793,6 +793,7 @@ SEASTAR_THREAD_TEST_CASE(test_view_update_generator_buffering) {
     };
 
     reader_concurrency_semaphore sem(1, new_reader_base_cost, get_name());
+    auto stop_sem = defer([&sem] { sem.stop().get(); });
 
     auto schema = schema_builder("ks", "cf")
             .with_column("pk", int32_type, column_kind::partition_key)
