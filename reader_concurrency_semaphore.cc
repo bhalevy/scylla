@@ -378,6 +378,7 @@ reader_concurrency_semaphore::~reader_concurrency_semaphore() {
 }
 
 reader_concurrency_semaphore::inactive_read_handle reader_concurrency_semaphore::register_inactive_read(flat_mutation_reader reader) noexcept {
+    assert(!_stopped);
     // Implies _inactive_reads.empty(), we don't queue new readers before
     // evicting all inactive reads.
     if (_wait_list.empty()) {
@@ -403,6 +404,7 @@ reader_concurrency_semaphore::inactive_read_handle reader_concurrency_semaphore:
 }
 
 void reader_concurrency_semaphore::set_notify_handler(inactive_read_handle& irh, eviction_notify_handler&& notify_handler, std::optional<std::chrono::seconds> ttl_opt) {
+    assert(!_stopped);
     auto& ir = *irh._irp;
     ir.notify_handler = std::move(notify_handler);
     if (ttl_opt) {
@@ -436,6 +438,7 @@ flat_mutation_reader_opt reader_concurrency_semaphore::unregister_inactive_read(
       }
     }
 
+    assert(!_stopped);
     --_stats.inactive_reads;
     auto irp = std::move(irh._irp);
     irp->unlink();
@@ -447,6 +450,17 @@ flat_mutation_reader_opt reader_concurrency_semaphore::try_evict_one_inactive_re
         return {};
     }
     return evict(_inactive_reads.front(), reason);
+}
+
+future<> reader_concurrency_semaphore::stop() noexcept {
+    assert(!_stopped);
+    _stopped = true;
+    co_await _close_reader_gate.close();
+    while (!_inactive_reads.empty()) {
+        auto reader = evict(_inactive_reads.front(), evict_reason::manual);
+        co_await reader.close();
+    }
+    broken(std::make_exception_ptr(stopped_exception()));
 }
 
 flat_mutation_reader reader_concurrency_semaphore::evict(inactive_read& ir, evict_reason reason) {
@@ -472,7 +486,8 @@ flat_mutation_reader reader_concurrency_semaphore::evict(inactive_read& ir, evic
 }
 
 void reader_concurrency_semaphore::close_reader(flat_mutation_reader&& reader) {
-    // TODO: close _close_reader_gate in stop()
+    // It is safe to discard the future since it is waited on, indirectly,
+    // by closing the _close_reader_gate in stop().
     (void)with_gate(_close_reader_gate, [reader = std::move(reader)] () mutable {
         return reader.close().handle_exception([desc = reader.description()] (std::exception_ptr ep) {
             rcslog.warn("Failed background close of inactive {}: {}", desc, ep);
@@ -490,8 +505,13 @@ bool reader_concurrency_semaphore::may_proceed(const resources& r) const {
     return _wait_list.empty() && (has_available_units(r) || _resources.count == _initial_resources.count);
 }
 
+std::runtime_error reader_concurrency_semaphore::stopped_exception() {
+    return std::runtime_error(format("{} was stopped", _name));
+}
+
 future<reader_permit::resource_units> reader_concurrency_semaphore::do_wait_admission(reader_permit permit, size_t memory,
         db::timeout_clock::time_point timeout) {
+    assert(!_stopped);
     if (_wait_list.size() >= _max_queue_length) {
         _stats.total_reads_shed_due_to_overload++;
         if (_prethrow_action) {
@@ -501,12 +521,15 @@ future<reader_permit::resource_units> reader_concurrency_semaphore::do_wait_admi
         throw std::runtime_error(format("{}: restricted mutation reader queue overload", _name));
     }
     auto r = resources(1, static_cast<ssize_t>(memory));
-    while (!may_proceed(r)) {
+    while (!may_proceed(r) && !_stopped) {
         if (auto reader_opt = try_evict_one_inactive_read(evict_reason::permit)) {
             co_await reader_opt->close();
         } else {
             break;
         }
+    }
+    if (_stopped) {
+        throw stopped_exception();
     }
     if (may_proceed(r)) {
         permit.on_admission();

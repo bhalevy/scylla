@@ -151,6 +151,7 @@ private:
     stats _stats;
     std::unique_ptr<permit_list> _permit_list;
     gate _close_reader_gate;
+    bool _stopped = false;
 
 private:
     [[nodiscard]] flat_mutation_reader evict(inactive_read&, evict_reason reason);
@@ -163,6 +164,8 @@ private:
 
     // closes reader in the background.
     void close_reader(flat_mutation_reader&& reader);
+
+    std::runtime_error stopped_exception();
 
 public:
     struct no_limits { };
@@ -233,9 +236,10 @@ public:
     /// (if there was no reader to evict).
     flat_mutation_reader_opt try_evict_one_inactive_read(evict_reason = evict_reason::manual);
 
-    void clear_inactive_reads() {
-        _inactive_reads.clear();
-    }
+    /// Stop the reader_concurrency_semaphore.
+    ///
+    /// Clears all inactive reads and waits until all are closed
+    future<> stop() noexcept;
 
     const stats& get_stats() const {
         return _stats;
