@@ -150,6 +150,7 @@ private:
     inactive_reads_type _inactive_reads;
     stats _stats;
     std::unique_ptr<permit_list> _permit_list;
+    bool _stopped = false;
 
 private:
     void evict(inactive_read&, evict_reason reason);
@@ -159,6 +160,8 @@ private:
     bool may_proceed(const resources& r) const;
 
     future<reader_permit::resource_units> do_wait_admission(reader_permit permit, size_t memory, db::timeout_clock::time_point timeout);
+
+    std::runtime_error stopped_exception();
 
 public:
     struct no_limits { };
@@ -229,9 +232,10 @@ public:
     /// (if there was no reader to evict).
     bool try_evict_one_inactive_read(evict_reason = evict_reason::manual);
 
-    void clear_inactive_reads() {
-        _inactive_reads.clear();
-    }
+    /// Stop the reader_concurrency_semaphore.
+    ///
+    /// Clears all inactive reads and waits until all are closed
+    future<> stop() noexcept;
 
     const stats& get_stats() const {
         return _stats;
