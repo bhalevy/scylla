@@ -23,6 +23,7 @@
 
 #include <boost/intrusive/list.hpp>
 #include <seastar/core/future.hh>
+#include <seastar/core/gate.hh>
 #include "reader_permit.hh"
 #include "flat_mutation_reader.hh"
 
@@ -151,6 +152,7 @@ private:
     stats _stats;
     std::unique_ptr<permit_list> _permit_list;
     bool _stopped = false;
+    gate _close_readers_gate;
 
 private:
     [[nodiscard]] flat_mutation_reader evict(inactive_read&, evict_reason reason);
@@ -162,6 +164,9 @@ private:
     future<reader_permit::resource_units> do_wait_admission(reader_permit permit, size_t memory, db::timeout_clock::time_point timeout);
 
     std::runtime_error stopped_exception();
+
+    // closes reader in the background.
+    void close_reader(flat_mutation_reader&& reader);
 
 public:
     struct no_limits { };
