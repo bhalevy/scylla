@@ -3207,7 +3207,9 @@ flat_mutation_reader create_evictable_reader_and_evict_after_first_buffer(
 
     handle.pause();
 
-    while(permit.semaphore().try_evict_one_inactive_read());
+    while (auto reader_opt = permit.semaphore().try_evict_one_inactive_read()) {
+        reader_opt->close().get();
+    }
 
     return std::move(rd);
 }

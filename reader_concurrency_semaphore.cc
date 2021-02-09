@@ -485,7 +485,9 @@ future<reader_permit::resource_units> reader_concurrency_semaphore::do_wait_admi
     }
     auto r = resources(1, static_cast<ssize_t>(memory));
     while (!may_proceed(r)) {
-        if (!try_evict_one_inactive_read(evict_reason::permit)) {
+        if (auto reader_opt = try_evict_one_inactive_read(evict_reason::permit)) {
+            co_await reader_opt->close();
+        } else {
             break;
         }
     }
