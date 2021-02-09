@@ -262,7 +262,7 @@ public:
     future<> save_readers(flat_mutation_reader::tracked_buffer unconsumed_buffer, detached_compaction_state compaction_state,
             std::optional<clustering_key_prefix> last_ckey);
 
-    future<> stop();
+    virtual future<> stop() noexcept override;
 };
 
 std::string_view read_context::reader_state_to_string(reader_state rs) {
@@ -352,7 +352,10 @@ void read_context::destroy_reader(shard_id shard, future<stopped_reader> reader_
     });
 }
 
-future<> read_context::stop() {
+// Note: No need to stop _semaphores here
+// as read_context doesn't own them.
+// They are stopped by the database.
+future<> read_context::stop() noexcept {
     auto gate_fut = _dismantling_gate.is_closed() ? make_ready_future<>() : _dismantling_gate.close();
     return gate_fut.then([this] {
         return parallel_for_each(smp::all_cpus(), [this] (unsigned shard) {

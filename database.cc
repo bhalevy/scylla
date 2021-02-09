@@ -755,9 +755,6 @@ void database::set_format_by_config() {
 }
 
 database::~database() {
-    _read_concurrency_sem.clear_inactive_reads();
-    _streaming_concurrency_sem.clear_inactive_reads();
-    _system_read_concurrency_sem.clear_inactive_reads();
 }
 
 void database::update_version(const utils::UUID& version) {
@@ -2041,6 +2038,12 @@ database::stop() {
         return _user_sstables_manager->close();
     }).then([this] {
         return _system_sstables_manager->close();
+    }).finally([this] {
+        return when_all_succeed(
+                _read_concurrency_sem.stop(),
+                _streaming_concurrency_sem.stop(),
+                _compaction_concurrency_sem.stop(),
+                _system_read_concurrency_sem.stop()).discard_result();
     });
 }
 
@@ -2302,6 +2305,11 @@ flat_mutation_reader make_multishard_streaming_reader(distributed<database>& db,
                 _contexts[shard].semaphore = &cf.streaming_read_concurrency_semaphore();
             }
             return *_contexts[shard].semaphore;
+        }
+        virtual future<> stop() noexcept override {
+            // _contexts[shard].semaphore is owned by the database
+            // and stopped by it.
+            return make_ready_future<>();
         }
     };
     auto ms = mutation_source([&db] (schema_ptr s,
