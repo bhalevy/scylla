@@ -23,6 +23,7 @@
 #include <seastar/core/print.hh>
 #include <seastar/util/lazy.hh>
 #include <seastar/util/log.hh>
+#include <seastar/core/coroutine.hh>
 
 #include "reader_concurrency_semaphore.hh"
 #include "utils/exceptions.hh"
@@ -417,8 +418,9 @@ reader_concurrency_semaphore::reader_concurrency_semaphore(no_limits, sstring na
             std::move(name)) {}
 
 reader_concurrency_semaphore::~reader_concurrency_semaphore() {
+    // FIXME: assert(_stopped) once all readers are properly closed.
+    assert(_inactive_reads.empty());
     broken();
-    clear_inactive_reads();
 }
 
 reader_concurrency_semaphore::inactive_read_handle reader_concurrency_semaphore::register_inactive_read(flat_mutation_reader reader) noexcept {
@@ -498,6 +500,14 @@ void reader_concurrency_semaphore::clear_inactive_reads() {
     }
 }
 
+future<> reader_concurrency_semaphore::stop() noexcept {
+    assert(!_stopped);
+    _stopped = true;
+    clear_inactive_reads();
+    broken(std::make_exception_ptr(stopped_exception()));
+    co_return;
+}
+
 void reader_concurrency_semaphore::evict(inactive_read& ir, evict_reason reason) noexcept {
     ir.detach();
     std::unique_ptr<inactive_read> irp(&ir);
@@ -529,6 +539,10 @@ bool reader_concurrency_semaphore::may_proceed(const resources& r) const {
     // Special case: when there is no active reader (based on count) admit one
     // regardless of availability of memory.
     return _wait_list.empty() && (has_available_units(r) || _resources.count == _initial_resources.count);
+}
+
+std::runtime_error reader_concurrency_semaphore::stopped_exception() {
+    return std::runtime_error(format("{} was stopped", _name));
 }
 
 future<reader_permit::resource_units> reader_concurrency_semaphore::do_wait_admission(reader_permit permit, size_t memory,

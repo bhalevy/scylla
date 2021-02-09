@@ -163,5 +163,15 @@ public:
         }
         return *_contexts[shard]->semaphore;
     }
+    virtual future<> stop() noexcept override {
+        return parallel_for_each(smp::all_cpus(), [this] (unsigned shard) {
+            if (_contexts[shard]) {
+                return smp::submit_to(shard, [this, shard] {
+                    return _contexts[shard]->semaphore->stop();
+                });
+            }
+            return make_ready_future<>();
+        });
+    }
 };
 

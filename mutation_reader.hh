@@ -493,6 +493,9 @@ public:
     /// This method will be called on the shard where the relevant reader lives.
     virtual reader_concurrency_semaphore& semaphore() = 0;
 
+    /// Stop and wait for background work
+    virtual future<> stop() noexcept = 0;
+
     /// Pause the reader.
     ///
     /// The purpose of pausing a reader is making it evictable while it is

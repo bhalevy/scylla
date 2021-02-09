@@ -1809,6 +1809,7 @@ class multishard_combining_reader : public flat_mutation_reader::impl {
     };
 
     const dht::sharder& _sharder;
+    shared_ptr<reader_lifecycle_policy> _lifecycle_policy;
     std::vector<lw_shared_ptr<shard_reader>> _shard_readers;
     // Contains the position of each shard with token granularity, organized
     // into a min-heap. Used to select the shard with the smallest token each
@@ -1934,7 +1935,11 @@ multishard_combining_reader::multishard_combining_reader(
         const io_priority_class& pc,
         tracing::trace_state_ptr trace_state,
         mutation_reader::forwarding fwd_mr)
-    : impl(std::move(s), std::move(permit)), _sharder(sharder) {
+    : impl(std::move(s)
+    , std::move(permit))
+    , _sharder(sharder)
+    , _lifecycle_policy(lifecycle_policy)
+{
 
     on_partition_range_change(pr);
 
