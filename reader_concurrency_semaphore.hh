@@ -153,7 +153,7 @@ private:
     bool _stopped = false;
 
 private:
-    void evict(inactive_read&, evict_reason reason);
+    [[nodiscard]] flat_mutation_reader evict(inactive_read&, evict_reason reason);
 
     bool has_available_units(const resources& r) const;
 
@@ -230,7 +230,7 @@ public:
     ///
     /// Return true if an inactive read was evicted and false otherwise
     /// (if there was no reader to evict).
-    bool try_evict_one_inactive_read(evict_reason = evict_reason::manual);
+    flat_mutation_reader_opt try_evict_one_inactive_read(evict_reason = evict_reason::manual);
 
     /// Stop the reader_concurrency_semaphore.
     ///
