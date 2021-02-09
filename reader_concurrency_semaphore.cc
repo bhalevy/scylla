@@ -23,6 +23,7 @@
 #include <seastar/core/print.hh>
 #include <seastar/util/lazy.hh>
 #include <seastar/util/log.hh>
+#include <seastar/core/coroutine.hh>
 
 #include "reader_concurrency_semaphore.hh"
 #include "utils/exceptions.hh"
@@ -479,9 +480,7 @@ future<reader_permit::resource_units> reader_concurrency_semaphore::do_wait_admi
             _prethrow_action();
         }
         maybe_dump_reader_permit_diagnostics(*this, *_permit_list, "wait queue overloaded");
-        return make_exception_future<reader_permit::resource_units>(
-                std::make_exception_ptr(std::runtime_error(
-                        format("{}: restricted mutation reader queue overload", _name))));
+        throw std::runtime_error(format("{}: restricted mutation reader queue overload", _name));
     }
     auto r = resources(1, static_cast<ssize_t>(memory));
     while (!may_proceed(r)) {
@@ -491,13 +490,13 @@ future<reader_permit::resource_units> reader_concurrency_semaphore::do_wait_admi
     }
     if (may_proceed(r)) {
         permit.on_admission();
-        return make_ready_future<reader_permit::resource_units>(reader_permit::resource_units(std::move(permit), r));
+        co_return reader_permit::resource_units(std::move(permit), r);
     }
     promise<reader_permit::resource_units> pr;
     auto fut = pr.get_future();
     permit.on_waiting();
     _wait_list.push_back(entry(std::move(pr), std::move(permit), r), timeout);
-    return fut;
+    co_return co_await std::move(fut);
 }
 
 reader_permit reader_concurrency_semaphore::make_permit(const schema* const schema, const char* const op_name) {
