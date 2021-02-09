@@ -382,7 +382,7 @@ reader_concurrency_semaphore::reader_concurrency_semaphore(no_limits, sstring na
             std::move(name)) {}
 
 reader_concurrency_semaphore::~reader_concurrency_semaphore() {
-    broken(std::make_exception_ptr(broken_semaphore{}));
+    broken();
 }
 
 reader_concurrency_semaphore::inactive_read_handle reader_concurrency_semaphore::register_inactive_read(flat_mutation_reader reader) noexcept {
@@ -518,8 +518,11 @@ reader_permit reader_concurrency_semaphore::make_permit(const schema* const sche
 }
 
 void reader_concurrency_semaphore::broken(std::exception_ptr ex) {
+    if (!ex) {
+        ex = std::make_exception_ptr(broken_semaphore{});
+    }
     while (!_wait_list.empty()) {
-        _wait_list.front().pr.set_exception(std::make_exception_ptr(broken_semaphore{}));
+        _wait_list.front().pr.set_exception(ex);
         _wait_list.pop_front();
     }
 }
