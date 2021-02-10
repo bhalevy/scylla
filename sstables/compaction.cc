@@ -639,15 +639,17 @@ private:
         auto now = gc_clock::now();
         auto consumer = make_interposer_consumer([this, gc_consumer = std::move(gc_consumer), now] (flat_mutation_reader reader) mutable
         {
+          return with_flat_mutation_reader(std::move(reader), [this, gc_consumer = std::move(gc_consumer), now] (flat_mutation_reader& reader) mutable {
             using compact_mutations = compact_for_compaction<compacting_sstable_writer, GCConsumer>;
             auto cfc = make_stable_flattened_mutations_consumer<compact_mutations>(*schema(), now,
                                          max_purgeable_func(),
                                          get_compacting_sstable_writer(),
                                          std::move(gc_consumer));
 
-            return seastar::async([cfc = std::move(cfc), reader = std::move(reader), this] () mutable {
+            return seastar::async([cfc = std::move(cfc), &reader, this] () mutable {
                 reader.consume_in_thread(std::move(cfc), db::no_timeout);
             });
+          });
         });
         return consumer(make_sstable_reader());
     }
