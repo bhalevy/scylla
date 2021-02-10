@@ -1504,7 +1504,7 @@ future<> evictable_reader::fill_buffer(db::timeout_clock::time_point timeout) {
     if (is_end_of_stream()) {
         return make_ready_future<>();
     }
-    return do_with(resume_or_create_reader(), [this, timeout] (flat_mutation_reader& reader) mutable {
+    return with_flat_mutation_reader(resume_or_create_reader(), [this, timeout] (flat_mutation_reader& reader) mutable {
         return fill_buffer(reader, timeout).then([this, &reader] {
             _end_of_stream = reader.is_end_of_stream() && reader.is_buffer_empty();
             maybe_pause(std::move(reader));
