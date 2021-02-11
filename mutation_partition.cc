@@ -1953,7 +1953,7 @@ class query_result_builder {
     std::optional<mutation_querier> _mutation_consumer;
     stop_iteration _stop;
 public:
-    query_result_builder(const schema& s, query::result::builder& rb)
+    query_result_builder(const schema& s, query::result::builder& rb) noexcept
         : _schema(s), _rb(rb)
     { }
 
