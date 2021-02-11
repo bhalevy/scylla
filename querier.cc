@@ -345,6 +345,7 @@ static future<std::optional<Querier>> lookup_querier(
 
     tracing::trace(trace_state, "Dropping querier because {}", cannot_use_reason(can_be_used));
     ++stats.drops;
+    co_await q.close();
     co_return std::nullopt;
 }
 
