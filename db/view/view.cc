@@ -1761,7 +1761,12 @@ future<> view_builder::do_build_step() {
                 initialize_reader_at_current_token(_current_step->second);
             }
             if (_current_step->second.build_status.empty()) {
+                auto base = _current_step->second.base->schema();
+                auto reader = std::move(_current_step->second.reader);
                 _current_step = _base_to_build_step.erase(_current_step);
+                reader.close().handle_exception([base = std::move(base)] (std::exception_ptr ep) {
+                    vlogger.warn("Failed closing build step reader for base {}.{}: {}. Ignored as build step already completed successfully", base->ks_name(), base->cf_name(), ep);
+                }).get();
             } else {
                 ++_current_step;
             }
