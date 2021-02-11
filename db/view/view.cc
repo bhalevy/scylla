@@ -1433,10 +1433,10 @@ view_builder::build_step& view_builder::get_or_create_build_step(utils::UUID bas
     return it->second;
 }
 
-void view_builder::initialize_reader_at_current_token(build_step& step) {
+future<> view_builder::initialize_reader_at_current_token(build_step& step) {
     step.pslice = make_partition_slice(*step.base->schema());
     step.prange = dht::partition_range(dht::ring_position::starting_at(step.current_token()), dht::ring_position::max());
-    step.reader = step.base->get_sstable_set().make_local_shard_sstable_reader(
+    return step.reader.reassign(step.base->get_sstable_set().make_local_shard_sstable_reader(
             step.base->schema(),
             _permit,
             step.prange,
@@ -1444,7 +1444,7 @@ void view_builder::initialize_reader_at_current_token(build_step& step) {
             default_priority_class(),
             nullptr,
             streamed_mutation::forwarding::no,
-            mutation_reader::forwarding::no);
+            mutation_reader::forwarding::no));
 }
 
 void view_builder::load_view_status(view_builder::view_build_status status, std::unordered_set<utils::UUID>& loaded_views) {
@@ -1631,13 +1631,12 @@ future<> view_builder::calculate_shard_build_step(view_builder_init_state& vbi) 
         vbi.bookkeeping_ops.push_back(add_new_view(view, get_or_create_build_step(view->view_info()->base_id())));
     }
 
-    for (auto& [_, build_step] : _base_to_build_step) {
-        initialize_reader_at_current_token(build_step);
-    }
-
-    auto f = seastar::when_all_succeed(vbi.bookkeeping_ops.begin(), vbi.bookkeeping_ops.end());
-    return f.handle_exception([this] (std::exception_ptr ep) {
-        vlogger.warn("Failed to update materialized view bookkeeping while synchronizing view builds on all shards ({}), continuing anyway.", ep);
+    return parallel_for_each(_base_to_build_step, [this] (auto& p) {
+        return initialize_reader_at_current_token(p.second);
+    }).then([this, &vbi] {
+        return seastar::when_all_succeed(vbi.bookkeeping_ops.begin(), vbi.bookkeeping_ops.end()).handle_exception([this] (std::exception_ptr ep) {
+            vlogger.warn("Failed to update materialized view bookkeeping while synchronizing view builds on all shards ({}), continuing anyway.", ep);
+        });
     });
 }
 
@@ -1675,7 +1674,7 @@ void view_builder::on_create_view(const sstring& ks_name, const sstring& view_na
             // being built to receive duplicate updates, but it simplifies things as we don't have
             // to keep around a list of new views to build the next time the reader crosses a token
             // threshold.
-            initialize_reader_at_current_token(step);
+          return initialize_reader_at_current_token(step).then([this, view, &step] () mutable {
             return add_new_view(view, step).then_wrapped([this, view] (future<>&& f) {
                 if (f.failed()) {
                     vlogger.error("Error setting up view for building {}.{}: {}", view->ks_name(), view->cf_name(), f.get_exception());
@@ -1683,6 +1682,7 @@ void view_builder::on_create_view(const sstring& ks_name, const sstring& view_na
                 // Waited on indirectly in stop().
                 (void)_build_step.trigger();
             });
+          });
         });
     }).handle_exception_type([] (no_such_column_family&) { });
 }
@@ -1758,7 +1758,7 @@ future<> view_builder::do_build_step() {
                 auto base = _current_step->second.base->schema();
                 vlogger.warn("Error executing build step for base {}.{}: {}", base->ks_name(), base->cf_name(), std::current_exception());
                 r.retry(_as).get();
-                initialize_reader_at_current_token(_current_step->second);
+                initialize_reader_at_current_token(_current_step->second).get();
             }
             if (_current_step->second.build_status.empty()) {
                 auto base = _current_step->second.base->schema();
@@ -1933,6 +1933,7 @@ public:
         return stop_iteration(_step.build_status.empty());
     }
 
+    // Must be called in a seastar thread.
     built_views consume_end_of_stream() {
         inject_failure("view_builder_consume_end_of_stream");
         if (vlogger.is_enabled(log_level::debug)) {
@@ -1948,7 +1949,7 @@ public:
             for (auto&& vs : _step.build_status) {
                 vs.next_token = dht::minimum_token();
             }
-            _builder.initialize_reader_at_current_token(_step);
+            _builder.initialize_reader_at_current_token(_step).get();
             check_for_built_views();
         }
         return std::move(_built_views);
