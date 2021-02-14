@@ -176,6 +176,7 @@ public:
     }
 
     ~test_querier_cache() {
+        _cache.stop().get();
         _sem.stop().get();
     }
 
