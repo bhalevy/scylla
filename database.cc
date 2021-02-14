@@ -2018,7 +2018,9 @@ database::stop() {
     }).then([this] {
         return _system_sstables_manager->close();
     }).finally([this] {
-        return when_all_succeed(_read_concurrency_sem.stop(), _streaming_concurrency_sem.stop(), _system_read_concurrency_sem.stop()).discard_result();
+        return when_all_succeed(_read_concurrency_sem.stop(), _streaming_concurrency_sem.stop(), _system_read_concurrency_sem.stop()).discard_result().finally([this] {
+            return _querier_cache.close();
+        });
     });
 }
 

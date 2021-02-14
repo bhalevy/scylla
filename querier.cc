@@ -432,6 +432,20 @@ future<> querier_cache::evict_all_for_table(const utils::UUID& schema_id) noexce
             evict_from_index(_shard_mutation_querier_index)).discard_result();
 }
 
+future<> querier_cache::close() noexcept {
+    auto close_from_index = [this] (index& idx) -> future<> {
+        for (auto it = idx.begin(); it != idx.end();) {
+            co_await it->second->close();
+            it = idx.erase(it);
+            --_stats.population;
+        }
+    };
+
+    return when_all_succeed(close_from_index(_data_querier_index),
+            close_from_index(_mutation_querier_index),
+            close_from_index(_shard_mutation_querier_index)).discard_result();
+}
+
 querier_cache_context::querier_cache_context(querier_cache& cache, utils::UUID key, query::is_first_page is_first_page)
     : _cache(&cache)
     , _key(key)
