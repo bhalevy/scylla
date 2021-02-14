@@ -733,7 +733,9 @@ SEASTAR_THREAD_TEST_CASE(test_immediate_evict_on_insert) {
 
 SEASTAR_THREAD_TEST_CASE(test_unique_inactive_read_handle) {
     reader_concurrency_semaphore sem1(reader_concurrency_semaphore::no_limits{}, "sem1");
+    auto stop_sem1 = defer([&sem1] { sem1.stop().get(); });
     reader_concurrency_semaphore sem2(reader_concurrency_semaphore::no_limits{}, ""); // to see the message for an unnamed semaphore
+    auto stop_sem2 = defer([&sem2] { sem2.stop().get(); });
 
     auto schema = schema_builder("ks", "cf")
         .with_column("pk", int32_type, column_kind::partition_key)
