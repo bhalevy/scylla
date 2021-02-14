@@ -139,7 +139,7 @@ future<> send_mutation_fragments(lw_shared_ptr<send_info> si) {
     // The reader contains no data
     sslog.info("[Stream #{}] Skip sending ks={}, cf={}, reader contains no data, with new rpc streaming",
         si->plan_id, si->cf.schema()->ks_name(), si->cf.schema()->cf_name());
-    return make_ready_future<>();
+    return si->reader.close();
   }
   return si->estimate_partitions().then([si] (size_t estimated_partitions) {
     sslog.info("[Stream #{}] Start sending ks={}, cf={}, estimated_partitions={}, with new rpc streaming", si->plan_id, si->cf.schema()->ks_name(), si->cf.schema()->cf_name(), estimated_partitions);
@@ -197,8 +197,8 @@ future<> send_mutation_fragments(lw_shared_ptr<send_info> si) {
                     return sink(frozen_mutation_fragment(bytes_ostream()), stream_mutation_fragments_cmd::error).then([ep = std::move(ep)] () mutable {
                         return make_exception_future<>(std::move(ep));
                     });
-                }).finally([&sink] () mutable {
-                    return sink.close();
+                }).finally([&sink, si] () mutable {
+                    return when_all_succeed(si->reader.close(), sink.close()).discard_result();
                 });
             });
         }();
