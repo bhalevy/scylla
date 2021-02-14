@@ -174,6 +174,10 @@ public:
         : test_querier_cache(test_querier_cache::make_value, entry_ttl) {
     }
 
+    ~test_querier_cache() {
+        _cache.close().get();
+    }
+
     const simple_schema& get_simple_schema() const {
         return _s;
     }
