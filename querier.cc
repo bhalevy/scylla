@@ -348,7 +348,8 @@ std::optional<Querier> querier_cache::lookup_querier(
     ++stats.drops;
 
     // Close and drop the querier in the background.
-    // TODO: wait on _closing_gate in querier_cache::close()
+    // It is safe to do so, since _closing_gate is closed and
+    // waited on in querier_cache::stop()
     (void)with_gate(_closing_gate, [this, q = std::move(q)] () mutable {
         return q.close().finally([q = std::move(q)] {});
     });
@@ -443,6 +444,25 @@ future<> querier_cache::evict_all_for_table(const utils::UUID& schema_id) noexce
     return when_all_succeed(evict_from_index(_data_querier_index),
             evict_from_index(_mutation_querier_index),
             evict_from_index(_shard_mutation_querier_index)).discard_result();
+}
+
+future<> querier_cache::stop() noexcept {
+    co_await _closing_gate.close();
+
+    auto close_from_index = [this] (index& idx) {
+        return do_with(idx.begin(), [this, &idx] (index::iterator& it) {
+            return do_until([this, &it, &idx] { return it == idx.end(); }, [this, &it, &idx] {
+                return it->second->close().finally([this, &it, &idx] {
+                    it = idx.erase(it);
+                    --_stats.population;
+                });
+            });
+        });
+    };
+
+    co_await close_from_index(_data_querier_index);
+    co_await close_from_index(_mutation_querier_index);
+    co_await close_from_index(_shard_mutation_querier_index);
 }
 
 querier_cache_context::querier_cache_context(querier_cache& cache, utils::UUID key, query::is_first_page is_first_page)
