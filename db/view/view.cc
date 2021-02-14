@@ -1409,6 +1409,10 @@ future<> view_builder::stop() {
             // ignored
         }).handle_exception_type([] (const semaphore_timed_out&) {
             // ignored
+        }).finally([this] {
+            return parallel_for_each(_base_to_build_step, [] (std::pair<const utils::UUID, build_step>& p) {
+                return p.second.reader.close();
+            });
         });
     });
 }
