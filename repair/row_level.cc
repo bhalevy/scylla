@@ -858,7 +858,11 @@ public:
         auto f2 = _sink_source_for_get_row_diff.close();
         auto f3 = _sink_source_for_put_row_diff.close();
         return when_all_succeed(std::move(gate_future), std::move(f1), std::move(f2), std::move(f3)).discard_result().finally([this] {
-            return _repair_writer->wait_for_writer_done();
+            return _repair_writer->wait_for_writer_done().finally([this] {
+                return do_with(std::move(_row_buf), std::move(_working_row_buf), [] (std::list<repair_row>& row_buf, std::list<repair_row>& working_row_buf) {
+                    return when_all_succeed(utils::clear_gently(row_buf), utils::clear_gently(working_row_buf)).discard_result();
+                });
+            });
         });
     }
 
