@@ -36,7 +36,6 @@
 #include "idl/mutation.dist.impl.hh"
 #include "service/storage_service.hh"
 #include "frozen_mutation.hh"
-#include <seastar/core/coroutine.hh>
 
 using namespace db;
 
@@ -48,12 +47,6 @@ auto write_live_cell(Writer&& writer, atomic_cell_view c)
     return std::move(writer).write_created_at(c.timestamp())
                             .write_fragmented_value(c.value())
                         .end_live_cell();
-}
-
-template<typename Writer>
-auto write_live_cell_gently(Writer&& writer, atomic_cell_view c)
-{
-    return futurize_invoke(write_live_cell<Writer>, std::forward<Writer>(writer), std::move(c));
 }
 
 template<typename Writer>
@@ -80,12 +73,6 @@ auto write_counter_cell(Writer&& writer, atomic_cell_view c)
 }
 
 template<typename Writer>
-auto write_counter_cell_gently(Writer&& writer, atomic_cell_view c)
-{
-    return futurize_invoke(write_counter_cell<Writer>, std::forward<Writer>(writer), std::move(c));
-}
-
-template<typename Writer>
 auto write_expiring_cell(Writer&& writer, atomic_cell_view c)
 {
     return std::move(writer).write_ttl(c.ttl())
@@ -98,12 +85,6 @@ auto write_expiring_cell(Writer&& writer, atomic_cell_view c)
 }
 
 template<typename Writer>
-auto write_expiring_cell_gently(Writer&& writer, atomic_cell_view c)
-{
-    return futurize_invoke(write_expiring_cell<Writer>, std::forward<Writer>(writer), std::move(c));
-}
-
-template<typename Writer>
 auto write_dead_cell(Writer&& writer, atomic_cell_view c)
 {
     return std::move(writer).start_tomb()
@@ -111,12 +92,6 @@ auto write_dead_cell(Writer&& writer, atomic_cell_view c)
                                 .write_deletion_time(c.deletion_time())
                             .end_tomb()
                         .end_dead_cell();
-}
-
-template<typename Writer>
-auto write_dead_cell_gently(Writer&& writer, atomic_cell_view c)
-{
-    return futurize_invoke(write_dead_cell<Writer>, std::forward<Writer>(writer), std::move(c));
 }
 
 template<typename Writer>
@@ -136,26 +111,6 @@ auto write_collection_cell(Writer&& collection_writer, collection_mutation_view 
     }
     return std::move(cells_writer).end_elements().end_collection_cell();
   });
-}
-
-template<typename Writer>
-auto write_collection_cell_gently(Writer&& collection_writer, collection_mutation_view cmv, const column_definition& def)
-{
-    return cmv.with_deserialized(*def.type, [&] (collection_mutation_view_description m_view) {
-        auto cells_writer = std::move(collection_writer).write_tomb(m_view.tomb).start_elements();
-        return do_for_each(m_view.cells, [&] (auto&& c) -> future<> {
-            auto cell_writer = cells_writer.add().write_key(c.first);
-            if (!c.second.is_live()) {
-                (co_await write_dead_cell_gently(std::move(cell_writer).start_value_dead_cell(), c.second)).end_collection_element();
-            } else if (c.second.is_live_and_has_ttl()) {
-                (co_await write_expiring_cell_gently(std::move(cell_writer).start_value_expiring_cell(), c.second)).end_collection_element();
-            } else {
-                (co_await write_live_cell_gently(std::move(cell_writer).start_value_live_cell(), c.second)).end_collection_element();
-            }
-        }).then([&] {
-            return std::move(cells_writer).end_elements().end_collection_cell();
-        });
-    });
 }
 
 template<typename Writer>
@@ -182,34 +137,6 @@ auto write_row_cells(Writer&& writer, const row& r, const schema& s, column_kind
         }
     });
     return std::move(column_writer).end_columns();
-}
-
-template<typename Writer>
-auto write_row_cells_gently(Writer&& writer, const row& r, const schema& s, column_kind kind)
-{
-    return do_with(std::move(writer).start_columns(), [&r, &s, kind] (auto& column_writer) {
-        return r.do_for_each_cell([&s, kind, &column_writer] (column_id id, const atomic_cell_or_collection& cell) -> future<> {
-            auto& def = s.column_at(kind, id);
-            auto cell_or_collection_writer = column_writer.add().write_id(id);
-            if (def.is_atomic()) {
-                auto&& c = cell.as_atomic_cell(def);
-                auto cell_writer = std::move(cell_or_collection_writer).start_c_variant();
-                if (!c.is_live()) {
-                    (co_await write_dead_cell_gently(std::move(cell_writer).start_variant_dead_cell(), c)).end_variant().end_column();
-                } else if (def.is_counter()) {
-                    (co_await write_counter_cell_gently(std::move(cell_writer).start_variant_counter_cell(), c)).end_variant().end_column();
-                } else if (c.is_live_and_has_ttl()) {
-                    (co_await write_expiring_cell_gently(std::move(cell_writer).start_variant_expiring_cell(), c)).end_variant().end_column();
-                } else {
-                    (co_await write_live_cell_gently(std::move(cell_writer).start_variant_live_cell(), c)).end_variant().end_column();
-                }
-            } else {
-                (co_await write_collection_cell_gently(std::move(cell_or_collection_writer).start_c_collection_cell(), cell.as_collection_mutation(), def)).end_column();
-            }
-        }).then([&] {
-            return std::move(column_writer).end_columns();
-        });
-    });
 }
 
 template<typename Writer>
@@ -265,17 +192,6 @@ static auto write_row(Writer&& writer, const schema& s, const clustering_key_pre
 }
 
 template<typename Writer>
-static auto write_row_gently(Writer&& writer, const schema& s, const clustering_key_prefix& key, const row& cells, const row_marker& m, const row_tombstone& t) {
-    auto marker_writer = std::move(writer).write_key(key);
-    auto deleted_at_writer = write_row_marker(std::move(marker_writer), m).start_deleted_at();
-    auto row_writer = write_tombstone(std::move(deleted_at_writer), t.regular()).end_deleted_at().start_cells();
-    return write_row_cells_gently(std::move(row_writer), cells, s, column_kind::regular_column).then([&] (auto&& st) {
-        auto shadowable_deleted_at_writer = std::move(st).end_cells().start_shadowable_deleted_at();
-        return write_tombstone(std::move(shadowable_deleted_at_writer), t.shadowable().tomb()).end_shadowable_deleted_at();
-    });
-}
-
-template<typename Writer>
 void mutation_partition_serializer::write_serialized(Writer&& writer, const schema& s, const mutation_partition& mp)
 {
     auto srow_writer = std::move(writer).write_tomb(mp.partition_tombstone()).start_static_row();
@@ -286,23 +202,6 @@ void mutation_partition_serializer::write_serialized(Writer&& writer, const sche
         write_row(clustering_rows.add(), s, cr.key(), cr.row().cells(), cr.row().marker(), cr.row().deleted_at()).end_deletable_row();
     }
     std::move(clustering_rows).end_rows().end_mutation_partition();
-}
-
-template<typename Writer>
-future<> mutation_partition_serializer::write_serialized_gently(Writer&& writer, const schema& s, const mutation_partition& mp)
-{
-    auto srow_writer = std::move(writer).write_tomb(mp.partition_tombstone()).start_static_row();
-    // Note: co_await write_row_cells_gently here hits a bug in clang++ with -Og
-    return write_row_cells_gently(std::move(srow_writer), mp.static_row().get(), s, column_kind::static_column).then([&s, &mp] (auto&& st) -> future<> {
-        auto row_tombstones = std::move(st).end_static_row().start_range_tombstones();
-        write_tombstones(s, row_tombstones, mp.row_tombstones());
-        auto clustering_rows = std::move(row_tombstones).end_range_tombstones().start_rows();
-        for (auto&& cr : mp.non_dummy_rows()) {
-            auto&& st = co_await write_row_gently(clustering_rows.add(), s, cr.key(), cr.row().cells(), cr.row().marker(), cr.row().deleted_at());
-            std::move(st).end_deletable_row();
-        }
-        std::move(clustering_rows).end_rows().end_mutation_partition();
-    });
 }
 
 mutation_partition_serializer::mutation_partition_serializer(const schema& schema, const mutation_partition& p)
@@ -317,16 +216,6 @@ mutation_partition_serializer::write(bytes_ostream& out) const {
 void mutation_partition_serializer::write(ser::writer_of_mutation_partition<bytes_ostream>&& wr) const
 {
     write_serialized(std::move(wr), _schema, _p);
-}
-
-future<>
-mutation_partition_serializer::write_gently(bytes_ostream& out) const {
-    return write_gently(ser::writer_of_mutation_partition<bytes_ostream>(out));
-}
-
-future<> mutation_partition_serializer::write_gently(ser::writer_of_mutation_partition<bytes_ostream>&& wr) const
-{
-    return write_serialized_gently(std::move(wr), _schema, _p);
 }
 
 void serialize_mutation_fragments(const schema& s, tombstone partition_tombstone,
@@ -350,34 +239,6 @@ void serialize_mutation_fragments(const schema& s, tombstone partition_tombstone
     while (!crs.empty()) {
         auto& cr = crs.front();
         write_row(clustering_rows.add(), s, cr.key(), cr.cells(), cr.marker(), cr.tomb()).end_deletable_row();
-        crs.pop_front();
-    }
-    std::move(clustering_rows).end_rows().end_mutation_partition();
-}
-
-future<> serialize_mutation_fragments_gently(const schema& s, tombstone partition_tombstone,
-    std::optional<static_row> sr,  range_tombstone_list rts,
-    std::deque<clustering_row> crs, ser::writer_of_mutation_partition<bytes_ostream>&& wr)
-{
-    auto srow_writer = std::move(wr).write_tomb(partition_tombstone).start_static_row();
-    auto row_tombstones = co_await [&] () -> future<ser::mutation_partition__range_tombstones<bytes_ostream>> {
-        if (sr) {
-            auto&& st = co_await write_row_cells_gently(std::move(srow_writer), sr->cells(), s, column_kind::static_column);
-            co_return std::move(st).end_static_row().start_range_tombstones();
-        } else {
-            co_return std::move(srow_writer).start_columns().end_columns().end_static_row().start_range_tombstones();
-        }
-    }();
-    sr = { };
-
-    write_tombstones(s, row_tombstones, rts);
-    rts.clear();
-
-    auto clustering_rows = std::move(row_tombstones).end_range_tombstones().start_rows();
-    while (!crs.empty()) {
-        auto& cr = crs.front();
-        auto&& st = co_await write_row_gently(clustering_rows.add(), s, cr.key(), cr.cells(), cr.marker(), cr.tomb());
-        std::move(st).end_deletable_row();
         crs.pop_front();
     }
     std::move(clustering_rows).end_rows().end_mutation_partition();
@@ -412,39 +273,4 @@ frozen_mutation_fragment freeze(const schema& s, const mutation_fragment& mf)
         }
     )).end_mutation_fragment();
     return frozen_mutation_fragment(std::move(out));
-}
-
-future<frozen_mutation_fragment> freeze_gently(const schema& s, const mutation_fragment& mf)
-{
-    bytes_ostream out;
-    struct visitor {
-        const schema& s;
-        ser::writer_of_mutation_fragment<bytes_ostream> writer;
-
-        future<ser::after_mutation_fragment__fragment<bytes_ostream>> operator()(const clustering_row& cr) {
-            auto&& st = co_await write_row_gently(std::move(writer).start_fragment_clustering_row().start_row(), s, cr.key(), cr.cells(), cr.marker(), cr.tomb());
-            co_return std::move(st).end_row()
-                .end_clustering_row();
-        }
-        future<ser::after_mutation_fragment__fragment<bytes_ostream>> operator()(const static_row& sr) {
-            auto&& st = co_await write_row_cells_gently(std::move(writer).start_fragment_static_row().start_cells(), sr.cells(), s, column_kind::static_column);
-            co_return std::move(st).end_cells()
-                .end_static_row();
-        }
-        future<ser::after_mutation_fragment__fragment<bytes_ostream>> operator()(const range_tombstone& rt) {
-            co_return std::move(writer).write_fragment_range_tombstone(rt);
-        }
-        future<ser::after_mutation_fragment__fragment<bytes_ostream>> operator()(const partition_start& ps) {
-            co_return std::move(writer).start_fragment_partition_start()
-                    .write_key(ps.key().key())
-                    .write_partition_tombstone(ps.partition_tombstone())
-                .end_partition_start();
-        }
-        future<ser::after_mutation_fragment__fragment<bytes_ostream>> operator()(const partition_end& pe) {
-            co_return std::move(writer).write_fragment_partition_end(pe);
-        }
-    };
-    auto&& st = co_await mf.visit(visitor{s, out});
-    std::move(st).end_mutation_fragment();
-    co_return frozen_mutation_fragment(std::move(out));
 }

@@ -132,5 +132,4 @@ public:
 };
 
 frozen_mutation_fragment freeze(const schema& s, const mutation_fragment& mf);
-future<frozen_mutation_fragment> freeze_gently(const schema& s, const mutation_fragment& mf);
 

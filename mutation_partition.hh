@@ -31,7 +31,6 @@
 
 #include <seastar/core/bitset-iter.hh>
 #include <seastar/util/optimized_optional.hh>
-#include <seastar/core/coroutine.hh>
 
 #include "schema_fwd.hh"
 #include "tombstone.hh"
@@ -281,30 +280,6 @@ public:
         } else {
             for (auto& cell : _storage.set) {
                 maybe_invoke_with_hash(func, cell.id(), cell.get_cell_and_hash());
-            }
-        }
-    }
-
-    future<> do_for_each_cell(noncopyable_function<future<> (column_id, atomic_cell_or_collection&)> func) noexcept {
-        if (_type == storage_type::vector) {
-            for (auto i : bitsets::for_each_set(_storage.vector.present)) {
-                co_await maybe_invoke_with_hash(func, i, _storage.vector.v[i]);
-            }
-        } else {
-            for (auto& cell : _storage.set) {
-                co_await maybe_invoke_with_hash(func, cell.id(), cell.get_cell_and_hash());
-            }
-        }
-    }
-
-    future<> do_for_each_cell(noncopyable_function<future<> (column_id, const atomic_cell_or_collection&)> func) const noexcept {
-        if (_type == storage_type::vector) {
-            for (auto i : bitsets::for_each_set(_storage.vector.present)) {
-                co_await maybe_invoke_with_hash(func, i, _storage.vector.v[i]);
-            }
-        } else {
-            for (auto& cell : _storage.set) {
-                co_await maybe_invoke_with_hash(func, cell.id(), cell.get_cell_and_hash());
             }
         }
     }
