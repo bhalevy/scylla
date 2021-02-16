@@ -274,3 +274,45 @@ frozen_mutation_fragment freeze(const schema& s, const mutation_fragment& mf)
     )).end_mutation_fragment();
     return frozen_mutation_fragment(std::move(out));
 }
+
+future<frozen_mutation_fragment> freeze_gently(const schema& s, const mutation_fragment& mf)
+{
+    return do_with(bytes_ostream(), [&s, &mf] (bytes_ostream& out) {
+        struct visitor {
+            using ret_type = ser::after_mutation_fragment__fragment<bytes_ostream>;
+
+            const schema& s;
+            ser::writer_of_mutation_fragment<bytes_ostream> writer;
+
+            visitor(const schema& s_, bytes_ostream& out_) noexcept : s(s_), writer(out_) { }
+
+            future<ret_type> operator()(const clustering_row& cr) {
+                // TODO: write_row_gently
+                auto&& st = write_row(std::move(writer).start_fragment_clustering_row().start_row(), s, cr.key(), cr.cells(), cr.marker(), cr.tomb());
+                return make_ready_future<ret_type>(std::move(st).end_row().end_clustering_row());
+            }
+            future<ret_type> operator()(const static_row& sr) {
+                // TODO: write_row_cells_gently
+                auto&& st = write_row_cells(std::move(writer).start_fragment_static_row().start_cells(), sr.cells(), s, column_kind::static_column);
+                return make_ready_future<ret_type>(std::move(st).end_cells().end_static_row());
+            }
+            future<ret_type> operator()(const range_tombstone& rt) {
+                return make_ready_future<ret_type>(std::move(writer).write_fragment_range_tombstone(rt));
+            }
+            future<ret_type> operator()(const partition_start& ps) {
+                return make_ready_future<ret_type>(std::move(writer).start_fragment_partition_start()
+                        .write_key(ps.key().key())
+                        .write_partition_tombstone(ps.partition_tombstone())
+                        .end_partition_start());
+            }
+            future<ret_type> operator()(const partition_end& pe) {
+                return make_ready_future<ret_type>(std::move(writer).write_fragment_partition_end(pe));
+            }
+        };
+        return mf.visit(visitor(s, out)).then([] (auto&& st) {
+            std::move(st).end_mutation_fragment();
+        }).then([&out] {
+            return frozen_mutation_fragment(std::move(out));
+        });
+    });
+}

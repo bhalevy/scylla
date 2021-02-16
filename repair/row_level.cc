@@ -1145,20 +1145,22 @@ private:
         return repair_hash(h.finalize_uint64());
     }
 
-    stop_iteration handle_mutation_fragment(mutation_fragment& mf, size_t& cur_size, size_t& new_rows_size, std::list<repair_row>& cur_rows) {
+    future<stop_iteration> handle_mutation_fragment(mutation_fragment mf, size_t& cur_size, size_t& new_rows_size, std::list<repair_row>& cur_rows) {
+      return do_with(std::move(mf), [this, &cur_size, &new_rows_size, &cur_rows] (const mutation_fragment& mf) {
         if (mf.is_partition_start()) {
             auto& start = mf.as_partition_start();
             _repair_reader.set_current_dk(start.key());
             if (!start.partition_tombstone()) {
                 // Ignore partition_start with empty partition tombstone
-                return stop_iteration::no;
+                return make_ready_future<stop_iteration>(stop_iteration::no);
             }
         } else if (mf.is_end_of_partition()) {
             _repair_reader.clear_current_dk();
-            return stop_iteration::no;
+            return make_ready_future<stop_iteration>(stop_iteration::no);
         }
         auto hash = do_hash_for_mf(*_repair_reader.get_current_dk(), mf);
-        repair_row r(freeze(*_schema, mf), position_in_partition(mf.position()), _repair_reader.get_current_dk(), hash, is_dirty_on_master::no);
+       return freeze_gently(*_schema, mf).then([this, &mf, &cur_size, &new_rows_size, &cur_rows, hash] (frozen_mutation_fragment frozen_mut) {
+        repair_row r(std::move(frozen_mut), position_in_partition(mf.position()), _repair_reader.get_current_dk(), hash, is_dirty_on_master::no);
         rlogger.trace("Reading: r.boundary={}, r.hash={}", r.boundary(), r.hash());
         _metrics.row_from_disk_nr++;
         _metrics.row_from_disk_bytes += r.size();
@@ -1166,6 +1168,8 @@ private:
         new_rows_size += r.size();
         cur_rows.push_back(std::move(r));
         return stop_iteration::no;
+       });
+      });
     }
 
     // Read rows from sstable until the size of rows exceeds _max_row_buf_size  - current_size
@@ -1183,9 +1187,9 @@ private:
                 return _repair_reader.read_mutation_fragment().then([this, &cur_size, &new_rows_size, &cur_rows] (mutation_fragment_opt mfopt) mutable {
                     if (!mfopt) {
                         _repair_reader.on_end_of_stream();
-                        return stop_iteration::yes;
+                        return make_ready_future<stop_iteration>(stop_iteration::yes);
                     }
-                    return handle_mutation_fragment(*mfopt, cur_size, new_rows_size, cur_rows);
+                    return handle_mutation_fragment(std::move(*mfopt), cur_size, new_rows_size, cur_rows);
                 });
             }).then_wrapped([this, &cur_rows, &new_rows_size] (future<> fut) mutable {
                 if (fut.failed()) {
