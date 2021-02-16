@@ -50,6 +50,11 @@ auto write_live_cell(Writer&& writer, atomic_cell_view c)
 }
 
 template<typename Writer>
+auto write_live_cell_gently(Writer&& writer, atomic_cell_view c) {
+    return futurize_invoke(write_live_cell<Writer>, std::forward<Writer>(writer), std::move(c));
+}
+
+template<typename Writer>
 auto write_counter_cell(Writer&& writer, atomic_cell_view c)
 {
     auto value = std::move(writer).write_created_at(c.timestamp());
@@ -73,6 +78,11 @@ auto write_counter_cell(Writer&& writer, atomic_cell_view c)
 }
 
 template<typename Writer>
+auto write_counter_cell_gently(Writer&& writer, atomic_cell_view c) {
+    return futurize_invoke(write_counter_cell<Writer>, std::forward<Writer>(writer), std::move(c));
+}
+
+template<typename Writer>
 auto write_expiring_cell(Writer&& writer, atomic_cell_view c)
 {
     return std::move(writer).write_ttl(c.ttl())
@@ -85,6 +95,11 @@ auto write_expiring_cell(Writer&& writer, atomic_cell_view c)
 }
 
 template<typename Writer>
+auto write_expiring_cell_gently(Writer&& writer, atomic_cell_view c) {
+    return futurize_invoke(write_expiring_cell<Writer>, std::forward<Writer>(writer), std::move(c));
+}
+
+template<typename Writer>
 auto write_dead_cell(Writer&& writer, atomic_cell_view c)
 {
     return std::move(writer).start_tomb()
@@ -92,6 +107,11 @@ auto write_dead_cell(Writer&& writer, atomic_cell_view c)
                                 .write_deletion_time(c.deletion_time())
                             .end_tomb()
                         .end_dead_cell();
+}
+
+template<typename Writer>
+auto write_dead_cell_gently(Writer&& writer, atomic_cell_view c) {
+    return futurize_invoke(write_dead_cell<Writer>, std::forward<Writer>(writer), std::move(c));
 }
 
 template<typename Writer>
@@ -111,6 +131,32 @@ auto write_collection_cell(Writer&& collection_writer, collection_mutation_view 
     }
     return std::move(cells_writer).end_elements().end_collection_cell();
   });
+}
+
+template<typename Writer>
+auto write_collection_cell_gently(Writer&& collection_writer, collection_mutation_view cmv, const column_definition& def)
+{
+    return cmv.with_deserialized(*def.type, [&] (collection_mutation_view_description m_view) {
+        auto cells_writer = std::move(collection_writer).write_tomb(m_view.tomb).start_elements();
+        return do_for_each(m_view.cells, [&] (auto&& c) {
+            auto cell_writer = cells_writer.add().write_key(c.first);
+            if (!c.second.is_live()) {
+                return write_dead_cell_gently(std::move(cell_writer).start_value_dead_cell(), c.second).then([] (auto&& st) {
+                    return std::move(st).end_collection_element();
+                });
+            } else if (c.second.is_live_and_has_ttl()) {
+                return write_expiring_cell_gently(std::move(cell_writer).start_value_expiring_cell(), c.second).then([] (auto&& st) {
+                    return std::move(st).end_collection_element();
+                });
+            } else {
+                return write_live_cell_gently(std::move(cell_writer).start_value_live_cell(), c.second).then([] (auto&& st) {
+                    return std::move(st).end_collection_element();
+                });
+            }
+        }).then([&] {
+            return std::move(cells_writer).end_elements().end_collection_cell();
+        });
+    });
 }
 
 template<typename Writer>
@@ -137,6 +183,44 @@ auto write_row_cells(Writer&& writer, const row& r, const schema& s, column_kind
         }
     });
     return std::move(column_writer).end_columns();
+}
+
+template<typename Writer>
+auto write_row_cells_gently(Writer&& writer, const row& r, const schema& s, column_kind kind)
+{
+    return do_with(std::move(writer).start_columns(), [&r, &s, kind] (auto& column_writer) {
+        return r.do_for_each_cell([&s, kind, &column_writer] (column_id id, const atomic_cell_or_collection& cell) {
+            auto& def = s.column_at(kind, id);
+            auto cell_or_collection_writer = column_writer.add().write_id(id);
+            if (def.is_atomic()) {
+                auto&& c = cell.as_atomic_cell(def);
+                auto cell_writer = std::move(cell_or_collection_writer).start_c_variant();
+                if (!c.is_live()) {
+                    return write_dead_cell_gently(std::move(cell_writer).start_variant_dead_cell(), std::move(c)).then([] (auto&& st) {
+                        return std::move(st).end_variant().end_column();
+                    });
+                } else if (def.is_counter()) {
+                    return write_counter_cell_gently(std::move(cell_writer).start_variant_counter_cell(), std::move(c)).then([] (auto&& st) {
+                        return std::move(st).end_variant().end_column();
+                    });
+                } else if (c.is_live_and_has_ttl()) {
+                    return write_expiring_cell_gently(std::move(cell_writer).start_variant_expiring_cell(), std::move(c)).then([] (auto&& st) {
+                        return std::move(st).end_variant().end_column();
+                    });
+                } else {
+                    return write_live_cell_gently(std::move(cell_writer).start_variant_live_cell(), std::move(c)).then([] (auto&& st) {
+                        return std::move(st).end_variant().end_column();
+                    });
+                }
+            } else {
+                return write_collection_cell_gently(std::move(cell_or_collection_writer).start_c_collection_cell(), cell.as_collection_mutation(), def).then([] (auto&& st) {
+                    return std::move(st).end_column();
+                });
+            }
+        }).then([&] {
+            return std::move(column_writer).end_columns();
+        });
+    });
 }
 
 template<typename Writer>
@@ -189,6 +273,17 @@ static auto write_row(Writer&& writer, const schema& s, const clustering_key_pre
     auto row_writer = write_tombstone(std::move(deleted_at_writer), t.regular()).end_deleted_at().start_cells();
     auto shadowable_deleted_at_writer = write_row_cells(std::move(row_writer), cells, s, column_kind::regular_column).end_cells().start_shadowable_deleted_at();
     return write_tombstone(std::move(shadowable_deleted_at_writer), t.shadowable().tomb()).end_shadowable_deleted_at();
+}
+
+template<typename Writer>
+static auto write_row_gently(Writer&& writer, const schema& s, const clustering_key_prefix& key, const row& cells, const row_marker& m, const row_tombstone& t) {
+    auto marker_writer = std::move(writer).write_key(key);
+    auto deleted_at_writer = write_row_marker(std::move(marker_writer), m).start_deleted_at();
+    auto row_writer = write_tombstone(std::move(deleted_at_writer), t.regular()).end_deleted_at().start_cells();
+    return write_row_cells_gently(std::move(row_writer), cells, s, column_kind::regular_column).then([&] (auto&& st) {
+        auto shadowable_deleted_at_writer = std::move(st).end_cells().start_shadowable_deleted_at();
+        return write_tombstone(std::move(shadowable_deleted_at_writer), t.shadowable().tomb()).end_shadowable_deleted_at();
+    });
 }
 
 template<typename Writer>
@@ -287,14 +382,14 @@ future<frozen_mutation_fragment> freeze_gently(const schema& s, const mutation_f
             visitor(const schema& s_, bytes_ostream& out_) noexcept : s(s_), writer(out_) { }
 
             future<ret_type> operator()(const clustering_row& cr) {
-                // TODO: write_row_gently
-                auto&& st = write_row(std::move(writer).start_fragment_clustering_row().start_row(), s, cr.key(), cr.cells(), cr.marker(), cr.tomb());
-                return make_ready_future<ret_type>(std::move(st).end_row().end_clustering_row());
+                return write_row_gently(std::move(writer).start_fragment_clustering_row().start_row(), s, cr.key(), cr.cells(), cr.marker(), cr.tomb()).then([] (auto&& st) {
+                    return std::move(st).end_row().end_clustering_row();
+                });
             }
             future<ret_type> operator()(const static_row& sr) {
-                // TODO: write_row_cells_gently
-                auto&& st = write_row_cells(std::move(writer).start_fragment_static_row().start_cells(), sr.cells(), s, column_kind::static_column);
-                return make_ready_future<ret_type>(std::move(st).end_cells().end_static_row());
+                return write_row_cells_gently(std::move(writer).start_fragment_static_row().start_cells(), sr.cells(), s, column_kind::static_column).then([] (auto&& st) {
+                    return std::move(st).end_cells().end_static_row();
+                });
             }
             future<ret_type> operator()(const range_tombstone& rt) {
                 return make_ready_future<ret_type>(std::move(writer).write_fragment_range_tombstone(rt));

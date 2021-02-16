@@ -284,6 +284,34 @@ public:
         }
     }
 
+    future<> do_for_each_cell(noncopyable_function<future<> (column_id, atomic_cell_or_collection&)> func) noexcept {
+        if (_type == storage_type::vector) {
+            return do_with(bitsets::for_each_set(_storage.vector.present), [this, func = std::move(func)] (auto& range) mutable {
+                return do_for_each(range, [this, func = std::move(func)] (auto i) {
+                    return maybe_invoke_with_hash(func, i, _storage.vector.v[i]);
+                });
+            });
+        } else {
+            return do_for_each(_storage.set, [func = std::move(func)] (auto& cell) {
+                return maybe_invoke_with_hash(func, cell.id(), cell.get_cell_and_hash());
+            });
+        }
+    }
+
+    future<> do_for_each_cell(noncopyable_function<future<> (column_id, const atomic_cell_or_collection&)> func) const noexcept {
+        if (_type == storage_type::vector) {
+            return do_with(bitsets::for_each_set(_storage.vector.present), [this, func = std::move(func)] (auto& range) mutable {
+                return do_for_each(range, [this, func = std::move(func)] (auto i) {
+                    return maybe_invoke_with_hash(func, i, _storage.vector.v[i]);
+                });
+            });
+        } else {
+            return do_for_each(_storage.set, [func = std::move(func)] (auto& cell) {
+                return maybe_invoke_with_hash(func, cell.id(), cell.get_cell_and_hash());
+            });
+        }
+    }
+
     template<typename Func>
     void for_each_cell_until(Func&& func) const {
         if (_type == storage_type::vector) {
