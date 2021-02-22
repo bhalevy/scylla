@@ -403,6 +403,7 @@ public:
     virtual future<> next_partition() override { return make_ready_future<>(); }
     virtual future<> fast_forward_to(const dht::partition_range& pr, db::timeout_clock::time_point timeout) override { return make_ready_future<>(); };
     virtual future<> fast_forward_to(position_range cr, db::timeout_clock::time_point timeout) override { return make_ready_future<>(); };
+    virtual future<> close() noexcept override { return make_ready_future<>(); }
 };
 
 flat_mutation_reader make_empty_flat_reader(schema_ptr s, reader_permit permit) {
@@ -618,6 +619,9 @@ flat_mutation_reader_from_mutations(reader_permit permit, std::vector<mutation> 
         };
         virtual future<> fast_forward_to(position_range cr, db::timeout_clock::time_point timeout) override {
             throw std::runtime_error("This reader can't be fast forwarded to another position.");
+        };
+        virtual future<> close() noexcept override {
+            return make_ready_future<>();
         };
     };
     assert(!mutations.empty());
@@ -912,6 +916,9 @@ make_flat_mutation_reader_from_fragments(schema_ptr schema, reader_permit permit
             do_fast_forward_to(pr);
             return make_ready_future<>();
         }
+        virtual future<> close() noexcept override {
+            return make_ready_future<>();
+        }
     };
     return make_flat_mutation_reader<reader>(std::move(schema), std::move(permit), std::move(fragments), pr);
 }
@@ -977,6 +984,9 @@ public:
     }
     virtual future<> fast_forward_to(position_range, db::timeout_clock::time_point) override {
         return make_exception_future<>(make_backtraced_exception_ptr<std::bad_function_call>());
+    }
+    virtual future<> close() noexcept override {
+        return make_ready_future<>();
     }
 };
 

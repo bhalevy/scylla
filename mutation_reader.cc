@@ -2098,6 +2098,9 @@ public:
     virtual future<> fast_forward_to(position_range, db::timeout_clock::time_point) override {
         return make_exception_future<>(make_backtraced_exception_ptr<std::bad_function_call>());
     }
+    virtual future<> close() noexcept override {
+        return make_ready_future<>();
+    }
     future<> push(mutation_fragment&& mf) {
         push_and_maybe_notify(std::move(mf));
         if (!is_buffer_full()) {
