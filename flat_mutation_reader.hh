@@ -295,6 +295,8 @@ public:
             return std::exchange(_buffer, tracked_buffer(_permit));
         }
 
+        void release_resources() noexcept;
+
         void move_buffer_content_to(impl& other) {
             if (other._buffer.empty()) {
                 std::swap(_buffer, other._buffer);
@@ -527,6 +529,13 @@ public:
     // call.
     tracked_buffer detach_buffer() {
         return _impl->detach_buffer();
+    }
+    // Release the internal buffer and permit of the reader.
+    // The reader becomes unusable after its resources are released.
+    // The call is meant to be used to synchronously release the reader's
+    // resources before closing and eventually destroying it.
+    auto release_resources() noexcept {
+        return _impl->release_resources();
     }
     // Moves the buffer content to `other`.
     //
