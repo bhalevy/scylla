@@ -190,6 +190,7 @@ private:
 
 public:
     struct no_limits { };
+    struct null_permits { };
 
     reader_concurrency_semaphore(int count,
             ssize_t memory,
@@ -201,6 +202,9 @@ public:
     ///
     /// And conversely, no queue limit either.
     explicit reader_concurrency_semaphore(no_limits, sstring name = "unlimited reader_concurrency_semaphore");
+
+    /// Create a semaphore with no count and memory.
+    explicit reader_concurrency_semaphore(null_permits, sstring name = "null permits reader_concurrency_semaphore");
 
     ~reader_concurrency_semaphore();
 
@@ -307,4 +311,6 @@ public:
     }
 
     void broken(std::exception_ptr ex = {});
+
+    static reader_permit make_null_permit();
 };

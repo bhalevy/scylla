@@ -32,6 +32,7 @@
 #include <seastar/util/defer.hh>
 #include "utils/exceptions.hh"
 #include <seastar/core/on_internal_error.hh>
+#include "reader_concurrency_semaphore.hh"
 
 logging::logger fmr_logger("flat_mutation_reader");
 
@@ -59,6 +60,12 @@ static size_t compute_buffer_size(const schema& s, const flat_mutation_reader::t
             return mf.memory_usage();
         }), size_t(0)
     );
+}
+
+void flat_mutation_reader::impl::release_resources() noexcept {
+    _buffer_size = 0;
+    std::exchange(_permit, reader_concurrency_semaphore::make_null_permit());
+    std::exchange(_buffer, tracked_buffer(_permit));
 }
 
 void flat_mutation_reader::impl::forward_buffer_to(const position_in_partition& pos) {
