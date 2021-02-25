@@ -364,7 +364,13 @@ static void maybe_dump_reader_permit_diagnostics(const reader_concurrency_semaph
     }));
 }
 
+thread_local reader_concurrency_semaphore null_permits_semaphore{reader_concurrency_semaphore::null_permits{}};
+
 } // anonymous namespace
+
+reader_permit reader_concurrency_semaphore::make_null_permit() {
+    return null_permits_semaphore.make_permit(nullptr, "null permit");
+}
 
 void reader_concurrency_semaphore::expiry_handler::operator()(entry& e) noexcept {
     e.pr.set_exception(named_semaphore_timed_out(_semaphore._name));
@@ -416,6 +422,9 @@ reader_concurrency_semaphore::reader_concurrency_semaphore(no_limits, sstring na
             std::numeric_limits<int>::max(),
             std::numeric_limits<ssize_t>::max(),
             std::move(name)) {}
+
+reader_concurrency_semaphore::reader_concurrency_semaphore(null_permits, sstring name)
+    : reader_concurrency_semaphore(0, 0,std::move(name)) {}
 
 reader_concurrency_semaphore::~reader_concurrency_semaphore() {
     // FIXME: assert(_stopped) once all reader_concurrency_semaphore instances are properly closed.
