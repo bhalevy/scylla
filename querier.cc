@@ -389,6 +389,19 @@ future<> querier_base::close() noexcept {
     return std::visit(variant_closer{*this}, _reader);
 }
 
+querier_base::operator bool() const noexcept {
+    struct variant_has_value {
+        const querier_base& q;
+        bool operator()(const flat_mutation_reader& r) const noexcept {
+            return bool(r);
+        }
+        bool operator()(const reader_concurrency_semaphore::inactive_read_handle& imr) const noexcept {
+            return bool(imr);
+        }
+    };
+    return std::visit(variant_has_value{*this}, _reader);
+}
+
 void querier_cache::set_entry_ttl(std::chrono::seconds entry_ttl) {
     _entry_ttl = entry_ttl;
 }
