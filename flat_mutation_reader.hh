@@ -314,7 +314,6 @@ private:
     std::unique_ptr<impl> _impl;
 
     flat_mutation_reader() = default;
-    explicit operator bool() const noexcept { return bool(_impl); }
     friend class optimized_optional<flat_mutation_reader>;
     void do_upgrade_schema(const schema_ptr&);
     static void on_close_error(std::unique_ptr<impl>, std::exception_ptr ep) noexcept;
@@ -331,6 +330,8 @@ public:
     flat_mutation_reader& operator=(flat_mutation_reader&& o) noexcept;
 
     ~flat_mutation_reader();
+
+    explicit operator bool() const noexcept { return bool(_impl); }
 
     future<mutation_fragment_opt> operator()(db::timeout_clock::time_point timeout) {
         return _impl->operator()(timeout);
