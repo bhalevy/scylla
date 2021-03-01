@@ -153,6 +153,9 @@ public:
 
     virtual ~querier_base() = default;
 
+    // Returns true if the querier still holds a valid reader/inactive_reader.
+    explicit operator bool() const noexcept;
+
     const ::schema& schema() const {
         return *_schema;
     }
