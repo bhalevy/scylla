@@ -441,7 +441,11 @@ bool reader_concurrency_semaphore::try_evict_one_inactive_read(evict_reason reas
 }
 
 void reader_concurrency_semaphore::evict(inactive_read& ir, evict_reason reason) {
+    if (!ir.is_linked()) {
+        return;
+    }
     auto reader = std::move(ir.reader);
+    ir.ttl_timer.cancel();
     ir.unlink();
     if (auto notify_handler = std::move(ir.notify_handler)) {
         notify_handler(reason);

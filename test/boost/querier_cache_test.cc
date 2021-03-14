@@ -800,3 +800,35 @@ SEASTAR_THREAD_TEST_CASE(test_inactive_read_handle_timeout_after_unregister) {
     seastar::sleep(1010ms).get();
     BOOST_REQUIRE(!evict_reason);
 }
+
+SEASTAR_THREAD_TEST_CASE(test_inactive_read_handle_timeout_after_evict) {
+    reader_concurrency_semaphore sem(reader_concurrency_semaphore::no_limits{}, "sem");
+
+    auto schema = schema_builder("ks", "cf")
+        .with_column("pk", int32_type, column_kind::partition_key)
+        .with_column("v", int32_type)
+        .build();
+
+    std::optional<reader_concurrency_semaphore::evict_reason> evict_reason;
+
+    auto irh = sem.register_inactive_read(make_empty_flat_reader(schema, sem.make_permit(schema.get(), get_name())));
+    sem.set_notify_handler(irh, [&evict_reason] (reader_concurrency_semaphore::evict_reason reason) {
+        evict_reason.emplace(reason);
+    }, 1s);
+    BOOST_REQUIRE_EQUAL(sem.get_stats().inactive_reads, 1);
+
+    auto evicted = sem.try_evict_one_inactive_read();
+    BOOST_REQUIRE(evicted);
+    BOOST_REQUIRE(evict_reason);
+    BOOST_REQUIRE(*evict_reason == reader_concurrency_semaphore::evict_reason::manual);
+    evict_reason.reset();
+    BOOST_REQUIRE_EQUAL(sem.get_stats().inactive_reads, 0);
+
+    // FIXME: set_notify_handler on an evicted reader should be prohibited.
+    sem.set_notify_handler(irh, [&evict_reason] (reader_concurrency_semaphore::evict_reason reason) {
+        evict_reason.emplace(reason);
+    }, 1s);
+    seastar::sleep(1010ms).get();
+    BOOST_REQUIRE(!evict_reason);
+    BOOST_REQUIRE_EQUAL(sem.get_stats().inactive_reads, 0);
+}
