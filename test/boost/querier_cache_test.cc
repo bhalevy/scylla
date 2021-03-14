@@ -824,11 +824,12 @@ SEASTAR_THREAD_TEST_CASE(test_inactive_read_handle_timeout_after_evict) {
     evict_reason.reset();
     BOOST_REQUIRE_EQUAL(sem.get_stats().inactive_reads, 0);
 
-    // FIXME: set_notify_handler on an evicted reader should be prohibited.
-    sem.set_notify_handler(irh, [&evict_reason] (reader_concurrency_semaphore::evict_reason reason) {
-        evict_reason.emplace(reason);
-    }, 1s);
-    seastar::sleep(1010ms).get();
-    BOOST_REQUIRE(!evict_reason);
+    BOOST_REQUIRE_THROW(sem.set_notify_handler(irh, [&evict_reason] (reader_concurrency_semaphore::evict_reason reason) {
+            evict_reason.emplace(reason);
+        }, 1s),
+        std::runtime_error);
+
+    auto reader_opt = sem.unregister_inactive_read(std::move(irh));
+    BOOST_REQUIRE(!reader_opt);
     BOOST_REQUIRE_EQUAL(sem.get_stats().inactive_reads, 0);
 }

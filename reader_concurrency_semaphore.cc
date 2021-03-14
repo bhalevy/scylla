@@ -401,6 +401,9 @@ reader_concurrency_semaphore::inactive_read_handle reader_concurrency_semaphore:
 }
 
 void reader_concurrency_semaphore::set_notify_handler(inactive_read_handle& irh, eviction_notify_handler&& notify_handler, std::optional<std::chrono::seconds> ttl_opt) {
+    if (!irh) {
+        throw std::runtime_error("inactive_read missing, already unregistered, or evicted");
+    }
     auto& ir = *irh._irp;
     ir.notify_handler = std::move(notify_handler);
     if (ttl_opt) {
@@ -441,9 +444,7 @@ bool reader_concurrency_semaphore::try_evict_one_inactive_read(evict_reason reas
 }
 
 void reader_concurrency_semaphore::evict(inactive_read& ir, evict_reason reason) {
-    if (!ir.is_linked()) {
-        return;
-    }
+    assert(ir.is_linked());
     auto reader = std::move(ir.reader);
     ir.ttl_timer.cancel();
     ir.unlink();

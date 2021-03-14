@@ -134,7 +134,7 @@ public:
             return *this;
         }
         explicit operator bool() const noexcept {
-            return bool(_irp);
+            return bool(_irp) && _irp->is_linked();
         }
     };
 
