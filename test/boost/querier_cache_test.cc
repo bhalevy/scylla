@@ -753,3 +753,50 @@ SEASTAR_THREAD_TEST_CASE(test_unique_inactive_read_handle) {
     BOOST_REQUIRE_THROW(sem1.unregister_inactive_read(std::move(sem2_h1)), std::runtime_error);
     BOOST_REQUIRE_THROW(sem2.unregister_inactive_read(std::move(sem1_h1)), std::runtime_error);
 }
+
+SEASTAR_THREAD_TEST_CASE(test_inactive_read_handle_timeout) {
+    reader_concurrency_semaphore sem(reader_concurrency_semaphore::no_limits{}, "sem");
+
+    auto schema = schema_builder("ks", "cf")
+        .with_column("pk", int32_type, column_kind::partition_key)
+        .with_column("v", int32_type)
+        .build();
+
+    std::optional<reader_concurrency_semaphore::evict_reason> evict_reason;
+
+    auto irh = sem.register_inactive_read(make_empty_flat_reader(schema, sem.make_permit(schema.get(), get_name())));
+    sem.set_notify_handler(irh, [&evict_reason] (reader_concurrency_semaphore::evict_reason reason) {
+        evict_reason.emplace(reason);
+    }, 1s);
+
+    seastar::sleep(1010ms).get();
+
+    BOOST_REQUIRE(evict_reason);
+    BOOST_REQUIRE(*evict_reason == reader_concurrency_semaphore::evict_reason::time);
+
+    auto reader_opt = sem.unregister_inactive_read(std::move(irh));
+    BOOST_REQUIRE(!reader_opt);
+}
+
+SEASTAR_THREAD_TEST_CASE(test_inactive_read_handle_timeout_after_unregister) {
+    reader_concurrency_semaphore sem(reader_concurrency_semaphore::no_limits{}, "sem");
+
+    auto schema = schema_builder("ks", "cf")
+        .with_column("pk", int32_type, column_kind::partition_key)
+        .with_column("v", int32_type)
+        .build();
+
+    std::optional<reader_concurrency_semaphore::evict_reason> evict_reason;
+
+    auto irh = sem.register_inactive_read(make_empty_flat_reader(schema, sem.make_permit(schema.get(), get_name())));
+    sem.set_notify_handler(irh, [&evict_reason] (reader_concurrency_semaphore::evict_reason reason) {
+        evict_reason.emplace(reason);
+    }, 1s);
+
+    auto reader_opt = sem.unregister_inactive_read(std::move(irh));
+    BOOST_REQUIRE(reader_opt);
+    BOOST_REQUIRE(!evict_reason);
+
+    seastar::sleep(1010ms).get();
+    BOOST_REQUIRE(!evict_reason);
+}
