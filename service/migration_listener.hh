@@ -46,7 +46,7 @@
 #include <seastar/core/sstring.hh>
 #include <seastar/core/shared_ptr.hh>
 #include <seastar/util/defer.hh>
-#include "utils/atomic_vector.hh"
+#include "utils/atomic_containers.hh"
 
 class keyspace_metadata;
 class view_ptr;

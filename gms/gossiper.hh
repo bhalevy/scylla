@@ -42,7 +42,7 @@
 #include <seastar/core/distributed.hh>
 #include <seastar/core/shared_ptr.hh>
 #include <seastar/core/print.hh>
-#include "utils/atomic_vector.hh"
+#include "utils/atomic_containers.hh"
 #include "utils/UUID.hh"
 #include "utils/fb_utilities.hh"
 #include "gms/i_failure_detection_event_listener.hh"
