@@ -87,7 +87,7 @@ public:
     static dht::ring_position to_ring_position(const compatible_ring_position_or_view& crp);
     static dht::partition_range to_partition_range(const interval_type& i);
     static dht::partition_range to_partition_range(const dht::ring_position_view& pos, const interval_type& i);
-    explicit partitioned_sstable_set(schema_ptr schema, lw_shared_ptr<sstable_list> all, bool use_level_metadata = true);
+    explicit partitioned_sstable_set(schema_ptr schema, bool use_level_metadata = true);
 
     virtual std::unique_ptr<sstable_set_impl> clone() const override;
     virtual std::vector<shared_sstable> select(const dht::partition_range& range) const override;
