@@ -31,8 +31,8 @@
 
 namespace sstables {
 
-void sstable_run::insert(shared_sstable sst) {
-    _all.insert(std::move(sst));
+bool sstable_run::insert(shared_sstable sst) {
+    return _all.insert(std::move(sst));
 }
 
 void sstable_run::erase(shared_sstable sst) {
@@ -101,18 +101,26 @@ sstable_set::select_sstable_runs(const std::vector<shared_sstable>& sstables) co
     }));
 }
 
-lw_shared_ptr<sstable_list>
+#if 0
+const auto&
 sstable_set::all() const {
     return _impl->all();
 }
+#endif
 
 void sstable_set::for_each_sstable(std::function<void(const shared_sstable&)> func) const {
     return _impl->for_each_sstable(std::move(func));
 }
 
+future<> sstable_set::do_for_each_sstable(std::function<future<> (const shared_sstable&)> func) const {
+    return _impl->do_for_each_sstable(std::move(func));
+}
+
 void
 sstable_set::insert(shared_sstable sst) {
-    _impl->insert(sst);
+    if (!_impl->insert(sst)) {
+        return;
+    }
     try {
         _all_runs[sst->run_identifier()].insert(sst);
     } catch (...) {
@@ -253,13 +261,19 @@ lw_shared_ptr<sstable_list> partitioned_sstable_set::all() const {
 }
 
 void partitioned_sstable_set::for_each_sstable(std::function<void(const shared_sstable&)> func) const {
-    for (auto& sst : *_all) {
+    for (auto& sst : _all.set()) {
         func(sst);
     }
 }
 
-void partitioned_sstable_set::insert(shared_sstable sst) {
-    _all->insert(sst);
+future<> partitioned_sstable_set::do_for_each_sstable(std::function<future<>(const shared_sstable&)> func) const {
+    return _all.do_for_each(std::move(func)).finally([zis = shared_from_this()] {});
+}
+
+bool partitioned_sstable_set::insert(shared_sstable sst) {
+    if (!_all->insert(sst)) {
+        return false;
+    }
     try {
         if (store_as_unleveled(sst)) {
             _unleveled_sstables.push_back(std::move(sst));
@@ -373,10 +387,17 @@ void time_series_sstable_set::for_each_sstable(std::function<void(const shared_s
     }
 }
 
+future<> time_series_sstable_set::do_for_each_sstable(std::function<future<>(const shared_sstable&)> func) const {
+    return do_for_each(*_sstables, [func = std::move(func)] (const std::pair<position_in_partition, shared_sstable>& entry) {
+        return func(entry.second);
+    });
+}
+
 // O(log n)
-void time_series_sstable_set::insert(shared_sstable sst) {
+bool time_series_sstable_set::insert(shared_sstable sst) {
     auto pos = sst->min_position();
     _sstables->emplace(pos, std::move(sst));
+    return true;
 }
 
 // O(n) worst case, but should be close to O(log n) most of the time

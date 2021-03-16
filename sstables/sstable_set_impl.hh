@@ -25,6 +25,7 @@
 
 #include "compatible_ring_position.hh"
 #include "sstable_set.hh"
+#include "utils/atomic_containers.hh"
 
 namespace sstables {
 
@@ -41,7 +42,8 @@ public:
     virtual std::vector<shared_sstable> select(const dht::partition_range& range) const = 0;
     virtual lw_shared_ptr<sstable_list> all() const = 0;
     virtual void for_each_sstable(std::function<void(const shared_sstable&)> func) const = 0;
-    virtual void insert(shared_sstable sst) = 0;
+    virtual future<> do_for_each_sstable(std::function<future<>(const shared_sstable&)> func) const = 0;
+    virtual bool insert(shared_sstable sst) = 0;
     virtual void erase(shared_sstable sst) = 0;
     virtual std::unique_ptr<incremental_selector_impl> make_incremental_selector() const = 0;
 
@@ -69,7 +71,7 @@ private:
     schema_ptr _schema;
     std::vector<shared_sstable> _unleveled_sstables;
     interval_map_type _leveled_sstables;
-    lw_shared_ptr<sstable_list> _all;
+    atomic_unordered_set<shared_sstable> _all;
     // Change counter on interval map for leveled sstables which is used by
     // incremental selector to determine whether or not to invalidate iterators.
     uint64_t _leveled_sstables_change_cnt = 0;
@@ -93,7 +95,8 @@ public:
     virtual std::vector<shared_sstable> select(const dht::partition_range& range) const override;
     virtual lw_shared_ptr<sstable_list> all() const override;
     virtual void for_each_sstable(std::function<void(const shared_sstable&)> func) const override;
-    virtual void insert(shared_sstable sst) override;
+    virtual future<> do_for_each_sstable(std::function<future<>(const shared_sstable&)> func) const override;
+    virtual bool insert(shared_sstable sst) override;
     virtual void erase(shared_sstable sst) override;
     virtual std::unique_ptr<incremental_selector_impl> make_incremental_selector() const override;
     class incremental_selector;
@@ -116,7 +119,8 @@ public:
     virtual std::vector<shared_sstable> select(const dht::partition_range& range = query::full_partition_range) const override;
     virtual lw_shared_ptr<sstable_list> all() const override;
     virtual void for_each_sstable(std::function<void(const shared_sstable&)> func) const override;
-    virtual void insert(shared_sstable sst) override;
+    virtual future<> do_for_each_sstable(std::function<future<>(const shared_sstable&)> func) const override;
+    virtual bool insert(shared_sstable sst) override;
     virtual void erase(shared_sstable sst) override;
     virtual std::unique_ptr<incremental_selector_impl> make_incremental_selector() const override;
 
