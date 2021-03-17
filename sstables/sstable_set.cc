@@ -68,21 +68,11 @@ sstable_set::sstable_set(std::unique_ptr<sstable_set_impl> impl, schema_ptr s)
         , _schema(std::move(s)) {
 }
 
-sstable_set::sstable_set(const sstable_set& x)
-        : _impl(x._impl->clone())
-        , _schema(x._schema) {
+sstable_set sstable_set::clone() const {
+    return sstable_set(_impl->clone(), _schema);
 }
 
 sstable_set::sstable_set(sstable_set&&) noexcept = default;
-
-sstable_set&
-sstable_set::operator=(const sstable_set& x) {
-    if (this != &x) {
-        auto tmp = sstable_set(x);
-        *this = std::move(tmp);
-    }
-    return *this;
-}
 
 sstable_set&
 sstable_set::operator=(sstable_set&&) noexcept = default;
@@ -365,12 +355,12 @@ time_series_sstable_set::time_series_sstable_set(schema_ptr schema)
     : _schema(std::move(schema))
     , _sstables(make_lw_shared<container_t>(position_in_partition::less_compare(*_schema))) {}
 
-time_series_sstable_set::time_series_sstable_set(const time_series_sstable_set& s)
-    : _schema(s._schema)
-    , _sstables(make_lw_shared(*s._sstables)) {}
+time_series_sstable_set::time_series_sstable_set(schema_ptr schema, lw_shared_ptr<container_t> sstables) noexcept
+    : _schema(std::move(schema))
+    , _sstables(std::move(sstables)) {}
 
 std::unique_ptr<sstable_set_impl> time_series_sstable_set::clone() const {
-    return std::make_unique<time_series_sstable_set>(*this);
+    return std::make_unique<time_series_sstable_set>(_schema, make_lw_shared<container_t>(*_sstables));
 }
 
 std::vector<shared_sstable> time_series_sstable_set::select(const dht::partition_range& range) const {

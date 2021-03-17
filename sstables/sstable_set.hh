@@ -55,10 +55,13 @@ class sstable_set : public enable_lw_shared_from_this<sstable_set> {
 public:
     ~sstable_set();
     sstable_set(std::unique_ptr<sstable_set_impl> impl, schema_ptr s);
-    sstable_set(const sstable_set&);
+    sstable_set(const sstable_set&) = delete;
     sstable_set(sstable_set&&) noexcept;
-    sstable_set& operator=(const sstable_set&);
+    sstable_set& operator=(const sstable_set&) = delete;
     sstable_set& operator=(sstable_set&&) noexcept;
+
+    sstable_set clone() const;
+
     std::vector<shared_sstable> select(const dht::partition_range& range) const;
     // Return all runs which contain any of the input sstables.
     std::vector<sstable_run> select_sstable_runs(const std::vector<shared_sstable>& sstables) const;

@@ -658,7 +658,8 @@ future<> compaction_manager::rewrite_sstables(column_family* cf, sstables::compa
             auto sstable_level = sst->get_sstable_level();
             auto run_identifier = sst->run_identifier();
             // FIXME: this compaction should run with maintenance priority.
-            auto descriptor = sstables::compaction_descriptor({ sst }, cf.get_sstable_set(), service::get_local_compaction_priority(),
+            auto all_sstables = std::make_optional<sstables::sstable_set>(cf.get_sstable_set().clone());
+            auto descriptor = sstables::compaction_descriptor({ sst }, std::move(all_sstables), service::get_local_compaction_priority(),
                 sstable_level, sstables::compaction_descriptor::default_max_sstable_bytes, run_identifier, options);
 
             // Releases reference to cleaned sstable such that respective used disk space can be freed.

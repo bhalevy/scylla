@@ -200,7 +200,8 @@ time_window_compaction_strategy::get_sstables_for_compaction(column_family& cf, 
     if (!expired.empty()) {
         compaction_candidates.insert(compaction_candidates.end(), expired.begin(), expired.end());
     }
-    return compaction_descriptor(std::move(compaction_candidates), cf.get_sstable_set(), service::get_local_compaction_priority());
+    auto all_sstables = std::make_optional<sstables::sstable_set>(cf.get_sstable_set().clone());
+    return compaction_descriptor(std::move(compaction_candidates), std::move(all_sstables), service::get_local_compaction_priority());
 }
 
 time_window_compaction_strategy::bucket_compaction_mode

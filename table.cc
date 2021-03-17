@@ -364,7 +364,7 @@ void table::add_sstable(sstables::shared_sstable sstable) {
         on_internal_error(tlogger, format("Attempted to load the shared SSTable {} at table", sstable->get_filename()));
     }
     // allow in-progress reads to continue using old list
-    auto new_sstables = make_lw_shared<sstables::sstable_set>(*_sstables);
+    auto new_sstables = make_lw_shared<sstables::sstable_set>(_sstables->clone());
     new_sstables->insert(sstable);
     if (sstable->requires_view_building()) {
         _sstables_staging.emplace(sstable->generation(), sstable);
@@ -1885,7 +1885,7 @@ table::make_reader_excluding_sstables(schema_ptr s,
         readers.emplace_back(mt->make_flat_reader(s, permit, range, slice, pc, trace_state, fwd, fwd_mr));
     }
 
-    auto effective_sstables = ::make_lw_shared<sstables::sstable_set>(*_sstables);
+    auto effective_sstables = make_lw_shared<sstables::sstable_set>(_sstables->clone());
     for (auto& sst : excluded) {
         effective_sstables->erase(sst);
     }

@@ -174,7 +174,8 @@ public:
 
                 auto start = perf_sstable_test_env::now();
 
-                auto descriptor = sstables::compaction_descriptor(std::move(ssts), cf->get_sstable_set(), default_priority_class());
+                auto all_sstables = std::make_optional<sstables::sstable_set>(cf->get_sstable_set().clone());
+                auto descriptor = sstables::compaction_descriptor(std::move(ssts), std::move(all_sstables), default_priority_class());
                 descriptor.creator = [sst_gen = std::move(sst_gen)] (unsigned dummy) mutable {
                     return sst_gen();
                 };

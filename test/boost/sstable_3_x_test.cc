@@ -3126,7 +3126,8 @@ static flat_mutation_reader compacted_sstable_reader(test_env& env, schema_ptr s
     auto sstables = open_sstables(env, s, format("test/resource/sstables/3.x/uncompressed/{}", table_name), generations);
     auto new_generation = generations.back() + 1;
 
-    auto desc = sstables::compaction_descriptor(std::move(sstables), cf->get_sstable_set(), default_priority_class());
+    auto all_sstables = std::make_optional<sstables::sstable_set>(cf->get_sstable_set().clone());
+    auto desc = sstables::compaction_descriptor(std::move(sstables), std::move(all_sstables), default_priority_class());
     desc.creator = [s, &tmp, &env, new_generation] (shard_id dummy) {
         return env.make_sstable(s, tmp.path().string(), new_generation,
                          sstables::sstable_version_types::mc, sstable::format_types::big, 4096);

@@ -60,7 +60,8 @@ compaction_descriptor leveled_compaction_strategy::get_sstables_for_compaction(c
         auto& sst = *std::max_element(sstables.begin(), sstables.end(), [&] (auto& i, auto& j) {
             return i->estimate_droppable_tombstone_ratio(gc_before) < j->estimate_droppable_tombstone_ratio(gc_before);
         });
-        return sstables::compaction_descriptor({ sst }, cfs.get_sstable_set(), service::get_local_compaction_priority(), sst->get_sstable_level());
+        auto all_sstables = std::make_optional<sstables::sstable_set>(cfs.get_sstable_set().clone());
+        return sstables::compaction_descriptor({ sst }, std::move(all_sstables), service::get_local_compaction_priority(), sst->get_sstable_level());
     }
     return {};
 }
@@ -73,7 +74,8 @@ compaction_descriptor leveled_compaction_strategy::get_major_compaction_job(colu
     auto& sst = *std::max_element(candidates.begin(), candidates.end(), [&] (sstables::shared_sstable& sst1, sstables::shared_sstable& sst2) {
         return sst1->get_sstable_level() < sst2->get_sstable_level();
     });
-    return compaction_descriptor(std::move(candidates), cf.get_sstable_set(), service::get_local_compaction_priority(),
+    auto all_sstables = std::make_optional<sstables::sstable_set>(cf.get_sstable_set().clone());
+    return compaction_descriptor(std::move(candidates), std::move(all_sstables), service::get_local_compaction_priority(),
                                  sst->get_sstable_level(), _max_sstable_size_in_mb*1024*1024);
 }
 

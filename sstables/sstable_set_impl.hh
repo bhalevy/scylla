@@ -124,7 +124,8 @@ private:
 
 public:
     time_series_sstable_set(schema_ptr schema);
-    time_series_sstable_set(const time_series_sstable_set& s);
+    time_series_sstable_set(schema_ptr schema, lw_shared_ptr<container_t> sstables) noexcept;
+    time_series_sstable_set(const time_series_sstable_set& s) = delete;
 
     virtual std::unique_ptr<sstable_set_impl> clone() const override;
     virtual std::vector<shared_sstable> select(const dht::partition_range& range = query::full_partition_range) const override;

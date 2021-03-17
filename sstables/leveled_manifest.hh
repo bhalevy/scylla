@@ -173,7 +173,8 @@ public:
             if (info.can_promote) {
                 info.candidates = get_overlapping_starved_sstables(next_level, std::move(info.candidates), compaction_counter);
             }
-            return sstables::compaction_descriptor(std::move(info.candidates), _table.get_sstable_set(),
+            auto all_sstables = std::make_optional<sstables::sstable_set>(_table.get_sstable_set().clone());
+            return sstables::compaction_descriptor(std::move(info.candidates), std::move(all_sstables),
                                                    service::get_local_compaction_priority(), next_level, _max_sstable_size_in_bytes);
         } else {
             logger.debug("No compaction candidates for L{}", level);
@@ -252,7 +253,8 @@ public:
                     _table.min_compaction_threshold(), _schema->max_compaction_threshold(), _stcs_options);
                 if (!most_interesting.empty()) {
                     logger.debug("L0 is too far behind, performing size-tiering there first");
-                    return sstables::compaction_descriptor(std::move(most_interesting), _table.get_sstable_set(),
+                    auto all_sstables = std::make_optional<sstables::sstable_set>(_table.get_sstable_set().clone());
+                    return sstables::compaction_descriptor(std::move(most_interesting), std::move(all_sstables),
                                                            service::get_local_compaction_priority());
                 }
             }
@@ -267,7 +269,8 @@ public:
             auto info = get_candidates_for(0, last_compacted_keys);
             if (!info.candidates.empty()) {
                 auto next_level = get_next_level(info.candidates, info.can_promote);
-                return sstables::compaction_descriptor(std::move(info.candidates), _table.get_sstable_set(),
+                auto all_sstables = std::make_optional<sstables::sstable_set>(_table.get_sstable_set().clone());
+                return sstables::compaction_descriptor(std::move(info.candidates), std::move(all_sstables),
                                                        service::get_local_compaction_priority(), next_level, _max_sstable_size_in_bytes);
             }
         }
