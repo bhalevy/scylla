@@ -23,6 +23,8 @@
 #include <seastar/core/future-util.hh>
 #include <seastar/core/align.hh>
 #include <seastar/core/aligned_buffer.hh>
+#include "utils/closeable.hh"
+
 #include "sstables/sstables.hh"
 #include "sstables/key.hh"
 #include "sstables/compress.hh"
@@ -1046,9 +1048,7 @@ SEASTAR_TEST_CASE(compaction_manager_test) {
 
     auto cm = make_lw_shared<compaction_manager>();
     cm->enable();
-    auto stop_cm = defer([&cm] {
-        cm->stop().get();
-    });
+    auto stop_cm = deferred_stop(*cm);
 
     auto tmp = tmpdir();
     column_family::config cfg = column_family_test_config(env.manager());
@@ -5396,9 +5396,7 @@ SEASTAR_TEST_CASE(sstable_scrub_test) {
             cfg.datadir = tmp.path().string();
             auto table = make_lw_shared<column_family>(schema, cfg, column_family::no_commitlog(),
                 db.get_compaction_manager(), cl_stats, db.row_cache_tracker());
-            auto stop_table = defer([table] {
-                table->stop().get();
-            });
+            auto stop_table = deferred_stop(*table);
             table->mark_ready_for_writes();
             table->start();
 

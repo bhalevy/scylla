@@ -24,7 +24,7 @@
 #include <seastar/core/do_with.hh>
 #include <seastar/util/noncopyable_function.hh>
 #include <seastar/core/sharded.hh>
-#include <seastar/util/defer.hh>
+#include "utils/closeable.hh"
 
 #include "sstables/sstables.hh"
 #include "test/lib/tmpdir.hh"
@@ -94,7 +94,7 @@ public:
     static inline future<> do_with_async(noncopyable_function<void (test_env&)> func) {
         return seastar::async([func = std::move(func)] {
             test_env env;
-            auto close_env = defer([&] { env.stop().get(); });
+            auto close_env = deferred_stop(env);
             func(env);
         });
     }
@@ -103,7 +103,7 @@ public:
         return seastar::async([func = std::move(func)] {
             sharded<test_env> env;
             env.start().get();
-            auto stop = defer([&] { env.stop().get(); });
+            auto stop = deferred_stop(env);
             func(env);
         });
     }
@@ -112,7 +112,7 @@ public:
     static future<T> do_with_async_returning(noncopyable_function<T (test_env&)> func) {
         return seastar::async([func = std::move(func)] {
             test_env env;
-            auto stop = defer([&] { env.stop().get(); });
+            auto stop = deferred_stop(env);
             return func(env);
         });
     }

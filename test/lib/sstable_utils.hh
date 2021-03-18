@@ -21,6 +21,8 @@
 
 #pragma once
 
+#include "utils/closeable.hh"
+
 #include "sstables/sstables.hh"
 #include "sstables/shared_sstable.hh"
 #include "sstables/index_reader.hh"
@@ -316,7 +318,7 @@ public:
             storage_service_for_tests ssft;
             auto tmp = tmpdir();
             test_env env;
-            auto close_env = defer([&] { env.stop().get(); });
+            auto close_env = deferred_stop(env);
             fut(env, tmp.path().string()).get();
         });
     }
@@ -332,7 +334,7 @@ public:
             auto dest_path = dest_dir.path() / src.c_str();
             std::filesystem::create_directories(dest_path);
             test_env env;
-            auto close_env = defer([&] { env.stop().get(); });
+            auto close_env = deferred_stop(env);
             fut(env, src_dir.path().string(), dest_path.string()).get();
         });
     }
