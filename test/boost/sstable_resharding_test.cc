@@ -7,6 +7,8 @@
 #include <seastar/core/future-util.hh>
 #include <seastar/core/do_with.hh>
 #include <seastar/core/distributed.hh>
+#include "utils/closeable.hh"
+
 #include "types/map.hh"
 #include "sstables/sstables.hh"
 #include <seastar/testing/test_case.hh>
@@ -42,7 +44,7 @@ static schema_ptr get_schema(unsigned shard_count, unsigned sharding_ignore_msb_
 
 void run_sstable_resharding_test() {
     test_env env;
-    auto close_env = defer([&] { env.stop().get(); });
+    auto close_env = deferred_stop(env);
     cache_tracker tracker;
   for (const auto version : all_sstable_versions) {
     storage_service_for_tests ssft;

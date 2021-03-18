@@ -71,4 +71,50 @@ inline auto deferred_close(Object& obj) {
     return close_controller(obj);
 }
 
+template <typename Object>
+concept stoppable = requires (Object o) {
+    { o.stop() } -> std::same_as<future<>>;
+};
+
+/// Template helper to stop \c obj when destroyed.
+///
+/// \tparam Object a class exposing a \c stop() method that returns a \c future<>
+///         that is called when the controller is destroyed.
+template <typename Object>
+requires stoppable<Object>
+class stop_controller {
+    Object& _obj;
+    bool _stopped = false;
+
+    void do_stop() noexcept {
+        if (!_stopped) {
+            _stopped = true;
+            _obj.stop().get();
+        }
+    }
+public:
+    stop_controller(Object& obj) noexcept : _obj(obj) {}
+    ~stop_controller() {
+        do_stop();
+    }
+    /// Stop \c obj once now.
+    void stop_now() noexcept {
+        assert(!_stopped);
+        do_stop();
+    }
+};
+
+/// Auto-stop an object.
+///
+/// \param obj object to auto-stop.
+///
+/// \return A deferred action that stops \c obj.
+///
+/// \note Can be used only in a seatstar thread.
+template <typename Object>
+requires stoppable<Object>
+inline auto deferred_stop(Object& obj) {
+    return stop_controller(obj);
+}
+
 } // namespace seastar

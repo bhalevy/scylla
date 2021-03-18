@@ -22,6 +22,7 @@
 #include <filesystem>
 #include <seastar/testing/test_case.hh>
 #include <seastar/testing/thread_test_case.hh>
+#include "utils/closeable.hh"
 
 #include "test/lib/tmpdir.hh"
 #include "test/lib/sstable_test_env.hh"
@@ -45,7 +46,7 @@ static auto copy_sst_to_tmpdir(fs::path tmp_path, test_env& env, sstables::schem
 SEASTAR_THREAD_TEST_CASE(test_sstable_move) {
     tmpdir tmp;
     auto env = test_env();
-    auto stop_env = defer([&env] { env.stop().get(); });
+    auto stop_env = deferred_stop(env);
 
     int64_t gen = 1;
     auto sst = copy_sst_to_tmpdir(tmp.path(), env, uncompressed_schema(), fs::path(uncompressed_dir()), gen);
@@ -97,7 +98,7 @@ static bool partial_create_links(sstable_ptr sst, fs::path dst_path, int64_t gen
 SEASTAR_THREAD_TEST_CASE(test_sstable_move_replay) {
     tmpdir tmp;
     auto env = test_env();
-    auto stop_env = defer([&env] { env.stop().get(); });
+    auto stop_env = deferred_stop(env);
 
     int64_t gen = 1;
     auto sst = copy_sst_to_tmpdir(tmp.path(), env, uncompressed_schema(), fs::path(uncompressed_dir()), gen);
@@ -118,7 +119,7 @@ SEASTAR_THREAD_TEST_CASE(test_sstable_move_replay) {
 SEASTAR_THREAD_TEST_CASE(test_sstable_move_exists_failure) {
     tmpdir tmp;
     auto env = test_env();
-    auto stop_env = defer([&env] { env.stop().get(); });
+    auto stop_env = deferred_stop(env);
 
     int64_t gen = 1;
     auto src_sst = copy_sst_to_tmpdir(tmp.path(), env, uncompressed_schema(), fs::path(uncompressed_dir()), gen);
