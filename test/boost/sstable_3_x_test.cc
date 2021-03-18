@@ -29,6 +29,7 @@
 #include <seastar/core/reactor.hh>
 #include <seastar/testing/test_case.hh>
 #include <seastar/testing/thread_test_case.hh>
+#include "utils/closeable.hh"
 
 #include "sstables/sstables.hh"
 #include "sstables/compaction_manager.hh"
@@ -5289,7 +5290,7 @@ static void test_sstable_write_large_row_f(schema_ptr s, memtable& mt, const par
 
     large_row_handler handler(threshold, std::numeric_limits<uint64_t>::max(), f);
     sstables_manager manager(handler, test_db_config, test_feature_service);
-    auto stop_manager = defer([&] { manager.close().get(); });
+    auto stop_manager = deferred_close(manager);
     tmpdir dir;
     auto sst = manager.make_sstable(
             s, dir.path().string(), 1 /* generation */, version, sstables::sstable::format_types::big);
@@ -5346,7 +5347,7 @@ static void test_sstable_log_too_many_rows_f(int rows, uint64_t threshold, bool 
 
     large_row_handler handler(std::numeric_limits<uint64_t>::max(), threshold, f);
     sstables_manager manager(handler, test_db_config, test_feature_service);
-    auto close_manager = defer([&] { manager.close().get(); });
+    auto close_manager = deferred_close(manager);
     tmpdir dir;
     auto sst = manager.make_sstable(sc, dir.path().string(), 1, version, sstables::sstable::format_types::big);
     sst->write_components(mt->make_flat_reader(sc, tests::make_permit()), 1, sc, manager.configure_writer("test"), encoding_stats{}).get();

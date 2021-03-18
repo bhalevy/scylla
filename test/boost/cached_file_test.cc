@@ -25,7 +25,6 @@
 #include <seastar/core/fstream.hh>
 #include <seastar/core/file.hh>
 #include <seastar/core/reactor.hh>
-#include <seastar/util/defer.hh>
 
 #include "test/lib/random_utils.hh"
 #include "test/lib/log.hh"
@@ -33,6 +32,7 @@
 #include "test/lib/reader_permit.hh"
 
 #include "utils/cached_file.hh"
+#include "utils/closeable.hh"
 
 using namespace seastar;
 
@@ -72,7 +72,7 @@ test_file make_test_file(size_t size) {
     testlog.debug("file contents: {}", contents);
 
     output_stream<char> out = make_file_output_stream(f).get0();
-    auto close_out = defer([&] { out.close().get(); });
+    auto close_out = deferred_close(out);
     out.write(contents.begin(), contents.size()).get();
     out.flush().get();
 
