@@ -427,6 +427,9 @@ reader_concurrency_semaphore::reader_concurrency_semaphore(null_permits, sstring
     : reader_concurrency_semaphore(0, 0,std::move(name)) {}
 
 reader_concurrency_semaphore::~reader_concurrency_semaphore() {
+    if (!_stopped) {
+        on_internal_error_noexcept(rcslog, "reader_concurrency_semaphore no stopped");
+    }
     assert(_stopped);
 }
 

@@ -2002,6 +2002,8 @@ future<> multishard_combining_reader::close() noexcept {
         return parallel_for_each(shard_readers, [] (lw_shared_ptr<shard_reader>& sr) {
             return sr->close();
         });
+    }).finally([this] {
+        return _lifecycle_policy->stop();
     });
 }
 
