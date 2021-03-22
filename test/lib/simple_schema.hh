@@ -43,10 +43,12 @@ class simple_schema {
     api::timestamp_type _timestamp = api::min_timestamp;
     const column_definition* _v_def = nullptr;
     table_schema_version _v_def_version;
+    reader_concurrency_semaphore& _semaphore;
 
-    simple_schema(schema_ptr s, api::timestamp_type timestamp)
+    simple_schema(schema_ptr s, api::timestamp_type timestamp, reader_concurrency_semaphore& semaphore)
         : _s(s)
         , _timestamp(timestamp)
+        , _semaphore(semaphore)
     {}
 private:
     const column_definition& get_v_def(const schema& s) {
@@ -69,13 +71,14 @@ public:
     }
 public:
     using with_static = bool_class<class static_tag>;
-    simple_schema(with_static ws = with_static::yes)
+    simple_schema(reader_concurrency_semaphore& semaphore, with_static ws = with_static::yes)
         : _s(schema_builder("ks", "cf")
             .with_column("pk", utf8_type, column_kind::partition_key)
             .with_column("ck", utf8_type, column_kind::clustering_key)
             .with_column("s1", utf8_type, ws ? column_kind::static_column : column_kind::regular_column)
             .with_column("v", utf8_type)
             .build())
+        , _semaphore(semaphore)
     { }
 
     sstring cql() const {
@@ -132,21 +135,21 @@ public:
         auto row = clustering_row(key);
         const column_definition& v_def = get_v_def(*_s);
         row.cells().apply(v_def, atomic_cell::make_live(*v_def.type, new_timestamp(), serialized(v)));
-        return mutation_fragment(*_s, tests::make_permit(), std::move(row));
+        return mutation_fragment(*_s, tests::make_permit(_semaphore), std::move(row));
     }
 
     mutation_fragment make_row_from_serialized_value(const clustering_key& key, bytes_view v) {
         auto row = clustering_row(key);
         const column_definition& v_def = get_v_def(*_s);
         row.cells().apply(v_def, atomic_cell::make_live(*v_def.type, new_timestamp(), v));
-        return mutation_fragment(*_s, tests::make_permit(), std::move(row));
+        return mutation_fragment(*_s, tests::make_permit(_semaphore), std::move(row));
     }
 
     mutation_fragment make_static_row(sstring v) {
         static_row row;
         const column_definition& s_def = *_s->get_column_definition(to_bytes("s1"));
         row.cells().apply(s_def, atomic_cell::make_live(*s_def.type, new_timestamp(), serialized(v)));
-        return mutation_fragment(*_s, tests::make_permit(), std::move(row));
+        return mutation_fragment(*_s, tests::make_permit(_semaphore), std::move(row));
     }
 
     void set_schema(schema_ptr s) {
@@ -225,14 +228,16 @@ public:
 class global_simple_schema {
     global_schema_ptr _gs;
     api::timestamp_type _timestamp;
+    reader_concurrency_semaphore& _semaphore;
 public:
 
-    global_simple_schema(simple_schema& s)
+    global_simple_schema(simple_schema& s, reader_concurrency_semaphore& semaphore)
         : _gs(s.schema())
-        , _timestamp(s.current_timestamp()) {
-    }
+        , _timestamp(s.current_timestamp())
+        , _semaphore(semaphore)
+    {}
 
     simple_schema get() const {
-        return simple_schema(_gs.get(), _timestamp);
+        return simple_schema(_gs.get(), _timestamp, _semaphore);
     }
 };

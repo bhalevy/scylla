@@ -30,6 +30,8 @@
 #include "test/lib/tmpdir.hh"
 #include "test/lib/test_services.hh"
 #include "test/lib/log.hh"
+#include "test/lib/reader_permit.hh"
+#include "test/lib/reader_concurrency_semaphore_for_tests.hh"
 
 namespace sstables {
 
@@ -43,6 +45,7 @@ public:
 
 class test_env {
     std::unique_ptr<test_env_sstables_manager> _mgr;
+    reader_concurrency_semaphore_for_tests _test_semaphore;
 public:
     explicit test_env() : _mgr(std::make_unique<test_env_sstables_manager>(nop_lp_handler, test_db_config, test_feature_service)) { }
 
@@ -115,6 +118,10 @@ public:
             auto stop = deferred_stop(env);
             return func(env);
         });
+    }
+
+    reader_concurrency_semaphore_for_tests& test_semaphore() {
+        return _test_semaphore;
     }
 };
 

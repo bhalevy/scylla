@@ -24,7 +24,7 @@
 #include "mutation_reader.hh"
 #include "memtable.hh"
 #include "utils/phased_barrier.hh"
-#include "test/lib/reader_permit.hh"
+#include "test/lib/reader_concurrency_semaphore_for_tests.hh"
 #include <seastar/core/circular_buffer.hh>
 #include <seastar/core/thread.hh>
 #include <seastar/core/condition-variable.hh>
@@ -34,6 +34,7 @@
 // Must be destroyed in a seastar thread.
 class memtable_snapshot_source {
     schema_ptr _s;
+    reader_concurrency_semaphore_for_tests& _test_semaphore;
     circular_buffer<lw_shared_ptr<memtable>> _memtables;
     utils::phased_barrier _apply;
     bool _closed = false;
@@ -68,7 +69,7 @@ private:
         std::vector<flat_mutation_reader> readers;
         for (auto&& mt : _memtables) {
             readers.push_back(mt->make_flat_reader(new_mt->schema(),
-                 tests::make_permit(),
+                 _test_semaphore.make_permit(),
                  query::full_partition_range,
                  new_mt->schema()->full_slice(),
                  default_priority_class(),
@@ -77,7 +78,7 @@ private:
                  mutation_reader::forwarding::yes));
         }
         _memtables.push_back(new_memtable());
-        auto&& rd = make_combined_reader(new_mt->schema(), tests::make_permit(), std::move(readers));
+        auto&& rd = make_combined_reader(new_mt->schema(), _test_semaphore.make_permit(), std::move(readers));
         auto close_rd = deferred_close(rd);
         consume_partitions(rd, [&] (mutation&& m) {
             new_mt->apply(std::move(m));
@@ -87,8 +88,9 @@ private:
         _memtables.push_back(new_mt);
     }
 public:
-    memtable_snapshot_source(schema_ptr s)
+    memtable_snapshot_source(schema_ptr s, reader_concurrency_semaphore_for_tests& test_semaphore)
         : _s(s)
+        , _test_semaphore(test_semaphore)
         , _compactor(seastar::async([this] () noexcept {
             while (!_closed) {
                 // condition_variable::wait() also allocates memory
@@ -126,7 +128,7 @@ public:
     void apply(memtable& mt) {
         auto op = _apply.start();
         auto new_mt = new_memtable();
-        new_mt->apply(mt, tests::make_permit()).get();
+        new_mt->apply(mt, _test_semaphore.make_permit()).get();
         _memtables.push_back(new_mt);
     }
     // mt must not change from now on.

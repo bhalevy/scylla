@@ -34,6 +34,8 @@
 #include "db/large_data_handler.hh"
 #include "sstables/sstables_manager.hh"
 
+class reader_concurrency_semaphore_for_tests;
+
 // Includes: database, auth, storage_service
 class storage_service_for_tests {
     class impl;
@@ -41,6 +43,8 @@ class storage_service_for_tests {
 public:
     storage_service_for_tests();
     ~storage_service_for_tests();
+
+    reader_concurrency_semaphore_for_tests& local_test_semaphore();
 };
 
 extern db::nop_large_data_handler nop_lp_handler;

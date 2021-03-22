@@ -29,7 +29,9 @@
 #include <boost/range/adaptor/map.hpp>
 #include "test/lib/flat_mutation_reader_assertions.hh"
 #include "test/lib/reader_permit.hh"
+#include "test/lib/sstable_test_env.hh"
 #include <seastar/core/reactor.hh>
+#include "test/lib/reader_concurrency_semaphore_for_tests.hh"
 
 using namespace sstables;
 using namespace std::chrono_literals;
@@ -93,7 +95,8 @@ sstables::shared_sstable make_sstable_containing(std::function<sstables::shared_
     }
 
     // validate the sstable
-    auto rd = assert_that(sst->as_mutation_source().make_reader(s, tests::make_permit()));
+    reader_concurrency_semaphore_for_tests test_semaphore;
+    auto rd = assert_that(sst->as_mutation_source().make_reader(s, test_semaphore.make_permit()));
     for (auto&& m : merged) {
         rd.produces(m);
     }
@@ -118,7 +121,7 @@ shared_sstable make_sstable(sstables::test_env& env, schema_ptr s, sstring dir, 
         mt->apply(m);
     }
 
-    sst->write_components(mt->make_flat_reader(s, tests::make_permit()), mutations.size(), s, cfg, mt->get_encoding_stats()).get();
+    sst->write_components(mt->make_flat_reader(s, env.test_semaphore().make_permit()), mutations.size(), s, cfg, mt->get_encoding_stats()).get();
     sst->load().get();
 
     return sst;
@@ -184,5 +187,31 @@ future<shared_sstable> test_env::reusable_sst(schema_ptr schema, sstring dir, un
                 return make_exception_future<shared_sstable>(std::move(ret_ep));
             }
         });
+    });
+}
+
+future<> test_setup::do_with_tmp_directory(std::function<future<> (test_env&, sstring tmpdir_path)>&& fut) {
+    return seastar::async([fut = std::move(fut)] {
+        storage_service_for_tests ssft;
+        auto tmp = tmpdir();
+        test_env env;
+        auto close_env = deferred_stop(env);
+        fut(env, tmp.path().string()).get();
+    });
+}
+
+future<> test_setup::do_with_cloned_tmp_directory(sstring src, std::function<future<> (test_env&, sstring srcdir_path, sstring destdir_path)>&& fut) {
+    return seastar::async([fut = std::move(fut), src = std::move(src)] {
+        storage_service_for_tests ssft;
+        auto src_dir = tmpdir();
+        auto dest_dir = tmpdir();
+        for (const auto& entry : std::filesystem::directory_iterator(src.c_str())) {
+            std::filesystem::copy(entry.path(), src_dir.path() / entry.path().filename());
+        }
+        auto dest_path = dest_dir.path() / src.c_str();
+        std::filesystem::create_directories(dest_path);
+        test_env env;
+        auto close_env = deferred_stop(env);
+        fut(env, src_dir.path().string(), dest_path.string()).get();
     });
 }

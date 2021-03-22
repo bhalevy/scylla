@@ -123,6 +123,7 @@ private:
     sharded<db::view::view_update_generator>& _view_update_generator;
     sharded<service::migration_notifier>& _mnotifier;
     sharded<cdc::generation_service>& _cdc_generation_service;
+    sharded<reader_concurrency_semaphore_for_tests>& _test_semaphore;
 private:
     struct core_local_state {
         service::client_state client_state;
@@ -154,7 +155,8 @@ public:
             sharded<db::view::view_builder>& view_builder,
             sharded<db::view::view_update_generator>& view_update_generator,
             sharded<service::migration_notifier>& mnotifier,
-            sharded<cdc::generation_service>& cdc_generation_service)
+            sharded<cdc::generation_service>& cdc_generation_service,
+            sharded<reader_concurrency_semaphore_for_tests>& test_semaphore)
             : _feature_service(feature_service)
             , _db(db)
             , _qp(qp)
@@ -163,6 +165,7 @@ public:
             , _view_update_generator(view_update_generator)
             , _mnotifier(mnotifier)
             , _cdc_generation_service(cdc_generation_service)
+            , _test_semaphore(test_semaphore)
     { }
 
     virtual future<::shared_ptr<cql_transport::messages::result_message>> execute_cql(sstring_view text) override {
@@ -276,7 +279,7 @@ public:
         auto exp = expected.type()->decompose(expected);
         auto dk = dht::decorate_key(*schema, pkey);
         auto shard = dht::shard_of(*schema, dk._token);
-        return _db.invoke_on(shard, [pkey = std::move(pkey),
+        return _db.invoke_on(shard, [this, pkey = std::move(pkey),
                                       ckey = std::move(ckey),
                                       ks_name = std::move(ks_name),
                                       column_name = std::move(column_name),
@@ -284,7 +287,7 @@ public:
                                       table_name = std::move(table_name)] (database& db) mutable {
           auto& cf = db.find_column_family(ks_name, table_name);
           auto schema = cf.schema();
-          return cf.find_partition_slow(schema, tests::make_permit(), pkey)
+          return cf.find_partition_slow(schema, local_test_semaphore().make_permit(), pkey)
                   .then([schema, ckey, column_name, exp] (column_family::const_mutation_partition_ptr p) {
             assert(p != nullptr);
             auto row = p->find_row(*schema, ckey);
@@ -343,6 +346,10 @@ public:
 
     virtual service::migration_notifier& local_mnotifier() override {
         return _mnotifier.local();
+    }
+
+    virtual reader_concurrency_semaphore_for_tests& local_test_semaphore() override {
+        return _test_semaphore.local();
     }
 
     future<> start() {
@@ -628,6 +635,12 @@ public:
                 view_builder.stop().get();
             });
 
+            sharded<reader_concurrency_semaphore_for_tests> test_semaphore;
+            test_semaphore.start();
+            auto stop_test_semaphore = defer([&test_semaphore] {
+                test_semaphore.stop().get();
+            });
+
             // Create the testing user.
             try {
                 auth::role_config config;
@@ -643,7 +656,7 @@ public:
                 // The default user may already exist if this `cql_test_env` is starting with previously populated data.
             }
 
-            single_node_cql_env env(feature_service, db, qp, auth_service, view_builder, view_update_generator, mm_notif, cdc_generation_service);
+            single_node_cql_env env(feature_service, db, qp, auth_service, view_builder, view_update_generator, mm_notif, cdc_generation_service, test_semaphore);
             env.start().get();
             auto stop_env = defer([&env] { env.stop().get(); });
 

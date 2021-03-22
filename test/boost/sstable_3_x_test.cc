@@ -95,7 +95,7 @@ public:
         return sstables::test(_sst).read_indexes();
     }
     flat_mutation_reader make_reader() {
-        return _sst->make_reader(_sst->_schema, tests::make_permit(), query::full_partition_range, _sst->_schema->full_slice());
+        return _sst->make_reader(_sst->_schema, _env.test_semaphore().make_permit(), query::full_partition_range, _sst->_schema->full_slice());
     }
 
     const stats_metadata& get_stats_metadata() const {
@@ -115,7 +115,7 @@ public:
             mutation_reader::forwarding fwd_mr = mutation_reader::forwarding::yes,
             read_monitor& monitor = default_read_monitor()) {
         return _sst->make_reader(_sst->_schema,
-                                          tests::make_permit(),
+                                          _env.test_semaphore().make_permit(),
                                           range,
                                           slice,
                                           pc,
@@ -3136,7 +3136,7 @@ static flat_mutation_reader compacted_sstable_reader(test_env& env, schema_ptr s
     sstables::compact_sstables(std::move(desc), *cf).get();
 
     auto compacted_sst = open_sstable(env, s, tmp.path().string(), new_generation);
-    return compacted_sst->as_mutation_source().make_reader(s, tests::make_permit(), query::full_partition_range, s->full_slice());
+    return compacted_sst->as_mutation_source().make_reader(s, env.test_semaphore().make_permit(), query::full_partition_range, s->full_slice());
 }
 
 SEASTAR_THREAD_TEST_CASE(compact_deleted_row) {
@@ -3319,9 +3319,9 @@ static tmpdir write_sstables(test_env& env, schema_ptr s, lw_shared_ptr<memtable
     auto sst = env.make_sstable(s, tmp.path().string(), 1, version, sstable::format_types::big, 4096);
 
     sst->write_components(make_combined_reader(s,
-        tests::make_permit(),
-        mt1->make_flat_reader(s, tests::make_permit()),
-        mt2->make_flat_reader(s, tests::make_permit())), 1, s, env.manager().configure_writer(), mt1->get_encoding_stats()).get();
+        _env.test_semaphore().make_permit(),
+        mt1->make_flat_reader(s, _env.test_semaphore().make_permit()),
+        mt2->make_flat_reader(s, _env.test_semaphore().make_permit())), 1, s, env.manager().configure_writer(), mt1->get_encoding_stats()).get();
     return tmp;
 }
 
@@ -4669,7 +4669,7 @@ static sstring get_read_index_test_path(sstring table_name) {
 }
 
 static std::unique_ptr<index_reader> get_index_reader(shared_sstable sst) {
-    return std::make_unique<index_reader>(sst, tests::make_permit(), default_priority_class(), tracing::trace_state_ptr());
+    return std::make_unique<index_reader>(sst, _env.test_semaphore().make_permit(), default_priority_class(), tracing::trace_state_ptr());
 }
 
 shared_sstable make_test_sstable(test_env& env, schema_ptr schema, const sstring& table_name, int64_t gen = 1) {
@@ -5212,11 +5212,11 @@ SEASTAR_THREAD_TEST_CASE(test_sstable_reader_on_unknown_column) {
             1 /* generation */,
             version,
             sstables::sstable::format_types::big);
-        sst->write_components(mt->make_flat_reader(write_schema, tests::make_permit()), 1, write_schema, cfg, mt->get_encoding_stats()).get();
+        sst->write_components(mt->make_flat_reader(write_schema, _env.test_semaphore().make_permit()), 1, write_schema, cfg, mt->get_encoding_stats()).get();
         sst->load().get();
 
         BOOST_REQUIRE_EXCEPTION(
-            assert_that(sst->make_reader(read_schema, tests::make_permit(), query::full_partition_range, read_schema->full_slice()))
+            assert_that(sst->make_reader(read_schema, _env.test_semaphore().make_permit(), query::full_partition_range, read_schema->full_slice()))
                 .produces_partition_start(dk)
                 .produces_row(to_ck(0), {{val2_cdef, int32_type->decompose(int32_t(200))}})
                 .produces_row(to_ck(1), {{val2_cdef, int32_type->decompose(int32_t(201))}})
@@ -5301,7 +5301,7 @@ static void test_sstable_write_large_row_f(schema_ptr s, memtable& mt, const par
     // trigger depends on the size of rows after they are written in the MC format and that size
     // depends on the encoding statistics (because of variable-length encoding). The original values
     // were chosen with the default-constructed encoding_stats, so let's keep it that way.
-    sst->write_components(mt.make_flat_reader(s, tests::make_permit()), 1, s, manager.configure_writer("test"), encoding_stats{}).get();
+    sst->write_components(mt.make_flat_reader(s, _env.test_semaphore().make_permit()), 1, s, manager.configure_writer("test"), encoding_stats{}).get();
     BOOST_REQUIRE_EQUAL(i, expected.size());
 }
 
@@ -5352,7 +5352,7 @@ static void test_sstable_log_too_many_rows_f(int rows, uint64_t threshold, bool 
     auto close_manager = deferred_close(manager);
     tmpdir dir;
     auto sst = manager.make_sstable(sc, dir.path().string(), 1, version, sstables::sstable::format_types::big);
-    sst->write_components(mt->make_flat_reader(sc, tests::make_permit()), 1, sc, manager.configure_writer("test"), encoding_stats{}).get();
+    sst->write_components(mt->make_flat_reader(sc, _env.test_semaphore().make_permit()), 1, sc, manager.configure_writer("test"), encoding_stats{}).get();
 
     BOOST_REQUIRE_EQUAL(logged, expected);
 }

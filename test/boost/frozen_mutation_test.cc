@@ -105,10 +105,10 @@ SEASTAR_TEST_CASE(test_application_of_partition_view_has_the_same_effect_as_appl
 
 SEASTAR_THREAD_TEST_CASE(test_frozen_mutation_fragment) {
     storage_service_for_tests ssft;
-    for_each_mutation([] (const mutation& m) {
+    for_each_mutation([&ssft] (const mutation& m) {
         auto& s = *m.schema();
         std::vector<mutation_fragment> mfs;
-        auto rd = flat_mutation_reader_from_mutations(tests::make_permit(), { m });
+        auto rd = flat_mutation_reader_from_mutations(ssft.local_test_semaphore().make_permit(), { m });
         auto close_rd = deferred_close(rd);
         rd.consume_pausable([&] (mutation_fragment mf) {
             mfs.emplace_back(std::move(mf));
@@ -116,7 +116,7 @@ SEASTAR_THREAD_TEST_CASE(test_frozen_mutation_fragment) {
         }, db::no_timeout).get();
 
         for (auto&& mf : mfs) {
-            auto refrozen_mf = freeze(s, mf).unfreeze(s, tests::make_permit());
+            auto refrozen_mf = freeze(s, mf).unfreeze(s, ssft.local_test_semaphore().make_permit());
             if (!mf.equal(s, refrozen_mf)) {
                 BOOST_FAIL("Expected " << mutation_fragment::printer(s, mf) << " got " << mutation_fragment::printer(s, refrozen_mf));
             }

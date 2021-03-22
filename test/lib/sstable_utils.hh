@@ -33,9 +33,12 @@
 #include <boost/range/irange.hpp>
 #include <boost/range/adaptor/map.hpp>
 #include "test/lib/test_services.hh"
-#include "test/lib/sstable_test_env.hh"
 #include "test/lib/reader_permit.hh"
 #include "gc_clock.hh"
+
+namespace sstables {
+    class test_env;
+}
 
 using namespace sstables;
 using namespace std::chrono_literals;
@@ -75,7 +78,7 @@ inline std::vector<sstring> make_keys(unsigned n, const schema_ptr& s, size_t mi
     return do_make_keys(n, s, min_key_size, local_shard_only::no);
 }
 
-shared_sstable make_sstable(sstables::test_env& env, schema_ptr s, sstring dir, std::vector<mutation> mutations,
+shared_sstable make_sstable(test_env& env, schema_ptr s, sstring dir, std::vector<mutation> mutations,
         sstable_writer_config cfg, sstables::sstable::version_types version, gc_clock::time_point query_time = gc_clock::now());
 
 std::vector<std::pair<sstring, dht::token>>
@@ -91,21 +94,25 @@ using sstable_ptr = shared_sstable;
 
 class test {
     sstable_ptr _sst;
+    reader_concurrency_semaphore _semaphore;
 public:
 
-    test(sstable_ptr s) : _sst(s) {}
+    test(sstable_ptr s)
+        : _sst(s)
+        , _semaphore(reader_concurrency_semaphore::no_limits{}, "sstables test")
+    {}
 
     summary& _summary() {
         return _sst->_components->summary;
     }
 
     future<temporary_buffer<char>> data_read(uint64_t pos, size_t len) {
-        return _sst->data_read(pos, len, default_priority_class(), tests::make_permit());
+        return _sst->data_read(pos, len, default_priority_class(), tests::make_permit(_semaphore));
     }
 
     future<index_list> read_indexes() {
         auto l = make_lw_shared<index_list>();
-        return do_with(std::make_unique<index_reader>(_sst, tests::make_permit(), default_priority_class(), tracing::trace_state_ptr()),
+        return do_with(std::make_unique<index_reader>(_sst, tests::make_permit(_semaphore), default_priority_class(), tracing::trace_state_ptr()),
                 [this, l] (std::unique_ptr<index_reader>& ir) {
             return ir->read_partition_data().then([&, l] {
                 l->push_back(std::move(ir->current_partition_entry()));
@@ -313,31 +320,9 @@ public:
         });
     }
 
-    static future<> do_with_tmp_directory(std::function<future<> (test_env&, sstring tmpdir_path)>&& fut) {
-        return seastar::async([fut = std::move(fut)] {
-            storage_service_for_tests ssft;
-            auto tmp = tmpdir();
-            test_env env;
-            auto close_env = deferred_stop(env);
-            fut(env, tmp.path().string()).get();
-        });
-    }
+    static future<> do_with_tmp_directory(std::function<future<> (test_env&, sstring tmpdir_path)>&& fut);
 
-    static future<> do_with_cloned_tmp_directory(sstring src, std::function<future<> (test_env&, sstring srcdir_path, sstring destdir_path)>&& fut) {
-        return seastar::async([fut = std::move(fut), src = std::move(src)] {
-            storage_service_for_tests ssft;
-            auto src_dir = tmpdir();
-            auto dest_dir = tmpdir();
-            for (const auto& entry : std::filesystem::directory_iterator(src.c_str())) {
-                std::filesystem::copy(entry.path(), src_dir.path() / entry.path().filename());
-            }
-            auto dest_path = dest_dir.path() / src.c_str();
-            std::filesystem::create_directories(dest_path);
-            test_env env;
-            auto close_env = deferred_stop(env);
-            fut(env, src_dir.path().string(), dest_path.string()).get();
-        });
-    }
+    static future<> do_with_cloned_tmp_directory(sstring src, std::function<future<> (test_env&, sstring srcdir_path, sstring destdir_path)>&& fut);
 };
 
 } // namespace sstables

@@ -220,7 +220,8 @@ void test_slice_single_version(mutation& underlying,
                                std::deque<expected_row> expected_cache_rows,
                                std::deque<range_tombstone> expected_cache_tombstones) {
     // Set up underlying
-    memtable_snapshot_source source_mt(SCHEMA);
+    reader_concurrency_semaphore_for_tests test_semaphore;
+    memtable_snapshot_source source_mt(SCHEMA, test_semaphore);
     source_mt.apply(underlying);
     cache_tracker tracker;
     row_cache cache(SCHEMA, snapshot_source([&] { return source_mt(); }), tracker);
@@ -229,7 +230,7 @@ void test_slice_single_version(mutation& underlying,
 
     try {
         auto range = dht::partition_range::make_singular(DK);
-        auto reader = cache.make_reader(SCHEMA, tests::make_permit(), range, slice);
+        auto reader = cache.make_reader(SCHEMA, test_semaphore.make_permit(), range, slice);
 
         check_produces_only(DK, std::move(reader), expected_sm_fragments, slice.row_ranges(*SCHEMA, DK.key()));
 

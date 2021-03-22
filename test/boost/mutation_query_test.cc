@@ -61,14 +61,14 @@ struct mutation_less_cmp {
         return m1.decorated_key().less_compare(*m1.schema(), m2.decorated_key());
     }
 };
-mutation_source make_source(std::vector<mutation> mutations) {
-    return mutation_source([mutations = std::move(mutations)] (schema_ptr s, reader_permit, const dht::partition_range& range, const query::partition_slice& slice,
+mutation_source make_source(storage_service_for_tests& ssft, std::vector<mutation> mutations) {
+    return mutation_source([mutations = std::move(mutations), &ssft] (schema_ptr s, reader_permit, const dht::partition_range& range, const query::partition_slice& slice,
             const io_priority_class& pc, tracing::trace_state_ptr, streamed_mutation::forwarding fwd, mutation_reader::forwarding fwd_mr) {
         assert(range.is_full()); // slicing not implemented yet
         for (auto&& m : mutations) {
             assert(m.schema() == s);
         }
-        return flat_mutation_reader_from_mutations(tests::make_permit(), mutations, slice, fwd);
+        return flat_mutation_reader_from_mutations(ssft.local_test_semaphore().make_permit(), mutations, slice, fwd);
     });
 }
 
@@ -98,14 +98,14 @@ SEASTAR_TEST_CASE(test_reading_from_single_partition) {
         m1.set_clustered_cell(clustering_key::from_single_value(*s, bytes("C")), "v1", data_value(bytes("C:v")), 1);
         m1.set_clustered_cell(clustering_key::from_single_value(*s, bytes("D")), "v1", data_value(bytes("D:v")), 1);
 
-        auto src = make_source({m1});
+        auto src = make_source(ssft, {m1});
 
         // Test full slice, but with row limit
         {
             auto slice = make_full_slice(*s);
 
             reconcilable_result result = mutation_query(s, src,
-                query::full_partition_range, slice, 2, query::max_partitions, now, db::no_timeout, tests::make_query_class_config(), make_accounter()).get0();
+                query::full_partition_range, slice, 2, query::max_partitions, now, db::no_timeout, ssft.local_test_semaphore().make_query_class_config(), make_accounter()).get0();
 
             // FIXME: use mutation assertions
             assert_that(to_result_set(result, s, slice))
@@ -128,7 +128,7 @@ SEASTAR_TEST_CASE(test_reading_from_single_partition) {
                 .build();
 
             reconcilable_result result = mutation_query(s, src,
-                query::full_partition_range, slice, query::max_rows, query::max_partitions, now, db::no_timeout, tests::make_query_class_config(), make_accounter()).get0();
+                query::full_partition_range, slice, query::max_rows, query::max_partitions, now, db::no_timeout, ssft.local_test_semaphore().make_query_class_config(), make_accounter()).get0();
 
             assert_that(to_result_set(result, s, slice))
                 .has_only(a_row()
@@ -157,14 +157,14 @@ SEASTAR_TEST_CASE(test_cells_are_expired_according_to_query_timestamp) {
             atomic_cell::make_live(*s->get_column_definition("v1")->type, 
                                    api::timestamp_type(1), bytes("B:v1")));
 
-        auto src = make_source({m1});
+        auto src = make_source(ssft, {m1});
 
         // Not expired yet
         {
             auto slice = make_full_slice(*s);
 
             reconcilable_result result = mutation_query(s, src,
-                query::full_partition_range, slice, 1, query::max_partitions, now, db::no_timeout, tests::make_query_class_config(), make_accounter()).get0();
+                query::full_partition_range, slice, 1, query::max_partitions, now, db::no_timeout, ssft.local_test_semaphore().make_query_class_config(), make_accounter()).get0();
 
             assert_that(to_result_set(result, s, slice))
                 .has_only(a_row()
@@ -178,7 +178,7 @@ SEASTAR_TEST_CASE(test_cells_are_expired_according_to_query_timestamp) {
             auto slice = make_full_slice(*s);
 
             reconcilable_result result = mutation_query(s, src,
-                query::full_partition_range, slice, 1, query::max_partitions, now + 2s, db::no_timeout, tests::make_query_class_config(), make_accounter()).get0();
+                query::full_partition_range, slice, 1, query::max_partitions, now + 2s, db::no_timeout, ssft.local_test_semaphore().make_query_class_config(), make_accounter()).get0();
 
             assert_that(to_result_set(result, s, slice))
                 .has_only(a_row()
@@ -203,7 +203,7 @@ SEASTAR_TEST_CASE(test_reverse_ordering_is_respected) {
         m1.set_clustered_cell(clustering_key::from_single_value(*s, bytes("D")), "v1", data_value(bytes("D_v1")), 1);
         m1.set_clustered_cell(clustering_key::from_single_value(*s, bytes("E")), "v1", data_value(bytes("E_v1")), 1);
 
-        auto src = make_source({m1});
+        auto src = make_source(ssft, {m1});
 
         {
             auto slice = partition_slice_builder(*s)
@@ -211,7 +211,7 @@ SEASTAR_TEST_CASE(test_reverse_ordering_is_respected) {
                 .build();
 
             reconcilable_result result = mutation_query(s, src,
-                query::full_partition_range, slice, 3, query::max_partitions, now, db::no_timeout, tests::make_query_class_config(), make_accounter()).get0();
+                query::full_partition_range, slice, 3, query::max_partitions, now, db::no_timeout, ssft.local_test_semaphore().make_query_class_config(), make_accounter()).get0();
 
             assert_that(to_result_set(result, s, slice))
                 .has_size(3)
@@ -241,7 +241,7 @@ SEASTAR_TEST_CASE(test_reverse_ordering_is_respected) {
                 .build();
 
             reconcilable_result result = mutation_query(s, src,
-                query::full_partition_range, slice, 3, query::max_partitions, now, db::no_timeout, tests::make_query_class_config(), make_accounter()).get0();
+                query::full_partition_range, slice, 3, query::max_partitions, now, db::no_timeout, ssft.local_test_semaphore().make_query_class_config(), make_accounter()).get0();
 
             assert_that(to_result_set(result, s, slice))
                 .has_size(3)
@@ -269,7 +269,7 @@ SEASTAR_TEST_CASE(test_reverse_ordering_is_respected) {
 
             {
                 reconcilable_result result = mutation_query(s, src,
-                    query::full_partition_range, slice, 10, query::max_partitions, now, db::no_timeout, tests::make_query_class_config(), make_accounter()).get0();
+                    query::full_partition_range, slice, 10, query::max_partitions, now, db::no_timeout, ssft.local_test_semaphore().make_query_class_config(), make_accounter()).get0();
 
                 assert_that(to_result_set(result, s, slice))
                     .has_size(3)
@@ -289,7 +289,7 @@ SEASTAR_TEST_CASE(test_reverse_ordering_is_respected) {
 
             {
                 reconcilable_result result = mutation_query(s, src,
-                    query::full_partition_range, slice, 1, query::max_partitions, now, db::no_timeout, tests::make_query_class_config(), make_accounter()).get0();
+                    query::full_partition_range, slice, 1, query::max_partitions, now, db::no_timeout, ssft.local_test_semaphore().make_query_class_config(), make_accounter()).get0();
 
                 assert_that(to_result_set(result, s, slice))
                     .has_size(1)
@@ -301,7 +301,7 @@ SEASTAR_TEST_CASE(test_reverse_ordering_is_respected) {
 
             {
                 reconcilable_result result = mutation_query(s, src,
-                    query::full_partition_range, slice, 2, query::max_partitions, now, db::no_timeout, tests::make_query_class_config(), make_accounter()).get0();
+                    query::full_partition_range, slice, 2, query::max_partitions, now, db::no_timeout, ssft.local_test_semaphore().make_query_class_config(), make_accounter()).get0();
 
                 assert_that(to_result_set(result, s, slice))
                     .has_size(2)
@@ -328,7 +328,7 @@ SEASTAR_TEST_CASE(test_reverse_ordering_is_respected) {
                 .build();
 
             reconcilable_result result = mutation_query(s, src,
-                query::full_partition_range, slice, 2, query::max_partitions, now, db::no_timeout, tests::make_query_class_config(), make_accounter()).get0();
+                query::full_partition_range, slice, 2, query::max_partitions, now, db::no_timeout, ssft.local_test_semaphore().make_query_class_config(), make_accounter()).get0();
 
             assert_that(to_result_set(result, s, slice))
                 .has_size(2)
@@ -352,7 +352,7 @@ SEASTAR_TEST_CASE(test_reverse_ordering_is_respected) {
                 .build();
 
             reconcilable_result result = mutation_query(s, src,
-                query::full_partition_range, slice, 3, query::max_partitions, now, db::no_timeout, tests::make_query_class_config(), make_accounter()).get0();
+                query::full_partition_range, slice, 3, query::max_partitions, now, db::no_timeout, ssft.local_test_semaphore().make_query_class_config(), make_accounter()).get0();
 
             assert_that(to_result_set(result, s, slice))
                 .has_size(2)
@@ -374,7 +374,7 @@ SEASTAR_TEST_CASE(test_reverse_ordering_is_respected) {
                 .build();
 
             reconcilable_result result = mutation_query(s, src,
-                query::full_partition_range, slice, 3, query::max_partitions, now, db::no_timeout, tests::make_query_class_config(), make_accounter()).get0();
+                query::full_partition_range, slice, 3, query::max_partitions, now, db::no_timeout, ssft.local_test_semaphore().make_query_class_config(), make_accounter()).get0();
 
             assert_that(to_result_set(result, s, slice))
                 .has_only(a_row()
@@ -396,11 +396,11 @@ SEASTAR_TEST_CASE(test_query_when_partition_tombstone_covers_live_cells) {
         m1.partition().apply(tombstone(api::timestamp_type(1), now));
         m1.set_clustered_cell(clustering_key::from_single_value(*s, bytes("A")), "v1", data_value(bytes("A:v")), 1);
 
-        auto src = make_source({m1});
+        auto src = make_source(ssft, {m1});
         auto slice = make_full_slice(*s);
 
         reconcilable_result result = mutation_query(s, src,
-            query::full_partition_range, slice, query::max_rows, query::max_partitions, now, db::no_timeout, tests::make_query_class_config(), make_accounter()).get0();
+            query::full_partition_range, slice, query::max_rows, query::max_partitions, now, db::no_timeout, ssft.local_test_semaphore().make_query_class_config(), make_accounter()).get0();
 
         assert_that(to_result_set(result, s, slice))
             .is_empty();
@@ -445,13 +445,13 @@ SEASTAR_TEST_CASE(test_partitions_with_only_expired_tombstones_are_dropped) {
         ring[2].partition().apply(tombstone(api::new_timestamp(), now));
         ring[3].set_clustered_cell(clustering_key::make_empty(), "v", data_value(bytes("v")), api::new_timestamp());
 
-        auto src = make_source(ring);
+        auto src = make_source(ssft, ring);
         auto slice = make_full_slice(*s);
 
         auto query_time = now + std::chrono::seconds(1);
 
         reconcilable_result result = mutation_query(s, src, query::full_partition_range, slice, query::max_rows, query::max_partitions, query_time,
-                db::no_timeout, tests::make_query_class_config(), make_accounter()).get0();
+                db::no_timeout, ssft.local_test_semaphore().make_query_class_config(), make_accounter()).get0();
 
         BOOST_REQUIRE_EQUAL(result.partitions().size(), 2);
         BOOST_REQUIRE_EQUAL(result.row_count(), 2);
@@ -467,31 +467,31 @@ SEASTAR_TEST_CASE(test_result_row_count) {
 
             mutation m1(s, partition_key::from_single_value(*s, "key1"));
 
-            auto src = make_source({m1});
+            auto src = make_source(ssft, {m1});
 
-            auto r = to_data_query_result(mutation_query(s, make_source({m1}), query::full_partition_range, slice, 10000, query::max_partitions, now,
-                        db::no_timeout, tests::make_query_class_config(), make_accounter()).get0(), s, slice, inf32, inf32);
+            auto r = to_data_query_result(mutation_query(s, make_source(ssft, {m1}), query::full_partition_range, slice, 10000, query::max_partitions, now,
+                        db::no_timeout, ssft.local_test_semaphore().make_query_class_config(), make_accounter()).get0(), s, slice, inf32, inf32);
             BOOST_REQUIRE_EQUAL(r.row_count().value(), 0);
 
             m1.set_static_cell("s1", data_value(bytes("S_v1")), 1);
-            r = to_data_query_result(mutation_query(s, make_source({m1}), query::full_partition_range, slice, 10000, query::max_partitions, now,
-                        db::no_timeout, tests::make_query_class_config(), make_accounter()).get0(), s, slice, inf32, inf32);
+            r = to_data_query_result(mutation_query(s, make_source(ssft, {m1}), query::full_partition_range, slice, 10000, query::max_partitions, now,
+                        db::no_timeout, ssft.local_test_semaphore().make_query_class_config(), make_accounter()).get0(), s, slice, inf32, inf32);
             BOOST_REQUIRE_EQUAL(r.row_count().value(), 1);
 
             m1.set_clustered_cell(clustering_key::from_single_value(*s, bytes("A")), "v1", data_value(bytes("A_v1")), 1);
-            r = to_data_query_result(mutation_query(s, make_source({m1}), query::full_partition_range, slice, 10000, query::max_partitions, now,
-                        db::no_timeout, tests::make_query_class_config(), make_accounter()).get0(), s, slice, inf32, inf32);
+            r = to_data_query_result(mutation_query(s, make_source(ssft, {m1}), query::full_partition_range, slice, 10000, query::max_partitions, now,
+                        db::no_timeout, ssft.local_test_semaphore().make_query_class_config(), make_accounter()).get0(), s, slice, inf32, inf32);
             BOOST_REQUIRE_EQUAL(r.row_count().value(), 1);
 
             m1.set_clustered_cell(clustering_key::from_single_value(*s, bytes("B")), "v1", data_value(bytes("B_v1")), 1);
-            r = to_data_query_result(mutation_query(s, make_source({m1}), query::full_partition_range, slice, 10000, query::max_partitions, now,
-                        db::no_timeout, tests::make_query_class_config(), make_accounter()).get0(), s, slice, inf32, inf32);
+            r = to_data_query_result(mutation_query(s, make_source(ssft, {m1}), query::full_partition_range, slice, 10000, query::max_partitions, now,
+                        db::no_timeout, ssft.local_test_semaphore().make_query_class_config(), make_accounter()).get0(), s, slice, inf32, inf32);
             BOOST_REQUIRE_EQUAL(r.row_count().value(), 2);
 
             mutation m2(s, partition_key::from_single_value(*s, "key2"));
             m2.set_static_cell("s1", data_value(bytes("S_v1")), 1);
-            r = to_data_query_result(mutation_query(s, make_source({m1, m2}), query::full_partition_range, slice, 10000, query::max_partitions, now,
-                        db::no_timeout, tests::make_query_class_config(), make_accounter()).get0(), s, slice, inf32, inf32);
+            r = to_data_query_result(mutation_query(s, make_source(ssft, {m1, m2}), query::full_partition_range, slice, 10000, query::max_partitions, now,
+                        db::no_timeout, ssft.local_test_semaphore().make_query_class_config(), make_accounter()).get0(), s, slice, inf32, inf32);
             BOOST_REQUIRE_EQUAL(r.row_count().value(), 3);
     });
 }
@@ -509,12 +509,12 @@ SEASTAR_TEST_CASE(test_partition_limit) {
         mutation m3(s, partition_key::from_single_value(*s, "key3"));
         m3.set_clustered_cell(clustering_key::from_single_value(*s, bytes("B")), "v1", data_value(bytes("B:v")), 1);
 
-        auto src = make_source({m1, m2, m3});
+        auto src = make_source(ssft, {m1, m2, m3});
         auto slice = make_full_slice(*s);
 
         {
             reconcilable_result result = mutation_query(s, src,
-                query::full_partition_range, slice, query::max_rows, 10, now, db::no_timeout, tests::make_query_class_config(), make_accounter()).get0();
+                query::full_partition_range, slice, query::max_rows, 10, now, db::no_timeout, ssft.local_test_semaphore().make_query_class_config(), make_accounter()).get0();
 
             assert_that(to_result_set(result, s, slice))
                 .has_size(2)
@@ -530,7 +530,7 @@ SEASTAR_TEST_CASE(test_partition_limit) {
 
         {
             reconcilable_result result = mutation_query(s, src,
-                query::full_partition_range, slice, query::max_rows, 1, now, db::no_timeout, tests::make_query_class_config(), make_accounter()).get0();
+                query::full_partition_range, slice, query::max_rows, 1, now, db::no_timeout, ssft.local_test_semaphore().make_query_class_config(), make_accounter()).get0();
 
             assert_that(to_result_set(result, s, slice))
                 .has_size(1)
@@ -543,10 +543,11 @@ SEASTAR_TEST_CASE(test_partition_limit) {
 }
 
 SEASTAR_THREAD_TEST_CASE(test_result_size_calculation) {
+    storage_service_for_tests ssft;
     random_mutation_generator gen(random_mutation_generator::generate_counters::no);
     std::vector<mutation> mutations = gen(1);
     schema_ptr s = gen.schema();
-    mutation_source source = make_source(std::move(mutations));
+    mutation_source source = make_source(ssft, std::move(mutations));
     query::result_memory_limiter l(std::numeric_limits<ssize_t>::max());
     query::partition_slice slice = make_full_slice(*s);
     slice.options.set<query::partition_slice::option::allow_short_read>();
@@ -554,12 +555,12 @@ SEASTAR_THREAD_TEST_CASE(test_result_size_calculation) {
     query::result::builder digest_only_builder(slice, query::result_options{query::result_request::only_digest, query::digest_algorithm::xxHash},
             l.new_digest_read(query::max_result_size(query::result_memory_limiter::maximum_result_size), query::short_read::yes).get0());
     data_query(s, source, query::full_partition_range, slice, std::numeric_limits<uint32_t>::max(), std::numeric_limits<uint32_t>::max(),
-            gc_clock::now(), digest_only_builder, db::no_timeout, tests::make_query_class_config()).get0();
+            gc_clock::now(), digest_only_builder, db::no_timeout, ssft.local_test_semaphore().make_query_class_config()).get0();
 
     query::result::builder result_and_digest_builder(slice, query::result_options{query::result_request::result_and_digest, query::digest_algorithm::xxHash},
             l.new_data_read(query::max_result_size(query::result_memory_limiter::maximum_result_size), query::short_read::yes).get0());
     data_query(s, source, query::full_partition_range, slice, std::numeric_limits<uint32_t>::max(), std::numeric_limits<uint32_t>::max(),
-            gc_clock::now(), result_and_digest_builder, db::no_timeout, tests::make_query_class_config()).get0();
+            gc_clock::now(), result_and_digest_builder, db::no_timeout, ssft.local_test_semaphore().make_query_class_config()).get0();
 
     BOOST_REQUIRE_EQUAL(digest_only_builder.memory_accounter().used_memory(), result_and_digest_builder.memory_accounter().used_memory());
 }

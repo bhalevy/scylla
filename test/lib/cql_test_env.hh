@@ -61,6 +61,8 @@ namespace db {
     class config;
 }
 
+class reader_concurrency_semaphore_for_tests;
+
 class cql_test_config {
 public:
     seastar::shared_ptr<db::config> db_config;
@@ -132,6 +134,8 @@ public:
     virtual db::view::view_update_generator& local_view_update_generator() = 0;
 
     virtual service::migration_notifier& local_mnotifier() = 0;
+
+    virtual reader_concurrency_semaphore_for_tests& local_test_semaphore() = 0;
 };
 
 future<> do_with_cql_env(std::function<future<>(cql_test_env&)> func, cql_test_config = {});

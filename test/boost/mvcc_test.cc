@@ -40,6 +40,7 @@
 #include "test/lib/log.hh"
 #include "test/boost/range_tombstone_list_assertions.hh"
 #include "real_dirty_memory_accounter.hh"
+#include "test/lib/reader_concurrency_semaphore_for_tests.hh"
 
 using namespace std::chrono_literals;
 
@@ -86,7 +87,8 @@ SEASTAR_TEST_CASE(test_range_tombstone_slicing) {
     return seastar::async([] {
         logalloc::region r;
         mutation_cleaner cleaner(r, no_cache_tracker, app_stats_for_tests);
-        simple_schema table;
+        reader_concurrency_semaphore_for_tests test_semaphore;
+        auto table = test_semaphore.make_simple_schema();
         auto s = table.schema();
         with_allocator(r.allocator(), [&] {
             mutation_application_stats app_stats;
@@ -333,7 +335,8 @@ mvcc_partition mvcc_container::make_not_evictable(const mutation_partition& mp) 
 
 SEASTAR_TEST_CASE(test_apply_to_incomplete) {
     return seastar::async([] {
-        simple_schema table;
+        reader_concurrency_semaphore_for_tests test_semaphore;
+        auto table = test_semaphore.make_simple_schema();
         mvcc_container ms(table.schema());
         auto&& s = *table.schema();
 
@@ -389,7 +392,8 @@ SEASTAR_TEST_CASE(test_apply_to_incomplete) {
 
 SEASTAR_TEST_CASE(test_schema_upgrade_preserves_continuity) {
     return seastar::async([] {
-        simple_schema table;
+        reader_concurrency_semaphore_for_tests test_semaphore;
+        auto table = test_semaphore.make_simple_schema();
         mvcc_container ms(table.schema());
 
         auto new_mutation = [&] {
@@ -449,7 +453,8 @@ SEASTAR_TEST_CASE(test_schema_upgrade_preserves_continuity) {
 SEASTAR_TEST_CASE(test_eviction_with_active_reader) {
     return seastar::async([] {
         {
-            simple_schema table;
+            reader_concurrency_semaphore_for_tests test_semaphore;
+            auto table = test_semaphore.make_simple_schema();
             mvcc_container ms(table.schema());
             auto&& s = *table.schema();
             auto pk = table.make_pkey();
@@ -544,14 +549,14 @@ SEASTAR_TEST_CASE(test_apply_to_incomplete_respects_continuity) {
 }
 
 // Call with region locked.
-static mutation_partition read_using_cursor(partition_snapshot& snap) {
+static mutation_partition read_using_cursor(partition_snapshot& snap, reader_permit permit) {
     partition_snapshot_row_cursor cur(*snap.schema(), snap);
     cur.maybe_refresh();
     auto mp = cur.read_partition();
     for (auto&& rt : snap.range_tombstones()) {
         mp.apply_delete(*snap.schema(), rt);
     }
-    mp.apply(*snap.schema(), mutation_fragment(*snap.schema(), tests::make_permit(), static_row(snap.static_row(false))));
+    mp.apply(*snap.schema(), mutation_fragment(*snap.schema(), permit, static_row(snap.static_row(false))));
     mp.set_static_row_continuous(snap.static_row_continuous());
     mp.apply(snap.partition_tombstone());
     return mp;
@@ -561,6 +566,7 @@ SEASTAR_TEST_CASE(test_snapshot_cursor_is_consistent_with_merging) {
     // Tests that reading many versions using a cursor gives the logical mutation back.
     return seastar::async([] {
         {
+            reader_concurrency_semaphore_for_tests test_semaphore;
             random_mutation_generator gen(random_mutation_generator::generate_counters::no);
             auto s = gen.schema();
             mvcc_container ms(s);
@@ -581,7 +587,7 @@ SEASTAR_TEST_CASE(test_snapshot_cursor_is_consistent_with_merging) {
 
                 auto expected = e.squashed();
                 auto snap = e.read();
-                auto actual = read_using_cursor(*snap);
+                auto actual = read_using_cursor(*snap, test_semaphore.make_permit());
 
                 assert_that(s, actual).has_same_continuity(expected);
 
@@ -599,6 +605,7 @@ SEASTAR_TEST_CASE(test_snapshot_cursor_is_consistent_with_merging) {
 SEASTAR_TEST_CASE(test_snapshot_cursor_is_consistent_with_merging_for_nonevictable) {
     // Tests that reading many versions using a cursor gives the logical mutation back.
     return seastar::async([] {
+        reader_concurrency_semaphore_for_tests test_semaphore;
         logalloc::region r;
         mutation_cleaner cleaner(r, no_cache_tracker, app_stats_for_tests);
         with_allocator(r.allocator(), [&] {
@@ -624,7 +631,7 @@ SEASTAR_TEST_CASE(test_snapshot_cursor_is_consistent_with_merging_for_nonevictab
 
                 auto expected = e.squashed(*s);
                 auto snap = e.read(r, cleaner, s, no_cache_tracker);
-                auto actual = read_using_cursor(*snap);
+                auto actual = read_using_cursor(*snap, test_semaphore.make_permit());
 
                 BOOST_REQUIRE(expected.is_fully_continuous());
                 BOOST_REQUIRE(actual.is_fully_continuous());
@@ -639,10 +646,11 @@ SEASTAR_TEST_CASE(test_snapshot_cursor_is_consistent_with_merging_for_nonevictab
 SEASTAR_TEST_CASE(test_continuity_merging_in_evictable) {
     // Tests that reading many versions using a cursor gives the logical mutation back.
     return seastar::async([] {
+        reader_concurrency_semaphore_for_tests test_semaphore;
         cache_tracker tracker;
         auto& r = tracker.region();
         with_allocator(r.allocator(), [&] {
-            simple_schema ss;
+            auto ss = test_semaphore.make_simple_schema();
             auto s = ss.schema();
 
             auto base_m = mutation(s, ss.make_pkey(0));
@@ -665,7 +673,7 @@ SEASTAR_TEST_CASE(test_continuity_merging_in_evictable) {
                 expected.clustered_row(*s, ss.make_ckey(2), is_dummy::no, is_continuous::no);
 
                 auto snap = e.read(r, tracker.cleaner(), s, &tracker);
-                auto actual = read_using_cursor(*snap);
+                auto actual = read_using_cursor(*snap, test_semaphore.make_permit());
                 auto actual2 = e.squashed(*s);
 
                 assert_that(s, actual)
@@ -681,10 +689,11 @@ SEASTAR_TEST_CASE(test_continuity_merging_in_evictable) {
 
 SEASTAR_TEST_CASE(test_partition_snapshot_row_cursor) {
     return seastar::async([] {
+        reader_concurrency_semaphore_for_tests test_semaphore;
         cache_tracker tracker;
         auto& r = tracker.region();
         with_allocator(r.allocator(), [&] {
-            simple_schema table;
+            auto table = test_semaphore.make_simple_schema();
             auto&& s = *table.schema();
 
             auto e = partition_entry::make_evictable(s, mutation_partition(table.schema()));

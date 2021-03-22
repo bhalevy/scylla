@@ -20,22 +20,21 @@
  */
 
 #include "test/lib/reader_permit.hh"
+#include "test/lib/reader_concurrency_semaphore_for_tests.hh"
 #include "reader_concurrency_semaphore.hh"
 
 namespace tests {
 
-thread_local reader_concurrency_semaphore the_semaphore{reader_concurrency_semaphore::no_limits{}};
+reader_concurrency_semaphore_for_tests::reader_concurrency_semaphore_for_tests(sstring name)
+    : _semaphore(reader_concurrency_semaphore::no_limits{}, name)
+{}
 
-reader_concurrency_semaphore& semaphore() {
-    return the_semaphore;
+reader_permit make_permit(reader_concurrency_semaphore& semaphore) {
+    return semaphore.make_permit(nullptr, "test");
 }
 
-reader_permit make_permit() {
-    return the_semaphore.make_permit(nullptr, "test");
-}
-
-query::query_class_config make_query_class_config() {
-    return query::query_class_config{the_semaphore, query::max_result_size(std::numeric_limits<uint64_t>::max())};
+query::query_class_config make_query_class_config(reader_concurrency_semaphore& semaphore) {
+    return query::query_class_config{semaphore, query::max_result_size(std::numeric_limits<uint64_t>::max())};
 }
 
 } // namespace tests

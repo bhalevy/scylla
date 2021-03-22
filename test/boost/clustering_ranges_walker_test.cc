@@ -104,7 +104,8 @@ static void run_tests(data_set ds) {
 }
 
 SEASTAR_TEST_CASE(test_basic_operation_on_various_data_sets) {
-    simple_schema s;
+    reader_concurrency_semaphore semaphore(reader_concurrency_semaphore::no_limits{}, "test");
+    simple_schema s(semaphore);
     auto keys = s.make_ckeys(10);
 
     {
@@ -207,7 +208,8 @@ SEASTAR_TEST_CASE(test_basic_operation_on_various_data_sets) {
 }
 
 SEASTAR_TEST_CASE(test_range_overlap) {
-    simple_schema s;
+    reader_concurrency_semaphore semaphore(reader_concurrency_semaphore::no_limits{}, "test");
+    simple_schema s(semaphore);
     auto keys = s.make_ckeys(10);
 
     auto range1 = query::clustering_range::make({keys[1], true}, {keys[2], false});
@@ -291,7 +293,8 @@ SEASTAR_TEST_CASE(test_range_overlap) {
 }
 
 SEASTAR_TEST_CASE(verify_static_row_can_be_contiguous_with_a_clustering_range_that_is_open_in_front) {
-    simple_schema s;
+    reader_concurrency_semaphore semaphore(reader_concurrency_semaphore::no_limits{}, "test");
+    simple_schema s(semaphore);
     auto keys = s.make_ckeys(10);
     auto range1 = query::clustering_range::make_ending_with({keys[2], false});
     auto ranges = query::clustering_row_ranges({range1});
@@ -305,7 +308,8 @@ SEASTAR_TEST_CASE(verify_static_row_can_be_contiguous_with_a_clustering_range_th
 }
 
 SEASTAR_TEST_CASE(verify_static_row_can_be_contiguous_with_a_clustering_range_negative_tests) {
-    simple_schema s;
+    reader_concurrency_semaphore semaphore(reader_concurrency_semaphore::no_limits{}, "test");
+    simple_schema s(semaphore);
     auto keys = s.make_ckeys(10);
     auto range1 = query::clustering_range::make({keys[2], false}, {keys[4], false});
     auto ranges = query::clustering_row_ranges({range1});

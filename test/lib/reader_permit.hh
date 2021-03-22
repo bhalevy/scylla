@@ -28,10 +28,8 @@ class reader_concurrency_semaphore;
 
 namespace tests {
 
-reader_concurrency_semaphore& semaphore();
+reader_permit make_permit(reader_concurrency_semaphore&);
 
-reader_permit make_permit();
-
-query::query_class_config make_query_class_config();
+query::query_class_config make_query_class_config(reader_concurrency_semaphore&);
 
 } // namespace tests

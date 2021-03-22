@@ -30,7 +30,7 @@
 #include "gms/gossiper.hh"
 #include "message/messaging_service.hh"
 #include "service/storage_service.hh"
-
+#include "test/lib/reader_concurrency_semaphore_for_tests.hh"
 
 class storage_service_for_tests::impl {
     sharded<abort_source> _abort_source;
@@ -44,6 +44,7 @@ class storage_service_for_tests::impl {
     sharded<db::view::view_update_generator> _view_update_generator;
     sharded<netw::messaging_service> _messaging;
     sharded<cdc::generation_service> _cdc_generation_service;
+    sharded<reader_concurrency_semaphore_for_tests> _test_semaphore;
 public:
     impl() {
         auto thread = seastar::thread_impl::get();
@@ -64,6 +65,7 @@ public:
             ss.enable_all_features();
         }).get();
         _cdc_generation_service.start(std::ref(_cfg), std::ref(_gossiper), std::ref(_sys_dist_ks), std::ref(_abort_source), std::ref(_token_metadata)).get();
+        _test_semaphore.start().get();
     }
     ~impl() {
         _cdc_generation_service.stop().get();
@@ -75,6 +77,11 @@ public:
         _token_metadata.stop().get();
         _feature_service.stop().get();
         _abort_source.stop().get();
+        _test_semaphore.stop().get();
+    }
+
+    reader_concurrency_semaphore_for_tests& local_test_semaphore() {
+        return _test_semaphore.local();
     }
 };
 
@@ -82,6 +89,10 @@ storage_service_for_tests::storage_service_for_tests() : _impl(std::make_unique<
 }
 
 storage_service_for_tests::~storage_service_for_tests() = default;
+
+reader_concurrency_semaphore_for_tests& storage_service_for_tests::local_test_semaphore() {
+    return _impl->local_test_semaphore();
+}
 
 dht::token create_token_from_key(const dht::i_partitioner& partitioner, sstring key) {
     sstables::key_view key_view = sstables::key_view(bytes_view(reinterpret_cast<const signed char*>(key.c_str()), key.size()));

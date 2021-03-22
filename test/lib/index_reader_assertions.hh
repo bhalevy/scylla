@@ -27,11 +27,15 @@
 #include "schema.hh"
 #include "sstables/index_reader.hh"
 
+class reader_concurrency_semaphore_for_tests;
+
 class index_reader_assertions {
     std::unique_ptr<sstables::index_reader> _r;
+    reader_concurrency_semaphore_for_tests& _semaphore;
 public:
-    index_reader_assertions(std::unique_ptr<sstables::index_reader> r)
+    index_reader_assertions(std::unique_ptr<sstables::index_reader> r, reader_concurrency_semaphore_for_tests& semaphore)
         : _r(std::move(r))
+        , _semaphore(semaphore)
     { }
 
     index_reader_assertions& has_monotonic_positions(const schema& s) {
@@ -52,7 +56,7 @@ public:
             prev = rp;
 
             std::unique_ptr<sstables::clustered_index_cursor> cur = e.get_promoted_index()->make_cursor(
-                _r->sstable(), tests::make_permit(), nullptr, {});
+                _r->sstable(), _semaphore.make_permit(), nullptr, {});
             std::optional<sstables::promoted_index_block_position> prev_end;
             while (auto ei_opt = cur->next_entry().get0()) {
                 sstables::clustered_index_cursor::entry_info& ei = *ei_opt;
@@ -78,6 +82,6 @@ public:
 };
 
 inline
-index_reader_assertions assert_that(std::unique_ptr<sstables::index_reader> r) {
-    return { std::move(r) };
+index_reader_assertions assert_that(std::unique_ptr<sstables::index_reader> r, reader_concurrency_semaphore_for_tests& semaphore) {
+    return { std::move(r), semaphore };
 }
