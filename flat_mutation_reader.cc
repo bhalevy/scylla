@@ -38,7 +38,8 @@ logging::logger fmr_logger("flat_mutation_reader");
 flat_mutation_reader& flat_mutation_reader::operator=(flat_mutation_reader&& o) noexcept {
     if (_impl) {
         impl* ip = _impl.get();
-        fmr_logger.warn("{} [{}]: permit {}: was not closed before overwritten by move-assign. Backtrace: {}", typeid(*ip).name(), fmt::ptr(ip), ip->_permit.description(), current_backtrace());
+        on_internal_error_noexcept(fmr_logger, format("{} [{}]: permit {}: was not closed before overwritten by move-assign", typeid(*ip).name(), fmt::ptr(ip), ip->_permit.description()));
+        abort();
     }
     _impl = std::move(o._impl);
     return *this;
@@ -47,7 +48,8 @@ flat_mutation_reader& flat_mutation_reader::operator=(flat_mutation_reader&& o) 
 flat_mutation_reader::~flat_mutation_reader() {
     if (_impl) {
         impl* ip = _impl.get();
-        fmr_logger.warn("{} [{}]: permit {}: was not closed before destruction. Backtrace: {}", typeid(*ip).name(), fmt::ptr(ip), ip->_permit.description(), current_backtrace());
+        on_internal_error_noexcept(fmr_logger, format("{} [{}]: permit {}: was not closed before destruction", typeid(*ip).name(), fmt::ptr(ip), ip->_permit.description()));
+        abort();
     }
 }
 
