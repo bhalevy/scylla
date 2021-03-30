@@ -1821,8 +1821,6 @@ public:
             tracing::trace_state_ptr trace_state,
             mutation_reader::forwarding fwd_mr);
 
-    ~multishard_combining_reader();
-
     // this is captured.
     multishard_combining_reader(const multishard_combining_reader&) = delete;
     multishard_combining_reader& operator=(const multishard_combining_reader&) = delete;
@@ -1931,12 +1929,6 @@ multishard_combining_reader::multishard_combining_reader(
     }
 }
 
-multishard_combining_reader::~multishard_combining_reader() {
-    for (auto& sr : _shard_readers) {
-        sr->stop();
-    }
-}
-
 future<> multishard_combining_reader::fill_buffer(db::timeout_clock::time_point timeout) {
     _crossed_shards = false;
     return do_until([this] { return is_buffer_full() || is_end_of_stream(); }, [this, timeout] {
@@ -1978,8 +1970,6 @@ future<> multishard_combining_reader::fast_forward_to(position_range pr, db::tim
 }
 
 future<> multishard_combining_reader::close() noexcept {
-    // Move _shard_readers to prevent double stop from
-    // ~multishard_combining_reader.
     auto shard_readers = std::move(_shard_readers);
     return parallel_for_each(shard_readers, [] (lw_shared_ptr<shard_reader>& sr) {
         return sr->close();
