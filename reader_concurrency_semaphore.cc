@@ -579,19 +579,23 @@ future<reader_permit::resource_units> reader_concurrency_semaphore::enqueue_wait
 future<reader_permit::resource_units> reader_concurrency_semaphore::do_wait_admission(reader_permit permit, size_t memory,
         db::timeout_clock::time_point timeout) {
     auto r = resources(1, static_cast<ssize_t>(memory));
+    bool was_empty = _wait_list.empty();
 
-    if (!_wait_list.empty()) {
-        return enqueue_waiter(std::move(permit), r, timeout);
-    }
-
-    while (!has_available_units(r)) {
-        if (!try_evict_one_inactive_read(evict_reason::permit)) {
-            return enqueue_waiter(std::move(permit), r, timeout);
+    if (was_empty) {
+        if (has_available_units(r)) {
+            permit.on_admission();
+            return make_ready_future<reader_permit::resource_units>(reader_permit::resource_units(std::move(permit), r));
         }
     }
 
-    permit.on_admission();
-    return make_ready_future<reader_permit::resource_units>(reader_permit::resource_units(std::move(permit), r));
+    auto ret = enqueue_waiter(std::move(permit), r, timeout);
+
+    if (was_empty) {
+        while (!ret.available() && try_evict_one_inactive_read(evict_reason::permit)) {
+        }
+    }
+
+    return ret;
 }
 
 reader_permit reader_concurrency_semaphore::make_permit(const schema* const schema, const char* const op_name) {
