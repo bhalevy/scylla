@@ -146,7 +146,7 @@ std::vector<std::vector<mutation>> combined::create_overlapping_partitions_disjo
 
 future<> combined::consume_all(flat_mutation_reader mr) const
 {
-    return do_with(std::move(mr), [] (auto& mr) {
+    return with_flat_mutation_reader(std::move(mr), [] (auto& mr) {
         perf_tests::start_measuring_time();
         return mr.consume_pausable([] (mutation_fragment mf) {
             perf_tests::do_not_optimize(mf);
@@ -270,6 +270,8 @@ future<size_t> clustering_combined::consume_all(flat_mutation_reader mr) const
         }, db::no_timeout).then([&num_mfs] {
             perf_tests::stop_measuring_time();
             return num_mfs;
+        }).finally([&mr] {
+            return mr.close();
         });
     });
 }
@@ -377,7 +379,7 @@ protected:
     }
 
     future<> consume_all(flat_mutation_reader mr) const {
-        return do_with(std::move(mr), [] (auto& mr) {
+        return with_flat_mutation_reader(std::move(mr), [] (auto& mr) {
             return mr.consume_pausable([] (mutation_fragment mf) {
                 perf_tests::do_not_optimize(mf);
                 return stop_iteration::no;
