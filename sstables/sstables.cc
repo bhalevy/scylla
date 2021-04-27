@@ -1601,7 +1601,9 @@ sstable::write_scylla_metadata(const io_priority_class& pc, shard_id shard, ssta
     // sstable write may fail to generate empty metadata if mutation source has only data from other shard.
     // see https://github.com/scylladb/scylla/issues/2932 for details on how it can happen.
     if (sm.token_ranges.elements.empty()) {
-        throw std::runtime_error(format("Failed to generate sharding metadata for {}", get_filename()));
+        auto msg = format("Failed to generate sharding metadata for {}", get_filename());
+        sstlog.error("{}: No token ranges for shard {}: first_key={} last_key={}", msg, shard, first_key, last_key);
+        throw std::runtime_error(msg);
     }
 
     if (!_components->scylla_metadata) {
