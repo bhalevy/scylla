@@ -2231,6 +2231,7 @@ const dht::decorated_key& sstable::get_first_decorated_key() const {
     if (!_first) {
         throw std::runtime_error(format("first key of {} wasn't set", get_filename()));
     }
+    assert(!_first->key().is_empty());
     return *_first;
 }
 
@@ -2238,6 +2239,7 @@ const dht::decorated_key& sstable::get_last_decorated_key() const {
     if (!_last) {
         throw std::runtime_error(format("last key of {} wasn't set", get_filename()));
     }
+    assert(!_last->key().is_empty());
     return *_last;
 }
 
