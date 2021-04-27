@@ -250,6 +250,7 @@ ring_position_range_vector_sharder::next(const schema& s) {
 future<utils::chunked_vector<partition_range>>
 split_range_to_single_shard(const schema& s, const partition_range& pr, shard_id shard) {
     const sharder& sharder = s.get_sharder();
+    assert(shard < sharder.shard_count());
     auto next_shard = shard + 1 == sharder.shard_count() ? 0 : shard + 1;
     auto start_token = pr.start() ? pr.start()->value().token() : minimum_token();
     auto start_shard = sharder.shard_of(start_token);
