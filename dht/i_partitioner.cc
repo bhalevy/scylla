@@ -253,7 +253,8 @@ split_range_to_single_shard(const schema& s, const partition_range& pr, shard_id
     auto next_shard = shard + 1 == sharder.shard_count() ? 0 : shard + 1;
     auto start_token = pr.start() ? pr.start()->value().token() : minimum_token();
     auto start_shard = sharder.shard_of(start_token);
-    auto start_boundary = start_shard == shard ? pr.start() : range_bound<ring_position>(ring_position::starting_at(sharder.token_for_next_shard(start_token, shard)));
+    auto start_boundary = start_shard == shard ? pr.start() :
+            range_bound<ring_position>(ring_position::starting_at(start_token = sharder.token_for_next_shard(start_token, shard)));
     return repeat_until_value([&sharder,
             &pr,
             cmp = ring_position_comparator(s),
