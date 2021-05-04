@@ -83,7 +83,7 @@ size_tiered_compaction_strategy::get_buckets(const std::vector<sstables::shared_
         size_t size = pair.second;
 
         // look for a bucket containing similar-sized files:
-        // group in the same bucket if it's w/in 50% of the average for this bucket,
+        // group in the same bucket if it's w/in (bucket_low, bucket_high) of the average for this bucket,
         // or this file and the bucket are all considered "small" (less than `minSSTableSize`)
         if (cur_bucket >= 0) {
             double& old_average_size = bucket_average_size_list[cur_bucket];
@@ -93,10 +93,18 @@ size_tiered_compaction_strategy::get_buckets(const std::vector<sstables::shared_
                 bucket_type& bucket = bucket_list[cur_bucket];
                 auto total_size = bucket.size() * old_average_size;
                 auto new_average_size = (total_size + size) / (bucket.size() + 1);
+                auto min_sstable_size = bucket[0]->data_size();
 
+                // SSTables are added in increasing size order so the bucket's
+                // average might drift upwards.
+                // Don't let it drift too high, to a point where the smallest
+                // SSTable might fall out of range.
+                if (size < options.min_sstable_size || min_sstable_size > new_average_size * options.bucket_low) {
+                // FIXME: reindent
                 bucket.push_back(pair.first);
                 old_average_size = new_average_size;
                 continue;
+                }
             }
         }
 
