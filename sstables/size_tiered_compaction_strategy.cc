@@ -100,10 +100,9 @@ size_tiered_compaction_strategy::get_buckets(const std::vector<sstables::shared_
                 // Don't let it drift too high, to a point where the smallest
                 // SSTable might fall out of range.
                 if (size < options.min_sstable_size || min_sstable_size > new_average_size * options.bucket_low) {
-                // FIXME: reindent
-                bucket.push_back(pair.first);
-                old_average_size = new_average_size;
-                continue;
+                    bucket.push_back(pair.first);
+                    old_average_size = new_average_size;
+                    continue;
                 }
             }
         }
