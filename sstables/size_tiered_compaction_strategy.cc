@@ -76,7 +76,7 @@ size_tiered_compaction_strategy::get_buckets(const std::vector<sstables::shared_
 
     using bucket_type = std::vector<sstables::shared_sstable>;
     std::vector<bucket_type> bucket_list;
-    std::vector<size_t> bucket_average_size_list;
+    std::vector<double> bucket_average_size_list;
     ssize_t cur_bucket = -1;
 
     for (auto& pair : sorted_sstables) {
@@ -86,13 +86,13 @@ size_tiered_compaction_strategy::get_buckets(const std::vector<sstables::shared_
         // group in the same bucket if it's w/in 50% of the average for this bucket,
         // or this file and the bucket are all considered "small" (less than `minSSTableSize`)
         if (cur_bucket >= 0) {
-            size_t& old_average_size = bucket_average_size_list[cur_bucket];
+            double& old_average_size = bucket_average_size_list[cur_bucket];
 
             if ((size > (old_average_size * options.bucket_low) && size < (old_average_size * options.bucket_high)) ||
                     (size < options.min_sstable_size && old_average_size < options.min_sstable_size)) {
                 bucket_type& bucket = bucket_list[cur_bucket];
-                size_t total_size = bucket.size() * old_average_size;
-                size_t new_average_size = (total_size + size) / (bucket.size() + 1);
+                auto total_size = bucket.size() * old_average_size;
+                auto new_average_size = (total_size + size) / (bucket.size() + 1);
 
                 bucket.push_back(pair.first);
                 old_average_size = new_average_size;
