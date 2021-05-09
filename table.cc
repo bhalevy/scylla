@@ -568,14 +568,15 @@ table::seal_active_memtable(flush_permit&& permit) {
                 });
             });
         });
-    }).then([this, memtable_size, old, op = std::move(op), previous_flush = std::move(previous_flush)] () mutable {
+    }).then([this, old] {
+        if (_commitlog) {
+            _commitlog->discard_completed_segments(_schema->id(), old->rp_set());
+        }
+    }).finally([this, memtable_size, op = std::move(op), previous_flush = std::move(previous_flush)] () mutable {
         _stats.pending_flushes--;
         _config.cf_stats->pending_memtables_flushes_count--;
         _config.cf_stats->pending_memtables_flushes_bytes -= memtable_size;
 
-        if (_commitlog) {
-            _commitlog->discard_completed_segments(_schema->id(), old->rp_set());
-        }
         return previous_flush.finally([op = std::move(op)] { });
     });
     // FIXME: release commit log
