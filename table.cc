@@ -1477,9 +1477,10 @@ future<> table::clear() {
     if (_commitlog) {
         _commitlog->discard_completed_segments(_schema->id());
     }
+    co_await _flush_barrier.advance_and_await();
     _memtables->clear();
     _memtables->add_memtable();
-    return _cache.invalidate(row_cache::external_updater([] { /* There is no underlying mutation source */ }));
+    co_return co_await _cache.invalidate(row_cache::external_updater([] { /* There is no underlying mutation source */ }));
 }
 
 // NOTE: does not need to be futurized, but might eventually, depending on
