@@ -39,12 +39,12 @@ public:
     basic_mutable_view() = default;
 
     template<typename U, U N>
-    basic_mutable_view(basic_sstring<CharT, U, N>& str)
+    basic_mutable_view(basic_sstring<CharT, U, N>& str) noexcept
         : _begin(str.begin())
         , _end(str.end())
     { }
 
-    basic_mutable_view(CharT* ptr, size_t length)
+    basic_mutable_view(CharT* ptr, size_t length) noexcept
         : _begin(ptr)
         , _end(ptr + length)
     { }
@@ -55,19 +55,19 @@ public:
 
     CharT& operator[](size_t idx) const { return _begin[idx]; }
 
-    iterator begin() const { return _begin; }
-    iterator end() const { return _end; }
+    iterator begin() const noexcept { return _begin; }
+    iterator end() const noexcept { return _end; }
 
-    CharT* data() const { return _begin; }
-    size_t size() const { return _end - _begin; }
-    bool empty() const { return _begin == _end; }
-    CharT& front() { return *_begin; }
-    const CharT& front() const { return *_begin; }
+    CharT* data() const noexcept { return _begin; }
+    size_t size() const noexcept { return _end - _begin; }
+    bool empty() const noexcept { return _begin == _end; }
+    CharT& front() noexcept { return *_begin; }
+    const CharT& front() const noexcept { return *_begin; }
 
-    void remove_prefix(size_t n) {
+    void remove_prefix(size_t n) noexcept {
         _begin += n;
     }
-    void remove_suffix(size_t n) {
+    void remove_suffix(size_t n) noexcept {
         _end -= n;
     }
 

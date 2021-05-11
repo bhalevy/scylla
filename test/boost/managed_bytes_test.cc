@@ -27,6 +27,14 @@
 #include <boost/test/unit_test.hpp>
 #include <unordered_set>
 
+static_assert(std::is_nothrow_constructible_v<bytes_view>);
+static_assert(std::is_nothrow_copy_constructible_v<bytes_view>);
+static_assert(std::is_nothrow_move_constructible_v<bytes_view>);
+
+static_assert(std::is_nothrow_constructible_v<bytes_mutable_view>);
+static_assert(std::is_nothrow_copy_constructible_v<bytes_mutable_view>);
+static_assert(std::is_nothrow_move_constructible_v<bytes_mutable_view>);
+
 struct fragmenting_allocation_strategy : standard_allocation_strategy {
     size_t allocated_bytes = 0;
     std::unordered_set<void*> allocations;
