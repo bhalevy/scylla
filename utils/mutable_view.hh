@@ -75,12 +75,18 @@ public:
     const CharT& front() const noexcept { return *_begin; }
 
     void remove_prefix(size_t n) noexcept {
-        n = std::min(n, size());
-        _begin += n;
+        if (n < size()) {
+            _begin += n;
+        } else {
+            _begin = _end = nullptr;
+        }
     }
     void remove_suffix(size_t n) noexcept {
-        n = std::min(n, size());
-        _end -= n;
+        if (n < size()) {
+            _end -= n;
+        } else {
+            _begin = _end = nullptr;
+        }
     }
 
     basic_mutable_view substr(size_t pos, size_t count) noexcept {
