@@ -57,34 +57,34 @@ struct super_enum {
 
     template<enum_type... values>
     struct max {
-        static constexpr enum_type max_of(enum_type a, enum_type b) {
+        static constexpr enum_type max_of(enum_type a, enum_type b) noexcept {
             return a > b ? a : b;
         }
 
         template<enum_type first, enum_type second, enum_type... rest>
-        static constexpr enum_type get() {
+        static constexpr enum_type get() noexcept {
             return max_of(first, get<second, rest...>());
         }
 
         template<enum_type first>
-        static constexpr enum_type get() { return first; }
+        static constexpr enum_type get() noexcept { return first; }
 
         static constexpr enum_type value = get<values...>();
     };
 
     template<enum_type... values>
     struct min {
-        static constexpr enum_type min_of(enum_type a, enum_type b) {
+        static constexpr enum_type min_of(enum_type a, enum_type b) noexcept {
             return a < b ? a : b;
         }
 
         template<enum_type first, enum_type second, enum_type... rest>
-        static constexpr enum_type get() {
+        static constexpr enum_type get() noexcept {
             return min_of(first, get<second, rest...>());
         }
 
         template<enum_type first>
-        static constexpr enum_type get() { return first; }
+        static constexpr enum_type get() noexcept { return first; }
 
         static constexpr enum_type value = get<values...>();
     };
@@ -110,11 +110,11 @@ struct super_enum {
     }
 
     template<enum_type Elem>
-    static constexpr sequence_type sequence_for() {
+    static constexpr sequence_type sequence_for() noexcept {
         return static_cast<sequence_type>(Elem);
     }
 
-    static sequence_type sequence_for(enum_type elem) {
+    static sequence_type sequence_for(enum_type elem) noexcept {
         return static_cast<sequence_type>(elem);
     }
 
@@ -141,10 +141,10 @@ private:
     using mask_iterator = seastar::bitsets::set_iterator<mask_digits>;
 
     mask_type _mask;
-    constexpr enum_set(mask_type mask) : _mask(mask) {}
+    constexpr enum_set(mask_type mask) noexcept : _mask(mask) {}
 
     template<enum_type Elem>
-    static constexpr unsigned shift_for() {
+    static constexpr unsigned shift_for() noexcept {
         return Enum::template sequence_for<Elem>();
     }
 
@@ -157,7 +157,7 @@ private:
 public:
     using iterator = std::invoke_result_t<decltype(&enum_set::make_iterator), mask_iterator>;
 
-    constexpr enum_set() : _mask(0) {}
+    constexpr enum_set() noexcept : _mask(0) {}
 
     /**
      * \throws \ref bad_enum_set_mask
@@ -172,82 +172,82 @@ public:
         return enum_set(mask);
     }
 
-    static constexpr mask_type full_mask() {
+    static constexpr mask_type full_mask() noexcept {
         return ~(std::numeric_limits<mask_type>::max() << (Enum::max_sequence + 1));
     }
 
-    static constexpr enum_set full() {
+    static constexpr enum_set full() noexcept {
         return enum_set(full_mask());
     }
 
-    static inline mask_type mask_for(enum_type e) {
+    static inline mask_type mask_for(enum_type e) noexcept {
         return mask_type(1) << Enum::sequence_for(e);
     }
 
     template<enum_type Elem>
-    static constexpr mask_type mask_for() {
+    static constexpr mask_type mask_for() noexcept {
         return mask_type(1) << shift_for<Elem>();
     }
 
     struct prepared {
         mask_type mask;
-        bool operator==(const prepared& o) const {
+        bool operator==(const prepared& o) const noexcept {
             return mask == o.mask;
         }
     };
 
-    static prepared prepare(enum_type e) {
+    static prepared prepare(enum_type e) noexcept {
         return {mask_for(e)};
     }
 
     template<enum_type e>
-    static constexpr prepared prepare() {
+    static constexpr prepared prepare() noexcept {
         return {mask_for<e>()};
     }
 
     static_assert(std::numeric_limits<mask_type>::max() >= ((size_t)1 << Enum::max_sequence), "mask type too small");
 
     template<enum_type e>
-    bool contains() const {
+    bool contains() const noexcept {
         return bool(_mask & mask_for<e>());
     }
 
-    bool contains(enum_type e) const {
+    bool contains(enum_type e) const noexcept {
         return bool(_mask & mask_for(e));
     }
 
     template<enum_type e>
-    void remove() {
+    void remove() noexcept {
         _mask &= ~mask_for<e>();
     }
 
-    void remove(enum_type e) {
+    void remove(enum_type e) noexcept {
         _mask &= ~mask_for(e);
     }
 
     template<enum_type e>
-    void set() {
+    void set() noexcept {
         _mask |= mask_for<e>();
     }
 
     template<enum_type e>
-    void set_if(bool condition) {
+    void set_if(bool condition) noexcept {
         _mask |= mask_type(condition) << shift_for<e>();
     }
 
-    void set(enum_type e) {
+    void set(enum_type e) noexcept {
         _mask |= mask_for(e);
     }
 
-    void add(const enum_set& other) {
+    void add(const enum_set& other) noexcept {
         _mask |= other._mask;
     }
 
-    explicit operator bool() const {
+    explicit operator bool() const noexcept {
         return bool(_mask);
     }
 
-    mask_type mask() const {
+    mask_type mask() const noexcept {
         return _mask;
     }
 
@@ -262,41 +262,41 @@ public:
     template<enum_type... items>
     struct frozen {
         template<enum_type first>
-        static constexpr mask_type make_mask() {
+        static constexpr mask_type make_mask() noexcept {
             return mask_for<first>();
         }
 
-        static constexpr mask_type make_mask() {
+        static constexpr mask_type make_mask() noexcept {
             return 0;
         }
 
         template<enum_type first, enum_type second, enum_type... rest>
-        static constexpr mask_type make_mask() {
+        static constexpr mask_type make_mask() noexcept {
             return mask_for<first>() | make_mask<second, rest...>();
         }
 
         static constexpr mask_type mask = make_mask<items...>();
 
         template<enum_type Elem>
-        static constexpr bool contains() {
+        static constexpr bool contains() noexcept {
             return mask & mask_for<Elem>();
         }
 
-        static bool contains(enum_type e) {
+        static bool contains(enum_type e) noexcept {
             return mask & mask_for(e);
         }
 
-        static bool contains(prepared e) {
+        static bool contains(prepared e) noexcept {
             return mask & e.mask;
         }
 
-        static constexpr enum_set<Enum> unfreeze() {
+        static constexpr enum_set<Enum> unfreeze() noexcept {
             return enum_set<Enum>(mask);
         }
     };
 
     template<enum_type... items>
-    static constexpr enum_set<Enum> of() {
+    static constexpr enum_set<Enum> of() noexcept {
         return frozen<items...>::unfreeze();
     }
 };
