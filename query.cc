@@ -117,7 +117,7 @@ partition_slice::partition_slice(clustering_row_ranges row_ranges,
     std::unique_ptr<specific_ranges> specific_ranges,
     cql_serialization_format cql_format,
     uint32_t partition_row_limit_low_bits,
-    uint32_t partition_row_limit_high_bits)
+    uint32_t partition_row_limit_high_bits) noexcept
     : _row_ranges(std::move(row_ranges))
     , static_columns(std::move(static_columns))
     , regular_columns(std::move(regular_columns))
@@ -126,7 +126,11 @@ partition_slice::partition_slice(clustering_row_ranges row_ranges,
     , _cql_format(std::move(cql_format))
     , _partition_row_limit_low_bits(partition_row_limit_low_bits)
     , _partition_row_limit_high_bits(partition_row_limit_high_bits)
-{}
+{
+    static_assert(std::is_nothrow_move_constructible_v<clustering_row_ranges>);
+    static_assert(std::is_nothrow_move_constructible_v<query::column_id_vector>);
+    static_assert(std::is_nothrow_move_constructible_v<option_set>);
+}
 
 partition_slice::partition_slice(clustering_row_ranges row_ranges,
     query::column_id_vector static_columns,
@@ -134,8 +138,8 @@ partition_slice::partition_slice(clustering_row_ranges row_ranges,
     option_set options,
     std::unique_ptr<specific_ranges> specific_ranges,
     cql_serialization_format cql_format,
-    uint64_t partition_row_limit)
-    : partition_slice(std::move(row_ranges), std::move(static_columns), std::move(regular_columns), options,
+    uint64_t partition_row_limit) noexcept
+    : partition_slice(std::move(row_ranges), std::move(static_columns), std::move(regular_columns), std::move(options),
             std::move(specific_ranges), std::move(cql_format), static_cast<uint32_t>(partition_row_limit),
             static_cast<uint32_t>(partition_row_limit >> 32))
 {}
@@ -154,9 +158,10 @@ partition_slice::partition_slice(clustering_row_ranges ranges, const schema& s, 
     }
 }
 
-partition_slice::partition_slice(partition_slice&&) = default;
-
 partition_slice& partition_slice::operator=(partition_slice&& other) noexcept = default;
+
+static_assert(!std::is_default_constructible_v<partition_slice>);
+static_assert(std::is_nothrow_move_constructible_v<partition_slice>);
 
 // Only needed because selection_statement::execute does copies of its read_command
 // in the map-reduce op.

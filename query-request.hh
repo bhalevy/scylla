@@ -177,15 +177,16 @@ public:
         std::unique_ptr<specific_ranges> specific_ranges,
         cql_serialization_format,
         uint32_t partition_row_limit_low_bits,
-        uint32_t partition_row_limit_high_bits);
+        uint32_t partition_row_limit_high_bits) noexcept;
     partition_slice(clustering_row_ranges row_ranges, column_id_vector static_columns,
         column_id_vector regular_columns, option_set options,
         std::unique_ptr<specific_ranges> specific_ranges = nullptr,
         cql_serialization_format = cql_serialization_format::internal(),
-        uint64_t partition_row_limit = partition_max_rows);
+        uint64_t partition_row_limit = partition_max_rows) noexcept;
     partition_slice(clustering_row_ranges ranges, const schema& schema, const column_set& mask, option_set options);
     partition_slice(const partition_slice&);
-    partition_slice(partition_slice&&);
+    partition_slice(partition_slice&&) = default;
+    partition_slice() = delete;
     ~partition_slice();
 
     partition_slice& operator=(partition_slice&& other) noexcept;
