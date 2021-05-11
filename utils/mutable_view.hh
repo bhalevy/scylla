@@ -58,6 +58,13 @@ public:
         return _begin[idx];
     }
 
+    const CharT& at(size_t idx) const {
+        if (idx >= size()) {
+            throw std::out_of_range(format("basic_mutable_view::at: idx (which is {}) >= this->size() (which is {})", idx, size()));
+        }
+        return _begin[idx];
+    }
+
     iterator begin() const noexcept { return _begin; }
     iterator end() const noexcept { return _end; }
 
