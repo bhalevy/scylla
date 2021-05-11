@@ -26,25 +26,29 @@
 
 #include "seastarx.hh"
 
-template<typename CharT>
-class basic_mutable_view {
-    CharT* _begin = nullptr;
-    CharT* _end = nullptr;
+enum class mutable_view { no, yes, };
+
+template <typename CharT, mutable_view is_mutable>
+class basic_view_base {
 public:
     using value_type = CharT;
-    using pointer = CharT*;
-    using iterator = CharT*;
-    using const_iterator = CharT*;
+    using pointer = std::conditional_t<is_mutable == mutable_view::yes, CharT*, const CharT*>;
+    using reference = std::conditional_t<is_mutable == mutable_view::yes, CharT&, const CharT&>;
+    using iterator = pointer;
+    using const_iterator = const CharT*;
+private:
+    pointer _begin = nullptr;
+    pointer _end = nullptr;
+public:
+    basic_view_base() = default;
 
-    basic_mutable_view() = default;
-
-    template<typename U, U N>
-    basic_mutable_view(basic_sstring<CharT, U, N>& str) noexcept
+    template <typename U, U N, bool NulTerminate>
+    basic_view_base(basic_sstring<CharT, U, N, NulTerminate>& str) noexcept
         : _begin(str.begin())
         , _end(str.end())
     { }
 
-    basic_mutable_view(CharT* ptr, size_t length) noexcept
+    basic_view_base(pointer ptr, size_t length) noexcept
         : _begin(ptr)
         , _end(ptr + length)
     { }
@@ -53,14 +57,14 @@ public:
         return std::basic_string_view<CharT>(begin(), size());
     }
 
-    CharT& operator[](size_t idx) const noexcept {
+    reference operator[](size_t idx) const noexcept {
         assert(idx < size());
         return _begin[idx];
     }
 
     const CharT& at(size_t idx) const {
         if (idx >= size()) {
-            throw std::out_of_range(format("basic_mutable_view::at: idx (which is {}) >= this->size() (which is {})", idx, size()));
+            throw std::out_of_range(format("basic_view_base::at: idx (which is {}) >= this->size() (which is {})", idx, size()));
         }
         return _begin[idx];
     }
@@ -68,30 +72,47 @@ public:
     iterator begin() const noexcept { return _begin; }
     iterator end() const noexcept { return _end; }
 
-    CharT* data() const noexcept { return _begin; }
+    const_iterator cbegin() const noexcept { return _begin; }
+    const_iterator cend() const noexcept { return _end; }
+
+    pointer data() const noexcept { return _begin; }
     size_t size() const noexcept { return _end - _begin; }
     bool empty() const noexcept { return _begin == _end; }
-    CharT& front() noexcept { return *_begin; }
-    const CharT& front() const noexcept { return *_begin; }
+
+    template <typename>
+    requires ( is_mutable == mutable_view::yes )
+    CharT& front() noexcept {
+        assert(!empty());
+        return *_begin;
+    }
+
+    const CharT& front() const noexcept {
+        assert(!empty());
+        return *_begin;
+    }
 
     void remove_prefix(size_t n) noexcept {
-        if (n < size()) {
+        if (__builtin_expect(n <= size(), true)) {
             _begin += n;
         } else {
-            _begin = _end = nullptr;
-        }
-    }
-    void remove_suffix(size_t n) noexcept {
-        if (n < size()) {
-            _end -= n;
-        } else {
-            _begin = _end = nullptr;
+            _begin = _end;
         }
     }
 
-    basic_mutable_view substr(size_t pos, size_t count) noexcept {
+    void remove_suffix(size_t n) noexcept {
+        if (__builtin_expect(n <= size(), true)) {
+            _end -= n;
+        } else {
+            _end = _begin;
+        }
+    }
+
+    basic_view_base substr(size_t pos, size_t count) noexcept {
         assert(pos <= size());
         size_t n = std::min(count, (_end - _begin) - pos);
-        return basic_mutable_view{_begin + pos, n};
+        return basic_view_base{_begin + pos, n};
     }
 };
+
+template <typename CharT>
+using basic_mutable_view = basic_view_base<CharT, mutable_view::yes>;
