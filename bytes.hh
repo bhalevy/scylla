@@ -30,9 +30,10 @@
 #include "utils/mutable_view.hh"
 #include <xxhash.h>
 
-using bytes = basic_sstring<int8_t, uint32_t, 31, false>;
-using bytes_view = std::basic_string_view<int8_t>;
-using bytes_mutable_view = basic_mutable_view<bytes_view::value_type>;
+using bytes_char_type = int8_t;
+using bytes = basic_sstring<bytes_char_type, uint32_t, 31, false>;
+using bytes_view = basic_view<bytes_char_type>;
+using bytes_mutable_view = basic_mutable_view<bytes_char_type>;
 using bytes_opt = std::optional<bytes>;
 using sstring_view = std::string_view;
 
@@ -45,7 +46,7 @@ inline sstring_view to_sstring_view(bytes_view view) {
 }
 
 inline bytes_view to_bytes_view(sstring_view view) {
-    return {reinterpret_cast<const int8_t*>(view.data()), view.size()};
+    return bytes_view(reinterpret_cast<const bytes_char_type*>(view.data()), view.size());
 }
 
 struct fmt_hex {
@@ -60,12 +61,12 @@ sstring to_hex(bytes_view b);
 sstring to_hex(const bytes& b);
 sstring to_hex(const bytes_opt& b);
 
-std::ostream& operator<<(std::ostream& os, const bytes& b);
 std::ostream& operator<<(std::ostream& os, const bytes_opt& b);
 
 namespace std {
 
 // Must be in std:: namespace, or ADL fails
+std::ostream& operator<<(std::ostream& os, const bytes& b);
 std::ostream& operator<<(std::ostream& os, const bytes_view& b);
 
 }
@@ -108,6 +109,13 @@ struct hash<bytes_view> {
         bytes_view_hasher h;
         appending_hash<bytes_view>{}(h, v);
         return h.finalize();
+    }
+};
+
+template <>
+struct hash<bytes> {
+    size_t operator()(bytes b) const {
+        return std::hash<bytes_view>()(bytes_view(b));
     }
 };
 } // namespace std
