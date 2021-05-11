@@ -31,8 +31,7 @@
 #include "marshal_exception.hh"
 #include "bytes.hh"
 #include "utils/bit_cast.hh"
-
-enum class mutable_view { no, yes, };
+#include "utils/mutable_view.hh"
 
 /// Fragmented buffer
 ///
