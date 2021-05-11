@@ -87,17 +87,17 @@ class managed_bytes {
         int8_t size; // -1 -> use blob_storage
     };
     union u {
-        u() {}
+        u() noexcept {}
         ~u() {}
         blob_storage::ref_type ptr;
         small_blob small;
     } _u;
     static_assert(sizeof(small_blob) > sizeof(blob_storage*), "inline size too small");
 private:
-    bool external() const {
+    bool external() const noexcept {
         return _u.small.size < 0;
     }
-    size_t max_seg(allocation_strategy& alctr) {
+    size_t max_seg(allocation_strategy& alctr) noexcept {
         return alctr.preferred_max_contiguous_allocation() - sizeof(blob_storage);
     }
     void free_chain(blob_storage* p) noexcept {
@@ -125,7 +125,7 @@ public:
     using size_type = blob_storage::size_type;
     struct initialized_later {};
 
-    managed_bytes() {
+    managed_bytes() noexcept {
         _u.small.size = 0;
     }
 
