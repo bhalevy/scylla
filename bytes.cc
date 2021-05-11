@@ -82,10 +82,6 @@ sstring to_hex(const bytes_opt& b) {
     return !b ? "null" : to_hex(*b);
 }
 
-std::ostream& operator<<(std::ostream& os, const bytes& b) {
-    return os << to_hex(b);
-}
-
 std::ostream& operator<<(std::ostream& os, const bytes_opt& b) {
     if (b) {
         return os << *b;
@@ -94,6 +90,10 @@ std::ostream& operator<<(std::ostream& os, const bytes_opt& b) {
 }
 
 namespace std {
+
+std::ostream& operator<<(std::ostream& os, const bytes& b) {
+    return os << to_hex(b);
+}
 
 std::ostream& operator<<(std::ostream& os, const bytes_view& b) {
     return os << to_hex(b);
