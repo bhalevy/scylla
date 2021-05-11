@@ -53,7 +53,10 @@ public:
         return std::basic_string_view<CharT>(begin(), size());
     }
 
-    CharT& operator[](size_t idx) const { return _begin[idx]; }
+    CharT& operator[](size_t idx) const noexcept {
+        assert(idx < size());
+        return _begin[idx];
+    }
 
     iterator begin() const noexcept { return _begin; }
     iterator end() const noexcept { return _end; }
@@ -61,17 +64,29 @@ public:
     CharT* data() const noexcept { return _begin; }
     size_t size() const noexcept { return _end - _begin; }
     bool empty() const noexcept { return _begin == _end; }
-    CharT& front() noexcept { return *_begin; }
-    const CharT& front() const noexcept { return *_begin; }
+
+    CharT& front() noexcept {
+        assert(!empty());
+        return *_begin;
+    }
+
+    const CharT& front() const noexcept {
+        assert(!empty());
+        return *_begin;
+    }
 
     void remove_prefix(size_t n) noexcept {
+        assert(n <= size());
         _begin += n;
     }
+
     void remove_suffix(size_t n) noexcept {
+        assert(n <= size());
         _end -= n;
     }
 
-    basic_mutable_view substr(size_t pos, size_t count) {
+    basic_mutable_view substr(size_t pos, size_t count) noexcept {
+        assert(pos <= size());
         size_t n = std::min(count, (_end - _begin) - pos);
         return basic_mutable_view{_begin + pos, n};
     }
