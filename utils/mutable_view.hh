@@ -25,6 +25,7 @@
 #include <seastar/core/sstring.hh>
 
 #include "seastarx.hh"
+#include "utils/assert.hh"
 
 enum class mutable_view { no, yes, };
 
@@ -105,7 +106,7 @@ public:
     }
 
     base_reference operator[](size_t idx) const noexcept {
-        assert(idx < size());
+        SCYLLA_ASSERT(idx < size());
         return _begin[idx];
     }
 
@@ -136,39 +137,39 @@ public:
     template <typename>
     requires ( is_mutable == mutable_view::yes )
     reference front() noexcept {
-        assert(!empty());
+        SCYLLA_ASSERT(!empty());
         return *_begin;
     }
 
     const_reference front() const noexcept {
-        assert(!empty());
+        SCYLLA_ASSERT(!empty());
         return *_begin;
     }
 
     template <typename>
     requires ( is_mutable == mutable_view::yes )
     reference back() noexcept {
-        assert(!empty());
+        SCYLLA_ASSERT(!empty());
         return *(_end - 1);
     }
 
     const_reference back() const noexcept {
-        assert(!empty());
+        SCYLLA_ASSERT(!empty());
         return *(_end - 1);
     }
 
     void remove_prefix(size_t n) noexcept {
-        assert(n <= size());
+        SCYLLA_ASSERT(n <= size());
         _begin += n;
     }
 
     void remove_suffix(size_t n) noexcept {
-        assert(n <= size());
+        SCYLLA_ASSERT(n <= size());
         _end -= n;
     }
 
     basic_view_base substr(size_t pos, size_t count) noexcept {
-        assert(pos <= size());
+        SCYLLA_ASSERT(pos <= size());
         size_t n = std::min(count, (_end - _begin) - pos);
         return basic_view_base{_begin + pos, n};
     }
