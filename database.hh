@@ -156,10 +156,12 @@ class memtable_list {
 public:
     using seal_immediate_fn_type = std::function<future<> (flush_permit&&)>;
     using seal_delayed_fn_type = std::function<future<> ()>;
+    using await_pending_flushes_fn_type = std::function<future<> ()>;
 private:
     std::vector<shared_memtable> _memtables;
     seal_immediate_fn_type _seal_immediate_fn;
     seal_delayed_fn_type _seal_delayed_fn;
+    await_pending_flushes_fn_type _await_pending_flushes_fn;
     std::function<schema_ptr()> _current_schema;
     dirty_memory_manager* _dirty_memory_manager;
     std::optional<shared_promise<>> _flush_coalescing;
@@ -169,6 +171,7 @@ public:
     memtable_list(
             seal_immediate_fn_type seal_immediate_fn,
             seal_delayed_fn_type seal_delayed_fn,
+            await_pending_flushes_fn_type await_pending_flushes_fn,
             std::function<schema_ptr()> cs,
             dirty_memory_manager* dirty_memory_manager,
             table_stats& table_stats,
@@ -176,6 +179,7 @@ public:
         : _memtables({})
         , _seal_immediate_fn(seal_immediate_fn)
         , _seal_delayed_fn(seal_delayed_fn)
+        , _await_pending_flushes_fn(await_pending_flushes_fn)
         , _current_schema(cs)
         , _dirty_memory_manager(dirty_memory_manager)
         , _compaction_scheduling_group(compaction_scheduling_group)
@@ -185,17 +189,18 @@ public:
 
     memtable_list(
             seal_immediate_fn_type seal_immediate_fn,
+            await_pending_flushes_fn_type await_pending_flushes_fn,
             std::function<schema_ptr()> cs,
             dirty_memory_manager* dirty_memory_manager,
             table_stats& table_stats,
             seastar::scheduling_group compaction_scheduling_group = seastar::current_scheduling_group())
-        : memtable_list(std::move(seal_immediate_fn), {}, std::move(cs), dirty_memory_manager, table_stats, compaction_scheduling_group) {
+        : memtable_list(std::move(seal_immediate_fn), {}, std::move(await_pending_flushes_fn), std::move(cs), dirty_memory_manager, table_stats, compaction_scheduling_group) {
     }
 
     memtable_list(std::function<schema_ptr()> cs, dirty_memory_manager* dirty_memory_manager,
             table_stats& table_stats,
             seastar::scheduling_group compaction_scheduling_group = seastar::current_scheduling_group())
-        : memtable_list({}, {}, std::move(cs), dirty_memory_manager, table_stats, compaction_scheduling_group) {
+        : memtable_list({}, {}, [] { return make_ready_future<>(); }, std::move(cs), dirty_memory_manager, table_stats, compaction_scheduling_group) {
     }
 
     bool may_flush() const {
@@ -241,6 +246,10 @@ public:
         return request_flush();
     }
 
+    future<> await_pending_flushes() {
+        return _await_pending_flushes_fn();
+    }
+
     auto begin() noexcept {
         return _memtables.begin();
     }
@@ -273,6 +282,9 @@ public:
     // wouldn't happen anyway. Keeping the memtable in memory will potentially increase the time it
     // spends in memory allowing for more coalescing opportunities.
     future<> request_flush();
+
+    // Request flush and wait for all outstanding flushes to complete and seal the flushed memtables.
+    future<> flush() noexcept;
 private:
     lw_shared_ptr<memtable> new_memtable();
 };

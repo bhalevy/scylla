@@ -670,7 +670,7 @@ table::stop() {
     }
     return _async_gate.close().then([this] {
         return await_pending_ops().finally([this] {
-            return _memtables->request_flush().finally([this] {
+            return _memtables->flush().finally([this] {
                 return _compaction_manager.remove(this).then([this] {
                     return _sstable_deletion_gate.close().then([this] {
                         return get_row_cache().invalidate(row_cache::external_updater([this] {
@@ -1161,8 +1161,11 @@ table::make_memtable_list() {
     auto seal = [this] (flush_permit&& permit) {
         return seal_active_memtable(std::move(permit));
     };
+    auto await = [this] () {
+        return _flush_barrier.advance_and_await();
+    };
     auto get_schema = [this] { return schema(); };
-    return make_lw_shared<memtable_list>(std::move(seal), std::move(get_schema), _config.dirty_memory_manager, _stats, _config.memory_compaction_scheduling_group);
+    return make_lw_shared<memtable_list>(std::move(seal), std::move(await), std::move(get_schema), _config.dirty_memory_manager, _stats, _config.memory_compaction_scheduling_group);
 }
 
 table::table(schema_ptr schema, config config, db::commitlog* cl, compaction_manager& compaction_manager,
@@ -1464,7 +1467,7 @@ future<> table::flush(std::optional<db::replay_position> pos) {
         return make_ready_future<>();
     }
     auto op = _pending_flushes_phaser.start();
-    return _memtables->request_flush().then([this, op = std::move(op), fp = _highest_rp] {
+    return _memtables->flush().then([this, op = std::move(op), fp = _highest_rp] {
         _flush_rp = std::max(_flush_rp, fp);
     });
 }

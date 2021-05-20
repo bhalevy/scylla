@@ -1651,6 +1651,12 @@ future<> memtable_list::request_flush() {
     }
 }
 
+future<> memtable_list::flush() noexcept {
+    return request_flush().then([this] {
+        return await_pending_flushes();
+    });
+}
+
 lw_shared_ptr<memtable> memtable_list::new_memtable() {
     return make_lw_shared<memtable>(_current_schema(), *_dirty_memory_manager, _table_stats, this, _compaction_scheduling_group);
 }
