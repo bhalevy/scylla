@@ -25,6 +25,7 @@
 #include <seastar/core/future-util.hh>
 #include <seastar/core/gate.hh>
 #include <seastar/core/shared_ptr.hh>
+#include <seastar/core/shared_future.hh>
 #include "seastarx.hh"
 
 namespace utils {
@@ -37,6 +38,7 @@ public:
 private:
     using gate = seastar::gate;
     lw_shared_ptr<gate> _gate;
+    shared_future<> _pending;
     phase_type _phase;
 public:
     phased_barrier()
@@ -68,22 +70,40 @@ public:
     // Starts new operation. The operation ends when the "operation" object is destroyed.
     // The operation may last longer than the life time of the phased_barrier.
     operation start() {
+        if (!_gate) {
+            _gate = make_lw_shared<gate>();
+        }
         _gate->enter();
         return { _gate };
     }
 
     // Starts a new phase and waits for all operations started in any of the earlier phases.
     // It is fine to start multiple awaits in parallel.
-    // Strong exception guarantees.
+    // Never fails.
     future<> advance_and_await() noexcept {
-      try {
-        auto new_gate = make_lw_shared<gate>();
+        if (_pending.valid()) {
+            return _pending;
+        }
+
+        if (!_gate) {
+            return make_ready_future<>();
+        }
+
+        shared_promise<> pr;
+        _pending = pr.get_shared_future();
+        future<> ret = _pending;
         ++_phase;
-        auto old_gate = std::exchange(_gate, std::move(new_gate));
-        return old_gate->close().then([old_gate, op = start()] {});
-      } catch (...) {
-        return current_exception_as_future();
-      }
+        auto old_gate = std::move(_gate);
+        // run in background, synchronize using `ret`
+        (void)old_gate->close().then_wrapped([this, old_gate = std::move(old_gate), pr = std::move(pr)] (future<> f) mutable {
+            if (f.failed()) {
+                pr.set_exception(f.get_exception());
+            } else {
+                pr.set_value();
+            }
+            _pending = {};
+        });
+        return std::move(ret);
     }
 
     // Returns current phase number. The smallest value returned is 0.
@@ -93,7 +113,7 @@ public:
 
     // Number of operations in current phase.
     size_t operations_in_progress() const {
-        return _gate->get_count();
+        return _gate ? _gate->get_count() : 0;
     }
 };
 
