@@ -456,6 +456,8 @@ future<> compaction_manager::stop_ongoing_compactions(sstring reason) {
     return do_with(std::move(tasks), [this] (std::list<lw_shared_ptr<task>>& tasks) {
         return parallel_for_each(tasks, [this] (auto& task) {
             return this->task_stop(task);
+        }).handle_exception([] (std::exception_ptr ex) {
+            cmlog.warn("Error stopping compaction: {}: Ignored.", std::move(ex));
         });
     });
 }
