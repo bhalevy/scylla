@@ -568,7 +568,7 @@ private:
     std::exception_ptr _ex;
 
 private:
-    explicit queue_reader_handle(queue_reader& reader);
+    explicit queue_reader_handle(queue_reader& reader) noexcept;
 
     void abandon();
 
