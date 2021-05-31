@@ -284,6 +284,13 @@ public:
         // Similar to destructors, close must never fail.
         virtual future<> close() noexcept = 0;
 
+        // Aborts the reader with exception.
+        //
+        // This is a default implementation that just prints a
+        // warning.  Implementations implementing a more meaningful
+        // abort method, like the queue_reader, override this method.
+        virtual void abort(std::exception_ptr ex) noexcept;
+
         size_t buffer_size() const {
             return _buffer_size;
         }
@@ -479,6 +486,12 @@ public:
         }
         return make_ready_future<>();
     }
+    // Aborts the reader with exception.
+    //
+    // Note: can be called asynchonously, while operator()'s return value is not ready.
+    // The exception may be incorporated into operator()'s return value, but may also
+    // be ignored, if aborted too late.
+    void abort(std::exception_ptr ex) noexcept { _impl->abort(std::move(ex)); }
     bool is_end_of_stream() const { return _impl->is_end_of_stream(); }
     bool is_buffer_empty() const { return _impl->is_buffer_empty(); }
     bool is_buffer_full() const { return _impl->is_buffer_full(); }

@@ -2073,7 +2073,7 @@ public:
             _full.reset();
         }
     }
-    void abort(std::exception_ptr ep) {
+    void abort(std::exception_ptr ep) noexcept override {
         _ex = std::move(ep);
         if (_full) {
             _full->set_exception(_ex);
