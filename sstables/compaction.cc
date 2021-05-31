@@ -659,7 +659,7 @@ private:
         {
             return seastar::async([this, reader = std::move(reader), gc_consumer = std::move(gc_consumer), now] () mutable {
                 auto close_reader = deferred_close(reader);
-
+              try {
                 using compact_mutations = compact_for_compaction<compacting_sstable_writer, GCConsumer>;
                 auto cfc = make_stable_flattened_mutations_consumer<compact_mutations>(*schema(), now,
                                          max_purgeable_func(),
@@ -667,6 +667,9 @@ private:
                                          std::move(gc_consumer));
 
                 reader.consume_in_thread(std::move(cfc), db::no_timeout);
+              } catch (...) {
+                reader.abort(std::current_exception());
+              }
             });
         });
         return consumer(make_sstable_reader());

@@ -23,9 +23,12 @@
 
 #include "flat_mutation_reader.hh"
 #include "mutation_reader.hh"
+#include "log.hh"
 
 namespace mutation_writer {
 using reader_consumer = noncopyable_function<future<> (flat_mutation_reader)>;
+
+extern logging::logger mwlog;
 
 class bucket_writer {
     schema_ptr _schema;
@@ -67,6 +70,7 @@ future<> feed_writer(flat_mutation_reader&& rd, Writer&& wr) {
                         // so just ignore any exception.
                         (void)f.get_exception();
                     }
+                    mwlog.warn("feed_writer failed: {}", ex);
                     return make_exception_future<>(std::move(ex));
                 });
             } else {

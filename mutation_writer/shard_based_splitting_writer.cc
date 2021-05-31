@@ -27,8 +27,11 @@
 #include <seastar/core/shared_mutex.hh>
 
 #include "mutation_reader.hh"
+#include "log.hh"
 
 namespace mutation_writer {
+
+extern logging::logger mwlog;
 
 class shard_based_splitting_mutation_writer {
     using shard_writer = bucket_writer;
@@ -84,6 +87,7 @@ public:
         }
     }
     void abort(std::exception_ptr ep) {
+        mwlog.info("shard_based_splitting_mutation_writer: abort: {}", ep);
         for (auto&& shard : _shards) {
             if (shard) {
                 shard->abort(ep);

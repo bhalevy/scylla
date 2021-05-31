@@ -27,8 +27,11 @@
 #include <seastar/core/future-util.hh>
 #include <seastar/core/queue.hh>
 #include <seastar/core/smp.hh>
+#include "log.hh"
 
 namespace mutation_writer {
+
+extern logging::logger mwlog;
 
 thread_local reader_concurrency_semaphore semaphore(reader_concurrency_semaphore::no_limits{}, "multishard_writer");
 
@@ -160,7 +163,8 @@ future<stop_iteration> multishard_writer::handle_end_of_stream() {
 future<> multishard_writer::consume(unsigned shard) {
     return smp::submit_to(shard, [writer = _shard_writers[shard].get()] () mutable {
         return writer->consume();
-    }).handle_exception([this] (std::exception_ptr ep) {
+    }).handle_exception([this, shard] (std::exception_ptr ep) {
+        mwlog.info("multishard_writer::consume: shard={}: aborting queue_reader_handles: {}", shard, ep);
         for (auto& q : _queue_reader_handles) {
             if (q) {
                 q->abort(ep);
@@ -184,6 +188,7 @@ future<> multishard_writer::distribute_mutation_fragments() {
             }
         });
     }).handle_exception([this] (std::exception_ptr ep) {
+        mwlog.info("multishard_writer::distribute_mutation_fragments: aborting queue_reader_handles: {}", ep);
         for (auto& q : _queue_reader_handles) {
             if (q) {
                 q->abort(ep);

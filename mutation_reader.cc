@@ -2028,6 +2028,7 @@ public:
         : impl(std::move(s), std::move(permit)) {
     }
     ~queue_reader() {
+        mrlog.warn("queue_reader {} destroyed: handle={}: backtrace: {}", fmt::ptr(this), fmt::ptr(_handle), current_backtrace());
         if (_handle) {
             _handle->_reader = nullptr;
         }
@@ -2088,6 +2089,7 @@ void queue_reader_handle::abandon() {
 
 queue_reader_handle::queue_reader_handle(queue_reader& reader) noexcept : _reader(&reader) {
     _reader->_handle = this;
+    mrlog.info("queue_reader_handle {} constructed: reader={}", fmt::ptr(this), fmt::ptr(_reader));
 }
 
 queue_reader_handle::queue_reader_handle(queue_reader_handle&& o) noexcept
@@ -2097,6 +2099,7 @@ queue_reader_handle::queue_reader_handle(queue_reader_handle&& o) noexcept
     if (_reader) {
         _reader->_handle = this;
     }
+    mrlog.info("queue_reader_handle {} move-constructed from {}: reader={} ex={}", fmt::ptr(this), fmt::ptr(&o), fmt::ptr(_reader), _ex);
 }
 
 queue_reader_handle::~queue_reader_handle() {
@@ -2104,6 +2107,7 @@ queue_reader_handle::~queue_reader_handle() {
 }
 
 queue_reader_handle& queue_reader_handle::operator=(queue_reader_handle&& o) {
+    mrlog.info("queue_reader_handle {} move-assigned from {}: reader={} ex={}", fmt::ptr(this), fmt::ptr(&o), fmt::ptr(o._reader), o._ex);
     abandon();
     _reader = std::exchange(o._reader, nullptr);
     _ex = std::exchange(o._ex, {});
@@ -2118,7 +2122,7 @@ future<> queue_reader_handle::push(mutation_fragment mf) {
         if (_ex) {
             return make_exception_future<>(_ex);
         }
-        return make_exception_future<>(std::runtime_error("Dangling queue_reader_handle"));
+        return make_exception_future<>(std::runtime_error(format("queue_reader_handle {} push: Dangling queue_reader_handle", fmt::ptr(this))));
     }
     return _reader->push(std::move(mf));
 }
@@ -2128,8 +2132,9 @@ void queue_reader_handle::push_end_of_stream() {
         if (_ex) {
             std::rethrow_exception(_ex);
         }
-        throw std::runtime_error("Dangling queue_reader_handle");
+        throw std::runtime_error(format("queue_reader_handle {} push_end_of_stream: Dangling queue_reader_handle", fmt::ptr(this)));
     }
+    _ex = std::make_exception_ptr<std::runtime_error>(std::runtime_error(format("queue_reader_handle {}: end of stream", fmt::ptr(this))));
     _reader->push_end_of_stream();
     _reader->_handle = nullptr;
     _reader = nullptr;
@@ -2140,8 +2145,11 @@ bool queue_reader_handle::is_terminated() const {
 }
 
 void queue_reader_handle::abort(std::exception_ptr ep) {
-    _ex = std::move(ep);
+    if (!_ex) {
+        _ex = std::move(ep);
+    }
     if (_reader) {
+        mrlog.info("queue_reader_handle {} abort: {}", fmt::ptr(this), _ex);
         _reader->abort(_ex);
         _reader->_handle = nullptr;
         _reader = nullptr;

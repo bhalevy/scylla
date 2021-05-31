@@ -20,8 +20,12 @@
  */
 
 #include "feed_writers.hh"
+#include "log.hh"
+#include "seastar/util/backtrace.hh"
 
 namespace mutation_writer {
+
+logging::logger mwlog("mutation_writer");
 
 bucket_writer::bucket_writer(schema_ptr schema, std::pair<flat_mutation_reader, queue_reader_handle> queue_reader, reader_consumer& consumer)
     : _schema(schema)
@@ -34,14 +38,23 @@ bucket_writer::bucket_writer(schema_ptr schema, reader_permit permit, reader_con
 { }
 
 future<> bucket_writer::consume(mutation_fragment mf) {
+    if (_handle.is_terminated()) [[unlikely]] {
+        mwlog.warn("bucket_writer: consume called after close: backtrace: {}", current_backtrace());
+        return make_ready_future<>();
+    }
     return _handle.push(std::move(mf));
 }
 
 void bucket_writer::consume_end_of_stream() {
+    if (_handle.is_terminated()) [[unlikely]] {
+        mwlog.warn("bucket_writer: consume_end_of_stream called after close: backtrace: {}", current_backtrace());
+        return;
+    }
     _handle.push_end_of_stream();
 }
 
 void bucket_writer::abort(std::exception_ptr ep) noexcept {
+    mwlog.info("bucket_writer::abort: {}", ep);
     _handle.abort(std::move(ep));
 }
 
