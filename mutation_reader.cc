@@ -2128,6 +2128,9 @@ future<> queue_reader_handle::push(mutation_fragment mf) {
 
 void queue_reader_handle::push_end_of_stream() {
     if (!_reader) {
+        if (_ex) {
+            std::rethrow_exception(_ex);
+        }
         throw std::runtime_error("Dangling queue_reader_handle");
     }
     _reader->push_end_of_stream();
