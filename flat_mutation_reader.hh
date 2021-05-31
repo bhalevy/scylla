@@ -63,6 +63,7 @@ public:
     private:
         tracked_buffer _buffer;
         size_t _buffer_size = 0;
+        std::exception_ptr _ex;
     protected:
         size_t max_buffer_size_in_bytes = 8 * 1024;
         bool _end_of_stream = false;
@@ -116,12 +117,19 @@ public:
             _buffer_size += memory_usage;
         }
 
+        future<> do_fill_buffer(db::timeout_clock::time_point timeout) noexcept {
+            if (_ex) {
+                return make_exception_future<>(_ex);
+            }
+            return futurize_invoke([this, timeout] { return fill_buffer(timeout); });
+        };
+
         future<mutation_fragment_opt> operator()(db::timeout_clock::time_point timeout) {
             if (is_buffer_empty()) {
                 if (is_end_of_stream()) {
                     return make_ready_future<mutation_fragment_opt>();
                 }
-                return fill_buffer(timeout).then([this, timeout] { return operator()(timeout); });
+                return do_fill_buffer(timeout).then([this, timeout] { return operator()(timeout); });
             }
             return make_ready_future<mutation_fragment_opt>(pop_mutation_fragment());
         }
@@ -136,7 +144,7 @@ public:
                     if (is_end_of_stream()) {
                         return make_ready_future<stop_iteration>(stop_iteration::yes);
                     }
-                    return fill_buffer(timeout).then([] {
+                    return do_fill_buffer(timeout).then([] {
                         return make_ready_future<stop_iteration>(stop_iteration::no);
                     });
                 }
@@ -166,7 +174,7 @@ public:
                     if (is_end_of_stream()) {
                         return;
                     }
-                    fill_buffer(timeout).get();
+                    do_fill_buffer(timeout).get();
                     continue;
                 }
                 auto mf = pop_mutation_fragment();
@@ -284,6 +292,19 @@ public:
         //
         // Similar to destructors, close must never fail.
         virtual future<> close() noexcept = 0;
+
+        // Aborts the reader with exception.
+        // This clears the reader's buffer and stores the exception,
+        // to be returned from here on by fill_buffer and functions calling it.
+        //
+        // If overriden by the flat_mutation_reader::impl, the super-class
+        // abort should be called by the derived override implementation.
+        virtual void abort(std::exception_ptr ex) noexcept {
+            if (!_ex) {
+                _ex = std::move(ex);
+            }
+            _buffer.clear();
+        }
 
         size_t buffer_size() const {
             return _buffer_size;
@@ -480,6 +501,10 @@ public:
         }
         return make_ready_future<>();
     }
+    // Aborts the reader with exception.
+    // This clears the reader's buffer and stores the exception,
+    // to be returned from here on by fill_buffer and functions calling it.
+    void abort(std::exception_ptr ex) noexcept { _impl->abort(std::move(ex)); }
     bool is_end_of_stream() const { return _impl->is_end_of_stream(); }
     bool is_buffer_empty() const { return _impl->is_buffer_empty(); }
     bool is_buffer_full() const { return _impl->is_buffer_full(); }

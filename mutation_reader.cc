@@ -2033,9 +2033,6 @@ public:
         }
     }
     virtual future<> fill_buffer(db::timeout_clock::time_point) override {
-        if (_ex) {
-            return make_exception_future<>(_ex);
-        }
         if (_end_of_stream || !is_buffer_empty()) {
             return make_ready_future<>();
         }
@@ -2073,8 +2070,8 @@ public:
             _full.reset();
         }
     }
-    void abort(std::exception_ptr ep) {
-        _ex = std::move(ep);
+    virtual void abort(std::exception_ptr ep) noexcept override {
+        flat_mutation_reader::impl::abort(std::move(ep));
         if (_full) {
             _full->set_exception(_ex);
             _full.reset();

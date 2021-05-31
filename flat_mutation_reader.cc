@@ -42,7 +42,7 @@ flat_mutation_reader& flat_mutation_reader::operator=(flat_mutation_reader&& o) 
         // to prevent leaks and potential use-after-free due to background
         // tasks left behind.
         on_internal_error_noexcept(fmr_logger, format("{} [{}]: permit {}: was not closed before overwritten by move-assign", typeid(*ip).name(), fmt::ptr(ip), ip->_permit.description()));
-        abort();
+        ::abort();
     }
     _impl = std::move(o._impl);
     return *this;
@@ -55,7 +55,7 @@ flat_mutation_reader::~flat_mutation_reader() {
         // to prevent leaks and potential use-after-free due to background
         // tasks left behind.
         on_internal_error_noexcept(fmr_logger, format("{} [{}]: permit {}: was not closed before destruction", typeid(*ip).name(), fmt::ptr(ip), ip->_permit.description()));
-        abort();
+        ::abort();
     }
 }
 
