@@ -598,7 +598,7 @@ table::seal_active_memtable(flush_permit&& permit) {
         }
 
         if (_commitlog) {
-            _commitlog->discard_completed_segments(_schema->id(), old->rp_set());
+            _commitlog->discard_completed_segments(_schema->id(), old->get_and_discard_rp_set());
         }
         return previous_flush.finally([op = std::move(op)] { });
     });
@@ -1507,7 +1507,7 @@ future<> table::clear() {
     _memtables->clear_and_add();
     if (_commitlog) {
         for (auto& t : *_memtables) {
-            _commitlog->discard_completed_segments(_schema->id(), t->rp_set());
+            _commitlog->discard_completed_segments(_schema->id(), t->get_and_discard_rp_set());
         }
     }
     return _cache.invalidate(row_cache::external_updater([] { /* There is no underlying mutation source */ }));
