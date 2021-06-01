@@ -2083,6 +2083,10 @@ public:
             _not_full->set_exception(_ex);
             _not_full.reset();
         }
+        if (auto h = std::exchange(_handle, nullptr)) {
+            h->_reader = nullptr;
+            h->abort(_ex);
+        }
     }
 };
 
@@ -2139,10 +2143,10 @@ bool queue_reader_handle::is_terminated() const {
 
 void queue_reader_handle::abort(std::exception_ptr ep) {
     _ex = std::move(ep);
-    if (_reader) {
-        _reader->abort(_ex);
+    if (auto r = _reader) {
         _reader->_handle = nullptr;
         _reader = nullptr;
+        r->abort(_ex);
     }
 }
 
