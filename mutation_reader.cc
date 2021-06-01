@@ -2074,6 +2074,7 @@ public:
         }
     }
     void abort(std::exception_ptr ep) noexcept override {
+        assert(ep);
         _ex = std::move(ep);
         if (_full) {
             _full->set_exception(_ex);
