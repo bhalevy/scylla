@@ -58,6 +58,12 @@ class flat_mutation_reader final {
 public:
     using tracked_buffer = circular_buffer<mutation_fragment, tracking_allocator<mutation_fragment>>;
 
+    struct timeout_error : public std::runtime_error {
+        timeout_error() noexcept
+            : std::runtime_error("reader timed out")
+        { }
+    };
+
     class impl {
     private:
         tracked_buffer _buffer;
@@ -92,6 +98,12 @@ public:
         const tracked_buffer& buffer() const {
             return _buffer;
         }
+        future<> do_fill_buffer(db::timeout_clock::time_point timeout) noexcept {
+            if (db::timeout_clock::now() >= timeout) [[unlikely]] {
+                return make_exception_future<>(timeout_error());
+            }
+            return fill_buffer(timeout);
+        }
     public:
         impl(schema_ptr s, reader_permit permit) : _buffer(permit), _schema(std::move(s)), _permit(std::move(permit)) { }
         virtual ~impl() {}
@@ -120,7 +132,7 @@ public:
                 if (is_end_of_stream()) {
                     return make_ready_future<mutation_fragment_opt>();
                 }
-                return fill_buffer(timeout).then([this, timeout] { return operator()(timeout); });
+                return do_fill_buffer(timeout).then([this, timeout] { return operator()(timeout); });
             }
             return make_ready_future<mutation_fragment_opt>(pop_mutation_fragment());
         }
@@ -135,7 +147,7 @@ public:
                     if (is_end_of_stream()) {
                         return make_ready_future<stop_iteration>(stop_iteration::yes);
                     }
-                    return fill_buffer(timeout).then([] {
+                    return do_fill_buffer(timeout).then([] {
                         return make_ready_future<stop_iteration>(stop_iteration::no);
                     });
                 }
@@ -165,7 +177,7 @@ public:
                     if (is_end_of_stream()) {
                         return;
                     }
-                    fill_buffer(timeout).get();
+                    do_fill_buffer(timeout).get();
                     continue;
                 }
                 auto mf = pop_mutation_fragment();
@@ -419,7 +431,7 @@ public:
     // `operator()()` calls.
     future<> next_partition() { return _impl->next_partition(); }
 
-    future<> fill_buffer(db::timeout_clock::time_point timeout) { return _impl->fill_buffer(timeout); }
+    future<> fill_buffer(db::timeout_clock::time_point timeout) { return _impl->do_fill_buffer(timeout); }
 
     // Changes the range of partitions to pr. The range can only be moved
     // forwards. pr.begin() needs to be larger than pr.end() of the previousl

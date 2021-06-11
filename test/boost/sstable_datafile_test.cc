@@ -7811,3 +7811,32 @@ SEASTAR_TEST_CASE(max_ongoing_compaction_test) {
         BOOST_REQUIRE(max_ongoing_compaction == 1);
     });
 }
+
+// Reproducer for #8846
+SEASTAR_TEST_CASE(sstable_reader_timeout_test) {
+    return test_setup::do_with_tmp_directory([] (test_env& env, sstring tmpdir_path) {
+        return seastar::async([&env, tmpdir_path] {
+            auto s = complex_schema();
+
+            auto mt = make_lw_shared<memtable>(s);
+
+            auto key = partition_key::from_exploded(*s, {to_bytes("key1")});
+            auto cp = clustering_key_prefix::from_exploded(*s, {to_bytes("c1")});
+
+            mutation m(s, key);
+
+            tombstone tomb(api::new_timestamp(), gc_clock::now());
+            m.partition().apply_delete(*s, cp, tomb);
+            mt->apply(std::move(m));
+
+            auto sst = env.make_sstable(s, tmpdir_path, 12, la, big);
+            write_memtable_to_sstable_for_test(*mt, sst).get();
+            sst = env.reusable_sst(s, tmpdir_path, 12).get0();
+            auto pr = dht::partition_range::make_singular(make_dkey(s, "key1"));
+            auto rd = sst->make_reader(s, tests::make_permit(), pr, s->full_slice());
+            auto close_rd = deferred_close(rd);
+
+            BOOST_REQUIRE_THROW(read_mutation_from_flat_mutation_reader(rd, db::timeout_clock::now()).get(), flat_mutation_reader::timeout_error);
+        });
+    });
+}

@@ -1993,6 +1993,7 @@ table::query(schema_ptr s,
         }
       } catch (...) {
         ex = std::current_exception();
+        tlogger.debug("query failed for {}.{}: {}", s->ks_name(), s->cf_name(), ex);
       }
         co_await q.close();
         if (ex) {
