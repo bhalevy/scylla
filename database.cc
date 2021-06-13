@@ -1411,10 +1411,12 @@ database::query(schema_ptr s, const query::read_command& cmd, query::result_opti
             std::move(trace_state),
             seastar::ref(get_result_memory_limiter()),
             timeout,
-            std::move(cache_ctx)).then_wrapped([this, s = _stats, &semaphore, hit_rate = cf.get_global_cache_hit_rate(), op = cf.read_in_progress()] (auto f) {
+            std::move(cache_ctx)).then_wrapped([this, s = _stats, &semaphore, &cf, hit_rate = cf.get_global_cache_hit_rate(), op = cf.read_in_progress()] (auto f) {
         if (f.failed()) {
             ++semaphore.get_stats().total_failed_reads;
-            return make_exception_future<std::tuple<lw_shared_ptr<query::result>, cache_temperature>>(f.get_exception());
+            auto ex = f.get_exception();
+            dblog.debug("query failed for {}.{}: {}", cf.schema()->ks_name(), cf.schema()->cf_name(), ex);
+            return make_exception_future<std::tuple<lw_shared_ptr<query::result>, cache_temperature>>(std::move(ex));
         } else {
             ++semaphore.get_stats().total_successful_reads;
             auto result = f.get0();
