@@ -354,6 +354,10 @@ public:
         return fut;
     }
 
+    void expire_blocked_requests() noexcept {
+        _blocked_requests.expire();
+    }
+
     // returns a pointer to the largest region (in terms of memory usage) that sits below this
     // region group. This includes the regions owned by this region group as well as all of its
     // children.
