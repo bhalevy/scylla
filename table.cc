@@ -1504,12 +1504,12 @@ bool table::can_flush() const {
 }
 
 future<> table::clear() {
-    _memtables->clear_and_add();
     if (_commitlog) {
         for (auto& t : *_memtables) {
             _commitlog->discard_completed_segments(_schema->id(), t->rp_set());
         }
     }
+    _memtables->clear_and_add();
     return _cache.invalidate(row_cache::external_updater([] { /* There is no underlying mutation source */ }));
 }
 
