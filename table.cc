@@ -1504,6 +1504,7 @@ bool table::can_flush() const {
 }
 
 future<> table::clear() {
+    dirty_memory_region_group().expire_blocked_requests();
     if (_commitlog) {
         for (auto& t : *_memtables) {
             _commitlog->discard_completed_segments(_schema->id(), t->rp_set());
