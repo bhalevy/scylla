@@ -560,6 +560,13 @@ public:
         }
         return make_ready_future<>();
     }
+    // Abort read i/o operations.
+    //
+    // All outstanding reads are canceled.
+    // Outstanding and future reads will fail with the given exception.
+    void abort_io(std::exception_ptr ex) noexcept {
+        _impl->_permit.abort(std::move(ex));
+    }
     bool is_end_of_stream() const { return _impl->is_end_of_stream(); }
     bool is_buffer_empty() const { return _impl->is_buffer_empty(); }
     bool is_buffer_full() const { return _impl->is_buffer_full(); }
