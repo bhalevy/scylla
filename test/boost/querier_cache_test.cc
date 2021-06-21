@@ -21,6 +21,7 @@
 
 #include "db/timeout_clock.hh"
 #include "querier.hh"
+#include "seastar/core/timed_out_error.hh"
 #include "service/priority_manager.hh"
 #include "test/lib/simple_schema.hh"
 #include "test/lib/cql_test_env.hh"
@@ -222,8 +223,10 @@ public:
         const auto cache_key = make_cache_key(key);
 
         auto querier = make_querier<Querier>(range);
+        auto close_querier = deferred_action([&querier] { querier.close().get(); });
         auto dk_ck = querier.consume_page(dummy_result_builder{}, row_limit, std::numeric_limits<uint32_t>::max(),
                 gc_clock::now(), timeout, query::max_result_size(std::numeric_limits<uint64_t>::max())).get0();
+        close_querier.cancel();
         auto&& dk = dk_ck.first;
         auto&& ck = dk_ck.second;
         auto permit = querier.permit();
@@ -805,4 +808,14 @@ SEASTAR_THREAD_TEST_CASE(test_unique_inactive_read_handle) {
     });
     BOOST_REQUIRE_THROW(sem1.unregister_inactive_read(std::move(sem2_h1)), std::runtime_error);
     BOOST_REQUIRE_THROW(sem2.unregister_inactive_read(std::move(sem1_h1)), std::runtime_error);
+}
+
+SEASTAR_THREAD_TEST_CASE(test_data_querier_timeout) {
+    test_querier_cache t;
+
+    BOOST_REQUIRE_THROW(t.produce_first_page_and_save_data_querier(db::timeout_clock::now()), timed_out_error);
+
+    BOOST_REQUIRE_THROW(t.produce_first_page_and_save_data_querier(db::timeout_clock::now() + db::timeout_clock::duration::min()), timed_out_error);
+
+    BOOST_REQUIRE_NO_THROW(t.produce_first_page_and_save_data_querier(db::timeout_clock::now() + 1s));
 }

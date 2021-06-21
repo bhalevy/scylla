@@ -22,6 +22,7 @@
 #pragma once
 
 #include <seastar/util/closeable.hh>
+#include <seastar/core/timer.hh>
 
 #include "mutation_compactor.hh"
 #include "mutation_reader.hh"
@@ -86,7 +87,15 @@ auto consume_page(flat_mutation_reader& reader,
         gc_clock::time_point query_time,
         db::timeout_clock::time_point timeout,
         query::max_result_size max_size) {
-    return reader.peek(timeout).then([=, &reader, consumer = std::move(consumer), &slice] (
+    timer<db::timeout_clock> tmr;
+    if (timeout != db::no_timeout) {
+        if (db::timeout_clock::now() >= timeout) {
+            throw timed_out_error();
+        }
+        tmr.set_callback([&reader] { reader.abort_io(std::make_exception_ptr(timed_out_error())); });
+        tmr.arm(timeout);
+    }
+    return reader.peek(timeout).then([=, &reader, consumer = std::move(consumer), &slice, tmr = std::move(tmr)] (
                 mutation_fragment* next_fragment) mutable {
         const auto next_fragment_kind = next_fragment ? next_fragment->mutation_fragment_kind() : mutation_fragment::kind::partition_end;
         compaction_state->start_new_page(row_limit, partition_limit, query_time, next_fragment_kind, consumer);
@@ -106,7 +115,7 @@ auto consume_page(flat_mutation_reader& reader,
             return reader.consume(std::move(reader_consumer), timeout);
         };
 
-        return consume().then([last_ckey] (auto&&... results) mutable {
+        return consume().then([last_ckey, tmr = std::move(tmr)] (auto&&... results) mutable {
             static_assert(sizeof...(results) <= 1);
             return make_ready_future<std::tuple<std::optional<clustering_key_prefix>, std::decay_t<decltype(results)>...>>(std::tuple(std::move(*last_ckey), std::move(results)...));
         });
