@@ -19,6 +19,7 @@
  * along with Scylla.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include "db/timeout_clock.hh"
 #include "querier.hh"
 #include "service/priority_manager.hh"
 #include "test/lib/simple_schema.hh"
@@ -217,12 +218,12 @@ public:
 
     template <typename Querier>
     entry_info produce_first_page_and_save_querier(unsigned key, const dht::partition_range& range,
-            const query::partition_slice& slice, uint64_t row_limit) {
+            const query::partition_slice& slice, uint64_t row_limit, db::timeout_clock::time_point timeout = db::no_timeout) {
         const auto cache_key = make_cache_key(key);
 
         auto querier = make_querier<Querier>(range);
         auto dk_ck = querier.consume_page(dummy_result_builder{}, row_limit, std::numeric_limits<uint32_t>::max(),
-                gc_clock::now(), db::no_timeout, query::max_result_size(std::numeric_limits<uint64_t>::max())).get0();
+                gc_clock::now(), timeout, query::max_result_size(std::numeric_limits<uint64_t>::max())).get0();
         auto&& dk = dk_ck.first;
         auto&& ck = dk_ck.second;
         auto permit = querier.permit();
@@ -265,27 +266,27 @@ public:
     }
 
     entry_info produce_first_page_and_save_data_querier(unsigned key, const dht::partition_range& range,
-            const query::partition_slice& slice, uint64_t row_limit = 5) {
-        return produce_first_page_and_save_querier<query::data_querier>(key, range, slice, row_limit);
+            const query::partition_slice& slice, uint64_t row_limit = 5, db::timeout_clock::time_point timeout = db::no_timeout) {
+        return produce_first_page_and_save_querier<query::data_querier>(key, range, slice, row_limit, timeout);
     }
 
-    entry_info produce_first_page_and_save_data_querier(unsigned key, const dht::partition_range& range, uint64_t row_limit = 5) {
-        return produce_first_page_and_save_data_querier(key, range, make_default_slice(), row_limit);
+    entry_info produce_first_page_and_save_data_querier(unsigned key, const dht::partition_range& range, uint64_t row_limit = 5, db::timeout_clock::time_point timeout = db::no_timeout) {
+        return produce_first_page_and_save_data_querier(key, range, make_default_slice(), row_limit, timeout);
     }
 
     // Singular overload
-    entry_info produce_first_page_and_save_data_querier(unsigned key, std::size_t i, uint64_t row_limit = 5) {
-        return produce_first_page_and_save_data_querier(key, make_singular_partition_range(i), _s.schema()->full_slice(), row_limit);
+    entry_info produce_first_page_and_save_data_querier(unsigned key, std::size_t i, uint64_t row_limit = 5, db::timeout_clock::time_point timeout = db::no_timeout) {
+        return produce_first_page_and_save_data_querier(key, make_singular_partition_range(i), _s.schema()->full_slice(), row_limit, timeout);
     }
 
     // Use the whole range
-    entry_info produce_first_page_and_save_data_querier(unsigned key) {
-        return produce_first_page_and_save_data_querier(key, make_default_partition_range(), _s.schema()->full_slice());
+    entry_info produce_first_page_and_save_data_querier(unsigned key, uint64_t row_limit = 5, db::timeout_clock::time_point timeout = db::no_timeout) {
+        return produce_first_page_and_save_data_querier(key, make_default_partition_range(), _s.schema()->full_slice(), row_limit, timeout);
     }
 
     // For tests testing just one insert-lookup.
-    entry_info produce_first_page_and_save_data_querier() {
-        return produce_first_page_and_save_data_querier(1);
+    entry_info produce_first_page_and_save_data_querier(db::timeout_clock::time_point timeout = db::no_timeout) {
+        return produce_first_page_and_save_data_querier(1, make_default_partition_range(), _s.schema()->full_slice(), 1, timeout);
     }
 
     entry_info produce_first_page_and_save_mutation_querier(unsigned key, const dht::partition_range& range,
