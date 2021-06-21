@@ -170,6 +170,10 @@ public:
     seastar::io_intent* intent_ptr() noexcept {
         return _intent.get();
     }
+
+    void abort(std::exception_ptr ex) noexcept {
+        return _intent->abort(std::move(ex));
+    }
 };
 
 struct reader_concurrency_semaphore::permit_list {
@@ -233,6 +237,10 @@ sstring reader_permit::description() const {
 
 seastar::io_intent* reader_permit::intent_ptr() noexcept {
     return _impl->intent_ptr();
+}
+
+void reader_permit::abort(std::exception_ptr ex) noexcept {
+    return _impl->abort(std::move(ex));
 }
 
 std::ostream& operator<<(std::ostream& os, reader_permit::state s) {

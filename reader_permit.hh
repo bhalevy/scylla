@@ -141,6 +141,8 @@ public:
     sstring description() const;
 
     seastar::io_intent* intent_ptr() noexcept;
+
+    void abort(std::exception_ptr ex) noexcept;
 };
 
 class reader_permit::resource_units {
