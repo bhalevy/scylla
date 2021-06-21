@@ -24,6 +24,7 @@
 #include <seastar/util/lazy.hh>
 #include <seastar/util/log.hh>
 #include <seastar/core/coroutine.hh>
+#include <seastar/core/io_intent.hh>
 
 #include "reader_concurrency_semaphore.hh"
 #include "utils/exceptions.hh"
@@ -79,6 +80,7 @@ class reader_permit::impl : public boost::intrusive::list_base_hook<boost::intru
     std::string_view _op_name_view;
     reader_resources _resources;
     reader_permit::state _state = reader_permit::state::active;
+    std::unique_ptr<seastar::io_intent> _intent;
 
 public:
     struct value_tag {};
@@ -87,6 +89,7 @@ public:
         : _semaphore(semaphore)
         , _schema(schema)
         , _op_name_view(op_name)
+        , _intent(std::make_unique<seastar::io_intent>())
     {
         _semaphore.on_permit_created(*this);
     }
@@ -95,6 +98,7 @@ public:
         , _schema(schema)
         , _op_name(std::move(op_name))
         , _op_name_view(_op_name)
+        , _intent(std::make_unique<seastar::io_intent>())
     {
         _semaphore.on_permit_created(*this);
     }
@@ -162,6 +166,10 @@ public:
                 _schema ? _schema->cf_name() : "*",
                 _op_name_view);
     }
+
+    seastar::io_intent* intent_ptr() noexcept {
+        return _intent.get();
+    }
 };
 
 struct reader_concurrency_semaphore::permit_list {
@@ -221,6 +229,10 @@ reader_resources reader_permit::consumed_resources() const {
 
 sstring reader_permit::description() const {
     return _impl->description();
+}
+
+seastar::io_intent* reader_permit::intent_ptr() noexcept {
+    return _impl->intent_ptr();
 }
 
 std::ostream& operator<<(std::ostream& os, reader_permit::state s) {
