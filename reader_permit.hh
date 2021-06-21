@@ -141,6 +141,8 @@ public:
     sstring description() const;
 
     io_intent& get_intent() noexcept;
+
+    void abort_io(std::exception_ptr ex) noexcept;
 };
 
 class reader_permit::resource_units {

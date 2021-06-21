@@ -168,6 +168,10 @@ public:
     io_intent& get_intent() noexcept {
         return _intent;
     }
+
+    void abort_io(std::exception_ptr ex) noexcept {
+        return _intent.cancel(std::move(ex));
+    }
 };
 
 // We rely on a stable seastar::io_intent* from get_intent()
@@ -236,6 +240,10 @@ sstring reader_permit::description() const {
 
 io_intent& reader_permit::get_intent() noexcept {
     return _impl->get_intent();
+}
+
+void reader_permit::abort_io(std::exception_ptr ex) noexcept {
+    return _impl->abort_io(std::move(ex));
 }
 
 std::ostream& operator<<(std::ostream& os, reader_permit::state s) {
