@@ -2191,6 +2191,7 @@ input_stream<char> sstable::data_stream(uint64_t pos, size_t len, const io_prior
     options.io_priority_class = pc;
     options.read_ahead = 4;
     options.dynamic_adjustments = std::move(history);
+    options.intent = &permit.get_intent();
 
     file f = make_tracked_file(_data_file, std::move(permit));
     if (trace_state) {
