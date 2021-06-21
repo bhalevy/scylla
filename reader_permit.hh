@@ -28,6 +28,7 @@
 
 namespace seastar {
     class file;
+    class io_intent;
 } // namespace seastar
 
 struct reader_resources {
@@ -138,6 +139,8 @@ public:
     reader_resources consumed_resources() const;
 
     sstring description() const;
+
+    io_intent& get_intent() noexcept;
 };
 
 class reader_permit::resource_units {

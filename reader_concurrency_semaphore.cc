@@ -24,6 +24,7 @@
 #include <seastar/util/lazy.hh>
 #include <seastar/util/log.hh>
 #include <seastar/core/coroutine.hh>
+#include <seastar/core/io_intent.hh>
 
 #include "reader_concurrency_semaphore.hh"
 #include "utils/exceptions.hh"
@@ -79,6 +80,7 @@ class reader_permit::impl : public boost::intrusive::list_base_hook<boost::intru
     std::string_view _op_name_view;
     reader_resources _resources;
     reader_permit::state _state = reader_permit::state::active;
+    io_intent _intent;
 
 public:
     struct value_tag {};
@@ -162,7 +164,16 @@ public:
                 _schema ? _schema->cf_name() : "*",
                 _op_name_view);
     }
+
+    io_intent& get_intent() noexcept {
+        return _intent;
+    }
 };
+
+// We rely on a stable seastar::io_intent* from get_intent()
+// to be passed on to the i/o layer.
+static_assert(!std::is_copy_constructible_v<reader_permit::impl>);
+static_assert(!std::is_move_constructible_v<reader_permit::impl>);
 
 struct reader_concurrency_semaphore::permit_list {
     using list_type = boost::intrusive::list<reader_permit::impl, boost::intrusive::constant_time_size<false>>;
@@ -221,6 +232,10 @@ reader_resources reader_permit::consumed_resources() const {
 
 sstring reader_permit::description() const {
     return _impl->description();
+}
+
+io_intent& reader_permit::get_intent() noexcept {
+    return _impl->get_intent();
 }
 
 std::ostream& operator<<(std::ostream& os, reader_permit::state s) {
