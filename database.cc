@@ -1640,6 +1640,7 @@ future<> memtable_list::flush() {
     if (!may_flush()) {
         return make_ready_future<>();
     } else if (!_flush_coalescing) {
+      return _flush_lock.read_lock().then([this] {
         _flush_coalescing = shared_promise<>();
         _dirty_memory_manager->start_extraneous_flush();
         auto ef = defer([this] { _dirty_memory_manager->finish_extraneous_flush(); });
@@ -1655,6 +1656,9 @@ future<> memtable_list::flush() {
                 }
             });
         });
+      }).finally([this] {
+          _flush_lock.read_unlock();
+      });
     } else {
         return _flush_coalescing->get_shared_future();
     }

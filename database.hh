@@ -168,6 +168,7 @@ private:
     std::optional<shared_promise<>> _flush_coalescing;
     seastar::scheduling_group _compaction_scheduling_group;
     table_stats& _table_stats;
+    rwlock _flush_lock;
 public:
     memtable_list(
             seal_immediate_fn_type seal_immediate_fn,
@@ -272,6 +273,18 @@ public:
     // spends in memory allowing for more coalescing opportunities.
     // The returned future<> resolves when any pending flushes are complete and the memtable is sealed.
     future<> flush();
+
+    // Wait for pending flushes and hold-up further flushes
+    // while the lock is held.
+    future<> flush_lock() {
+        return _flush_lock.write_lock();
+    }
+
+    // Release the exclusive flush lock
+    void flush_unlock() {
+        return _flush_lock.write_unlock();
+    }
+
 private:
     lw_shared_ptr<memtable> new_memtable();
 };
@@ -483,6 +496,7 @@ private:
     utils::phased_barrier _pending_streams_phaser;
     // Corresponding phaser for in-progress flushes
     utils::phased_barrier _pending_flushes_phaser;
+    rwlock _flush_rwlock;
 
     // This field cashes the last truncation time for the table.
     // The master resides in system.truncated table

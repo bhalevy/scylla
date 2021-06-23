@@ -1504,6 +1504,8 @@ bool table::can_flush() const {
 }
 
 future<> table::clear() {
+  // Prevent concurrent clear/flush
+  return _memtables->flush_lock().then([this] {
     if (_commitlog) {
         for (auto& t : *_memtables) {
             _commitlog->discard_completed_segments(_schema->id(), t->get_and_discard_rp_set());
@@ -1511,6 +1513,9 @@ future<> table::clear() {
     }
     _memtables->clear_and_add();
     return _cache.invalidate(row_cache::external_updater([] { /* There is no underlying mutation source */ }));
+  }).finally([this] {
+    _memtables->flush_unlock();
+  });
 }
 
 // NOTE: does not need to be futurized, but might eventually, depending on
