@@ -845,6 +845,15 @@ public:
     }
 
 public:
+    future<> clear_gently() noexcept {
+        // FIXME: coroutinize
+        return utils::clear_gently(_peer_row_hash_sets).then([this] {
+            return utils::clear_gently(_working_row_buf);
+        }).then([this] {
+            return utils::clear_gently(_row_buf);
+        });
+    }
+
     future<> stop() {
         // Prevent double-stop
         if (!_repair_writer) {
@@ -859,7 +868,9 @@ public:
         return when_all_succeed(std::move(gate_future), std::move(f1), std::move(f2), std::move(f3)).discard_result().finally([this] {
             return _repair_writer->wait_for_writer_done().finally([this] {
                 _repair_writer = {};
-                return close();
+                return close().then([this] {
+                    return clear_gently();
+                });
             });
         });
     }
