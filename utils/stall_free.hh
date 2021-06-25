@@ -28,6 +28,8 @@
 #include <seastar/core/future-util.hh>
 #include "utils/collection-concepts.hh"
 
+using namespace seastar;
+
 namespace utils {
 
 
@@ -56,14 +58,93 @@ void merge_to_gently(std::list<T>& list1, const std::list<T>& list2, Compare com
     }
 }
 
-template<class T>
-seastar::future<> clear_gently(std::list<T>& list) {
-    return repeat([&list] () mutable {
-        if (list.empty()) {
-            return seastar::stop_iteration::yes;
-        }
-        list.pop_back();
-        return seastar::stop_iteration::no;
+template <typename T>
+concept GentlyClearable = requires (T x) {
+    { x.clear_gently() } -> std::same_as<future<>>;
+};
+
+template <typename T>
+concept SmartPointer = requires (T x) {
+    { x.reset() } -> std::same_as<void>;
+    { x.get() } -> std::same_as<typename T::element_type*>;
+};
+
+template <typename T>
+concept VectorLike = requires (T x, size_t n) {
+    { x.empty() } -> std::same_as<bool>;
+    { x.back() } -> std::same_as<typename T::value_type&>;
+    { x.pop_back() } -> std::same_as<void>;
+};
+
+template <typename T>
+concept Container = !VectorLike<T> && requires (T x) {
+    { x.empty() } -> std::same_as<bool>;
+    { x.erase(x.begin()) } -> std::same_as<typename T::iterator>;
+};
+
+template <typename T, std::size_t N>
+future<> clear_gently(std::array<T, N>&a) noexcept;
+
+template <Container T>
+future<> clear_gently(T& c) noexcept;
+
+template <GentlyClearable T>
+future<> clear_gently(T& o) noexcept(noexcept(o.clear_gently())) {
+    return o.clear_gently();
+}
+
+template <typename T>
+future<> clear_gently(T&) noexcept {
+    return make_ready_future<>();
+}
+
+template <SmartPointer Ptr>
+future<> clear_gently(Ptr& o) {
+    return clear_gently(*o).finally([&o] {
+        return o.reset();
+    });
+}
+
+template <typename T, std::size_t N>
+future<> clear_gently(std::array<T, N>&a) noexcept {
+    return do_for_each(a, [] (T& o) {
+        return clear_gently(o);
+    });
+}
+
+// Trivially destructible elements can be safely cleared in bulk
+template <VectorLike T>
+requires std::is_trivially_destructible_v<typename T::value_type>
+future<> clear_gently(T& v) noexcept {
+    v.clear();
+    return make_ready_future<>();
+}
+
+// Clear the elements gently and destroy them one-by-one
+// in reverse order, to avoid copying.
+template <VectorLike T>
+requires (!std::is_trivially_destructible_v<typename T::value_type>)
+future<> clear_gently(T& v) noexcept {
+    return do_until([&v] { return v.empty(); }, [&v] {
+        return clear_gently(v.back()).finally([&v] {
+            v.pop_back();
+        });
+    });
+    return make_ready_future<>();
+}
+
+template <typename K, typename T>
+future<> clear_gently(std::pair<const K, T>& p) {
+    return clear_gently(p.second);
+}
+
+template <Container T>
+future<> clear_gently(T& c) noexcept {
+    return do_until([&c] { return c.empty(); }, [&c] {
+        auto it = c.begin();
+        return clear_gently(*it).finally([&c, it = std::move(it)] () mutable {
+            c.erase(it);
+        });
     });
 }
 
