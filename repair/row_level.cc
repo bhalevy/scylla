@@ -846,6 +846,11 @@ public:
 
 public:
     future<> stop() {
+        // Prevent double-stop
+        if (!_repair_writer) {
+            assert(_gate.is_closed());
+            return make_ready_future<>();
+        }
         auto gate_future = _gate.close();
         auto f1 = _sink_source_for_get_full_row_hashes.close();
         auto f2 = _sink_source_for_get_row_diff.close();
@@ -853,6 +858,7 @@ public:
         rlogger.debug("repair_meta::stop");
         return when_all_succeed(std::move(gate_future), std::move(f1), std::move(f2), std::move(f3)).discard_result().finally([this] {
             return _repair_writer->wait_for_writer_done().finally([this] {
+                _repair_writer = {};
                 return close();
             });
         });
@@ -2807,9 +2813,9 @@ public:
                     _all_live_peer_nodes,
                     _all_live_peer_nodes.size(),
                     this);
-            auto auto_close_master = defer([&master] {
-                master.close().handle_exception([] (std::exception_ptr ep) {
-                    rlogger.warn("Failed auto-closing Row Level Repair (Master): {}. Ignored.", ep);
+            auto auto_stop_master = defer([&master] {
+                master.stop().handle_exception([] (std::exception_ptr ep) {
+                    rlogger.warn("Failed auto-stopping Row Level Repair (Master): {}. Ignored.", ep);
                 }).get();
             });
 
