@@ -28,6 +28,8 @@
 #include <seastar/core/future-util.hh>
 #include "utils/collection-concepts.hh"
 
+using namespace seastar;
+
 namespace utils {
 
 
@@ -56,14 +58,74 @@ void merge_to_gently(std::list<T>& list1, const std::list<T>& list2, Compare com
     }
 }
 
-template<class T>
-seastar::future<> clear_gently(std::list<T>& list) {
-    return repeat([&list] () mutable {
-        if (list.empty()) {
-            return seastar::stop_iteration::yes;
-        }
-        list.pop_back();
-        return seastar::stop_iteration::no;
+template <typename T>
+requires requires (T o) {
+    { o.clear_gently() } -> std::same_as<future<>>;
+}
+future<> maybe_clear_gently(T& o) {
+    return o.clear_gently();
+}
+
+template <typename T>
+requires std::is_trivially_destructible_v<T>
+future<> maybe_clear_gently(T&) noexcept {
+    return make_ready_future<>();
+}
+
+template <typename Container>
+seastar::future<> clear_gently(Container& c) noexcept;
+
+template <typename T>
+requires requires (T o) {
+    { o.erase(o.begin()) } -> std::same_as<typename T::iterator>;
+}
+future<> maybe_clear_gently(T& o) {
+    return clear_gently(o);
+}
+
+template <typename T>
+future<> maybe_clear_gently(T&) noexcept {
+    return make_ready_future<>();
+}
+
+// Trivially destructible elements can be safely cleared in bulk
+template <typename T>
+requires std::is_trivially_destructible_v<T>
+future<> clear_gently(std::vector<T>& v) noexcept {
+    v.clear();
+    return make_ready_future<>();
+}
+
+// Clear the elements gently and destroy them one-by-one
+// in reverse order, to avoid copying.
+template <typename T>
+future<> clear_gently(std::vector<T>& v) noexcept {
+    return do_until([&v] { return v.empty(); }, [&v] {
+        auto it = v.end();
+        --it;
+        return maybe_clear_gently(*it).finally([&v, it = std::move(it)] {
+            v.erase(it);
+        });
+    });
+}
+
+template <typename K, typename T>
+future<> clear_gently(std::unordered_map<K, T>& c) noexcept {
+    return do_until([&c] { return c.empty(); }, [&c] {
+        auto it = c.begin();
+        return maybe_clear_gently(it->second).finally([&c, it = std::move(it)] {
+            c.erase(it);
+        });
+    });
+}
+
+template <typename Container>
+seastar::future<> clear_gently(Container& c) noexcept {
+    return do_until([&c] { return c.empty(); }, [&c] {
+        auto it = c.begin();
+        return maybe_clear_gently(*it).finally([&c, it = std::move(it)] {
+            c.erase(it);
+        });
     });
 }
 
