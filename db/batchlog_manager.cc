@@ -148,6 +148,9 @@ future<> db::batchlog_manager::start() {
 }
 
 future<> db::batchlog_manager::stop() {
+    if (this_shard_id() == 0) {
+        _sem.broken();
+    }
     if (!_stop.abort_requested()) {
         _stop.request_abort();
     }
