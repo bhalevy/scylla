@@ -43,6 +43,8 @@
 #include <seastar/core/do_with.hh>
 #include <seastar/core/semaphore.hh>
 #include <seastar/core/metrics.hh>
+#include <seastar/core/coroutine.hh>
+#include <seastar/core/sleep.hh>
 #include <boost/range/adaptor/map.hpp>
 #include <boost/range/adaptor/sliced.hpp>
 
@@ -110,35 +112,47 @@ future<> db::batchlog_manager::do_batch_log_replay() {
     });
 }
 
-future<> db::batchlog_manager::start() {
-    // Since replay is a "node global" operation, we should not attempt to do
-    // it in parallel on each shard. It will just overlap/interfere.  To
-    // simplify syncing between the timer and user initiated replay operations,
-    // we use the _timer and _sem on shard zero only. Replaying batchlog can
-    // generate a lot of work, so we distrute the real work on all cpus with
-    // round-robin scheduling.
-    if (this_shard_id() == 0) {
-        _timer.set_callback([this] {
-            // Do it in the background.
-            (void)do_batch_log_replay().handle_exception([] (auto ep) {
-                blogger.error("Exception in batch replay: {}", ep);
-            }).finally([this] {
-                _timer.arm(lowres_clock::now() + std::chrono::milliseconds(replay_interval));
-            });
-        });
+// Since replay is a "node global" operation, we should not attempt to do
+// it in parallel on each shard. It will just overlap/interfere.  To
+// simplify syncing between this loop and user initiated replay operations,
+// we use the _sem on shard zero only. Replaying batchlog can
+// generate a lot of work, so we distrute the real work on all cpus with
+// round-robin scheduling.
+future<> db::batchlog_manager::batchlog_replay_loop() {
+    assert (this_shard_id() == 0);
+    auto delay = _delay;
+    while (!_stop.abort_requested()) {
+        try {
+            co_await sleep_abortable(delay, _stop);
+        } catch (sleep_aborted&) {
+            co_return;
+        }
+        try {
+            co_await do_batch_log_replay();
+        } catch (...) {
+            blogger.error("Exception in batch replay: {}", std::current_exception());
+        }
+        delay = std::chrono::milliseconds(replay_interval);
+    }
+}
 
-        _timer.arm(lowres_clock::now() + _delay);
+future<> db::batchlog_manager::start() {
+    if (this_shard_id() == 0) {
+        _started.emplace(batchlog_replay_loop());
     }
     return make_ready_future<>();
 }
 
 future<> db::batchlog_manager::stop() {
-    if (_stop) {
-        return make_ready_future<>();
+    if (!_stop.abort_requested()) {
+        _stop.request_abort();
     }
-    _stop = true;
-    _timer.cancel();
-    return _gate.close();
+    if (auto started = std::exchange(_started, std::nullopt)) {
+        co_await std::move(*started);
+    }
+    if (!_gate.is_closed()) {
+        co_await _gate.close();
+    }
 }
 
 future<size_t> db::batchlog_manager::count_all_batches() const {
