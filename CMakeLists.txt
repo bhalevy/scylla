@@ -326,6 +326,7 @@ set(scylla_sources
     compaction/compaction.cc
     compaction/compaction_manager.cc
     compaction/compaction_strategy.cc
+    compaction/date_tiered_compaction_strategy.cc
     compaction/leveled_compaction_strategy.cc
     compaction/size_tiered_compaction_strategy.cc
     compaction/time_window_compaction_strategy.cc
