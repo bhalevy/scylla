@@ -92,6 +92,8 @@ void service_level_controller::set_distributed_data_accessor(service_level_distr
 
 future<> service_level_controller::drain() {
     if (this_shard_id() != global_controller) {
+        // delete all sg's in _service_levels_db, leaving it empty.
+        _service_levels_db.clear();
         return make_ready_future();
     }
     // abort the loop of the distributed data checking if it is running
