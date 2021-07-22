@@ -99,7 +99,10 @@ future<> service_level_controller::drain() {
         _global_controller_db->dist_data_update_aborter.request_abort();
     }
     _global_controller_db->notifications_serializer.broken();
-    return std::exchange(_global_controller_db->distributed_data_update, make_ready_future<>()).then_wrapped([] (future<> f) {
+    return std::exchange(_global_controller_db->distributed_data_update, make_ready_future<>()).then([this] {
+        // delete all sg's in _service_levels_db, leaving it empty.
+        _service_levels_db.clear();
+    }).then_wrapped([] (future<> f) {
         try {
             f.get();
         } catch (const broken_semaphore& ignored) {
