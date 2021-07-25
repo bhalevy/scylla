@@ -962,6 +962,17 @@ void table::trigger_offstrategy_compaction() {
     _compaction_manager.submit_offstrategy(this);
 }
 
+future<> table::submit_offstrategy_compaction() {
+    // If the user calls trigger_offstrategy_compaction() to trigger
+    // off-strategy explicitly, cancel the timeout based automatic trigger.
+    if (!_off_strategy_trigger.armed()) {
+        return make_ready_future<>();
+    }
+
+    _off_strategy_trigger.cancel();
+    return _compaction_manager.do_submit_offstrategy(this);
+}
+
 future<> table::run_offstrategy_compaction() {
     // This procedure will reshape sstables in maintenance set until it's ready for
     // integration into main set.
