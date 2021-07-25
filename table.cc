@@ -954,10 +954,20 @@ future<> table::run_compaction(sstables::compaction_descriptor descriptor) {
 }
 
 void table::trigger_offstrategy_compaction() {
+    // Run in background.
+    // This is safe since the compaction task
+    // is tracked by the compaction_manager
+    // until stop()
+    (void)submit_offstrategy_compaction().handle_exception([this, zis = shared_from_this()] (std::exception_ptr ex) {
+        tlogger.error("Offstrategy compaction of {}.{} failed: {}", _schema->ks_name(), _schema->cf_name(), std::current_exception());
+    });
+}
+
+future<> table::submit_offstrategy_compaction() {
     // If the user calls trigger_offstrategy_compaction() to trigger
     // off-strategy explicitly, cancel the timeout based automatic trigger.
     _off_strategy_trigger.cancel();
-    _compaction_manager.submit_offstrategy(this);
+    return _compaction_manager.submit_offstrategy(this);
 }
 
 future<> table::run_offstrategy_compaction() {
