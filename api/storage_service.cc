@@ -541,6 +541,25 @@ void set_storage_service(http_context& ctx, routes& r) {
         });
     });
 
+    ss::trigger_offstrategy_compaction.set(r, [&ctx](std::unique_ptr<request> req) {
+        auto keyspace = validate_keyspace(ctx, req->param);
+        auto table_names = split_cf(req->get_query_param("table"));
+        if (table_names.empty()) {
+            table_names = map_keys(ctx.db.local().find_keyspace(keyspace).metadata().get()->cf_meta_data());
+        }
+
+        return ctx.db.invoke_on_all([keyspace = std::move(keyspace), table_names = std::move(table_names)] (database& db) {
+            for (auto tname : table_names) {
+                auto& t = db.find_column_family(keyspace, tname);
+                if (t.is_pending_offstrategy_compaction()) {
+                    t.trigger_offstrategy_compaction();
+                }
+            }
+        }).then([] {
+            return make_ready_future<json::json_return_type>(0);
+        });
+    });
+
     ss::validate.set(r, wrap_ks_cf(ctx, [] (http_context& ctx, std::unique_ptr<request> req, sstring keyspace, std::vector<sstring> column_families ) {
         return ctx.db.invoke_on_all([=] (database& db) {
             return do_for_each(column_families, [=, &db](sstring cfname) {

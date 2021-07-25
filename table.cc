@@ -951,6 +951,10 @@ future<> table::run_compaction(sstables::compaction_descriptor descriptor) {
     return compact_sstables(std::move(descriptor));
 }
 
+bool table::is_pending_offstrategy_compaction() const noexcept {
+    return _off_strategy_trigger.armed();
+}
+
 void table::trigger_offstrategy_compaction() {
     // If the user calls trigger_offstrategy_compaction() to trigger
     // off-strategy explicitly, cancel the timeout based automatic trigger.

@@ -766,6 +766,38 @@
          ]
       },
       {
+         "path":"/storage_service/keyspace_trigger_offstrategy_compaction/{keyspace}",
+         "operations":[
+            {
+               "method":"POST",
+               "summary":"Trigger offstrategy compaction of tables in a single keyspace",
+               "type": "long",
+               "nickname":"trigger_offstrategy_compaction",
+               "produces":[
+                  "application/json"
+               ],
+               "parameters":[
+                  {
+                     "name":"keyspace",
+                     "description":"The keyspace to trigger offstrategy compaction in",
+                     "required":true,
+                     "allowMultiple":false,
+                     "type":"string",
+                     "paramType":"path"
+                  },
+                  {
+                     "name":"table",
+                     "description":"Comma seperated table names",
+                     "required":false,
+                     "allowMultiple":false,
+                     "type":"string",
+                     "paramType":"query"
+                  }
+               ]
+            }
+         ]
+      },
+      {
          "path":"/storage_service/keyspace_validate/{keyspace}",
          "operations":[
             {
