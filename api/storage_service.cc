@@ -644,6 +644,27 @@ void set_storage_service(http_context& ctx, routes& r, sharded<service::storage_
         });
     });
 
+    ss::perform_keyspace_offstrategy_compaction.set(r, wrap_ks_cf(ctx, [] (http_context& ctx, std::unique_ptr<request> req, sstring keyspace, std::vector<sstring> tables) -> future<json::json_return_type> {
+        std::unordered_map<sstring, bool> needed;
+        for (const auto& t : tables) {
+            needed[t] = false;
+        }
+        co_await ctx.db.invoke_on_all([&keyspace, &tables, &needed] (replica::database& db) {
+            return parallel_for_each(tables, [&db, &keyspace, &needed] (const sstring& table) {
+                return db.find_column_family(keyspace, table).perform_offstrategy_compaction().then([&table, &needed] (bool needed_for_table) {
+                    if (needed_for_table) {
+                        needed[table] = true;
+                    }
+                });
+            });
+        });
+        long count = 0;
+        for (const auto& t : tables) {
+            count += needed[t];
+        }
+        co_return count;
+    }));
+
     ss::upgrade_sstables.set(r, wrap_ks_cf(ctx, [] (http_context& ctx, std::unique_ptr<request> req, sstring keyspace, std::vector<sstring> column_families) {
         bool exclude_current_version = req_param<bool>(*req, "exclude_current_version", false);
 
