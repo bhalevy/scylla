@@ -880,6 +880,7 @@ public:
     void trigger_compaction();
     void try_trigger_compaction() noexcept;
     future<> run_compaction(sstables::compaction_descriptor descriptor);
+    bool is_pending_offstrategy_compaction() const noexcept;
     void trigger_offstrategy_compaction();
     future<> run_offstrategy_compaction();
     future<> submit_offstrategy_compaction();

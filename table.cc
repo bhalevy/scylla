@@ -953,6 +953,10 @@ future<> table::run_compaction(sstables::compaction_descriptor descriptor) {
     return compact_sstables(std::move(descriptor));
 }
 
+bool table::is_pending_offstrategy_compaction() const noexcept {
+    return _off_strategy_trigger.armed();
+}
+
 void table::trigger_offstrategy_compaction() {
     // Run in background.
     // This is safe since the compaction task
