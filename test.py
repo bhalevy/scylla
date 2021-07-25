@@ -617,7 +617,7 @@ def parse_cmd_line():
     parser.add_argument('--parallel-cases', dest="parallel_cases", action="store_true", default=False,
                         help="Run individual test cases in parallel")
     parser.add_argument('--logfile', dest="logfile", action="store", default=default_logfile,
-                        help=f"Test log file name or path. Given only a name, the log will be automatically created under <tmpdir>. Default: {default_logfile}")
+                        help=f"Test log file name or path. Given only a name, the log will be automatically created under <tmpdir>. If a single --mode option is given, then the log file is created under <tmpdir>/<mode>. Default: {default_logfile}")
     args = parser.parse_args()
 
     if not output_is_a_tty:
@@ -816,7 +816,10 @@ async def main():
 
     logfile = options.logfile
     if not os.path.dirname(logfile):
-        logfile = os.path.join(options.tmpdir, logfile)
+        logdir = options.tmpdir
+        if len(options.modes) == 1:
+            logdir = os.path.join(options.tmpdir, options.modes[0])
+        logfile = os.path.join(logdir, logfile)
     open_log(logfile)
 
     find_tests(options)
