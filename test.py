@@ -574,6 +574,7 @@ def parse_cmd_line():
     default_num_jobs_mem = ((sysmem - 4e9) // testmem)
     default_num_jobs_cpu = multiprocessing.cpu_count() // cpus_per_test_job
     default_num_jobs = min(default_num_jobs_mem, default_num_jobs_cpu)
+    default_tmpdir = "testlog"
 
     parser = argparse.ArgumentParser(description="Scylla test runner")
     parser.add_argument(
@@ -590,9 +591,9 @@ def parse_cmd_line():
     parser.add_argument(
         "--tmpdir",
         action="store",
-        default="testlog",
-        help="""Path to temporary test data and log files. The data is
-        further segregated per build mode. Default: ./testlog.""",
+        default=default_tmpdir,
+        help=f"""Path to temporary test data and log files. The data is
+        further segregated per build mode. Default: ./{default_tmpdir}.""",
     )
     parser.add_argument('--mode', choices=all_modes, action="append", dest="modes",
                         help="Run only tests for given build mode(s)")
