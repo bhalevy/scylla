@@ -794,7 +794,6 @@ def write_junit_report(tmpdir, mode):
 
 
 def open_log(tmpdir):
-    pathlib.Path(tmpdir).mkdir(parents=True, exist_ok=True)
     logging.basicConfig(
         filename=os.path.join(tmpdir, "test.py.log"),
         filemode="w",
@@ -809,6 +808,7 @@ async def main():
 
     options = parse_cmd_line()
 
+    pathlib.Path(options.tmpdir).mkdir(parents=True, exist_ok=True)
     open_log(options.tmpdir)
 
     find_tests(options)
