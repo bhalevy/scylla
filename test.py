@@ -575,6 +575,7 @@ def parse_cmd_line():
     default_num_jobs_cpu = multiprocessing.cpu_count() // cpus_per_test_job
     default_num_jobs = min(default_num_jobs_mem, default_num_jobs_cpu)
     default_tmpdir = "testlog"
+    default_logfile = "test.py.log"
 
     parser = argparse.ArgumentParser(description="Scylla test runner")
     parser.add_argument(
@@ -615,6 +616,8 @@ def parse_cmd_line():
                         help="Skip tests which match the provided pattern")
     parser.add_argument('--parallel-cases', dest="parallel_cases", action="store_true", default=False,
                         help="Run individual test cases in parallel")
+    parser.add_argument('--logfile', dest="logfile", action="store", default=default_logfile,
+                        help=f"Test log file name or path. Given only a name, the log will be automatically created under <tmpdir>. Default: {default_logfile}")
     args = parser.parse_args()
 
     if not output_is_a_tty:
@@ -794,9 +797,9 @@ def write_junit_report(tmpdir, mode):
         ET.ElementTree(xml_results).write(f, encoding="unicode")
 
 
-def open_log(tmpdir):
+def open_log(logfile):
     logging.basicConfig(
-        filename=os.path.join(tmpdir, "test.py.log"),
+        filename=logfile,
         filemode="w",
         level=logging.INFO,
         format="%(asctime)s.%(msecs)03d %(levelname)s> %(message)s",
@@ -810,7 +813,11 @@ async def main():
     options = parse_cmd_line()
 
     pathlib.Path(options.tmpdir).mkdir(parents=True, exist_ok=True)
-    open_log(options.tmpdir)
+
+    logfile = options.logfile
+    if not os.path.dirname(logfile):
+        logfile = os.path.join(options.tmpdir, logfile)
+    open_log(logfile)
 
     find_tests(options)
     if options.list_tests:
