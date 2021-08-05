@@ -457,7 +457,6 @@ private:
     std::optional<int64_t> _sstable_generation = {};
 
     db::replay_position _highest_rp;
-    db::replay_position _flush_rp;
     db::replay_position _lowest_allowed_rp;
 
     // Provided by the database that owns this commitlog
@@ -776,7 +775,7 @@ public:
 
     void start();
     future<> stop();
-    future<> flush(std::optional<db::replay_position> = {});
+    future<> flush();
     future<> clear(); // discards memtable(s) without flushing them to disk.
     future<db::replay_position> discard_sstables(db_clock::time_point);
 
