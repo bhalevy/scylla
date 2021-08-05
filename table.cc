@@ -1457,14 +1457,9 @@ future<std::unordered_map<sstring, table::snapshot_details>> table::get_snapshot
     });
 }
 
-future<> table::flush(std::optional<db::replay_position> pos) {
-    if (pos && *pos < _flush_rp) {
-        return make_ready_future<>();
-    }
+future<> table::flush() {
     auto op = _pending_flushes_phaser.start();
-    return _memtables->request_flush().then([this, op = std::move(op), fp = _highest_rp] {
-        _flush_rp = std::max(_flush_rp, fp);
-    });
+    return _memtables->request_flush().then([op = std::move(op)] {});
 }
 
 bool table::can_flush() const {

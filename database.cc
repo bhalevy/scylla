@@ -876,7 +876,7 @@ database::init_commitlog() {
                 return;
             }
             // Initiate a background flush. Waited upon in `stop()`.
-            (void)_column_families[id]->flush(pos);
+            (void)_column_families[id]->flush();
         }).release(); // we have longer life time than CL. Ignore reg anchor
     });
 }
