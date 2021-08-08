@@ -882,9 +882,15 @@ public:
     void trigger_compaction();
     void try_trigger_compaction() noexcept;
     future<> run_compaction(sstables::compaction_descriptor descriptor);
+
+    // Perform offstrategy compaction in the background
     void trigger_offstrategy_compaction();
+    // Perform offstrategy compaction
     future<> perform_offstrategy_compaction();
+    // Run offstrategy compaction.
+    // Typically called only internally by the compaction manager or unit tests.
     future<> run_offstrategy_compaction();
+
     void set_compaction_strategy(sstables::compaction_strategy_type strategy);
     const sstables::compaction_strategy& get_compaction_strategy() const {
         return _compaction_strategy;
