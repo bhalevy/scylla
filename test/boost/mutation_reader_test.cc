@@ -20,6 +20,7 @@
  */
 
 
+#include <exception>
 #include <list>
 #include <random>
 #include <experimental/source_location>
@@ -1482,7 +1483,11 @@ SEASTAR_TEST_CASE(restricted_reader_timeout) {
             auto timeout = std::chrono::duration_cast<db::timeout_clock::time_point::duration>(std::chrono::milliseconds{1});
 
             auto reader1 = std::make_unique<reader_wrapper>(semaphore, s.schema(), sst, timeout);
-            (*reader1)().get();
+            try {
+                (*reader1)().get();
+            } catch (...) {
+                BOOST_CHECK(is_timeout_exception(std::current_exception()));
+            }
 
             auto reader2 = std::make_unique<reader_wrapper>(semaphore, s.schema(), sst, timeout);
             auto read2_fut = (*reader2)();
@@ -1496,8 +1501,8 @@ SEASTAR_TEST_CASE(restricted_reader_timeout) {
             BOOST_CHECK(futures_failed);
 
             if (futures_failed) {
-                BOOST_CHECK_THROW(std::rethrow_exception(read2_fut.get_exception()), semaphore_timed_out);
-                BOOST_CHECK_THROW(std::rethrow_exception(read3_fut.get_exception()), semaphore_timed_out);
+                BOOST_CHECK(is_timeout_exception(read2_fut.get_exception()));
+                BOOST_CHECK(is_timeout_exception(read3_fut.get_exception()));
             } else {
                 // We need special cleanup when the test failed to avoid invalid
                 // memory access.
