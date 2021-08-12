@@ -1754,9 +1754,10 @@ void run_mutation_source_tests(populate_fn_ex populate, bool with_partition_rang
                                               const io_priority_class& pc,
                                               tracing::trace_state_ptr tr,
                                               streamed_mutation::forwarding fwd,
-                                              mutation_reader::forwarding mr_fwd) {
+                                              mutation_reader::forwarding mr_fwd,
+                                              abort_source* asp) {
             return upgrade_to_v2(
-                    ms.make_reader(s, std::move(permit), pr, slice, pc, std::move(tr), fwd, mr_fwd));
+                    ms.make_reader(s, std::move(permit), pr, slice, pc, std::move(tr), fwd, mr_fwd, asp));
         });
     }, with_partition_range_forwarding);
 }

@@ -92,6 +92,7 @@ private:
     bool _is_mutation_end = true;
     position_in_partition _fwd_end = position_in_partition::after_all_clustered_rows(); // Restricts the stream on top of _ck_ranges_walker.
     streamed_mutation::forwarding _fwd;
+    abort_source* _asp;
 
     // Because of #1203 we may encounter sstables with range tombstones
     // placed earlier than expected. We fix the ordering by loading range tombstones
@@ -343,6 +344,7 @@ public:
                         const io_priority_class& pc,
                         tracing::trace_state_ptr trace_state,
                         streamed_mutation::forwarding fwd,
+                        abort_source* asp,
                         const shared_sstable& sst)
         : _permit(std::move(permit))
         , _trace_state(std::move(trace_state))
@@ -352,6 +354,7 @@ public:
         , _schema(schema)
         , _slice(slice)
         , _fwd(fwd)
+        , _asp(asp)
         , _range_tombstones(*_schema, this->permit())
         , _treat_non_compound_rt_as_compound(!sst->has_correct_non_compound_range_tombstones())
     { }
@@ -362,8 +365,9 @@ public:
                         const io_priority_class& pc,
                         tracing::trace_state_ptr trace_state,
                         streamed_mutation::forwarding fwd,
+                        abort_source* asp,
                         const shared_sstable& sst)
-        : mp_row_consumer_k_l(reader, schema, std::move(permit), schema->full_slice(), pc, std::move(trace_state), fwd, sst) { }
+        : mp_row_consumer_k_l(reader, schema, std::move(permit), schema->full_slice(), pc, std::move(trace_state), fwd, asp, sst) { }
 
     // Consume the row's key and deletion_time. The latter determines if the
     // row is a tombstone, and if so, when it has been deleted.
@@ -888,6 +892,10 @@ public:
     tracing::trace_state_ptr trace_state() const {
         return _trace_state;
     }
+
+    abort_source* abort_source() const noexcept {
+        return _asp;
+    }
 };
 
 // data_consume_rows_context remembers the context that an ongoing
@@ -1114,6 +1122,7 @@ class sstable_mutation_reader : public mp_row_consumer_reader_k_l {
     const query::partition_slice& _slice;
     streamed_mutation::forwarding _fwd;
     mutation_reader::forwarding _fwd_mr;
+    abort_source* _asp;
     read_monitor& _monitor;
 public:
     sstable_mutation_reader(shared_sstable sst,
@@ -1125,9 +1134,10 @@ public:
                             tracing::trace_state_ptr trace_state,
                             streamed_mutation::forwarding fwd,
                             mutation_reader::forwarding fwd_mr,
+                            abort_source* asp,
                             read_monitor& mon)
             : mp_row_consumer_reader_k_l(std::move(schema), permit, std::move(sst))
-            , _consumer(this, _schema, std::move(permit), slice, pc, std::move(trace_state), fwd, _sst)
+            , _consumer(this, _schema, std::move(permit), slice, pc, std::move(trace_state), fwd, asp, _sst)
             // FIXME: I want to add `&& fwd_mr == mutation_reader::forwarding::no` below
             // but can't because many call sites use the default value for
             // `mutation_reader::forwarding` which is `yes`.
@@ -1136,6 +1146,7 @@ public:
             , _slice(slice)
             , _fwd(fwd)
             , _fwd_mr(fwd_mr)
+            , _asp(asp)
             , _monitor(mon) { }
 
     // Reference to _consumer is passed to data_consume_rows() in the constructor so we must not allow move/copy
@@ -1157,7 +1168,7 @@ private:
         if (!_index_reader) {
             auto caching = use_caching(!_slice.options.contains(query::partition_slice::option::bypass_cache));
             _index_reader = std::make_unique<index_reader>(_sst, _consumer.permit(), _consumer.io_priority(),
-                                                           _consumer.trace_state(), caching);
+                                                           _consumer.trace_state(), caching, _asp);
         }
         return *_index_reader;
     }
@@ -1465,9 +1476,10 @@ flat_mutation_reader make_reader(
         tracing::trace_state_ptr trace_state,
         streamed_mutation::forwarding fwd,
         mutation_reader::forwarding fwd_mr,
+        abort_source* asp,
         read_monitor& monitor) {
     return make_flat_mutation_reader<sstable_mutation_reader>(
-        std::move(sstable), std::move(schema), std::move(permit), range, slice, pc, std::move(trace_state), fwd, fwd_mr, monitor);
+        std::move(sstable), std::move(schema), std::move(permit), range, slice, pc, std::move(trace_state), fwd, fwd_mr, asp, monitor);
 }
 
 } // namespace kl

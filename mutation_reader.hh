@@ -26,10 +26,13 @@
 #include <seastar/core/future.hh>
 #include <seastar/core/future-util.hh>
 #include <seastar/core/do_with.hh>
+#include <seastar/core/abort_source.hh>
 #include "tracing/trace_state.hh"
 #include "flat_mutation_reader.hh"
 #include "flat_mutation_reader_v2.hh"
 #include "reader_concurrency_semaphore.hh"
+
+constexpr abort_source* no_abort_source = nullptr;
 
 class reader_selector {
 protected:
@@ -167,7 +170,8 @@ class mutation_source {
                                                                         io_priority,
                                                                         tracing::trace_state_ptr,
                                                                         streamed_mutation::forwarding,
-                                                                        mutation_reader::forwarding)>;
+                                                                        mutation_reader::forwarding,
+                                                                        seastar::abort_source*)>;
     using flat_reader_v2_factory_type = std::function<flat_mutation_reader_v2(schema_ptr,
                                                                         reader_permit,
                                                                         partition_range,
@@ -175,7 +179,8 @@ class mutation_source {
                                                                         io_priority,
                                                                         tracing::trace_state_ptr,
                                                                         streamed_mutation::forwarding,
-                                                                        mutation_reader::forwarding)>;
+                                                                        mutation_reader::forwarding,
+                                                                        seastar::abort_source*)>;
     // We could have our own version of std::function<> that is nothrow
     // move constructible and save some indirection and allocation.
     // Probably not worth the effort though.
@@ -198,6 +203,20 @@ public:
         , _presence_checker_factory(make_lw_shared<std::function<partition_presence_checker()>>(std::move(pcf)))
     { }
 
+    // For sources which don't care about the abort_source
+    mutation_source(std::function<flat_mutation_reader(schema_ptr, reader_permit, partition_range, const query::partition_slice&, io_priority,
+                tracing::trace_state_ptr, streamed_mutation::forwarding, mutation_reader::forwarding)> fn)
+        : mutation_source([fn = std::move(fn)] (schema_ptr s,
+                    reader_permit permit,
+                    partition_range range,
+                    const query::partition_slice& slice,
+                    io_priority pc,
+                    tracing::trace_state_ptr tr,
+                    streamed_mutation::forwarding fwd_sm,
+                    mutation_reader::forwarding fwd_mr,
+                    seastar::abort_source*) {
+        return fn(std::move(s), std::move(permit), range, slice, pc, std::move(tr), fwd_sm, fwd_mr);
+    }) {}
     // For sources which don't care about the mutation_reader::forwarding flag (always fast forwardable)
     mutation_source(std::function<flat_mutation_reader(schema_ptr, reader_permit, partition_range, const query::partition_slice&, io_priority,
                 tracing::trace_state_ptr, streamed_mutation::forwarding)> fn)
@@ -208,7 +227,8 @@ public:
                     io_priority pc,
                     tracing::trace_state_ptr tr,
                     streamed_mutation::forwarding fwd,
-                    mutation_reader::forwarding) {
+                    mutation_reader::forwarding,
+                    seastar::abort_source*) {
         return fn(std::move(s), std::move(permit), range, slice, pc, std::move(tr), fwd);
     }) {}
     mutation_source(std::function<flat_mutation_reader(schema_ptr, reader_permit, partition_range, const query::partition_slice&, io_priority)> fn)
@@ -219,7 +239,8 @@ public:
                     io_priority pc,
                     tracing::trace_state_ptr,
                     streamed_mutation::forwarding fwd,
-                    mutation_reader::forwarding) {
+                    mutation_reader::forwarding,
+                    seastar::abort_source*) {
         assert(!fwd);
         return fn(std::move(s), std::move(permit), range, slice, pc);
     }) {}
@@ -231,7 +252,8 @@ public:
                     io_priority,
                     tracing::trace_state_ptr,
                     streamed_mutation::forwarding fwd,
-                    mutation_reader::forwarding) {
+                    mutation_reader::forwarding,
+                    seastar::abort_source*) {
         assert(!fwd);
         return fn(std::move(s), std::move(permit), range, slice);
     }) {}
@@ -243,7 +265,8 @@ public:
                     io_priority,
                     tracing::trace_state_ptr,
                     streamed_mutation::forwarding fwd,
-                    mutation_reader::forwarding) {
+                    mutation_reader::forwarding,
+                    seastar::abort_source*) {
         assert(!fwd);
         return fn(std::move(s), std::move(permit), range);
     }) {}
@@ -266,13 +289,14 @@ public:
         io_priority pc = default_priority_class(),
         tracing::trace_state_ptr trace_state = nullptr,
         streamed_mutation::forwarding fwd = streamed_mutation::forwarding::no,
-        mutation_reader::forwarding fwd_mr = mutation_reader::forwarding::yes) const
+        mutation_reader::forwarding fwd_mr = mutation_reader::forwarding::yes,
+        abort_source* asp = no_abort_source) const
     {
         if (_fn_v2) {
             return downgrade_to_v1(
-                    (*_fn_v2)(std::move(s), std::move(permit), range, slice, pc, std::move(trace_state), fwd, fwd_mr));
+                    (*_fn_v2)(std::move(s), std::move(permit), range, slice, pc, std::move(trace_state), fwd, fwd_mr, asp));
         }
-        return (*_fn)(std::move(s), std::move(permit), range, slice, pc, std::move(trace_state), fwd, fwd_mr);
+        return (*_fn)(std::move(s), std::move(permit), range, slice, pc, std::move(trace_state), fwd, fwd_mr, asp);
     }
 
     flat_mutation_reader
@@ -298,13 +322,14 @@ public:
             io_priority pc = default_priority_class(),
             tracing::trace_state_ptr trace_state = nullptr,
             streamed_mutation::forwarding fwd = streamed_mutation::forwarding::no,
-            mutation_reader::forwarding fwd_mr = mutation_reader::forwarding::yes) const
+            mutation_reader::forwarding fwd_mr = mutation_reader::forwarding::yes,
+            abort_source* asp = no_abort_source) const
     {
         if (_fn_v2) {
-            return (*_fn_v2)(std::move(s), std::move(permit), range, slice, pc, std::move(trace_state), fwd, fwd_mr);
+            return (*_fn_v2)(std::move(s), std::move(permit), range, slice, pc, std::move(trace_state), fwd, fwd_mr, asp);
         }
         return upgrade_to_v2(
-                (*_fn)(std::move(s), std::move(permit), range, slice, pc, std::move(trace_state), fwd, fwd_mr));
+                (*_fn)(std::move(s), std::move(permit), range, slice, pc, std::move(trace_state), fwd, fwd_mr, asp));
     }
 
     flat_mutation_reader_v2

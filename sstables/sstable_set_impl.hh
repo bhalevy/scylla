@@ -57,7 +57,8 @@ public:
         const io_priority_class&,
         tracing::trace_state_ptr,
         streamed_mutation::forwarding,
-        mutation_reader::forwarding) const;
+        mutation_reader::forwarding,
+        abort_source*) const;
 };
 
 // specialized when sstables are partitioned in the token range space
@@ -150,7 +151,8 @@ public:
         const io_priority_class&,
         tracing::trace_state_ptr,
         streamed_mutation::forwarding,
-        mutation_reader::forwarding) const override;
+        mutation_reader::forwarding,
+        abort_source*) const override;
 };
 
 // this compound set holds reference to N sstable sets and allow their operations to be combined.
@@ -180,7 +182,8 @@ public:
             const io_priority_class&,
             tracing::trace_state_ptr,
             streamed_mutation::forwarding,
-            mutation_reader::forwarding) const override;
+            mutation_reader::forwarding,
+            abort_source*) const override;
 
     class incremental_selector;
 };

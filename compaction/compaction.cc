@@ -932,6 +932,7 @@ public:
                 tracing::trace_state_ptr(),
                 ::streamed_mutation::forwarding::no,
                 ::mutation_reader::forwarding::no,
+                no_abort_source,
                 default_read_monitor_generator());
     }
 
@@ -978,6 +979,7 @@ public:
                 tracing::trace_state_ptr(),
                 ::streamed_mutation::forwarding::no,
                 ::mutation_reader::forwarding::no,
+                no_abort_source,
                 _monitor_generator);
     }
 
@@ -1535,7 +1537,8 @@ public:
                 _io_priority,
                 nullptr,
                 ::streamed_mutation::forwarding::no,
-                ::mutation_reader::forwarding::no);
+                ::mutation_reader::forwarding::no,
+                no_abort_source);
 
     }
 
@@ -1716,7 +1719,7 @@ static future<compaction_info> scrub_sstables_validate_mode(sstables::compaction
 
     auto permit = cf.compaction_concurrency_semaphore().make_tracking_only_permit(schema.get(), "scrub:validate", db::no_timeout);
     auto reader = sstables->make_local_shard_sstable_reader(schema, permit, query::full_partition_range, schema->full_slice(), descriptor.io_priority,
-            tracing::trace_state_ptr(), ::streamed_mutation::forwarding::no, ::mutation_reader::forwarding::no, default_read_monitor_generator());
+            tracing::trace_state_ptr(), ::streamed_mutation::forwarding::no, ::mutation_reader::forwarding::no, no_abort_source, default_read_monitor_generator());
 
     const auto valid = co_await scrub_validate_mode_validate_reader(std::move(reader), *info);
 
