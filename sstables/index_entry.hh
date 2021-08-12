@@ -238,7 +238,8 @@ public:
         reader_permit,
         tracing::trace_state_ptr,
         file_input_stream_options,
-        use_caching);
+        use_caching,
+        abort_source*);
 };
 
 // A partition index element.

@@ -215,6 +215,7 @@ public:
             tracing::trace_state_ptr trace_state = {},
             streamed_mutation::forwarding fwd = streamed_mutation::forwarding::no,
             mutation_reader::forwarding fwd_mr = mutation_reader::forwarding::yes,
+            abort_source* asp = nullptr,
             read_monitor& monitor = default_read_monitor());
 
     flat_mutation_reader make_reader_v1(
@@ -226,6 +227,7 @@ public:
             tracing::trace_state_ptr trace_state = {},
             streamed_mutation::forwarding fwd = streamed_mutation::forwarding::no,
             mutation_reader::forwarding fwd_mr = mutation_reader::forwarding::yes,
+            abort_source* asp = nullptr,
             read_monitor& monitor = default_read_monitor());
 
     // Returns mutation_source containing all writes contained in this sstable.

@@ -118,9 +118,10 @@ public:
         input_stream<char>&& promoted_index_stream,
         uint32_t promoted_index_size,
         uint32_t blocks_count,
-        std::optional<column_values_fixed_lengths> clustering_values_fixed_lengths)
+        std::optional<column_values_fixed_lengths> clustering_values_fixed_lengths,
+        abort_source* asp)
         : _s(s)
-        , _reader{std::move(permit), std::move(promoted_index_stream), blocks_count, s, 0, promoted_index_size, std::move(clustering_values_fixed_lengths)}
+        , _reader{std::move(permit), std::move(promoted_index_stream), blocks_count, s, 0, promoted_index_size, std::move(clustering_values_fixed_lengths), asp}
     { }
 
     future<std::optional<skip_info>> advance_to(position_in_partition_view pos) override {

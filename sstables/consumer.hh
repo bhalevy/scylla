@@ -29,6 +29,8 @@
 #include <seastar/core/byteorder.hh>
 #include <seastar/util/variant_utils.hh>
 #include <seastar/net/byteorder.hh>
+#include <seastar/core/abort_source.hh>
+
 #include "bytes.hh"
 #include "reader_permit.hh"
 #include "utils/fragmented_temporary_buffer.hh"
@@ -493,14 +495,25 @@ protected:
     uint64_t _remain;
     std::optional<reader_permit::blocked_guard> _blocked_guard;
     bool _first_invoke = true;
+    optimized_optional<abort_source::subscription> _subscription;
 public:
     using read_status = data_consumer::read_status;
 
-    continuous_data_consumer(reader_permit permit, input_stream<char>&& input, uint64_t start, uint64_t maxlen)
+    continuous_data_consumer(reader_permit permit, input_stream<char>&& input, uint64_t start, uint64_t maxlen, abort_source* asp)
             : primitive_consumer(std::move(permit))
             , _input(std::move(input))
             , _stream_position(sstables::reader_position_tracker{start, maxlen})
-            , _remain(maxlen) {}
+            , _remain(maxlen)
+        {
+            if (asp) {
+                _subscription = asp->subscribe([this, asp] () noexcept {
+                    _input.abort(asp->get_exception());
+                });
+                if (!_subscription) {
+                    std::rethrow_exception(asp->get_exception());
+                }
+            }
+        }
 
     future<> consume_input() {
         // On first invoke we are guaranteed to go to the disk, so mark as

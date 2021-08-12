@@ -100,7 +100,7 @@ struct send_info {
         , cf(tbl_)
         , ranges(std::move(ranges_))
         , prs(dht::to_partition_ranges(ranges))
-        , reader(cf.make_streaming_reader(cf.schema(), std::move(permit_), prs)) {
+        , reader(cf.make_streaming_reader(cf.schema(), std::move(permit_), prs, no_abort_source)) {
     }
     future<bool> has_relevant_range_on_this_shard() {
         return do_with(false, ranges.begin(), [this] (bool& found_relevant_range, dht::token_range_vector::iterator& ranges_it) {

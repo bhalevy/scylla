@@ -728,7 +728,8 @@ mutation_source make_empty_mutation_source() {
             const io_priority_class& pc,
             tracing::trace_state_ptr tr,
             streamed_mutation::forwarding fwd,
-            mutation_reader::forwarding) {
+            mutation_reader::forwarding,
+            abort_source*) {
         return make_empty_flat_reader(s, std::move(permit));
     }, [] {
         return [] (const dht::decorated_key& key) {
