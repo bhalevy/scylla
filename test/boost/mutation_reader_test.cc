@@ -685,7 +685,8 @@ SEASTAR_THREAD_TEST_CASE(combined_mutation_reader_test) {
             seastar::default_priority_class(),
             nullptr,
             streamed_mutation::forwarding::no,
-            mutation_reader::forwarding::no);
+            mutation_reader::forwarding::no,
+            no_abort_source);
 
     assert_that(std::move(list_reader))
         .produces(expexted_mutation_0)

@@ -357,7 +357,7 @@ class compressed_file_data_source_impl : public data_source_impl {
     uint64_t _end_pos;
 public:
     compressed_file_data_source_impl(file f, sstables::compression* cm,
-                uint64_t pos, size_t len, file_input_stream_options options)
+                uint64_t pos, size_t len, file_input_stream_options options, abort_source* asp)
             : _compression_metadata(cm)
             , _offsets(_compression_metadata->offsets.get_accessor())
             , _compression(*cm)
@@ -384,7 +384,8 @@ public:
         _input_stream = make_file_input_stream(std::move(f),
                 start.chunk_start,
                 end.chunk_start + end.chunk_len - start.chunk_start,
-                std::move(options));
+                std::move(options),
+                asp);
         _underlying_pos = start.chunk_start;
         _pos = _beg_pos;
     }
@@ -457,9 +458,9 @@ requires ChecksumUtils<ChecksumType>
 class compressed_file_data_source : public data_source {
 public:
     compressed_file_data_source(file f, sstables::compression* cm,
-            uint64_t offset, size_t len, file_input_stream_options options)
+            uint64_t offset, size_t len, file_input_stream_options options, abort_source* asp)
         : data_source(std::make_unique<compressed_file_data_source_impl<ChecksumType>>(
-                std::move(f), cm, offset, len, std::move(options)))
+                std::move(f), cm, offset, len, std::move(options), asp))
         {}
 };
 
@@ -467,10 +468,11 @@ template <typename ChecksumType>
 requires ChecksumUtils<ChecksumType>
 inline input_stream<char> make_compressed_file_input_stream(
         file f, sstables::compression *cm, uint64_t offset, size_t len,
-        file_input_stream_options options)
+        file_input_stream_options options,
+        abort_source* asp)
 {
     return input_stream<char>(compressed_file_data_source<ChecksumType>(
-            std::move(f), cm, offset, len, std::move(options)));
+            std::move(f), cm, offset, len, std::move(options), asp));
 }
 
 // For SSTables 2.x (formats 'ka' and 'la'), the full checksum is a combination of checksums of compressed chunks.
@@ -582,15 +584,15 @@ inline output_stream<char> make_compressed_file_output_stream(output_stream<char
 
 input_stream<char> sstables::make_compressed_file_k_l_format_input_stream(file f,
         sstables::compression* cm, uint64_t offset, size_t len,
-        class file_input_stream_options options)
+        class file_input_stream_options options, abort_source* asp)
 {
-    return make_compressed_file_input_stream<adler32_utils>(std::move(f), cm, offset, len, std::move(options));
+    return make_compressed_file_input_stream<adler32_utils>(std::move(f), cm, offset, len, std::move(options), asp);
 }
 
 input_stream<char> sstables::make_compressed_file_m_format_input_stream(file f,
         sstables::compression *cm, uint64_t offset, size_t len,
-        class file_input_stream_options options) {
-    return make_compressed_file_input_stream<crc32_utils>(std::move(f), cm, offset, len, std::move(options));
+        class file_input_stream_options options, abort_source* asp) {
+    return make_compressed_file_input_stream<crc32_utils>(std::move(f), cm, offset, len, std::move(options), asp);
 }
 
 output_stream<char> sstables::make_compressed_file_m_format_output_stream(output_stream<char> out,

@@ -215,6 +215,7 @@ public:
             tracing::trace_state_ptr trace_state = {},
             streamed_mutation::forwarding fwd = streamed_mutation::forwarding::no,
             mutation_reader::forwarding fwd_mr = mutation_reader::forwarding::yes,
+            abort_source* asp = nullptr,
             read_monitor& monitor = default_read_monitor());
 
     flat_mutation_reader make_reader_v1(
@@ -226,6 +227,7 @@ public:
             tracing::trace_state_ptr trace_state = {},
             streamed_mutation::forwarding fwd = streamed_mutation::forwarding::no,
             mutation_reader::forwarding fwd_mr = mutation_reader::forwarding::yes,
+            abort_source* asp = nullptr,
             read_monitor& monitor = default_read_monitor());
 
     // Returns mutation_source containing all writes contained in this sstable.
@@ -618,7 +620,7 @@ private:
     // about the buffer size to read, and where exactly to stop reading
     // (even when a large buffer size is used).
     input_stream<char> data_stream(uint64_t pos, size_t len, const io_priority_class& pc,
-            reader_permit permit, tracing::trace_state_ptr trace_state, lw_shared_ptr<file_input_stream_history> history);
+            reader_permit permit, tracing::trace_state_ptr trace_state, lw_shared_ptr<file_input_stream_history> history, abort_source* asp = nullptr);
 
     // Read exactly the specific byte range from the data file (after
     // uncompression, if the file is compressed). This can be used to read
@@ -626,7 +628,7 @@ private:
     // determined using the index file).
     // This function is intended (and optimized for) random access, not
     // for iteration through all the rows.
-    future<temporary_buffer<char>> data_read(uint64_t pos, size_t len, const io_priority_class& pc, reader_permit permit);
+    future<temporary_buffer<char>> data_read(uint64_t pos, size_t len, const io_priority_class& pc, reader_permit permit, abort_source* asp = nullptr);
 
     future<summary_entry&> read_summary_entry(size_t i);
 

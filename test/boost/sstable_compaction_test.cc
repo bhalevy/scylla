@@ -3154,7 +3154,8 @@ SEASTAR_TEST_CASE(purged_tombstone_consumer_sstable_test) {
                 service::get_local_compaction_priority(),
                 nullptr,
                 ::streamed_mutation::forwarding::no,
-                ::mutation_reader::forwarding::no);
+                ::mutation_reader::forwarding::no,
+                no_abort_source);
 
             auto r = std::move(reader);
             auto close_r = deferred_close(r);
@@ -4073,7 +4074,8 @@ SEASTAR_TEST_CASE(test_twcs_single_key_reader_filtering) {
         auto reader = set.create_single_key_sstable_reader(
                 &cf, s, permit, eh, pr, slice, default_priority_class(),
                 tracing::trace_state_ptr(), ::streamed_mutation::forwarding::no,
-                ::mutation_reader::forwarding::no);
+                ::mutation_reader::forwarding::no,
+                no_abort_source);
         auto close_reader = deferred_close(reader);
 
         auto checked_by_ck = cf_stats.sstables_checked_by_clustering_filter;
@@ -4376,7 +4378,8 @@ SEASTAR_TEST_CASE(twcs_single_key_reader_through_compound_set_test) {
 
         auto reader = compound.create_single_key_sstable_reader(&*cf, s, permit, eh, pr, s->full_slice(), default_priority_class(),
                                                                 tracing::trace_state_ptr(), ::streamed_mutation::forwarding::no,
-                                                                ::mutation_reader::forwarding::no);
+                                                                ::mutation_reader::forwarding::no,
+                                                                no_abort_source);
         auto close_reader = deferred_close(reader);
         auto mfopt = read_mutation_from_flat_mutation_reader(reader, db::no_timeout).get0();
         BOOST_REQUIRE(mfopt);

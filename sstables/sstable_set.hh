@@ -26,6 +26,7 @@
 #include "shared_sstable.hh"
 #include "dht/i_partitioner.hh"
 #include <seastar/core/shared_ptr.hh>
+#include <seastar/core/abort_source.hh>
 #include <vector>
 
 namespace utils {
@@ -115,7 +116,8 @@ public:
         const io_priority_class&,
         tracing::trace_state_ptr,
         streamed_mutation::forwarding,
-        mutation_reader::forwarding) const;
+        mutation_reader::forwarding,
+        abort_source*) const;
 
     /// Read a range from the sstable set.
     ///
@@ -130,6 +132,7 @@ public:
         tracing::trace_state_ptr,
         streamed_mutation::forwarding,
         mutation_reader::forwarding,
+        abort_source*,
         read_monitor_generator& rmg = default_read_monitor_generator()) const;
 
     // Filters out mutations that don't belong to the current shard.
@@ -142,6 +145,7 @@ public:
         tracing::trace_state_ptr,
         streamed_mutation::forwarding,
         mutation_reader::forwarding,
+        abort_source*,
         read_monitor_generator& rmg = default_read_monitor_generator()) const;
 
     flat_mutation_reader make_reader(
@@ -153,6 +157,7 @@ public:
             tracing::trace_state_ptr,
             streamed_mutation::forwarding,
             mutation_reader::forwarding,
+            abort_source*,
             read_monitor_generator& rmg = default_read_monitor_generator()) const;
 
     friend class compound_sstable_set;

@@ -21,6 +21,7 @@
 
 #pragma once
 
+#include <seastar/core/abort_source.hh>
 #include "flat_mutation_reader_v2.hh"
 #include "sstables/progress_monitor.hh"
 
@@ -37,6 +38,7 @@ flat_mutation_reader_v2 make_reader(
         tracing::trace_state_ptr trace_state,
         streamed_mutation::forwarding fwd,
         mutation_reader::forwarding fwd_mr,
+        abort_source* asp,
         read_monitor& monitor);
 
 } // namespace mx

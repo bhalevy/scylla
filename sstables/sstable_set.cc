@@ -744,7 +744,8 @@ sstable_set_impl::create_single_key_sstable_reader(
         const io_priority_class& pc,
         tracing::trace_state_ptr trace_state,
         streamed_mutation::forwarding fwd,
-        mutation_reader::forwarding fwd_mr) const
+        mutation_reader::forwarding fwd_mr,
+        abort_source* asp) const
 {
     const auto& pos = pr.start()->value();
     auto selected_sstables = filter_sstable_for_reader_by_pk(select(pr), *schema, pos);
@@ -756,7 +757,7 @@ sstable_set_impl::create_single_key_sstable_reader(
         filter_sstable_for_reader_by_ck(std::move(selected_sstables), *cf, schema, slice)
         | boost::adaptors::transformed([&] (const shared_sstable& sstable) {
             tracing::trace(trace_state, "Reading key {} from sstable {}", pos, seastar::value_of([&sstable] { return sstable->get_filename(); }));
-            return sstable->make_reader_v1(schema, permit, pr, slice, pc, trace_state, fwd);
+            return sstable->make_reader_v1(schema, permit, pr, slice, pc, trace_state, fwd, mutation_reader::forwarding::yes, asp);
         })
     );
 
@@ -787,7 +788,8 @@ time_series_sstable_set::create_single_key_sstable_reader(
         const io_priority_class& pc,
         tracing::trace_state_ptr trace_state,
         streamed_mutation::forwarding fwd_sm,
-        mutation_reader::forwarding fwd_mr) const {
+        mutation_reader::forwarding fwd_mr,
+        abort_source* asp) const {
     const auto& pos = pr.start()->value();
     // First check if the optimized algorithm for TWCS single partition queries can be applied.
     // Multiple conditions must be satisfied:
@@ -807,7 +809,7 @@ time_series_sstable_set::create_single_key_sstable_reader(
         // Some of the conditions were not satisfied so we use the standard query path.
         return sstable_set_impl::create_single_key_sstable_reader(
                 cf, std::move(schema), std::move(permit), sstable_histogram,
-                pr, slice, pc, std::move(trace_state), fwd_sm, fwd_mr);
+                pr, slice, pc, std::move(trace_state), fwd_sm, fwd_mr, asp);
     }
 
     auto pk_filter = make_pk_filter(pos, *schema);
@@ -820,8 +822,8 @@ time_series_sstable_set::create_single_key_sstable_reader(
     auto& stats = *cf->cf_stats();
     stats.clustering_filter_count++;
 
-    auto create_reader = [schema, permit, &pr, &slice, &pc, trace_state, fwd_sm] (sstable& sst) {
-        return sst.make_reader_v1(schema, permit, pr, slice, pc, trace_state, fwd_sm);
+    auto create_reader = [schema, permit, &pr, &slice, &pc, trace_state, fwd_sm, asp] (sstable& sst) {
+        return sst.make_reader_v1(schema, permit, pr, slice, pc, trace_state, fwd_sm, mutation_reader::forwarding::yes, asp);
     };
 
     auto ck_filter = [ranges = slice.get_all_ranges()] (const sstable& sst) { return sst.may_contain_rows(ranges); };
@@ -1007,7 +1009,8 @@ compound_sstable_set::create_single_key_sstable_reader(
         const io_priority_class& pc,
         tracing::trace_state_ptr trace_state,
         streamed_mutation::forwarding fwd,
-        mutation_reader::forwarding fwd_mr) const {
+        mutation_reader::forwarding fwd_mr,
+        abort_source* asp) const {
     auto sets = _sets;
     auto it = std::partition(sets.begin(), sets.end(), [] (const auto& set) { return !set->all()->empty(); });
     auto non_empty_set_count = std::distance(sets.begin(), it);
@@ -1018,13 +1021,13 @@ compound_sstable_set::create_single_key_sstable_reader(
     // optimize for common case where only 1 set is populated, avoiding the expensive combined reader
     if (non_empty_set_count == 1) {
         const auto& non_empty_set = *std::begin(sets);
-        return non_empty_set->create_single_key_sstable_reader(cf, std::move(schema), std::move(permit), sstable_histogram, pr, slice, pc, trace_state, fwd, fwd_mr);
+        return non_empty_set->create_single_key_sstable_reader(cf, std::move(schema), std::move(permit), sstable_histogram, pr, slice, pc, trace_state, fwd, fwd_mr, asp);
     }
 
     auto readers = boost::copy_range<std::vector<flat_mutation_reader>>(
         boost::make_iterator_range(sets.begin(), it)
         | boost::adaptors::transformed([&] (const lw_shared_ptr<sstable_set>& non_empty_set) {
-            return non_empty_set->create_single_key_sstable_reader(cf, schema, permit, sstable_histogram, pr, slice, pc, trace_state, fwd, fwd_mr);
+            return non_empty_set->create_single_key_sstable_reader(cf, schema, permit, sstable_histogram, pr, slice, pc, trace_state, fwd, fwd_mr, asp);
         })
     );
     return make_combined_reader(std::move(schema), std::move(permit), std::move(readers), fwd, fwd_mr);
@@ -1041,10 +1044,11 @@ sstable_set::create_single_key_sstable_reader(
         const io_priority_class& pc,
         tracing::trace_state_ptr trace_state,
         streamed_mutation::forwarding fwd,
-        mutation_reader::forwarding fwd_mr) const {
+        mutation_reader::forwarding fwd_mr,
+        abort_source* asp) const {
     assert(pr.is_singular() && pr.start()->value().has_key());
     return _impl->create_single_key_sstable_reader(cf, std::move(schema),
-            std::move(permit), sstable_histogram, pr, slice, pc, std::move(trace_state), fwd, fwd_mr);
+            std::move(permit), sstable_histogram, pr, slice, pc, std::move(trace_state), fwd, fwd_mr, asp);
 }
 
 flat_mutation_reader
@@ -1057,11 +1061,12 @@ sstable_set::make_range_sstable_reader(
         tracing::trace_state_ptr trace_state,
         streamed_mutation::forwarding fwd,
         mutation_reader::forwarding fwd_mr,
+        abort_source* asp,
         read_monitor_generator& monitor_generator) const
 {
-    auto reader_factory_fn = [s, permit, &slice, &pc, trace_state, fwd, fwd_mr, &monitor_generator]
+    auto reader_factory_fn = [s, permit, &slice, &pc, trace_state, fwd, fwd_mr, &monitor_generator, asp]
             (shared_sstable& sst, const dht::partition_range& pr) mutable {
-        return sst->make_reader_v1(s, permit, pr, slice, pc, trace_state, fwd, fwd_mr, monitor_generator(sst));
+        return sst->make_reader_v1(s, permit, pr, slice, pc, trace_state, fwd, fwd_mr, asp, monitor_generator(sst));
     };
     return make_combined_reader(s, std::move(permit), std::make_unique<incremental_reader_selector>(s,
                     shared_from_this(),
@@ -1082,12 +1087,13 @@ sstable_set::make_local_shard_sstable_reader(
         tracing::trace_state_ptr trace_state,
         streamed_mutation::forwarding fwd,
         mutation_reader::forwarding fwd_mr,
+        abort_source* asp,
         read_monitor_generator& monitor_generator) const
 {
-    auto reader_factory_fn = [s, permit, &slice, &pc, trace_state, fwd, fwd_mr, &monitor_generator]
+    auto reader_factory_fn = [s, permit, &slice, &pc, trace_state, fwd, fwd_mr, &monitor_generator, asp]
             (shared_sstable& sst, const dht::partition_range& pr) mutable {
         assert(!sst->is_shared());
-        return sst->make_reader_v1(s, permit, pr, slice, pc, trace_state, fwd, fwd_mr, monitor_generator(sst));
+        return sst->make_reader_v1(s, permit, pr, slice, pc, trace_state, fwd, fwd_mr, asp, monitor_generator(sst));
     };
     if (auto sstables = _impl->all(); sstables->size() == 1) [[unlikely]] {
         auto sst = *sstables->begin();

@@ -586,7 +586,7 @@ private:
     mutation_source_opt _virtual_reader;
     // Creates a mutation reader which covers given sstables.
     // Caller needs to ensure that column_family remains live (FIXME: relax this).
-    // The 'range' parameter must be live as long as the reader is used.
+    // The 'range' and 'asp' (if not null) parameters must be live as long as the reader is used.
     // Mutations returned by the reader will all have given schema.
     flat_mutation_reader make_sstable_reader(schema_ptr schema,
                                         reader_permit permit,
@@ -596,7 +596,8 @@ private:
                                         const io_priority_class& pc,
                                         tracing::trace_state_ptr trace_state,
                                         streamed_mutation::forwarding fwd,
-                                        mutation_reader::forwarding fwd_mr) const;
+                                        mutation_reader::forwarding fwd_mr,
+                                        abort_source* asp) const;
 
     lw_shared_ptr<sstables::sstable_set> make_maintenance_sstable_set() const;
     lw_shared_ptr<sstables::sstable_set> make_compound_sstable_set();
@@ -663,7 +664,8 @@ public:
             const io_priority_class& pc = default_priority_class(),
             tracing::trace_state_ptr trace_state = nullptr,
             streamed_mutation::forwarding fwd = streamed_mutation::forwarding::no,
-            mutation_reader::forwarding fwd_mr = mutation_reader::forwarding::yes) const;
+            mutation_reader::forwarding fwd_mr = mutation_reader::forwarding::yes,
+            abort_source* asp = no_abort_source) const;
     flat_mutation_reader make_reader_excluding_sstables(schema_ptr schema,
             reader_permit permit,
             std::vector<sstables::shared_sstable>& sst,
@@ -672,7 +674,8 @@ public:
             const io_priority_class& pc = default_priority_class(),
             tracing::trace_state_ptr trace_state = nullptr,
             streamed_mutation::forwarding fwd = streamed_mutation::forwarding::no,
-            mutation_reader::forwarding fwd_mr = mutation_reader::forwarding::yes) const;
+            mutation_reader::forwarding fwd_mr = mutation_reader::forwarding::yes,
+            abort_source* asp = no_abort_source) const;
 
     flat_mutation_reader make_reader(schema_ptr schema, reader_permit permit, const dht::partition_range& range = query::full_partition_range) const {
         auto& full_slice = schema->full_slice();
@@ -685,20 +688,24 @@ public:
     //  - Does not populate the cache
     // Requires ranges to be sorted and disjoint.
     flat_mutation_reader make_streaming_reader(schema_ptr schema, reader_permit permit,
-            const dht::partition_range_vector& ranges) const;
+            const dht::partition_range_vector& ranges,
+            abort_source* asp = no_abort_source) const;
 
     // Single range overload.
     flat_mutation_reader make_streaming_reader(schema_ptr schema, reader_permit permit, const dht::partition_range& range,
             const query::partition_slice& slice,
-            mutation_reader::forwarding fwd_mr = mutation_reader::forwarding::no) const;
+            mutation_reader::forwarding fwd_mr = mutation_reader::forwarding::no,
+            abort_source* asp = no_abort_source) const;
 
-    flat_mutation_reader make_streaming_reader(schema_ptr schema, reader_permit permit, const dht::partition_range& range) {
+    flat_mutation_reader make_streaming_reader(schema_ptr schema, reader_permit permit, const dht::partition_range& range,
+            abort_source* asp = no_abort_source) {
         return make_streaming_reader(std::move(schema), std::move(permit), range, schema->full_slice());
     }
 
     // Stream reader from the given sstables
     flat_mutation_reader make_streaming_reader(schema_ptr schema, reader_permit permit, const dht::partition_range& range,
-            lw_shared_ptr<sstables::sstable_set> sstables) const;
+            lw_shared_ptr<sstables::sstable_set> sstables,
+            abort_source* asp = no_abort_source) const;
 
     sstables::shared_sstable make_streaming_sstable_for_write(std::optional<sstring> subdir = {});
     sstables::shared_sstable make_streaming_staging_sstable() {

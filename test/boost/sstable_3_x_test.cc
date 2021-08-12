@@ -125,6 +125,7 @@ public:
                                     std::move(trace_state),
                                     fwd,
                                     fwd_mr,
+                                    no_abort_source,
                                     monitor);
     }
     flat_mutation_reader_v2 make_reader(
@@ -143,6 +144,7 @@ public:
                                  std::move(trace_state),
                                  fwd,
                                  fwd_mr,
+                                 no_abort_source,
                                  monitor);
     }
     void assert_toc(const std::set<component_type>& expected_components) {

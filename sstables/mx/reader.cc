@@ -32,7 +32,7 @@ namespace mx {
 class mp_row_consumer_reader_mx : public mp_row_consumer_reader_base, public flat_mutation_reader_v2::impl {
     friend class sstables::mx::mp_row_consumer_m;
 public:
-    mp_row_consumer_reader_mx(schema_ptr s, reader_permit permit, shared_sstable sst)
+    mp_row_consumer_reader_mx(schema_ptr s, reader_permit permit, shared_sstable sst, abort_source* asp)
         : mp_row_consumer_reader_base(std::move(sst))
         , impl(std::move(s), std::move(permit))
     { }
@@ -67,6 +67,7 @@ public:
 
     bool _is_mutation_end = true;
     streamed_mutation::forwarding _fwd;
+    abort_source* _asp;
     // For static-compact tables C* stores the only row in the static row but in our representation they're regular rows.
     const bool _treat_static_row_as_regular;
 
@@ -216,6 +217,7 @@ public:
                         const io_priority_class& pc,
                         tracing::trace_state_ptr trace_state,
                         streamed_mutation::forwarding fwd,
+                        abort_source* asp,
                         const shared_sstable& sst)
         : _permit(std::move(permit))
         , _sst(sst)
@@ -225,6 +227,7 @@ public:
         , _schema(schema)
         , _slice(slice)
         , _fwd(fwd)
+        , _asp(asp)
         , _treat_static_row_as_regular(_schema->is_static_compact_table()
             && (!sst->has_scylla_component() || sst->features().is_enabled(sstable_feature::CorrectStaticCompact))) // See #4139
     {
@@ -237,8 +240,9 @@ public:
                         const io_priority_class& pc,
                         tracing::trace_state_ptr trace_state,
                         streamed_mutation::forwarding fwd,
+                        abort_source* asp,
                         const shared_sstable& sst)
-    : mp_row_consumer_m(reader, schema, std::move(permit), schema->full_slice(), pc, std::move(trace_state), fwd, sst)
+    : mp_row_consumer_m(reader, schema, std::move(permit), schema->full_slice(), pc, std::move(trace_state), fwd, asp, sst)
     { }
 
     ~mp_row_consumer_m() {}
@@ -643,6 +647,10 @@ public:
 
     tracing::trace_state_ptr trace_state() const {
         return _trace_state;
+    }
+
+    abort_source* abort_source() const noexcept {
+        return _asp;
     }
 };
 
@@ -1220,6 +1228,7 @@ class mx_sstable_mutation_reader : public mp_row_consumer_reader_mx {
     const query::partition_slice& _slice;
     streamed_mutation::forwarding _fwd;
     mutation_reader::forwarding _fwd_mr;
+    abort_source* _asp;
     read_monitor& _monitor;
 public:
     mx_sstable_mutation_reader(shared_sstable sst,
@@ -1231,9 +1240,10 @@ public:
                             tracing::trace_state_ptr trace_state,
                             streamed_mutation::forwarding fwd,
                             mutation_reader::forwarding fwd_mr,
+                            abort_source* asp,
                             read_monitor& mon)
-            : mp_row_consumer_reader_mx(std::move(schema), permit, std::move(sst))
-            , _consumer(this, _schema, std::move(permit), slice, pc, std::move(trace_state), fwd, _sst)
+            : mp_row_consumer_reader_mx(std::move(schema), permit, std::move(sst), asp)
+            , _consumer(this, _schema, std::move(permit), slice, pc, std::move(trace_state), fwd, asp, _sst)
             // FIXME: I want to add `&& fwd_mr == mutation_reader::forwarding::no` below
             // but can't because many call sites use the default value for
             // `mutation_reader::forwarding` which is `yes`.
@@ -1242,6 +1252,7 @@ public:
             , _slice(slice)
             , _fwd(fwd)
             , _fwd_mr(fwd_mr)
+            , _asp(asp)
             , _monitor(mon) { }
 
     // Reference to _consumer is passed to data_consume_rows() in the constructor so we must not allow move/copy
@@ -1263,7 +1274,7 @@ private:
         if (!_index_reader) {
             auto caching = use_caching(!_slice.options.contains(query::partition_slice::option::bypass_cache));
             _index_reader = std::make_unique<index_reader>(_sst, _consumer.permit(), _consumer.io_priority(),
-                                                           _consumer.trace_state(), caching);
+                                                           _consumer.trace_state(), caching, _asp);
         }
         return *_index_reader;
     }
@@ -1580,9 +1591,10 @@ flat_mutation_reader_v2 make_reader(
         tracing::trace_state_ptr trace_state,
         streamed_mutation::forwarding fwd,
         mutation_reader::forwarding fwd_mr,
+        abort_source* asp,
         read_monitor& monitor) {
     return make_flat_mutation_reader_v2<mx_sstable_mutation_reader>(
-        std::move(sstable), std::move(schema), std::move(permit), range, slice, pc, std::move(trace_state), fwd, fwd_mr, monitor);
+        std::move(sstable), std::move(schema), std::move(permit), range, slice, pc, std::move(trace_state), fwd, fwd_mr, asp, monitor);
 }
 
 } // namespace mx

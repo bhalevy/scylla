@@ -82,8 +82,9 @@ future<> view_update_generator::start() {
                                 const io_priority_class& pc,
                                 tracing::trace_state_ptr ts,
                                 streamed_mutation::forwarding fwd_ms,
-                                mutation_reader::forwarding fwd_mr) {
-                        return ssts->make_range_sstable_reader(s, std::move(permit), pr, ps, pc, std::move(ts), fwd_ms, fwd_mr);
+                                mutation_reader::forwarding fwd_mr,
+                                abort_source* asp) {
+                        return ssts->make_range_sstable_reader(s, std::move(permit), pr, ps, pc, std::move(ts), fwd_ms, fwd_mr, asp);
                     });
                     auto [staging_sstable_reader, staging_sstable_reader_handle] = make_manually_paused_evictable_reader(
                             std::move(ms),
@@ -93,7 +94,7 @@ future<> view_update_generator::start() {
                             s->full_slice(),
                             service::get_local_streaming_priority(),
                             nullptr,
-                            ::mutation_reader::forwarding::no);
+                            ::mutation_reader::forwarding::no); // FIXME: pass &_as to make_manually_paused_evictable_reader
 
                     inject_failure("view_update_generator_consume_staging_sstable");
                     auto result = staging_sstable_reader.consume_in_thread(view_updating_consumer(s, std::move(permit), *t, sstables, _as, staging_sstable_reader_handle), db::no_timeout);
