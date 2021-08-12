@@ -48,6 +48,7 @@
 #include "mutation_source_metadata.hh"
 #include "gms/gossiper.hh"
 #include "db/config.hh"
+#include "utils/timeout_abort_source.hh"
 
 #include <boost/range/algorithm/remove_if.hpp>
 
@@ -1991,6 +1992,7 @@ table::query(schema_ptr s,
              ? memory_limiter.new_digest_read(*cmd.max_result_size, short_read_allowed) : memory_limiter.new_data_read(*cmd.max_result_size, short_read_allowed));
 
     query_state qs(s, cmd, opts, partition_ranges, std::move(accounter));
+    utils::timeout_abort_source tas(timeout);
 
     std::optional<query::data_querier> querier_opt;
     if (saved_querier) {
@@ -2002,7 +2004,7 @@ table::query(schema_ptr s,
 
         if (!querier_opt) {
             querier_opt = query::data_querier(as_mutation_source(), s, permit, range, qs.cmd.slice,
-                    service::get_local_sstable_query_read_priority(), trace_state);
+                    service::get_local_sstable_query_read_priority(), trace_state, &tas);
         }
         auto& q = *querier_opt;
 
@@ -2051,9 +2053,10 @@ table::mutation_query(schema_ptr s,
     if (saved_querier) {
         querier_opt = std::move(*saved_querier);
     }
+    utils::timeout_abort_source tas(timeout);
     if (!querier_opt) {
         querier_opt = query::mutation_querier(as_mutation_source(), s, permit, range, cmd.slice,
-                service::get_local_sstable_query_read_priority(), trace_state);
+                service::get_local_sstable_query_read_priority(), trace_state, &tas);
     }
     auto& q = *querier_opt;
 
