@@ -1963,7 +1963,7 @@ class timeout_abort_source : public abort_source {
 public:
     timeout_abort_source(db::timeout_clock::time_point timeout) {
         if (timeout != db::no_timeout) {
-            _tmr.set_callback([this] { this->request_abort(); });
+            _tmr.set_callback([this] { this->request_abort_ex(std::make_exception_ptr(timed_out_error())); });
             _tmr.arm(timeout);
         }
     }
