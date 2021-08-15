@@ -268,7 +268,16 @@ public:
         const auto shard = this_shard_id();
         auto& rm = _readers[shard];
         if (rm.state == reader_state::successful_lookup) {
-            return make_ready_future<reader_permit>(rm.rparts->permit);
+            // The permit's timeout should have been set by lookup_readers
+            auto& permit = rm.rparts->permit;
+            if (timeout != permit.timeout()) {
+                if (permit.timeout() != db::no_timeout) {
+                    on_internal_error(mmq_log, format("obtain_reader_permit: timeout={} != permit.timeout={}",
+                            timeout.time_since_epoch().count(), permit.timeout().time_since_epoch().count()));
+                }
+                permit.set_timeout(timeout);
+            }
+            return make_ready_future<reader_permit>(permit);
         }
         return _db.local().obtain_reader_permit(std::move(schema), description, timeout);
     }

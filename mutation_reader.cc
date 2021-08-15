@@ -1147,7 +1147,9 @@ future<flat_mutation_reader> evictable_reader::resume_or_create_reader(db::timeo
     if (auto reader_opt = try_resume(timeout)) {
         co_return std::move(*reader_opt);
     }
-    co_await _permit.maybe_wait_readmission(timeout);
+    // FIXME: until the timeout parameter is removed
+    assert(timeout == _permit.timeout() || timeout == db::no_timeout);
+    co_await _permit.maybe_wait_readmission();
     co_return recreate_reader();
 }
 
@@ -1407,6 +1409,7 @@ future<> evictable_reader::next_partition() {
     if (!is_buffer_empty()) {
         co_return;
     }
+    // FIXME: a timeout should have been passed to next_partition
     auto reader = co_await resume_or_create_reader(db::no_timeout);
     co_await reader.next_partition();
     maybe_pause(std::move(reader));
