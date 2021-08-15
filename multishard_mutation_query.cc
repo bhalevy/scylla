@@ -268,7 +268,9 @@ public:
         const auto shard = this_shard_id();
         auto& rm = _readers[shard];
         if (rm.state == reader_state::successful_lookup) {
-            return make_ready_future<reader_permit>(rm.rparts->permit);
+            auto& permit = rm.rparts->permit;
+            permit.set_timeout(timeout);
+            return make_ready_future<reader_permit>(permit);
         }
         return _db.local().obtain_reader_permit(std::move(schema), description, timeout);
     }
