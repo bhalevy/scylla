@@ -310,7 +310,6 @@ public:
     }
 
     void set_timeout(db::timeout_clock::time_point timeout) noexcept {
-        assert(timeout >= _timeout || _timeout == db::no_timeout);
         _timeout = timeout;
     }
 };
