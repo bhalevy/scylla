@@ -494,8 +494,8 @@ public:
         // Use a very long timeout for the reader to break out any eventual
         // deadlock within the reader. Thirty minutes should be more than
         // enough to read a single mutation fragment.
-        auto timeout = db::timeout_clock::now() + std::chrono::minutes(30);
-        return _reader(timeout).then_wrapped([this] (future<mutation_fragment_opt> f) {
+        _reader.set_timeout(db::timeout_clock::now() + std::chrono::minutes(30));
+        return _reader().then_wrapped([this] (future<mutation_fragment_opt> f) {
             try {
                 auto mfopt = f.get0();
                 ++_reads_finished;

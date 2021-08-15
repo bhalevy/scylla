@@ -220,10 +220,10 @@ class read_context : public reader_lifecycle_policy {
 
 public:
     read_context(distributed<database>& db, schema_ptr s, const query::read_command& cmd, const dht::partition_range_vector& ranges,
-            tracing::trace_state_ptr trace_state)
+            tracing::trace_state_ptr trace_state, db::timeout_clock::time_point timeout)
             : _db(db)
             , _schema(std::move(s))
-            , _permit(_db.local().get_reader_concurrency_semaphore().make_tracking_only_permit(_schema.get(), "multishard-mutation-query"))
+            , _permit(_db.local().get_reader_concurrency_semaphore().make_tracking_only_permit(_schema.get(), "multishard-mutation-query", timeout))
             , _cmd(cmd)
             , _ranges(ranges)
             , _trace_state(std::move(trace_state))
@@ -628,7 +628,6 @@ future<page_consume_result<ResultBuilder>> read_page(
         const query::read_command& cmd,
         const dht::partition_range_vector& ranges,
         tracing::trace_state_ptr trace_state,
-        db::timeout_clock::time_point timeout,
         ResultBuilder&& result_builder) {
     auto ms = mutation_source([&] (schema_ptr s,
             reader_permit permit,
@@ -649,7 +648,7 @@ future<page_consume_result<ResultBuilder>> read_page(
     std::exception_ptr ex;
     try {
         auto [ckey, result] = co_await query::consume_page(reader, compaction_state, cmd.slice, std::move(result_builder), cmd.get_row_limit(),
-                cmd.partition_limit, cmd.timestamp, timeout, *cmd.max_result_size);
+                cmd.partition_limit, cmd.timestamp, *cmd.max_result_size);
         auto buffer = reader.detach_buffer();
         co_await reader.close();
         // page_consume_result cannot fail so there's no risk of double-closing reader.
@@ -670,14 +669,14 @@ future<typename ResultBuilder::result_type> do_query(
         tracing::trace_state_ptr trace_state,
         db::timeout_clock::time_point timeout,
         ResultBuilder&& result_builder) {
-    auto ctx = seastar::make_shared<read_context>(db, s, cmd, ranges, trace_state);
+    auto ctx = seastar::make_shared<read_context>(db, s, cmd, ranges, trace_state, timeout);
 
     co_await ctx->lookup_readers();
 
     std::exception_ptr ex;
 
     try {
-        auto [last_ckey, result, unconsumed_buffer, compaction_state] = co_await read_page<ResultBuilder>(ctx, s, cmd, ranges, trace_state, timeout,
+        auto [last_ckey, result, unconsumed_buffer, compaction_state] = co_await read_page<ResultBuilder>(ctx, s, cmd, ranges, trace_state,
                 std::move(result_builder));
 
         if (compaction_state->are_limits_reached() || result.is_short_read()) {
