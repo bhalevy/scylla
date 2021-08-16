@@ -428,12 +428,6 @@ public:
             }
         }
 
-        void maybe_timed_out() {
-            if (db::timeout_clock::now() >= timeout()) {
-                throw timed_out_error();
-            }
-        }
-
         db::timeout_clock::time_point timeout() const noexcept {
             return _permit.timeout();
         }

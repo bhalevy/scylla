@@ -24,6 +24,7 @@
 #include <seastar/core/align.hh>
 #include <seastar/core/aligned_buffer.hh>
 #include <seastar/util/closeable.hh>
+#include <seastar/util//timeout_abort_source.hh>
 
 #include "sstables/sstables.hh"
 #include "sstables/key.hh"
@@ -3012,7 +3013,13 @@ SEASTAR_TEST_CASE(sstable_reader_with_timeout) {
             auto sstp = env.reusable_sst(s, tmpdir_path, 12).get0();
             auto pr = dht::partition_range::make_singular(make_dkey(s, "key1"));
             auto timeout = db::timeout_clock::now();
-            auto rd = sstp->make_reader(s, env.make_reader_permit(timeout), pr, s->full_slice());
+            util::timeout_abort_source<db::timeout_clock> tas(timeout);
+            auto rd = sstp->make_reader(s, env.make_reader_permit(timeout), pr, s->full_slice(),
+                                        default_priority_class(),
+                                        tracing::trace_state_ptr{},
+                                        streamed_mutation::forwarding::no,
+                                        mutation_reader::forwarding::yes,
+                                        &tas);
             auto close_rd = deferred_close(rd);
             auto f = read_mutation_from_flat_mutation_reader(rd);
             BOOST_REQUIRE_THROW(f.get(), timed_out_error);
