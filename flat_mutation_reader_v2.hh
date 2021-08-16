@@ -438,6 +438,10 @@ public:
         db::timeout_clock::time_point timeout() const noexcept {
             return _permit.timeout();
         }
+
+        void set_timeout(db::timeout_clock::time_point timeout) noexcept {
+            _permit.set_timeout(timeout);
+        }
     };
 private:
     std::unique_ptr<impl> _impl;
@@ -625,6 +629,7 @@ public:
     void unpop_mutation_fragment(mutation_fragment_v2 mf) { _impl->unpop_mutation_fragment(std::move(mf)); }
     const schema_ptr& schema() const { return _impl->_schema; }
     const reader_permit& permit() const { return _impl->_permit; }
+    void set_timeout(db::timeout_clock::time_point timeout) noexcept { _impl->set_timeout(timeout); }
     void set_max_buffer_size(size_t size) {
         _impl->max_buffer_size_in_bytes = size;
     }

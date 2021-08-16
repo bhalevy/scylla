@@ -308,6 +308,11 @@ public:
     db::timeout_clock::time_point timeout() const noexcept {
         return _timeout;
     }
+
+    void set_timeout(db::timeout_clock::time_point timeout) noexcept {
+        assert(timeout >= _timeout || _timeout == db::no_timeout);
+        _timeout = timeout;
+    }
 };
 
 static_assert(std::is_nothrow_copy_constructible_v<reader_permit>);
@@ -394,6 +399,10 @@ void reader_permit::mark_unblocked() noexcept {
 
 db::timeout_clock::time_point reader_permit::timeout() const noexcept {
     return _impl->timeout();
+}
+
+void reader_permit::set_timeout(db::timeout_clock::time_point timeout) noexcept {
+    _impl->set_timeout(timeout);
 }
 
 std::ostream& operator<<(std::ostream& os, reader_permit::state s) {
