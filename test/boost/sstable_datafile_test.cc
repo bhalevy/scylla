@@ -72,6 +72,7 @@
 #include "test/lib/reader_concurrency_semaphore.hh"
 #include "test/lib/sstable_utils.hh"
 #include "test/lib/random_utils.hh"
+#include "utils/timeout_abort_source.hh"
 
 namespace fs = std::filesystem;
 
@@ -3012,7 +3013,13 @@ SEASTAR_TEST_CASE(sstable_reader_with_timeout) {
             auto sstp = env.reusable_sst(s, tmpdir_path, 12).get0();
             auto pr = dht::partition_range::make_singular(make_dkey(s, "key1"));
             auto timeout = db::timeout_clock::now();
-            auto rd = sstp->make_reader(s, env.make_reader_permit(timeout), pr, s->full_slice());
+            utils::timeout_abort_source tas(timeout);
+            auto rd = sstp->make_reader(s, env.make_reader_permit(timeout), pr, s->full_slice(),
+                                        default_priority_class(),
+                                        tracing::trace_state_ptr{},
+                                        streamed_mutation::forwarding::no,
+                                        mutation_reader::forwarding::yes,
+                                        &tas);
             auto close_rd = deferred_close(rd);
             auto f = read_mutation_from_flat_mutation_reader(rd);
             BOOST_REQUIRE_THROW(f.get(), timed_out_error);
