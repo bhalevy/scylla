@@ -1846,6 +1846,7 @@ multishard_combining_reader::multishard_combining_reader(
 }
 
 future<> multishard_combining_reader::fill_buffer(db::timeout_clock::time_point timeout) {
+    assert(timeout == _permit.timeout());
     _crossed_shards = false;
     return do_until([this] { return is_buffer_full() || is_end_of_stream(); }, [this, timeout] {
         auto& reader = *_shard_readers[_current_shard];
