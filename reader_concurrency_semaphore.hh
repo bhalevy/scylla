@@ -292,7 +292,7 @@ public:
     ///
     /// If the read was not evicted, the inactive read object, passed in to the
     /// register call, will be returned. Otherwise a nullptr is returned.
-    flat_mutation_reader_opt unregister_inactive_read(inactive_read_handle irh);
+    flat_mutation_reader_opt unregister_inactive_read(inactive_read_handle irh, std::optional<db::timeout_clock::time_point> timeout_opt);
 
     /// Try to evict an inactive read.
     ///

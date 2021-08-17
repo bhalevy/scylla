@@ -232,7 +232,7 @@ SEASTAR_THREAD_TEST_CASE(test_reader_concurrency_semaphore_forward_progress) {
             }
         }
         future<> tick(reader_concurrency_semaphore::inactive_read_handle& handle) {
-            if (auto reader = _permit->semaphore().unregister_inactive_read(std::move(handle)); reader) {
+            if (auto reader = _permit->semaphore().unregister_inactive_read(std::move(handle), std::nullopt); reader) {
                 _reader = std::move(*reader);
             } else {
                 co_await _permit->maybe_wait_readmission(db::no_timeout);
@@ -727,7 +727,7 @@ SEASTAR_THREAD_TEST_CASE(test_reader_concurrency_semaphore_admission) {
             require_can_admit(true, "inactive (used)");
 
             {
-                auto rd = semaphore.unregister_inactive_read(std::move(irh));
+                auto rd = semaphore.unregister_inactive_read(std::move(irh), std::nullopt);
                 rd->close().get();
             }
 

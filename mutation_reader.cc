@@ -967,7 +967,7 @@ private:
 private:
     void do_pause(flat_mutation_reader reader);
     void maybe_pause(flat_mutation_reader reader);
-    flat_mutation_reader_opt try_resume();
+    flat_mutation_reader_opt try_resume(std::optional<db::timeout_clock::time_point> timeout_opt);
     void update_next_position(flat_mutation_reader& reader);
     void adjust_partition_slice();
     flat_mutation_reader recreate_reader();
@@ -1000,7 +1000,7 @@ public:
         if (_reader) {
             return _reader->close();
         }
-        if (auto reader_opt = try_resume()) {
+        if (auto reader_opt = try_resume(std::nullopt)) {
             return reader_opt->close();
         }
         return make_ready_future<>();
@@ -1031,8 +1031,8 @@ void evictable_reader::maybe_pause(flat_mutation_reader reader) {
     }
 }
 
-flat_mutation_reader_opt evictable_reader::try_resume() {
-    return _permit.semaphore().unregister_inactive_read(std::move(_irh));
+flat_mutation_reader_opt evictable_reader::try_resume(std::optional<db::timeout_clock::time_point> timeout_opt) {
+    return _permit.semaphore().unregister_inactive_read(std::move(_irh), timeout_opt);
 }
 
 void evictable_reader::update_next_position(flat_mutation_reader& reader) {
@@ -1144,7 +1144,7 @@ future<flat_mutation_reader> evictable_reader::resume_or_create_reader(db::timeo
     if (_reader) {
         co_return std::move(*_reader);
     }
-    if (auto reader_opt = try_resume()) {
+    if (auto reader_opt = try_resume(timeout)) {
         co_return std::move(*reader_opt);
     }
     co_await _permit.maybe_wait_readmission(timeout);
@@ -1424,7 +1424,7 @@ future<> evictable_reader::fast_forward_to(const dht::partition_range& pr, db::t
         _range_override.reset();
         co_return;
     }
-    if (auto reader_opt = try_resume()) {
+    if (auto reader_opt = try_resume(this->timeout())) {
         co_await reader_opt->fast_forward_to(pr, timeout);
         _range_override.reset();
         maybe_pause(std::move(*reader_opt));

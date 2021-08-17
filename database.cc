@@ -1410,7 +1410,7 @@ database::query(schema_ptr s, const query::read_command& cmd, query::result_opti
     std::exception_ptr ex;
 
     if (cmd.query_uuid != utils::UUID{} && !cmd.is_first_page) {
-        querier_opt = _querier_cache.lookup_data_querier(cmd.query_uuid, *s, ranges.front(), cmd.slice, trace_state);
+        querier_opt = _querier_cache.lookup_data_querier(cmd.query_uuid, *s, ranges.front(), cmd.slice, trace_state, timeout);
     }
 
     auto read_func = [&, this] (reader_permit permit) {
@@ -1465,7 +1465,7 @@ database::query_mutations(schema_ptr s, const query::read_command& cmd, const dh
     std::exception_ptr ex;
 
     if (cmd.query_uuid != utils::UUID{} && !cmd.is_first_page) {
-        querier_opt = _querier_cache.lookup_mutation_querier(cmd.query_uuid, *s, range, cmd.slice, trace_state);
+        querier_opt = _querier_cache.lookup_mutation_querier(cmd.query_uuid, *s, range, cmd.slice, trace_state, timeout);
     }
 
     auto read_func = [&, this] (reader_permit permit) {
@@ -2364,7 +2364,7 @@ flat_mutation_reader make_multishard_streaming_reader(distributed<database>& db,
         }
         virtual future<> destroy_reader(stopped_reader reader) noexcept override {
             auto ctx = std::move(_contexts[this_shard_id()]);
-            auto reader_opt = ctx.semaphore->unregister_inactive_read(std::move(reader.handle));
+            auto reader_opt = ctx.semaphore->unregister_inactive_read(std::move(reader.handle), std::nullopt);
             if  (!reader_opt) {
                 return make_ready_future<>();
             }

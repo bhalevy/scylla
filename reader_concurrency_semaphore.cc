@@ -679,7 +679,7 @@ void reader_concurrency_semaphore::set_notify_handler(inactive_read_handle& irh,
     }
 }
 
-flat_mutation_reader_opt reader_concurrency_semaphore::unregister_inactive_read(inactive_read_handle irh) {
+flat_mutation_reader_opt reader_concurrency_semaphore::unregister_inactive_read(inactive_read_handle irh, std::optional<db::timeout_clock::time_point> timeout_opt) {
     if (!irh) {
         return {};
     }
@@ -703,6 +703,9 @@ flat_mutation_reader_opt reader_concurrency_semaphore::unregister_inactive_read(
     --_stats.inactive_reads;
     std::unique_ptr<inactive_read> irp(irh._irp);
     irp->reader.permit()._impl->on_unregister_as_inactive();
+    if (timeout_opt) {
+        irp->reader.set_timeout(*timeout_opt);
+    }
     return std::move(irp->reader);
 }
 

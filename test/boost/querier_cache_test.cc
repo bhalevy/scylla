@@ -317,7 +317,7 @@ public:
             const dht::partition_range& lookup_range,
             const query::partition_slice& lookup_slice) {
 
-        auto querier_opt = _cache.lookup_data_querier(make_cache_key(lookup_key), lookup_schema, lookup_range, lookup_slice, nullptr);
+        auto querier_opt = _cache.lookup_data_querier(make_cache_key(lookup_key), lookup_schema, lookup_range, lookup_slice, nullptr, std::nullopt);
         if (querier_opt) {
             querier_opt->close().get();
         }
@@ -330,7 +330,7 @@ public:
             const dht::partition_range& lookup_range,
             const query::partition_slice& lookup_slice) {
 
-        auto querier_opt = _cache.lookup_mutation_querier(make_cache_key(lookup_key), lookup_schema, lookup_range, lookup_slice, nullptr);
+        auto querier_opt = _cache.lookup_mutation_querier(make_cache_key(lookup_key), lookup_schema, lookup_range, lookup_slice, nullptr, std::nullopt);
         if (querier_opt) {
             querier_opt->close().get();
         }
@@ -793,12 +793,12 @@ SEASTAR_THREAD_TEST_CASE(test_unique_inactive_read_handle) {
     auto sem2_h1 = sem2.register_inactive_read(make_empty_flat_reader(schema, sem2.make_tracking_only_permit(schema.get(), get_name(), db::no_timeout)));
 
     // Sanity check that lookup still works with empty handle.
-    BOOST_REQUIRE(!sem1.unregister_inactive_read(reader_concurrency_semaphore::inactive_read_handle{}));
+    BOOST_REQUIRE(!sem1.unregister_inactive_read(reader_concurrency_semaphore::inactive_read_handle{}, std::nullopt));
 
     set_abort_on_internal_error(false);
     auto reset_on_internal_abort = defer([] {
         set_abort_on_internal_error(true);
     });
-    BOOST_REQUIRE_THROW(sem1.unregister_inactive_read(std::move(sem2_h1)), std::runtime_error);
-    BOOST_REQUIRE_THROW(sem2.unregister_inactive_read(std::move(sem1_h1)), std::runtime_error);
+    BOOST_REQUIRE_THROW(sem1.unregister_inactive_read(std::move(sem2_h1), std::nullopt), std::runtime_error);
+    BOOST_REQUIRE_THROW(sem2.unregister_inactive_read(std::move(sem1_h1), std::nullopt), std::runtime_error);
 }

@@ -262,7 +262,7 @@ void querier_cache::insert_querier(
     }
   try {
     auto cleanup_irh = defer([&] {
-        sem.unregister_inactive_read(std::move(irh));
+        sem.unregister_inactive_read(std::move(irh), std::nullopt);
     });
 
     auto it = index.emplace(key, std::make_unique<Querier>(std::move(q)));
@@ -320,7 +320,8 @@ std::optional<Querier> querier_cache::lookup_querier(
         const schema& s,
         dht::partition_ranges_view ranges,
         const query::partition_slice& slice,
-        tracing::trace_state_ptr trace_state) {
+        tracing::trace_state_ptr trace_state,
+        std::optional<db::timeout_clock::time_point> timeout_opt) {
     auto base_ptr = find_querier(index, key, ranges, trace_state);
     auto& stats = _stats;
     ++stats.lookups;
@@ -334,7 +335,7 @@ std::optional<Querier> querier_cache::lookup_querier(
         throw std::runtime_error("lookup_querier(): found querier is not of the expected type");
     }
     auto& q = *q_ptr;
-    auto reader_opt = q.permit().semaphore().unregister_inactive_read(querier_utils::get_inactive_read_handle(q));
+    auto reader_opt = q.permit().semaphore().unregister_inactive_read(querier_utils::get_inactive_read_handle(q), timeout_opt);
     if (!reader_opt) {
         throw std::runtime_error("lookup_querier(): found querier that is evicted");
     }
@@ -364,25 +365,28 @@ std::optional<data_querier> querier_cache::lookup_data_querier(utils::UUID key,
         const schema& s,
         const dht::partition_range& range,
         const query::partition_slice& slice,
-        tracing::trace_state_ptr trace_state) {
-    return lookup_querier<data_querier>(_data_querier_index, key, s, range, slice, std::move(trace_state));
+        tracing::trace_state_ptr trace_state,
+        std::optional<db::timeout_clock::time_point> timeout_opt) {
+    return lookup_querier<data_querier>(_data_querier_index, key, s, range, slice, std::move(trace_state), timeout_opt);
 }
 
 std::optional<mutation_querier> querier_cache::lookup_mutation_querier(utils::UUID key,
         const schema& s,
         const dht::partition_range& range,
         const query::partition_slice& slice,
-        tracing::trace_state_ptr trace_state) {
-    return lookup_querier<mutation_querier>(_mutation_querier_index, key, s, range, slice, std::move(trace_state));
+        tracing::trace_state_ptr trace_state,
+        std::optional<db::timeout_clock::time_point> timeout_opt) {
+    return lookup_querier<mutation_querier>(_mutation_querier_index, key, s, range, slice, std::move(trace_state), timeout_opt);
 }
 
 std::optional<shard_mutation_querier> querier_cache::lookup_shard_mutation_querier(utils::UUID key,
         const schema& s,
         const dht::partition_range_vector& ranges,
         const query::partition_slice& slice,
-        tracing::trace_state_ptr trace_state) {
+        tracing::trace_state_ptr trace_state,
+        std::optional<db::timeout_clock::time_point> timeout_opt) {
     return lookup_querier<shard_mutation_querier>(_shard_mutation_querier_index, key, s, ranges, slice,
-            std::move(trace_state));
+            std::move(trace_state), timeout_opt);
 }
 
 future<> querier_base::close() noexcept {
@@ -392,7 +396,7 @@ future<> querier_base::close() noexcept {
             return reader.close();
         }
         future<> operator()(reader_concurrency_semaphore::inactive_read_handle& irh) {
-            auto reader_opt = q.permit().semaphore().unregister_inactive_read(std::move(irh));
+            auto reader_opt = q.permit().semaphore().unregister_inactive_read(std::move(irh), std::nullopt);
             return reader_opt ? reader_opt->close() : make_ready_future<>();
         }
     };
@@ -410,7 +414,7 @@ future<bool> querier_cache::evict_one() noexcept {
             continue;
         }
         auto it = idx.begin();
-        auto reader_opt = it->second->permit().semaphore().unregister_inactive_read(querier_utils::get_inactive_read_handle(*it->second));
+        auto reader_opt = it->second->permit().semaphore().unregister_inactive_read(querier_utils::get_inactive_read_handle(*it->second), std::nullopt);
         idx.erase(it);
         ++_stats.resource_based_evictions;
         --_stats.population;
@@ -427,7 +431,7 @@ future<> querier_cache::evict_all_for_table(const utils::UUID& schema_id) noexce
         auto& idx = *ip;
         for (auto it = idx.begin(); it != idx.end();) {
             if (it->second->schema().id() == schema_id) {
-                auto reader_opt = it->second->permit().semaphore().unregister_inactive_read(querier_utils::get_inactive_read_handle(*it->second));
+                auto reader_opt = it->second->permit().semaphore().unregister_inactive_read(querier_utils::get_inactive_read_handle(*it->second), std::nullopt);
                 it = idx.erase(it);
                 --_stats.population;
                 if (reader_opt) {
