@@ -273,7 +273,7 @@ public:
         return _db.local().obtain_reader_permit(std::move(schema), description, timeout);
     }
 
-    future<> lookup_readers();
+    future<> lookup_readers(db::timeout_clock::time_point timeout);
 
     future<> save_readers(flat_mutation_reader::tracked_buffer unconsumed_buffer, detached_compaction_state compaction_state,
             std::optional<clustering_key_prefix> last_ckey);
@@ -320,6 +320,14 @@ flat_mutation_reader read_context::create_reader(
     if (rm.state == reader_state::successful_lookup) {
         if (auto reader_opt = semaphore().unregister_inactive_read(std::move(*rm.rparts->handle))) {
             rm.state = reader_state::used;
+            // The reader_meta permit is expected to be the same one used for create_reader.
+            // FIXME: The following check can be removed eventually once tested throughly.
+            if (reader_opt->timeout() != permit.timeout()) {
+                on_internal_error_noexcept(mmq_log, format("read_context::create_reader: reader.timeout={} != permit.timeout={}",
+                    reader_opt->timeout().time_since_epoch().count(),
+                    permit.timeout().time_since_epoch().count()));
+                reader_opt->set_timeout(permit.timeout());
+            }
             return std::move(*reader_opt);
         }
     }
@@ -531,16 +539,16 @@ future<> read_context::save_reader(shard_id shard, const dht::decorated_key& las
   });
 }
 
-future<> read_context::lookup_readers() {
+future<> read_context::lookup_readers(db::timeout_clock::time_point timeout) {
     if (_cmd.query_uuid == utils::UUID{} || _cmd.is_first_page) {
         return make_ready_future<>();
     }
 
-    return parallel_for_each(boost::irange(0u, smp::count), [this] (shard_id shard) {
+    return parallel_for_each(boost::irange(0u, smp::count), [this, timeout] (shard_id shard) {
         return _db.invoke_on(shard, [this, shard, cmd = &_cmd, ranges = &_ranges, gs = global_schema_ptr(_schema),
-                gts = tracing::global_trace_state_ptr(_trace_state)] (database& db) mutable {
+                gts = tracing::global_trace_state_ptr(_trace_state), timeout] (database& db) mutable {
             auto schema = gs.get();
-            auto querier_opt = db.get_querier_cache().lookup_shard_mutation_querier(cmd->query_uuid, *schema, *ranges, cmd->slice, gts.get());
+            auto querier_opt = db.get_querier_cache().lookup_shard_mutation_querier(cmd->query_uuid, *schema, *ranges, cmd->slice, gts.get(), timeout);
             auto& table = db.find_column_family(schema);
             auto& semaphore = this->semaphore();
 
@@ -672,7 +680,7 @@ future<typename ResultBuilder::result_type> do_query(
         ResultBuilder&& result_builder) {
     auto ctx = seastar::make_shared<read_context>(db, s, cmd, ranges, trace_state, timeout);
 
-    co_await ctx->lookup_readers();
+    co_await ctx->lookup_readers(timeout);
 
     std::exception_ptr ex;
 
