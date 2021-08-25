@@ -1316,7 +1316,7 @@ SEASTAR_THREAD_TEST_CASE(test_uncompressed_static_row_read) {
 // INSERT INTO test_ks.test_table(pk, ck, v) VALUES(2, 20, 200);
 // INSERT INTO test_ks.test_table(pk, ck, v) VALUES(3, 30, 300);
 
-using exception_predicate::message_equals;
+using namespace exception_predicate;
 
 SEASTAR_THREAD_TEST_CASE(test_uncompressed_random_partitioner) {
   test_env::do_with_async([] (test_env& env) {
@@ -1334,9 +1334,9 @@ SEASTAR_THREAD_TEST_CASE(test_uncompressed_random_partitioner) {
                            uncompressed_random_partitioner_path);
     using namespace std::string_literals;
     BOOST_REQUIRE_EXCEPTION(sst.load(), std::runtime_error,
-        message_equals("SSTable test/resource/sstables/3.x/uncompressed/random_partitioner/mc-1-big-Data.db uses "
-                       "org.apache.cassandra.dht.RandomPartitioner partitioner which is different than "
-                       "org.apache.cassandra.dht.Murmur3Partitioner partitioner used by the database"s));
+        message_matches("SSTable .*test/resource/sstables/3.x/uncompressed/random_partitioner/mc-1-big-Data\\.db uses "
+                       "org\\.apache\\.cassandra\\.dht\\.RandomPartitioner partitioner which is different than "
+                       "org\\.apache\\.cassandra\\.dht\\.Murmur3Partitioner partitioner used by the database"));
   }).get();
 }
 // Following tests run on files in test/resource/sstables/3.x/uncompressed/compound_static_row

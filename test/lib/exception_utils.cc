@@ -19,6 +19,8 @@
  * along with Scylla.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include <regex>
+
 #include "test/lib/exception_utils.hh"
 
 #include <boost/test/unit_test.hpp>
@@ -52,5 +54,15 @@ std::function<bool(const std::exception&)> exception_predicate::message_equals(
                 [=] (const std::exception& e) {
                     return fmt::format("Message '{}' doesn't equal '{}'\n{}:{}: invoked here",
                                        e.what(), text, loc.file_name(), loc.line());
+                });
+}
+
+std::function<bool(const std::exception&)> exception_predicate::message_matches(
+        const sstring& expression,
+        const std::experimental::source_location& loc) {
+    return make([=] (const std::exception& e) { return std::regex_search(e.what(), std::regex(expression.c_str())); },
+                [=] (const std::exception& e) {
+                    return fmt::format("Message '{}' doesn't match regular expression '{}'\n{}:{}: invoked here",
+                                       e.what(), expression, loc.file_name(), loc.line());
                 });
 }

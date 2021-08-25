@@ -2409,7 +2409,7 @@ future<> sstable::close_files() {
 }
 
 static inline sstring dirname(const sstring& fname) {
-    return fs::canonical(fs::path(fname)).parent_path().string();
+    return fs::path(fname).parent_path().string();
 }
 
 future<>
@@ -3008,6 +3008,9 @@ sstable::sstable(schema_ptr schema,
     , _large_data_handler(large_data_handler)
     , _manager(manager)
 {
+    if (_dir[0] != '/') {
+        _dir = fs::canonical(fs::path(_dir[0] ? _dir : ".")).native();
+    }
     tracker.add(*this);
     manager.add(this);
 }

@@ -19,6 +19,8 @@
  * along with Scylla.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include <regex>
+
 #include <seastar/testing/test_case.hh>
 #include <seastar/testing/thread_test_case.hh>
 #include <seastar/util/closeable.hh>
@@ -38,6 +40,25 @@ struct my_consumer {
     void consume_new_partition(const dht::decorated_key& dk) {}
     stop_iteration consume_end_of_partition() { return stop_iteration::no; }
 };
+}
+
+static void broken_sst(sstring dir, unsigned long generation, schema_ptr s, std::regex msg_regex, std::optional<sstring> sst_name = std::nullopt,
+    sstable_version_types version = la) {
+  sstables::test_env::do_with_async([&] (sstables::test_env& env) {
+    try {
+        sstable_ptr sstp = env.reusable_sst(s, dir, generation, version).get0();
+        auto r = sstp->make_reader(s, env.make_reader_permit(), query::full_partition_range, s->full_slice());
+        auto close_r = deferred_close(r);
+        r.consume(my_consumer{}, db::no_timeout).get();
+        BOOST_FAIL("expecting exception");
+    } catch (malformed_sstable_exception& e) {
+        auto ex_what = e.what();
+        BOOST_REQUIRE(std::regex_search(ex_what, msg_regex));
+        if (sst_name) {
+            BOOST_REQUIRE(sstring(ex_what).find(*sst_name) != sstring::npos);
+        }
+    }
+  }).get();
 }
 
 static void broken_sst(sstring dir, unsigned long generation, schema_ptr s, sstring msg, std::optional<sstring> sst_name,
@@ -66,6 +87,13 @@ static void broken_sst(sstring dir, unsigned long generation, sstring msg, std::
     return broken_sst(dir, generation, s, msg, sst_name);
 }
 
+static void broken_sst(sstring dir, unsigned long generation, std::regex msg_regex, std::optional<sstring> sst_name = std::nullopt) {
+    // Using an empty schema for this function, which is only about loading
+    // a malformed component and checking that it fails.
+    auto s = make_shared_schema({}, "ks", "cf", {}, {}, {}, {}, utf8_type);
+    return broken_sst(dir, generation, s, std::move(msg_regex), sst_name);
+}
+
 SEASTAR_THREAD_TEST_CASE(test_empty_index) {
   sstables::test_env::do_with_async([&] (sstables::test_env& env) {
     auto s = schema_builder("test_ks", "test_table")
@@ -76,8 +104,8 @@ SEASTAR_THREAD_TEST_CASE(test_empty_index) {
                  .build();
     sstable_ptr sstp = env.reusable_sst(s, "test/resource/sstables/empty_index", 36, sstable_version_types::mc).get0();
     auto fut = sstables::test(sstp).read_indexes(env.make_reader_permit());
-    BOOST_REQUIRE_EXCEPTION(fut.get(), malformed_sstable_exception, exception_predicate::message_equals(
-        "missing index entry in sstable test/resource/sstables/empty_index/mc-36-big-Index.db"));
+    BOOST_REQUIRE_EXCEPTION(fut.get(), malformed_sstable_exception, exception_predicate::message_matches(
+        "missing index entry in sstable .*test/resource/sstables/empty_index/mc-36-big-Index.db"));
   }).get();
 }
 
@@ -225,7 +253,7 @@ SEASTAR_THREAD_TEST_CASE(bad_column_name) {
 
 SEASTAR_THREAD_TEST_CASE(empty_toc) {
     broken_sst("test/resource/sstables/badtoc", 1,
-               "Empty TOC in sstable test/resource/sstables/badtoc/la-1-big-TOC.txt");
+               std::regex("Empty TOC in sstable .*test/resource/sstables/badtoc/la-1-big-TOC\\.txt"));
 }
 
 SEASTAR_THREAD_TEST_CASE(alien_toc) {
