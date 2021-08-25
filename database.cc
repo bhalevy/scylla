@@ -1143,13 +1143,11 @@ keyspace::make_directory_for_column_family(const sstring& name, utils::UUID uuid
     for (auto& extra : _config.all_datadirs) {
         cfdirs.push_back(column_family_directory(extra, name, uuid));
     }
-    return parallel_for_each(cfdirs, [] (sstring cfdir) {
+    co_await parallel_for_each(cfdirs, [] (sstring cfdir) {
         return io_check([cfdir] { return recursive_touch_directory(cfdir); });
-    }).then([cfdirs0 = cfdirs[0]] {
-        return io_check([cfdirs0] { return touch_directory(cfdirs0 + "/upload"); });
-    }).then([cfdirs0 = cfdirs[0]] {
-        return io_check([cfdirs0] { return touch_directory(cfdirs0 + "/staging"); });
     });
+    co_await io_check([dir = cfdirs[0] + "/upload"] { return touch_directory(dir); });
+    co_await io_check([dir = cfdirs[0] + "/staging"] { return touch_directory(dir); });
 }
 
 no_such_keyspace::no_such_keyspace(std::string_view ks_name)
