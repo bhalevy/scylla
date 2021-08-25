@@ -79,12 +79,12 @@ public:
     // The table UUID is returned too.
     static future<std::tuple<utils::UUID, std::vector<std::vector<sstables::shared_sstable>>>>
             get_sstables_from_upload_dir(distributed<database>& db, sstring ks, sstring cf);
-    static future<> populate_column_family(distributed<database>& db, sstring sstdir, sstring ks, sstring cf);
-    static future<> populate_keyspace(distributed<database>& db, sstring datadir, sstring ks_name);
+    static future<> populate_column_family(distributed<database>& db, std::filesystem::path sstdir, sstring ks, sstring cf);
+    static future<> populate_keyspace(distributed<database>& db, std::filesystem::path datadir, sstring ks_name);
     static future<> init_system_keyspace(distributed<database>& db, distributed<service::storage_service>& ss);
     static future<> ensure_system_table_directories(distributed<database>& db);
     static future<> init_non_system_keyspaces(distributed<database>& db, distributed<service::storage_proxy>& proxy, distributed<service::migration_manager>& mm);
 private:
-    static future<> cleanup_column_family_temp_sst_dirs(sstring sstdir);
-    static future<> handle_sstables_pending_delete(sstring pending_deletes_dir);
+    static future<> cleanup_column_family_temp_sst_dirs(std::filesystem::path sstdir);
+    static future<> handle_sstables_pending_delete(std::filesystem::path pending_deletes_dir);
 };

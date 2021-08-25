@@ -467,7 +467,7 @@ distributed_loader::get_sstables_from_upload_dir(distributed<database>& db, sstr
     });
 }
 
-future<> distributed_loader::cleanup_column_family_temp_sst_dirs(sstring sstdir) {
+future<> distributed_loader::cleanup_column_family_temp_sst_dirs(fs::path sstdir) {
     return do_with(std::vector<future<>>(), [sstdir = std::move(sstdir)] (std::vector<future<>>& futures) {
         return lister::scan_dir(sstdir, { directory_entry_type::directory }, [&futures] (fs::path sstdir, directory_entry de) {
             // push futures that remove files/directories into an array of futures,
@@ -485,7 +485,7 @@ future<> distributed_loader::cleanup_column_family_temp_sst_dirs(sstring sstdir)
     });
 }
 
-future<> distributed_loader::handle_sstables_pending_delete(sstring pending_delete_dir) {
+future<> distributed_loader::handle_sstables_pending_delete(std::filesystem::path pending_delete_dir) {
     return do_with(std::vector<future<>>(), [dir = std::move(pending_delete_dir)] (std::vector<future<>>& futures) {
         return lister::scan_dir(dir, { directory_entry_type::regular }, [&futures] (fs::path dir, directory_entry de) {
             // push nested futures that remove files/directories into an array of futures,
@@ -512,21 +512,21 @@ future<> distributed_loader::handle_sstables_pending_delete(sstring pending_dele
     });
 }
 
-future<> distributed_loader::populate_column_family(distributed<database>& db, sstring sstdir, sstring ks, sstring cf) {
-    return async([&db, sstdir = std::move(sstdir), ks = std::move(ks), cf = std::move(cf)] {
+future<> distributed_loader::populate_column_family(distributed<database>& db, fs::path cfpath, sstring ks, sstring cf) {
+    return async([&db, cfpath = std::move(cfpath), ks = std::move(ks), cf = std::move(cf)] {
         assert(this_shard_id() == 0);
         // First pass, cleanup temporary sstable directories and sstables pending delete.
-        cleanup_column_family_temp_sst_dirs(sstdir).get();
-        auto pending_delete_dir = sstdir + "/" + sstables::sstable::pending_delete_dir_basename();
-        auto exists = file_exists(pending_delete_dir).get0();
+        cleanup_column_family_temp_sst_dirs(cfpath).get();
+        auto pending_delete_dir = cfpath / sstables::sstable::pending_delete_dir_basename();
+        auto exists = file_exists(pending_delete_dir.native()).get0();
         if (exists) {
-            handle_sstables_pending_delete(pending_delete_dir).get();
+            handle_sstables_pending_delete(std::move(pending_delete_dir)).get();
         }
 
         global_column_family_ptr global_table(db, ks, cf);
 
         sharded<sstables::sstable_directory> directory;
-        directory.start(fs::path(sstdir), db.local().get_config().initial_sstable_loading_concurrency(), std::ref(db.local().get_sharded_sst_dir_semaphore()),
+        directory.start(cfpath, db.local().get_config().initial_sstable_loading_concurrency(), std::ref(db.local().get_sharded_sst_dir_semaphore()),
             sstables::sstable_directory::need_mutate_level::no,
             sstables::sstable_directory::lack_of_toc_fatal::yes,
             sstables::sstable_directory::enable_dangerous_direct_import_of_cassandra_counters(db.local().get_config().enable_dangerous_direct_import_of_cassandra_counters()),
@@ -555,6 +555,7 @@ future<> distributed_loader::populate_column_family(distributed<database>& db, s
             return make_ready_future<>();
         }).get();
 
+        auto sstdir = cfpath.native();
         reshard(directory, db, ks, cf, [&global_table, sstdir, sst_version] (shard_id shard) mutable {
             auto gen = smp::submit_to(shard, [&global_table] () {
                 return global_table->calculate_generation_for_new_table();
@@ -578,8 +579,8 @@ future<> distributed_loader::populate_column_family(distributed<database>& db, s
     });
 }
 
-future<> distributed_loader::populate_keyspace(distributed<database>& db, sstring datadir, sstring ks_name) {
-    auto ksdir = datadir + "/" + ks_name;
+future<> distributed_loader::populate_keyspace(distributed<database>& db, fs::path datadir, sstring ks_name) {
+    auto ksdir = datadir / ks_name;
     auto& keyspaces = db.local().get_keyspaces();
     auto i = keyspaces.find(ks_name);
     if (i == keyspaces.end()) {
@@ -598,7 +599,7 @@ future<> distributed_loader::populate_keyspace(distributed<database>& db, sstrin
                 auto sstdir = ks.column_family_directory(ksdir, cfname, uuid);
                 dblog.info("Keyspace {}: Reading CF {} id={} version={}", ks_name, cfname, uuid, s->version());
                 return ks.make_directory_for_column_family(cfname, uuid).then([&db, sstdir, uuid, ks_name, cfname] {
-                    return distributed_loader::populate_column_family(db, sstdir + "/staging", ks_name, cfname);
+                    return distributed_loader::populate_column_family(db, sstdir / "staging", ks_name, cfname);
                 }).then([&db, sstdir, uuid, ks_name, cfname] {
                     return distributed_loader::populate_column_family(db, sstdir, ks_name, cfname);
                 }).handle_exception([ks_name, cfname, sstdir](std::exception_ptr eptr) {
@@ -632,8 +633,7 @@ future<> distributed_loader::init_system_keyspace(distributed<database>& db, dis
             return db::system_keyspace::make(db, ss.local());
         }).get();
 
-        const auto& cfg = db.local().get_config();
-        for (auto& data_dir : cfg.data_file_directories()) {
+        for (auto& data_dir : db.local().data_file_directories()) {
             for (auto ksname : system_keyspaces) {
                 distributed_loader::populate_keyspace(db, data_dir, sstring(ksname)).get();
             }
@@ -675,16 +675,15 @@ future<> distributed_loader::init_non_system_keyspaces(distributed<database>& db
             return db.parse_system_tables(proxy, mm);
         }).get();
 
-        const auto& cfg = db.local().get_config();
-        using ks_dirs = std::unordered_multimap<sstring, sstring>;
+        using ks_dirs = std::unordered_multimap<sstring, fs::path>;
 
         ks_dirs dirs;
 
-        parallel_for_each(cfg.data_file_directories(), [&db, &dirs] (sstring directory) {
+        parallel_for_each(db.local().data_file_directories(), [&db, &dirs] (const fs::path& directory) {
             // we want to collect the directories first, so we can get a full set of potential dirs
             return lister::scan_dir(directory, { directory_entry_type::directory }, [&dirs] (fs::path datadir, directory_entry de) {
                 if (!is_system_keyspace(de.name)) {
-                    dirs.emplace(de.name, datadir.native());
+                    dirs.emplace(de.name, std::move(datadir));
                 }
                 return make_ready_future<>();
             });
@@ -710,7 +709,7 @@ future<> distributed_loader::init_non_system_keyspaces(distributed<database>& db
             auto j = i++;
             // might have more than one dir for a keyspace iff data_file_directories is > 1 and
             // somehow someone placed sstables in more than one of them for a given ks. (import?) 
-            futures.emplace_back(parallel_for_each(j, e, [&](const std::pair<sstring, sstring>& p) {
+            futures.emplace_back(parallel_for_each(j, e, [&](const std::pair<sstring, fs::path>& p) {
                 auto& datadir = p.second;
                 return distributed_loader::populate_keyspace(db, datadir, ks_name);
             }).finally([&] {

@@ -192,10 +192,7 @@ table::make_reader(schema_ptr s,
 }
 
 sstables::shared_sstable table::make_streaming_sstable_for_write(std::optional<sstring> subdir) {
-    sstring dir = _config.datadir;
-    if (subdir) {
-        dir += "/" + *subdir;
-    }
+    sstring dir = (subdir ? (_config.datadir / *subdir) : _config.datadir).native();
     auto newtab = make_sstable(dir);
     tlogger.debug("Created sstable for streaming: ks={}, cf={}, dir={}", schema()->ks_name(), schema()->cf_name(), dir);
     return newtab;
@@ -310,7 +307,7 @@ sstables::shared_sstable table::make_sstable(sstring dir) {
 }
 
 sstables::shared_sstable table::make_sstable() {
-    return make_sstable(_config.datadir);
+    return make_sstable(_config.datadir.native());
 }
 
 void table::notify_bootstrap_or_replace_start() {
@@ -1323,13 +1320,13 @@ future<> table::write_schema_as_cql(database& db, sstring dir) const {
 }
 
 future<> table::snapshot(database& db, sstring name, bool skip_flush) {
-    auto jsondir = _config.datadir + "/snapshots/" + name;
+    sstring jsondir = (_config.datadir / "snapshots" / name).native();
     tlogger.debug("snapshot {}: skip_flush={}", jsondir, skip_flush);
     auto f = skip_flush ? make_ready_future<>() : flush();
     return f.then([this, &db, jsondir = std::move(jsondir)]() {
        return with_semaphore(_sstable_deletion_sem, 1, [this, &db, jsondir = std::move(jsondir)]() {
         auto tables = boost::copy_range<std::vector<sstables::shared_sstable>>(*_sstables->all());
-        return do_with(std::move(tables), std::move(jsondir), [this, &db] (std::vector<sstables::shared_sstable>& tables, const sstring& jsondir) {
+        return do_with(std::move(tables), std::move(jsondir), [this, &db] (std::vector<sstables::shared_sstable>& tables, sstring& jsondir) {
             return io_check([&jsondir] { return recursive_touch_directory(jsondir); }).then([this, &db, &jsondir, &tables] {
                 return max_concurrent_for_each(tables, db.get_config().initial_sstable_loading_concurrency(), [&db, &jsondir] (sstables::shared_sstable sstable) {
                   return with_semaphore(db.get_sharded_sst_dir_semaphore().local(), 1, [&jsondir, sstable] {
@@ -1388,7 +1385,7 @@ future<> table::snapshot(database& db, sstring name, bool skip_flush) {
 }
 
 future<bool> table::snapshot_exists(sstring tag) {
-    sstring jsondir = _config.datadir + "/snapshots/" + tag;
+    sstring jsondir = (_config.datadir / "snapshots" / tag).native();
     return open_checked_directory(general_disk_error_handler, std::move(jsondir)).then_wrapped([] (future<file> f) {
         try {
             f.get0();

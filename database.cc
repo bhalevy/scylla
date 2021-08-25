@@ -374,6 +374,14 @@ database::database(const db::config& cfg, database_config dbcfg, service::migrat
     _row_cache_tracker.set_compaction_scheduling_group(dbcfg.memory_compaction_scheduling_group);
 
     setup_scylla_memory_diagnostics_producer();
+
+    for (auto& dir : _cfg.data_file_directories()) {
+        auto p = fs::path(dir);
+        if (!p.is_absolute()) {
+            p = fs::canonical(p);
+        }
+        _data_file_directories.push_back(std::move(p));
+    }
 }
 
 const db::extensions& database::extensions() const {
@@ -1125,29 +1133,29 @@ keyspace::make_column_family_config(const schema& s, const database& db) const {
     return cfg;
 }
 
-sstring
+fs::path
 keyspace::column_family_directory(const sstring& name, utils::UUID uuid) const {
     return column_family_directory(_config.datadir, name, uuid);
 }
 
-sstring
-keyspace::column_family_directory(const sstring& base_path, const sstring& name, utils::UUID uuid) const {
+fs::path
+keyspace::column_family_directory(const fs::path& base_path, const sstring& name, utils::UUID uuid) const {
     auto uuid_sstring = uuid.to_sstring();
     boost::erase_all(uuid_sstring, "-");
-    return format("{}/{}-{}", base_path, name, uuid_sstring);
+    return base_path / format("{}-{}", name, uuid_sstring);
 }
 
 future<>
 keyspace::make_directory_for_column_family(const sstring& name, utils::UUID uuid) {
-    std::vector<sstring> cfdirs;
+    std::vector<fs::path> cfdirs;
     for (auto& extra : _config.all_datadirs) {
         cfdirs.push_back(column_family_directory(extra, name, uuid));
     }
-    co_await parallel_for_each(cfdirs, [] (sstring cfdir) {
-        return io_check([cfdir] { return recursive_touch_directory(cfdir); });
+    co_await parallel_for_each(cfdirs, [] (const fs::path& cfdir) {
+        return io_check([&cfdir] { return recursive_touch_directory(cfdir.native()); });
     });
-    co_await io_check([dir = cfdirs[0] + "/upload"] { return touch_directory(dir); });
-    co_await io_check([dir = cfdirs[0] + "/staging"] { return touch_directory(dir); });
+    co_await io_check([dir = cfdirs[0] / "upload"] { return touch_directory(dir.native()); });
+    co_await io_check([dir = cfdirs[0] / "staging"] { return touch_directory(dir.native()); });
 }
 
 no_such_keyspace::no_such_keyspace(std::string_view ks_name)
@@ -1303,7 +1311,7 @@ database::create_keyspace(const lw_shared_ptr<keyspace_metadata>& ksm, bool is_b
     }
 
     if (datadir != "") {
-        return io_check([&datadir] { return touch_directory(datadir); });
+        return io_check([&datadir] { return touch_directory(datadir.native()); });
     } else {
         return make_ready_future<>();
     }
@@ -1914,10 +1922,13 @@ future<> database::apply_hint(schema_ptr s, const frozen_mutation& m, tracing::t
 keyspace::config
 database::make_keyspace_config(const keyspace_metadata& ksm) {
     keyspace::config cfg;
-    if (_cfg.data_file_directories().size() > 0) {
-        cfg.datadir = format("{}/{}", _cfg.data_file_directories()[0], ksm.name());
-        for (auto& extra : _cfg.data_file_directories()) {
-            cfg.all_datadirs.push_back(format("{}/{}", extra, ksm.name()));
+    if (data_file_directories().size() > 0) {
+        for (auto& extra : data_file_directories()) {
+            auto ksdir = extra / ksm.name();
+            if (cfg.datadir.empty()) {
+                cfg.datadir = ksdir;
+            }
+            cfg.all_datadirs.push_back(std::move(ksdir));
         }
         cfg.enable_disk_writes = !_cfg.enable_in_memory_data_store();
         cfg.enable_disk_reads = true; // we allways read from disk
@@ -1925,7 +1936,6 @@ database::make_keyspace_config(const keyspace_metadata& ksm) {
         cfg.enable_cache = _cfg.enable_cache();
 
     } else {
-        cfg.datadir = "";
         cfg.enable_disk_writes = false;
         cfg.enable_disk_reads = false;
         cfg.enable_commitlog = false;
@@ -2199,13 +2209,13 @@ static sstring get_snapshot_table_dir_prefix(const sstring& table_name) {
 // For the filesystem operations, this code will assume that all keyspaces are visible in all shards
 // (as we have been doing for a lot of the other operations, like the snapshot itself).
 future<> database::clear_snapshot(sstring tag, std::vector<sstring> keyspace_names, const sstring& table_name) {
-    std::vector<sstring> data_dirs = _cfg.data_file_directories();
+    const std::vector<fs::path>& data_dirs = data_file_directories();
     auto dirs_only_entries_ptr =
         make_lw_shared<lister::dir_entry_types>(lister::dir_entry_types{directory_entry_type::directory});
     lw_shared_ptr<sstring> tag_ptr = make_lw_shared<sstring>(std::move(tag));
     std::unordered_set<sstring> ks_names_set(keyspace_names.begin(), keyspace_names.end());
 
-    return parallel_for_each(data_dirs, [this, tag_ptr, ks_names_set = std::move(ks_names_set), dirs_only_entries_ptr, table_name = table_name] (const sstring& parent_dir) {
+    return parallel_for_each(data_dirs, [this, tag_ptr, ks_names_set = std::move(ks_names_set), dirs_only_entries_ptr, table_name = table_name] (const fs::path& parent_dir) {
         std::unique_ptr<lister::filter_type> filter = std::make_unique<lister::filter_type>([] (const fs::path& parent_dir, const directory_entry& dir_entry) { return true; });
 
         lister::filter_type table_filter = (table_name.empty()) ? lister::filter_type([] (const fs::path& parent_dir, const directory_entry& dir_entry) mutable { return true; }) :

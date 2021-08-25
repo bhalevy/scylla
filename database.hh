@@ -356,8 +356,8 @@ struct table_stats {
 class table : public enable_lw_shared_from_this<table> {
 public:
     struct config {
-        std::vector<sstring> all_datadirs;
-        sstring datadir;
+        std::vector<std::filesystem::path> all_datadirs;
+        std::filesystem::path datadir;
         bool enable_disk_writes = true;
         bool enable_disk_reads = true;
         bool enable_cache = true;
@@ -609,7 +609,7 @@ private:
     void do_trigger_compaction();
 public:
     sstring dir() const {
-        return _config.datadir;
+        return _config.datadir.native();
     }
 
     logalloc::region_group& dirty_memory_region_group() const {
@@ -1133,8 +1133,8 @@ public:
 class keyspace {
 public:
     struct config {
-        std::vector<sstring> all_datadirs;
-        sstring datadir;
+        std::vector<std::filesystem::path> all_datadirs;
+        std::filesystem::path datadir;
         bool enable_commitlog = true;
         bool enable_disk_reads = true;
         bool enable_disk_writes = true;
@@ -1198,12 +1198,12 @@ public:
         _config.enable_incremental_backups = val;
     }
 
-    const sstring& datadir() const {
+    const std::filesystem::path& datadir() const {
         return _config.datadir;
     }
 
-    sstring column_family_directory(const sstring& base_path, const sstring& name, utils::UUID uuid) const;
-    sstring column_family_directory(const sstring& name, utils::UUID uuid) const;
+    std::filesystem::path column_family_directory(const std::filesystem::path& base_path, const sstring& name, utils::UUID uuid) const;
+    std::filesystem::path column_family_directory(const sstring& name, utils::UUID uuid) const;
 
     future<> ensure_populated() const;
     void mark_as_populated();
@@ -1285,6 +1285,7 @@ private:
     std::unique_ptr<cell_locker_stats> _cl_stats;
 
     const db::config& _cfg;
+    std::vector<std::filesystem::path> _data_file_directories;
 
     dirty_memory_manager _system_dirty_memory_manager;
     dirty_memory_manager _dirty_memory_manager;
@@ -1613,6 +1614,10 @@ public:
 
     sharded<semaphore>& get_sharded_sst_dir_semaphore() {
         return _sst_dir_semaphore;
+    }
+
+    const std::vector<std::filesystem::path>& data_file_directories() const noexcept {
+        return _data_file_directories;
     }
 };
 

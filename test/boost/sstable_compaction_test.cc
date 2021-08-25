@@ -4142,11 +4142,11 @@ SEASTAR_TEST_CASE(max_ongoing_compaction_test) {
             auto s = make_schema(idx);
             column_family::config cfg = column_family_test_config(env.manager(), env.semaphore());
             cfg.datadir = tmp.path().string() + "/" + std::to_string(idx);
-            touch_directory(cfg.datadir).get();
+            touch_directory(cfg.datadir.native()).get();
             cfg.enable_commitlog = false;
             cfg.enable_incremental_backups = false;
 
-            auto sst_gen = [&env, s, dir = cfg.datadir, gen = make_lw_shared<unsigned>(1)] () mutable {
+            auto sst_gen = [&env, s, dir = cfg.datadir.native(), gen = make_lw_shared<unsigned>(1)] () mutable {
                 return env.make_sstable(s, dir, (*gen)++, sstables::sstable::version_types::md, big);
             };
 
