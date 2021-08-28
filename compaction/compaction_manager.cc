@@ -893,10 +893,9 @@ future<> compaction_manager::perform_sstable_scrub(column_family* cf, sstables::
     // must ensure that all sstables created before we run are scrubbed,
     // we need to barrier out any previously running compaction.
     return cf->run_with_compaction_disabled([this, cf, scrub_mode] {
-    // FIXME: fix indentation
-    return rewrite_sstables(cf, sstables::compaction_options::make_scrub(scrub_mode), [this] (const table& cf) {
-        return get_candidates(cf);
-    });
+        return rewrite_sstables(cf, sstables::compaction_options::make_scrub(scrub_mode), [this] (const table& cf) {
+            return get_candidates(cf);
+        });
     });
 }
 
