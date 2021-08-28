@@ -225,6 +225,7 @@ public:
     // Submit a column family for major compaction.
     future<> submit_major_compaction(column_family* cf);
 
+    using run_exclusively = bool_class<class run_exclusively_tag>;
 
     // Run a custom job for a given column family, defined by a function
     // it completes when future returned by job is ready or returns immediately
@@ -232,8 +233,10 @@ public:
     //
     // parameter type is the compaction type the operation can most closely be
     //      associated with, use compaction_type::Compaction, if none apply.
+    // parameter exclusive instruct the compaction manager to acquire an exclusive
+    //      compaction lock rather than a shared one.
     // parameter job is a function that will carry the operation
-    future<> run_custom_job(column_family* cf, sstables::compaction_type type, noncopyable_function<future<>()> job);
+    future<> run_custom_job(column_family* cf, sstables::compaction_type type, run_exclusively excl, noncopyable_function<future<>()> job);
 
     // Remove a column family from the compaction manager.
     // Cancel requests on cf and wait for a possible ongoing compaction on cf.

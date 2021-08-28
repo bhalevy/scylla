@@ -285,7 +285,7 @@ future<> compaction_manager::submit_major_compaction(column_family* cf) {
     return task->compaction_done.get_future().then([task] {});
 }
 
-future<> compaction_manager::run_custom_job(column_family* cf, sstables::compaction_type type, noncopyable_function<future<>()> job) {
+future<> compaction_manager::run_custom_job(column_family* cf, sstables::compaction_type type, run_exclusively excl, noncopyable_function<future<>()> job) {
     if (_state != state::enabled) {
         return make_ready_future<>();
     }
@@ -297,9 +297,11 @@ future<> compaction_manager::run_custom_job(column_family* cf, sstables::compact
 
     auto job_ptr = std::make_unique<noncopyable_function<future<>()>>(std::move(job));
 
-    task->compaction_done = with_semaphore(_custom_job_sem, 1, [this, task, cf, &job = *job_ptr] () mutable {
+    task->compaction_done = with_semaphore(_custom_job_sem, 1, [this, task, cf, excl, &job = *job_ptr] () mutable {
         // take read lock for cf, so major compaction and resharding can't proceed in parallel.
-        return with_lock(_compaction_locks[cf].for_read(), [this, task, cf, &job] () mutable {
+        auto& lk = _compaction_locks[cf];
+        auto acquire_lock = excl ? lk.hold_write_lock() : lk.hold_read_lock();
+        return acquire_lock.then([this, task, cf, &job] (rwlock::holder h) mutable {
             _stats.active_tasks++;
             if (!can_proceed(task)) {
                 return make_ready_future<>();
@@ -758,7 +760,7 @@ future<> compaction_manager::rewrite_sstables(column_family* cf, sstables::compa
 }
 
 future<> compaction_manager::perform_sstable_scrub_validate_mode(column_family* cf) {
-    return run_custom_job(cf, sstables::compaction_type::Scrub, [this, &cf = *cf, sstables = get_candidates(*cf)] () mutable -> future<> {
+    return run_custom_job(cf, sstables::compaction_type::Scrub, run_exclusively::yes, [this, &cf = *cf, sstables = get_candidates(*cf)] () mutable -> future<> {
         class pending_tasks {
             compaction_manager::stats& _stats;
             size_t _n;
