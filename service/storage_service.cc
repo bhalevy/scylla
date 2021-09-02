@@ -41,6 +41,7 @@
 #include "dht/boot_strapper.hh"
 #include <seastar/core/distributed.hh>
 #include <seastar/util/defer.hh>
+#include "locator/abstract_replication_strategy.hh"
 #include "locator/snitch_base.hh"
 #include "db/system_keyspace.hh"
 #include "db/system_distributed_keyspace.hh"
@@ -777,16 +778,17 @@ storage_service::get_rpc_address(const inet_address& endpoint) const {
 }
 
 std::unordered_map<dht::token_range, inet_address_vector_replica_set>
-storage_service::get_range_to_address_map(const sstring& keyspace) const {
-    return get_range_to_address_map(keyspace, get_token_metadata().sorted_tokens());
+storage_service::get_range_to_address_map_in_thread(const sstring& keyspace) const {
+    return get_range_to_address_map_in_thread(keyspace, get_token_metadata().sorted_tokens());
 }
 
 std::unordered_map<dht::token_range, inet_address_vector_replica_set>
-storage_service::get_range_to_address_map_in_local_dc(
+storage_service::get_range_to_address_map_in_local_dc_in_thread(
         const sstring& keyspace) const {
-    auto orig_map = get_range_to_address_map(keyspace, get_tokens_in_local_dc());
+    auto orig_map = get_range_to_address_map_in_thread(keyspace, get_tokens_in_local_dc_in_thread());
     std::unordered_map<dht::token_range, inet_address_vector_replica_set> filtered_map;
     for (auto entry : orig_map) {
+        thread::maybe_yield();
         auto& addresses = filtered_map[entry.first];
         addresses.reserve(entry.second.size());
         std::copy_if(entry.second.begin(), entry.second.end(), std::back_inserter(addresses), db::is_local);
@@ -796,11 +798,12 @@ storage_service::get_range_to_address_map_in_local_dc(
 }
 
 std::vector<token>
-storage_service::get_tokens_in_local_dc() const {
+storage_service::get_tokens_in_local_dc_in_thread() const {
     std::vector<token> filtered_tokens;
-    const auto& tm = get_token_metadata();
-    for (auto token : tm.sorted_tokens()) {
-        auto endpoint = tm.get_endpoint(token);
+    const auto tmptr = get_token_metadata_ptr();
+    for (auto token : tmptr->sorted_tokens()) {
+        thread::maybe_yield();
+        auto endpoint = tmptr->get_endpoint(token);
         if (db::is_local(*endpoint))
             filtered_tokens.push_back(token);
     }
@@ -808,7 +811,7 @@ storage_service::get_tokens_in_local_dc() const {
 }
 
 std::unordered_map<dht::token_range, inet_address_vector_replica_set>
-storage_service::get_range_to_address_map(const sstring& keyspace,
+storage_service::get_range_to_address_map_in_thread(const sstring& keyspace,
         const std::vector<token>& sorted_tokens) const {
     sstring ks = keyspace;
     // some people just want to get a visual representation of things. Allow null and set it to the first
@@ -820,7 +823,7 @@ storage_service::get_range_to_address_map(const sstring& keyspace,
         }
         ks = keyspaces[0];
     }
-    return construct_range_to_endpoint_map(ks, get_all_ranges(sorted_tokens));
+    return construct_range_to_endpoint_map_in_thread(ks, get_all_ranges(sorted_tokens));
 }
 
 void storage_service::handle_state_replacing_update_pending_ranges(mutable_token_metadata_ptr tmptr, inet_address replacing_node) {
@@ -3441,15 +3444,16 @@ future<> storage_service::move(token new_token) {
     });
 }
 
-std::vector<storage_service::token_range_endpoints>
+future<std::vector<storage_service::token_range_endpoints>>
 storage_service::describe_ring(const sstring& keyspace, bool include_only_local_dc) const {
+  return async([this, keyspace, include_only_local_dc] {
     std::vector<token_range_endpoints> ranges;
     //Token.TokenFactory tf = getPartitioner().getTokenFactory();
 
     std::unordered_map<dht::token_range, inet_address_vector_replica_set> range_to_address_map =
             include_only_local_dc
-                    ? get_range_to_address_map_in_local_dc(keyspace)
-                    : get_range_to_address_map(keyspace);
+                    ? get_range_to_address_map_in_local_dc_in_thread(keyspace)
+                    : get_range_to_address_map_in_thread(keyspace);
     for (auto entry : range_to_address_map) {
         auto range = entry.first;
         auto addresses = entry.second;
@@ -3461,6 +3465,7 @@ storage_service::describe_ring(const sstring& keyspace, bool include_only_local_
             tr._end_token = range.end()->value().to_sstring();
         }
         for (auto endpoint : addresses) {
+            thread::maybe_yield();
             endpoint_details details;
             details._host = endpoint;
             details._datacenter = locator::i_endpoint_snitch::get_local_snitch_ptr()->get_datacenter(endpoint);
@@ -3488,16 +3493,18 @@ storage_service::describe_ring(const sstring& keyspace, bool include_only_local_
         ranges.erase(right_inf);
     }
     return ranges;
+  });
 }
 
+// Must be called in a seastar thread
 std::unordered_map<dht::token_range, inet_address_vector_replica_set>
-storage_service::construct_range_to_endpoint_map(
+storage_service::construct_range_to_endpoint_map_in_thread(
         const sstring& keyspace,
         const dht::token_range_vector& ranges) const {
     std::unordered_map<dht::token_range, inet_address_vector_replica_set> res;
     for (auto r : ranges) {
         res[r] = _db.local().find_keyspace(keyspace).get_replication_strategy().get_natural_endpoints(
-                r.end() ? r.end()->value() : dht::maximum_token());
+                r.end() ? r.end()->value() : dht::maximum_token(), locator::can_yield::yes);
     }
     return res;
 }
