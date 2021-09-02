@@ -415,9 +415,8 @@ void set_storage_service(http_context& ctx, routes& r, sharded<service::storage_
     });
 
     ss::get_range_to_endpoint_map.set(r, [&ctx, &ss](std::unique_ptr<request> req) {
-        auto keyspace = validate_keyspace(ctx, req->param);
-        std::vector<ss::maplist_mapper> res;
-        return make_ready_future<json::json_return_type>(stream_range_as_array(ss.local().get_range_to_address_map(keyspace),
+      return async([&ss, keyspace = validate_keyspace(ctx, req->param)] {
+        return json::json_return_type(stream_range_as_array(ss.local().get_range_to_address_map_in_thread(keyspace),
                 [](const std::pair<dht::token_range, inet_address_vector_replica_set>& entry){
             ss::maplist_mapper m;
             if (entry.first.start()) {
@@ -435,6 +434,7 @@ void set_storage_service(http_context& ctx, routes& r, sharded<service::storage_
             }
             return m;
         }));
+      });
     });
 
     ss::get_pending_range_to_endpoint_map.set(r, [&ctx](std::unique_ptr<request> req) {
@@ -446,12 +446,16 @@ void set_storage_service(http_context& ctx, routes& r, sharded<service::storage_
     });
 
     ss::describe_any_ring.set(r, [&ctx, &ss](std::unique_ptr<request> req) {
-        return make_ready_future<json::json_return_type>(stream_range_as_array(ss.local().describe_ring(""), token_range_endpoints_to_json));
+        return ss.local().describe_ring("").then([] (std::vector<dht::token_range_endpoints> endpoints) {
+            return json::json_return_type(stream_range_as_array(endpoints, token_range_endpoints_to_json));
+        });
     });
 
     ss::describe_ring.set(r, [&ctx, &ss](std::unique_ptr<request> req) {
         auto keyspace = validate_keyspace(ctx, req->param);
-        return make_ready_future<json::json_return_type>(stream_range_as_array(ss.local().describe_ring(keyspace), token_range_endpoints_to_json));
+        return ss.local().describe_ring(keyspace).then([] (std::vector<dht::token_range_endpoints> endpoints) {
+            return json::json_return_type(stream_range_as_array(endpoints, token_range_endpoints_to_json));
+        });
     });
 
     ss::get_host_id_map.set(r, [&ctx](const_req req) {

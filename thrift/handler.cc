@@ -760,7 +760,7 @@ public:
                 throw make_exception<InvalidRequestException>("There is no ring for the keyspace: %s", keyspace);
             }
 
-            auto ring = _ss.local().describe_ring(keyspace, local);
+          return _ss.local().describe_ring(keyspace, local).then([] (std::vector<dht::token_range_endpoints> ring) {
             std::vector<TokenRange> ret;
             ret.reserve(ring.size());
             std::transform(ring.begin(), ring.end(), std::back_inserter(ret), [](auto&& tr) {
@@ -781,6 +781,7 @@ public:
                 return token_range;
             });
             return ret;
+          });
         });
     }
 
