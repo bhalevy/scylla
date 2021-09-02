@@ -455,6 +455,14 @@ private:
     // and wait for RING_DELAY ms so that we receive new writes from coordinators during streaming.
     void bootstrap();
 
+    std::vector<token> get_tokens_in_local_dc() const;
+
+    std::unordered_map<dht::token_range, inet_address_vector_replica_set> get_range_to_address_map_in_local_dc(
+            const sstring& keyspace) const;
+
+    std::unordered_map<dht::token_range, inet_address_vector_replica_set> get_range_to_address_map(const sstring& keyspace,
+            const std::vector<token>& sorted_tokens) const;
+
 public:
     bool is_bootstrap_mode() const {
         return _is_bootstrap_mode;
@@ -468,14 +476,6 @@ public:
     sstring get_rpc_address(const inet_address& endpoint) const;
 
     std::unordered_map<dht::token_range, inet_address_vector_replica_set> get_range_to_address_map(const sstring& keyspace) const;
-
-    std::unordered_map<dht::token_range, inet_address_vector_replica_set> get_range_to_address_map_in_local_dc(
-            const sstring& keyspace) const;
-
-    std::vector<token> get_tokens_in_local_dc() const;
-
-    std::unordered_map<dht::token_range, inet_address_vector_replica_set> get_range_to_address_map(const sstring& keyspace,
-            const std::vector<token>& sorted_tokens) const;
 
     /**
      * The same as {@code describeRing(String)} but converts TokenRange to the String for JMX compatibility
