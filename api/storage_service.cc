@@ -483,10 +483,11 @@ void set_storage_service(http_context& ctx, routes& r, sharded<service::storage_
         });
     });
 
-    ss::get_natural_endpoints.set(r, [&ctx, &ss](const_req req) {
-        auto keyspace = validate_keyspace(ctx, req.param);
-        return container_to_vec(ss.local().get_natural_endpoints(keyspace, req.get_query_param("cf"),
-                req.get_query_param("key")));
+    ss::get_natural_endpoints.set(r, [&ctx, &ss] (std::unique_ptr<request> req) {
+        return async([&ss, keyspace = validate_keyspace(ctx, req->param), cf = req->get_query_param("cf"), key = req->get_query_param("key")] {
+            auto rs = ss.local().get_natural_endpoints_in_thread(keyspace, cf, key);
+            return json::json_return_type(container_to_vec(rs));
+        });
     });
 
     ss::cdc_streams_check_and_repair.set(r, [&ctx, &ss] (std::unique_ptr<request> req) {
