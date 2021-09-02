@@ -483,10 +483,17 @@ void set_storage_service(http_context& ctx, routes& r, sharded<service::storage_
         });
     });
 
-    ss::get_natural_endpoints.set(r, [&ctx, &ss](const_req req) {
+    ss::get_natural_endpoints.set(r, [&ctx] (const_req req) {
+        auto& db = ctx.db.local();
         auto keyspace = validate_keyspace(ctx, req.param);
-        return container_to_vec(ss.local().get_natural_endpoints(keyspace, req.get_query_param("cf"),
-                req.get_query_param("key")));
+        auto cf = req.get_query_param("cf");
+        auto key = req.get_query_param("key");
+            // FIXME: indentation
+            auto schema = db.find_schema(keyspace, cf);
+            partition_key pk = partition_key::from_nodetool_style_string(schema, key);
+            dht::token token = schema->get_partitioner().get_token(*schema, pk.view());
+            auto rs = db.find_keyspace(keyspace).get_replication_strategy().get_natural_endpoints(token);
+            return container_to_vec(rs);
     });
 
     ss::cdc_streams_check_and_repair.set(r, [&ctx, &ss] (std::unique_ptr<request> req) {

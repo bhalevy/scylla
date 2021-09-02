@@ -3765,20 +3765,6 @@ storage_service::get_all_ranges(const std::vector<token>& sorted_tokens) const {
     return ranges;
 }
 
-inet_address_vector_replica_set
-storage_service::get_natural_endpoints(const sstring& keyspace,
-        const sstring& cf, const sstring& key) const {
-    auto schema = _db.local().find_schema(keyspace, cf);
-    partition_key pk = partition_key::from_nodetool_style_string(schema, key);
-    dht::token token = schema->get_partitioner().get_token(*schema, pk.view());
-    return get_natural_endpoints(keyspace, token);
-}
-
-inet_address_vector_replica_set
-storage_service::get_natural_endpoints(const sstring& keyspace, const token& pos) const {
-    return _db.local().find_keyspace(keyspace).get_replication_strategy().get_natural_endpoints(pos);
-}
-
 future<std::unordered_map<sstring, sstring>>
 storage_service::view_build_statuses(sstring keyspace, sstring view_name) const {
     return _sys_dist_ks.local().view_status(std::move(keyspace), std::move(view_name)).then([this] (std::unordered_map<utils::UUID, sstring> status) {
