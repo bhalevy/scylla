@@ -820,7 +820,13 @@ storage_service::get_range_to_address_map(const sstring& keyspace,
         }
         ks = keyspaces[0];
     }
-    return construct_range_to_endpoint_map(ks, get_all_ranges(sorted_tokens));
+    std::unordered_map<dht::token_range, inet_address_vector_replica_set> res;
+    auto& rs = _db.local().find_keyspace(ks).get_replication_strategy();
+    auto ranges = get_all_ranges(sorted_tokens);
+    for (auto& r : ranges) {
+        res[r] = rs.get_natural_endpoints(r.end() ? r.end()->value() : dht::maximum_token());
+    }
+    return res;
 }
 
 void storage_service::handle_state_replacing_update_pending_ranges(mutable_token_metadata_ptr tmptr, inet_address replacing_node) {
@@ -3489,19 +3495,6 @@ storage_service::describe_ring(const sstring& keyspace, bool include_only_local_
     }
     return ranges;
 }
-
-std::unordered_map<dht::token_range, inet_address_vector_replica_set>
-storage_service::construct_range_to_endpoint_map(
-        const sstring& keyspace,
-        const dht::token_range_vector& ranges) const {
-    std::unordered_map<dht::token_range, inet_address_vector_replica_set> res;
-    for (auto r : ranges) {
-        res[r] = _db.local().find_keyspace(keyspace).get_replication_strategy().get_natural_endpoints(
-                r.end() ? r.end()->value() : dht::maximum_token());
-    }
-    return res;
-}
-
 
 std::map<token, inet_address> storage_service::get_token_to_endpoint_map() {
     return get_token_metadata().get_normal_and_bootstrapping_token_to_endpoint_map();

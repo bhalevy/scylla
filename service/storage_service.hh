@@ -501,15 +501,6 @@ public:
      */
     std::map<token, inet_address> get_token_to_endpoint_map();
 
-    /**
-     * Construct the range to endpoint mapping based on the true view
-     * of the world.
-     * @param ranges
-     * @return mapping of ranges to the replicas responsible for them.
-    */
-    std::unordered_map<dht::token_range, inet_address_vector_replica_set> construct_range_to_endpoint_map(
-            const sstring& keyspace,
-            const dht::token_range_vector& ranges) const;
 public:
     virtual void on_join(gms::inet_address endpoint, gms::endpoint_state ep_state) override;
     virtual void before_change(gms::inet_address endpoint, gms::endpoint_state current_state, gms::application_state new_state_key, const gms::versioned_value& new_value) override;
