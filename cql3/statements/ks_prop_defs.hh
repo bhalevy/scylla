@@ -42,6 +42,7 @@
 #pragma once
 
 #include "cql3/statements/property_definitions.hh"
+#include "utils/class_registrator.hh"
 
 #include <seastar/core/shared_ptr.hh>
 #include <seastar/core/sstring.hh>
@@ -51,6 +52,15 @@ class keyspace_metadata;
 
 namespace locator {
     class token_metadata;
+    class shared_token_metadata;
+    struct snitch_ptr;
+    class abstract_replication_strategy;
+
+    using strategy_class_registry = class_registry<
+        locator::abstract_replication_strategy,
+        const locator::shared_token_metadata&,
+        locator::snitch_ptr&,
+        const std::map<sstring, sstring>&>;
 } // namespace locator
 
 namespace cql3 {
