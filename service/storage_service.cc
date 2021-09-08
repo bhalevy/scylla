@@ -3388,7 +3388,7 @@ storage_service::set_tables_autocompaction(const sstring &keyspace, std::vector<
                     if (enabled) {
                         cf.enable_auto_compaction();
                     } else {
-                        cf.disable_auto_compaction();
+                        return cf.disable_auto_compaction();
                     }
                     return make_ready_future<>();
                 });

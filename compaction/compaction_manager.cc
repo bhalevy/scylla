@@ -465,13 +465,13 @@ future<> compaction_manager::stop_ongoing_compactions(sstring reason, column_fam
         tasks_to_stop.emplace_back(task);
     }
 
-    auto cf_desc = cf ? format(" in {}.{}", cf->_schema->ks_name(), cf->_schema->cf_name()) : "";
+    auto cf_desc = cf ? format(" in {}.{}", cf->schema()->ks_name(), cf->schema()->cf_name()) : "";
     auto type_desc = compaction_type_opt ? format(" of type {}", *compaction_type_opt) : "";
     cmlog.info("Stopping {} ongoing compactions{}{} due to {}", tasks_to_stop.size(), type_desc, cf_desc, reason);
 
     // Wait for each task handler to stop. Copy list because task remove itself
     // from the list when done.
-    return do_with(std::move(tasks_to_stop), [this, reason = std::move(reason)] (std::list<lw_shared_ptr<task>>& tasks) mutable {
+    return do_with(std::move(tasks_to_stop), [this, reason = std::move(reason)] (std::vector<lw_shared_ptr<task>>& tasks) mutable {
         return parallel_for_each(tasks, [this, reason = std::move(reason)] (auto& task) {
             return this->task_stop(task, reason).then_wrapped([](future <> f) {
                 try {

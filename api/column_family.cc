@@ -871,7 +871,7 @@ void set_column_family(http_context& ctx, routes& r) {
 
     cf::disable_auto_compaction.set(r, [&ctx](std::unique_ptr<request> req) {
         return foreach_column_family(ctx, req->param["name"], [](column_family &cf) {
-            cf.disable_auto_compaction();
+            return cf.disable_auto_compaction();
         }).then([] {
             return make_ready_future<json::json_return_type>(json_void());
         });

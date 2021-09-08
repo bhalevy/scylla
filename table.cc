@@ -2118,7 +2118,7 @@ table::enable_auto_compaction() {
     _compaction_disabled_by_user = false;
 }
 
-void
+future<>
 table::disable_auto_compaction() {
     // XXX: mute backlog. When we disable background compactions
     // for the table, we must also disable current backlog of the
@@ -2147,6 +2147,7 @@ table::disable_auto_compaction() {
     // - it will break computation of major compaction descriptor
     //   for new submissions
     _compaction_disabled_by_user = true;
+    return get_compaction_manager().stop_ongoing_compactions("disable_auto_compaction", this, sstables::compaction_type::Compaction);
 }
 
 flat_mutation_reader
