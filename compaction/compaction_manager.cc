@@ -451,13 +451,27 @@ void compaction_manager::postpone_compaction_for_column_family(column_family* cf
     _postponed.push_back(cf);
 }
 
-future<> compaction_manager::stop_ongoing_compactions(sstring reason) {
-    cmlog.info("Stopping {} ongoing compactions due to {}", _tasks.size(), reason);
+future<> compaction_manager::stop_ongoing_compactions(sstring reason, column_family* cf, std::optional<sstables::compaction_type> compaction_type_opt) {
+    std::vector<lw_shared_ptr<task>> tasks_to_stop;
+
+    tasks_to_stop.reserve(_tasks.size());
+
+    for (auto& task : _tasks) {
+        if (task->info &&
+            ((cf && task->info->cf != cf) ||
+             (compaction_type_opt && task->info->type != *compaction_type_opt))) {
+            continue;
+        }
+        tasks_to_stop.emplace_back(task);
+    }
+
+    auto cf_desc = cf ? format(" in {}.{}", cf->_schema->ks_name(), cf->_schema->cf_name()) : "";
+    auto type_desc = compaction_type_opt ? format(" of type {}", *compaction_type_opt) : "";
+    cmlog.info("Stopping {} ongoing compactions{}{} due to {}", tasks_to_stop.size(), type_desc, cf_desc, reason);
 
     // Wait for each task handler to stop. Copy list because task remove itself
     // from the list when done.
-    auto tasks = _tasks;
-    return do_with(std::move(tasks), [this, reason = std::move(reason)] (std::list<lw_shared_ptr<task>>& tasks) mutable {
+    return do_with(std::move(tasks_to_stop), [this, reason = std::move(reason)] (std::list<lw_shared_ptr<task>>& tasks) mutable {
         return parallel_for_each(tasks, [this, reason = std::move(reason)] (auto& task) {
             return this->task_stop(task, reason).then_wrapped([](future <> f) {
                 try {
