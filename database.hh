@@ -1152,13 +1152,18 @@ public:
         size_t view_update_concurrency_semaphore_limit;
     };
 private:
+    database& _db;
     std::unique_ptr<locator::abstract_replication_strategy> _replication_strategy;
     locator::effective_replication_map_ptr _effective_replication_map;
     lw_shared_ptr<keyspace_metadata> _metadata;
     shared_promise<> _populated;
     config _config;
+
+    database& db() {
+        return _db;
+    }
 public:
-    explicit keyspace(lw_shared_ptr<keyspace_metadata> metadata, config cfg);
+    explicit keyspace(database& db, lw_shared_ptr<keyspace_metadata> metadata, config cfg);
 
     future<> update_from(const locator::shared_token_metadata& stm, lw_shared_ptr<keyspace_metadata>);
 
@@ -1244,7 +1249,7 @@ struct string_pair_eq {
 //   local metadata reads
 //   use shard_of() for data
 
-class database {
+class database : public peering_sharded_service<database> {
     friend class database_test;
 public:
     enum class table_kind {

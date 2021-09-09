@@ -124,8 +124,9 @@ void keyspace_metadata::remove_user_type(const user_type ut) {
     _user_types.remove_type(ut);
 }
 
-keyspace::keyspace(lw_shared_ptr<keyspace_metadata> metadata, config cfg)
-    : _metadata(std::move(metadata))
+keyspace::keyspace(database& db, lw_shared_ptr<keyspace_metadata> metadata, config cfg)
+    : _db(db)
+    , _metadata(std::move(metadata))
     , _config(std::move(cfg))
 {}
 
@@ -1298,7 +1299,7 @@ future<> database::create_in_memory_keyspace(const lw_shared_ptr<keyspace_metada
         // don't make system keyspace writes wait for user writes (if under pressure)
         kscfg.dirty_memory_manager = &_system_dirty_memory_manager;
     }
-    keyspace ks(ksm, std::move(kscfg));
+    keyspace ks(*this, ksm, std::move(kscfg));
     co_await ks.create_replication_strategy(get_shared_token_metadata(), ksm->strategy_options());
     _keyspaces.emplace(ksm->name(), std::move(ks));
 }
