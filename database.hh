@@ -84,6 +84,8 @@ class mutation;
 class frozen_mutation;
 class reconcilable_result;
 
+struct compaction_manager_task;
+
 namespace service {
 class storage_proxy;
 class storage_service;
@@ -801,7 +803,7 @@ public:
     // not a real compaction policy.
     future<> compact_all_sstables();
     // Compact all sstables provided in the vector.
-    future<> compact_sstables(sstables::compaction_descriptor descriptor);
+    future<> compact_sstables(sstables::compaction_descriptor descriptor, compaction_manager_task& task);
 
     future<bool> snapshot_exists(sstring name);
 
@@ -875,7 +877,7 @@ public:
     void trigger_compaction();
     void try_trigger_compaction() noexcept;
     void trigger_offstrategy_compaction();
-    future<> run_offstrategy_compaction();
+    future<> run_offstrategy_compaction(compaction_manager_task& task);
     void set_compaction_strategy(sstables::compaction_strategy_type strategy);
     const sstables::compaction_strategy& get_compaction_strategy() const {
         return _compaction_strategy;

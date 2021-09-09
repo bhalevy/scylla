@@ -886,7 +886,7 @@ table::on_compaction_completion(sstables::compaction_completion_desc& desc) {
 }
 
 future<>
-table::compact_sstables(sstables::compaction_descriptor descriptor) {
+table::compact_sstables(sstables::compaction_descriptor descriptor, compaction_manager_task& task) {
     if (!descriptor.sstables.size()) {
         // if there is nothing to compact, just return.
         return make_ready_future<>();
@@ -905,7 +905,7 @@ table::compact_sstables(sstables::compaction_descriptor descriptor) {
         }
     };
 
-    return sstables::compact_sstables(std::move(descriptor), *this).then([this] (auto info) {
+    return sstables::compact_sstables(std::move(descriptor), *this, task).then([this] (auto info) {
         if (info.type != sstables::compaction_type::Compaction) {
             return make_ready_future<>();
         }
@@ -959,7 +959,7 @@ void table::trigger_offstrategy_compaction() {
     _compaction_manager.submit_offstrategy(this);
 }
 
-future<> table::run_offstrategy_compaction() {
+future<> table::run_offstrategy_compaction(compaction_manager_task& task) {
     // This procedure will reshape sstables in maintenance set until it's ready for
     // integration into main set.
     // It may require N reshape rounds before the set satisfies the strategy invariant.
@@ -1002,7 +1002,7 @@ future<> table::run_offstrategy_compaction() {
         };
         auto input = boost::copy_range<std::unordered_set<sstables::shared_sstable>>(desc.sstables);
 
-        auto ret = co_await sstables::compact_sstables(std::move(desc), *this);
+        auto ret = co_await sstables::compact_sstables(std::move(desc), *this, task);
 
         // update list of reshape candidates without input but with output added to it
         auto it = boost::remove_if(reshape_candidates, [&] (auto& s) { return input.contains(s); });

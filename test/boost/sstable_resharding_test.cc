@@ -87,6 +87,10 @@ void run_sstable_resharding_test() {
     auto filter_fname = sstables::test(sst).filename(component_type::Filter);
     uint64_t bloom_filter_size_before = file_size(filter_fname).get0();
 
+    compaction_manager::task task = {
+        .compacting_cf = cf.get(),
+        .type = sstables::compaction_type::Reshard,
+    };
     auto descriptor = sstables::compaction_descriptor({sst}, std::nullopt, default_priority_class(), 0, std::numeric_limits<uint64_t>::max());
     descriptor.options = sstables::compaction_options::make_reshard();
     descriptor.creator = [&env, &cf, &tmp, version] (shard_id shard) mutable {
@@ -99,7 +103,7 @@ void run_sstable_resharding_test() {
         return env.make_sstable(cf->schema(), tmp.path().string(), gen,
             version, sstables::sstable::format_types::big);
     };
-    auto info = sstables::compact_sstables(std::move(descriptor), *cf).get0();
+    auto info = sstables::compact_sstables(std::move(descriptor), *cf, task).get0();
     auto new_sstables = std::move(info.new_sstables);
     BOOST_REQUIRE(new_sstables.size() == smp::count);
 

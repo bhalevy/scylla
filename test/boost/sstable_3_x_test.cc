@@ -3141,13 +3141,16 @@ static flat_mutation_reader compacted_sstable_reader(test_env& env, schema_ptr s
     auto sstables = open_sstables(env, s, format("test/resource/sstables/3.x/uncompressed/{}", table_name), generations);
     auto new_generation = generations.back() + 1;
 
+    compaction_manager::task task = {
+        .compacting_cf = cf.get(),
+    };
     auto desc = sstables::compaction_descriptor(std::move(sstables), cf->get_sstable_set(), default_priority_class());
     desc.creator = [s, &tmp, &env, new_generation] (shard_id dummy) {
         return env.make_sstable(s, tmp.path().string(), new_generation,
                          sstables::sstable_version_types::mc, sstable::format_types::big, 4096);
     };
     desc.replacer = replacer_fn_no_op();
-    sstables::compact_sstables(std::move(desc), *cf).get();
+    sstables::compact_sstables(std::move(desc), *cf, task).get();
 
     auto compacted_sst = open_sstable(env, s, tmp.path().string(), new_generation);
     return compacted_sst->as_mutation_source().make_reader(s, env.make_reader_permit(), query::full_partition_range, s->full_slice());

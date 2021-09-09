@@ -47,6 +47,16 @@ class table;
 using column_family = table;
 class compacting_sstable_registration;
 
+struct compaction_manager_task {
+    column_family* compacting_cf = nullptr;
+    shared_future<> compaction_done = make_ready_future<>();
+    exponential_backoff_retry compaction_retry = exponential_backoff_retry(std::chrono::seconds(5), std::chrono::seconds(300));
+    bool stopping = false;
+    sstables::compaction_type type = sstables::compaction_type::Compaction;
+    bool compaction_running = false;
+    lw_shared_ptr<sstables::compaction_info> info;
+};
+
 // Compaction manager is a feature used to manage compaction jobs from multiple
 // column families pertaining to the same database.
 class compaction_manager {
@@ -65,18 +75,10 @@ public:
         seastar::scheduling_group cpu;
         const ::io_priority_class& io;
     };
+    using task = compaction_manager_task;
 private:
-    struct task {
-        column_family* compacting_cf = nullptr;
-        shared_future<> compaction_done = make_ready_future<>();
-        exponential_backoff_retry compaction_retry = exponential_backoff_retry(std::chrono::seconds(5), std::chrono::seconds(300));
-        bool stopping = false;
-        sstables::compaction_type type = sstables::compaction_type::Compaction;
-        bool compaction_running = false;
-    };
-
     // compaction manager may have N fibers to allow parallel compaction per shard.
-    std::list<lw_shared_ptr<task>> _tasks;
+    std::list<lw_shared_ptr<compaction_manager_task>> _tasks;
 
     // Possible states in which the compaction manager can be found.
     //
@@ -128,7 +130,7 @@ private:
     timer<lowres_clock> _compaction_submission_timer = timer<lowres_clock>(compaction_submission_callback());
     static constexpr std::chrono::seconds periodic_compaction_submission_interval() { return std::chrono::seconds(3600); }
 private:
-    future<> task_stop(lw_shared_ptr<task> task);
+    future<> task_stop(lw_shared_ptr<task> task, sstring reason);
 
     // Return true if weight is not registered.
     bool can_register_weight(column_family* cf, int weight) const;
@@ -235,7 +237,8 @@ public:
     // parameter type is the compaction type the operation can most closely be
     //      associated with, use compaction_type::Compaction, if none apply.
     // parameter job is a function that will carry the operation
-    future<> run_custom_job(column_family* cf, sstables::compaction_type type, noncopyable_function<future<>()> job);
+    using custom_job_func = noncopyable_function<future<>(compaction_manager::task&)>;
+    future<> run_custom_job(column_family* cf, sstables::compaction_type type, custom_job_func job);
 
     // Remove a column family from the compaction manager.
     // Cancel requests on cf and wait for a possible ongoing compaction on cf.
@@ -255,6 +258,11 @@ public:
 
     void deregister_compaction(lw_shared_ptr<sstables::compaction_info> c) {
         _compactions.remove(c);
+        if (c->task) {
+            assert(c->task->info == c);
+            c->task->info = {};
+            c->task = nullptr;
+        }
     }
 
     const std::list<lw_shared_ptr<sstables::compaction_info>>& get_compactions() const {

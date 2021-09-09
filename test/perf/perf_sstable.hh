@@ -182,12 +182,15 @@ public:
 
                 auto start = perf_sstable_test_env::now();
 
+                compaction_manager::task task = {
+                    .compacting_cf = cf.get(),
+                };
                 auto descriptor = sstables::compaction_descriptor(std::move(ssts), cf->get_sstable_set(), default_priority_class());
                 descriptor.creator = [sst_gen = std::move(sst_gen)] (unsigned dummy) mutable {
                     return sst_gen();
                 };
                 descriptor.replacer = sstables::replacer_fn_no_op();
-                auto ret = sstables::compact_sstables(std::move(descriptor), *cf).get0();
+                auto ret = sstables::compact_sstables(std::move(descriptor), *cf, task).get0();
                 auto end = perf_sstable_test_env::now();
 
                 auto partitions_per_sstable = _cfg.partitions / _cfg.sstables;

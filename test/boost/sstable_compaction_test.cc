@@ -3874,11 +3874,16 @@ SEASTAR_TEST_CASE(test_offstrategy_sstable_compaction) {
             cf->mark_ready_for_writes();
             cf->start();
 
+            compaction_manager::task task = {
+                .compacting_cf = cf.get(),
+                .type = sstables::compaction_type::Reshape,
+            };
+
             for (auto i = 0; i < cf->schema()->max_compaction_threshold(); i++) {
                 auto sst = make_sstable_containing(sst_gen, {mut});
                 cf->add_sstable_and_update_cache(std::move(sst), sstables::offstrategy::yes).get();
             }
-            cf->run_offstrategy_compaction().get();
+            cf->run_offstrategy_compaction(task).get();
 
             // Make sure we release reference to all sstables, allowing them to be deleted before dir is destroyed
             cf->stop().get();

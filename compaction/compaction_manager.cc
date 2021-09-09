@@ -261,10 +261,10 @@ future<> compaction_manager::submit_major_compaction(column_family* cf) {
 
             cmlog.info0("User initiated compaction started on behalf of {}.{}", cf->schema()->ks_name(), cf->schema()->cf_name());
             compaction_backlog_tracker user_initiated(std::make_unique<user_initiated_backlog_tracker>(_compaction_controller.backlog_of_shares(200), _available_memory));
-            return do_with(std::move(user_initiated), [this, cf, descriptor = std::move(descriptor)] (compaction_backlog_tracker& bt) mutable {
+            return do_with(std::move(user_initiated), [this, cf, descriptor = std::move(descriptor), task = std::move(task)] (compaction_backlog_tracker& bt) mutable {
                 register_backlog_tracker(bt);
-                return with_scheduling_group(_compaction_controller.sg(), [this, cf, descriptor = std::move(descriptor)] () mutable {
-                    return cf->compact_sstables(std::move(descriptor));
+                return with_scheduling_group(_compaction_controller.sg(), [this, cf, descriptor = std::move(descriptor), task = std::move(task)] () mutable {
+                    return cf->compact_sstables(std::move(descriptor), *task);
                 });
             }).then([compacting = std::move(compacting)] {});
         });
@@ -285,7 +285,7 @@ future<> compaction_manager::submit_major_compaction(column_family* cf) {
     return task->compaction_done.get_future().then([task] {});
 }
 
-future<> compaction_manager::run_custom_job(column_family* cf, sstables::compaction_type type, noncopyable_function<future<>()> job) {
+future<> compaction_manager::run_custom_job(column_family* cf, sstables::compaction_type type, custom_job_func job) {
     if (_state != state::enabled) {
         return make_ready_future<>();
     }
@@ -295,7 +295,7 @@ future<> compaction_manager::run_custom_job(column_family* cf, sstables::compact
     task->type = type;
     _tasks.push_back(task);
 
-    auto job_ptr = std::make_unique<noncopyable_function<future<>()>>(std::move(job));
+    auto job_ptr = std::make_unique<custom_job_func>(std::move(job));
 
     task->compaction_done = with_semaphore(_custom_job_sem, 1, [this, task, cf, &job = *job_ptr] () mutable {
         // take read lock for cf, so major compaction and resharding can't proceed in parallel.
@@ -308,7 +308,7 @@ future<> compaction_manager::run_custom_job(column_family* cf, sstables::compact
             // NOTE:
             // no need to register shared sstables because they're excluded from non-resharding
             // compaction and some of them may not even belong to current shard.
-            return job();
+            return job(*task);
         });
     }).then_wrapped([this, task, job_ptr = std::move(job_ptr)] (future<> f) {
         _stats.active_tasks--;
@@ -326,7 +326,10 @@ future<> compaction_manager::run_custom_job(column_family* cf, sstables::compact
     return task->compaction_done.get_future().then([task] {});
 }
 
-future<> compaction_manager::task_stop(lw_shared_ptr<compaction_manager::task> task) {
+future<> compaction_manager::task_stop(lw_shared_ptr<compaction_manager::task> task, sstring reason) {
+    if (task->info) {
+        task->info->stop(std::move(reason));
+    }
     task->stopping = true;
     auto f = task->compaction_done.get_future();
     return f.then([task] {
@@ -449,19 +452,14 @@ void compaction_manager::postpone_compaction_for_column_family(column_family* cf
 }
 
 future<> compaction_manager::stop_ongoing_compactions(sstring reason) {
-    cmlog.info("Stopping {} ongoing compactions due to {}", _compactions.size(), reason);
-
-    // Stop all ongoing compaction.
-    for (auto& info : _compactions) {
-        info->stop(reason);
-    }
+    cmlog.info("Stopping {} ongoing compactions due to {}", _tasks.size(), reason);
 
     // Wait for each task handler to stop. Copy list because task remove itself
     // from the list when done.
     auto tasks = _tasks;
-    return do_with(std::move(tasks), [this] (std::list<lw_shared_ptr<task>>& tasks) {
-        return parallel_for_each(tasks, [this] (auto& task) {
-            return this->task_stop(task).then_wrapped([](future <> f) {
+    return do_with(std::move(tasks), [this, reason = std::move(reason)] (std::list<lw_shared_ptr<task>>& tasks) mutable {
+        return parallel_for_each(tasks, [this, reason = std::move(reason)] (auto& task) {
+            return this->task_stop(task, reason).then_wrapped([](future <> f) {
                 try {
                     f.get();
                 } catch (sstables::compaction_stop_exception& e) {
@@ -604,7 +602,7 @@ void compaction_manager::submit(column_family* cf) {
             _stats.pending_tasks--;
             _stats.active_tasks++;
             task->compaction_running = true;
-            return cf.compact_sstables(std::move(descriptor)).then_wrapped([this, task, compacting = std::move(compacting), weight_r = std::move(weight_r)] (future<> f) mutable {
+            return cf.compact_sstables(std::move(descriptor), *task).then_wrapped([this, task, compacting = std::move(compacting), weight_r = std::move(weight_r)] (future<> f) mutable {
                 _stats.active_tasks--;
                 task->compaction_running = false;
 
@@ -653,7 +651,7 @@ void compaction_manager::submit_offstrategy(column_family* cf) {
                 _stats.active_tasks++;
                 task->compaction_running = true;
 
-                return cf->run_offstrategy_compaction().then_wrapped([this, task] (future<> f) mutable {
+                return cf->run_offstrategy_compaction(*task).then_wrapped([this, task] (future<> f) mutable {
                     _stats.active_tasks--;
                     task->compaction_running = false;
                     try {
@@ -732,9 +730,9 @@ future<> compaction_manager::rewrite_sstables(column_family* cf, sstables::compa
                 _stats.active_tasks++;
                 task->compaction_running = true;
                 compaction_backlog_tracker user_initiated(std::make_unique<user_initiated_backlog_tracker>(_compaction_controller.backlog_of_shares(200), _available_memory));
-                return do_with(std::move(user_initiated), [this, &cf, descriptor = std::move(descriptor)] (compaction_backlog_tracker& bt) mutable {
-                    return with_scheduling_group(_maintenance_sg.cpu, [this, &cf, descriptor = std::move(descriptor)]() mutable {
-                        return cf.compact_sstables(std::move(descriptor));
+                return do_with(std::move(user_initiated), [this, &cf, descriptor = std::move(descriptor), task] (compaction_backlog_tracker& bt) mutable {
+                    return with_scheduling_group(_maintenance_sg.cpu, [this, &cf, descriptor = std::move(descriptor), task]() mutable {
+                        return cf.compact_sstables(std::move(descriptor), *task);
                     });
                 });
             }).then_wrapped([this, task, compacting] (future<> f) mutable {
@@ -765,7 +763,7 @@ future<> compaction_manager::rewrite_sstables(column_family* cf, sstables::compa
 }
 
 future<> compaction_manager::perform_sstable_scrub_validate_mode(column_family* cf) {
-    return run_custom_job(cf, sstables::compaction_type::Scrub, [this, &cf = *cf, sstables = get_candidates(*cf)] () mutable -> future<> {
+    return run_custom_job(cf, sstables::compaction_type::Scrub, [this, &cf = *cf, sstables = get_candidates(*cf)] (compaction_manager::task& task) mutable -> future<> {
         class pending_tasks {
             compaction_manager::stats& _stats;
             size_t _n;
@@ -793,7 +791,7 @@ future<> compaction_manager::perform_sstable_scrub_validate_mode(column_family* 
                             sstables::compaction_descriptor::default_max_sstable_bytes,
                             sst->run_identifier(),
                             sstables::compaction_options::make_scrub(sstables::compaction_options::scrub::mode::validate));
-                    return compact_sstables(std::move(desc), cf);
+                    return compact_sstables(std::move(desc), cf, task);
                 });
             } catch (sstables::compaction_stop_exception&) {
                 throw; // let run_custom_job() handle this
@@ -903,14 +901,6 @@ future<> compaction_manager::perform_sstable_scrub(column_family* cf, sstables::
 }
 
 future<> compaction_manager::remove(column_family* cf) {
-    // FIXME: better way to iterate through compaction info for a given column family,
-    // although this path isn't performance sensitive.
-    for (auto& info : _compactions) {
-        if (info->cf == cf) {
-            info->stop("column family removal");
-        }
-    }
-
     // We need to guarantee that a task being stopped will not retry to compact
     // a column family being removed.
     auto tasks_to_stop = make_lw_shared<std::vector<lw_shared_ptr<task>>>();
@@ -924,7 +914,7 @@ future<> compaction_manager::remove(column_family* cf) {
 
     // Wait for the termination of an ongoing compaction on cf, if any.
     return parallel_for_each(*tasks_to_stop, [this, cf] (auto& task) {
-        return this->task_stop(task);
+        return this->task_stop(task, "column family removal");
     }).then([this, cf, tasks_to_stop] {
         _compaction_locks.erase(cf);
     });

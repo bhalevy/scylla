@@ -33,6 +33,8 @@
 
 class flat_mutation_reader;
 
+struct compaction_manager_task;
+
 namespace sstables {
 
     class pretty_printed_data_size {
@@ -74,6 +76,7 @@ namespace sstables {
             const std::vector<shared_sstable> added;
         };
         std::vector<replacement> pending_replacements;
+        compaction_manager_task* task = nullptr;
 
         bool is_stop_requested() const noexcept {
             return !stop_requested.empty();
@@ -100,7 +103,7 @@ namespace sstables {
     // If descriptor.cleanup is true, mutation that doesn't belong to current node will be
     // cleaned up, log messages will inform the user that compact_sstables runs for
     // cleaning operation, and compaction history will not be updated.
-    future<compaction_info> compact_sstables(sstables::compaction_descriptor descriptor, column_family& cf);
+    future<compaction_info> compact_sstables(sstables::compaction_descriptor descriptor, column_family& cf, compaction_manager_task& task);
 
     // Return list of expired sstables for column family cf.
     // A sstable is fully expired *iff* its max_local_deletion_time precedes gc_before and its
