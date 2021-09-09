@@ -26,6 +26,7 @@
 #include <seastar/util/defer.hh>
 
 #include <seastar/testing/test_case.hh>
+#include "locator/abstract_replication_strategy.hh"
 #include "message/messaging_service.hh"
 #include "gms/failure_detector.hh"
 #include "gms/gossiper.hh"
@@ -60,6 +61,7 @@ SEASTAR_TEST_CASE(test_boot_shutdown){
         utils::fb_utilities::set_broadcast_address(gms::inet_address("127.0.0.1"));
         sharded<gms::feature_service> feature_service;
         sharded<locator::shared_token_metadata> token_metadata;
+        sharded<locator::effective_replication_map_registry> erm_registry;
         sharded<netw::messaging_service> _messaging;
         sharded<cdc::generation_service> cdc_generation_service;
         sharded<repair_service> repair;
@@ -70,6 +72,9 @@ SEASTAR_TEST_CASE(test_boot_shutdown){
 
         token_metadata.start().get();
         auto stop_token_mgr = defer([&token_metadata] { token_metadata.stop().get(); });
+
+        erm_registry.start().get();
+        auto stop_erm_registry = deferred_stop(erm_registry);
 
         mm_notif.start().get();
         auto stop_mm_notif = defer([&mm_notif] { mm_notif.stop().get(); });
@@ -105,7 +110,7 @@ SEASTAR_TEST_CASE(test_boot_shutdown){
             std::ref(sys_dist_ks),
             std::ref(view_update_generator),
             std::ref(feature_service), sscfg,
-            std::ref(migration_manager), std::ref(token_metadata),
+            std::ref(migration_manager), std::ref(token_metadata), std::ref(erm_registry),
             std::ref(_messaging),
             std::ref(cdc_generation_service), std::ref(repair),
             std::ref(raft_gr), std::ref(elc_notif)).get();

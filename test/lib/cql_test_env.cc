@@ -23,6 +23,7 @@
 #include <iterator>
 #include <seastar/core/thread.hh>
 #include <seastar/util/defer.hh>
+#include "locator/abstract_replication_strategy.hh"
 #include "sstables/sstables.hh"
 #include <seastar/core/do_with.hh>
 #include "test/lib/cql_test_env.hh"
@@ -482,6 +483,10 @@ public:
             token_metadata.start().get();
             auto stop_token_metadata = defer([&token_metadata] { token_metadata.stop().get(); });
 
+            sharded<locator::effective_replication_map_registry> erm_registry;
+            erm_registry.start().get();
+            auto stop_erm_registry = deferred_stop(erm_registry);
+
             sharded<service::migration_notifier> mm_notif;
             mm_notif.start().get();
             auto stop_mm_notify = defer([&mm_notif] { mm_notif.stop().get(); });
@@ -575,7 +580,7 @@ public:
                 std::ref(sys_dist_ks),
                 std::ref(view_update_generator),
                 std::ref(feature_service), sscfg, std::ref(mm),
-                std::ref(token_metadata), std::ref(ms),
+                std::ref(token_metadata), std::ref(erm_registry), std::ref(ms),
                 std::ref(cdc_generation_service),
                 std::ref(repair),
                 std::ref(raft_gr), std::ref(elc_notif)).get();
@@ -626,7 +631,7 @@ public:
             db::view::node_update_backlog b(smp::count, 10ms);
             scheduling_group_key_config sg_conf =
                     make_scheduling_group_key_config<service::storage_proxy_stats::stats>();
-            proxy.start(std::ref(db), std::ref(gossiper), spcfg, std::ref(b), scheduling_group_key_create(sg_conf).get0(), std::ref(feature_service), std::ref(token_metadata), std::ref(ms)).get();
+            proxy.start(std::ref(db), std::ref(gossiper), spcfg, std::ref(b), scheduling_group_key_create(sg_conf).get0(), std::ref(feature_service), std::ref(token_metadata), std::ref(erm_registry), std::ref(ms)).get();
             auto stop_proxy = defer([&proxy] { proxy.stop().get(); });
 
             mm.start(std::ref(mm_notif), std::ref(feature_service), std::ref(ms), std::ref(gossiper)).get();

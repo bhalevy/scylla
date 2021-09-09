@@ -2020,7 +2020,7 @@ future<> system_keyspace_make(database& db, service::storage_service& ss) {
                     std::map<sstring, sstring>{},
                     durable
                     );
-            co_await db.create_keyspace(ksm, true, database::system_keyspace::yes);
+            co_await db.create_keyspace(ksm, ss.local_effective_replication_map_registry(), true, database::system_keyspace::yes);
         }
         auto& ks = db.find_keyspace(ks_name);
         auto cfg = ks.make_column_family_config(*table, db);

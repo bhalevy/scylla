@@ -462,6 +462,7 @@ int main(int ac, char** av) {
     print_starting_message(ac, av, parsed_opts);
 
     sharded<locator::shared_token_metadata> token_metadata;
+    sharded<locator::effective_replication_map_registry> erm_registry;
     sharded<service::migration_notifier> mm_notifier;
     sharded<service::endpoint_lifecycle_notifier> lifecycle_notifier;
     distributed<database> db;
@@ -510,7 +511,7 @@ int main(int ac, char** av) {
         return seastar::async([cfg, ext, &db, &qp, &proxy, &mm, &mm_notifier, &ctx, &opts, &dirs,
                 &prometheus_server, &cf_cache_hitrate_calculator, &load_meter, &feature_service,
                 &token_metadata, &snapshot_ctl, &messaging, &sst_dir_semaphore, &raft_gr, &service_memory_limiter,
-                &repair, &ss, &lifecycle_notifier] {
+                &repair, &ss, &lifecycle_notifier, &erm_registry] {
           try {
             // disable reactor stall detection during startup
             auto blocked_reactor_notify_ms = engine().get_blocked_reactor_notify_ms();
@@ -696,6 +697,9 @@ int main(int ac, char** av) {
             //    token_metadata.stop().get();
             //});
 
+            erm_registry.start().get();
+            auto stop_erm_registry = deferred_stop(erm_registry);
+
             supervisor::notify("starting migration manager notifier");
             mm_notifier.start().get();
             auto stop_mm_notifier = defer_verbose_shutdown("migration manager notifier", [ &mm_notifier ] {
@@ -843,7 +847,7 @@ int main(int ac, char** av) {
             debug::the_storage_service = &ss;
             ss.start(std::ref(stop_signal.as_sharded_abort_source()),
                 std::ref(db), std::ref(gossiper), std::ref(sys_dist_ks), std::ref(view_update_generator),
-                std::ref(feature_service), sscfg, std::ref(mm), std::ref(token_metadata),
+                std::ref(feature_service), sscfg, std::ref(mm), std::ref(token_metadata), std::ref(erm_registry),
                 std::ref(messaging), std::ref(cdc_generation_service), std::ref(repair),
                 std::ref(raft_gr), std::ref(lifecycle_notifier)).get();
             supervisor::notify("starting per-shard database core");
@@ -926,7 +930,7 @@ int main(int ac, char** av) {
             };
             proxy.start(std::ref(db), std::ref(gossiper), spcfg, std::ref(node_backlog),
                     scheduling_group_key_create(storage_proxy_stats_cfg).get0(),
-                    std::ref(feature_service), std::ref(token_metadata), std::ref(messaging)).get();
+                    std::ref(feature_service), std::ref(token_metadata), std::ref(erm_registry), std::ref(messaging)).get();
             // #293 - do not stop anything
             // engine().at_exit([&proxy] { return proxy.stop(); });
             supervisor::notify("starting migration manager");

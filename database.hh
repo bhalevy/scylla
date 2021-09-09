@@ -1155,12 +1155,13 @@ public:
     };
 private:
     locator::abstract_replication_strategy::ptr_type _replication_strategy;
-    locator::mutable_effective_replication_map_ptr _effective_replication_map;
     lw_shared_ptr<keyspace_metadata> _metadata;
     shared_promise<> _populated;
     config _config;
+    locator::effective_replication_map_registry& _erm_registry;
+    locator::effective_replication_map_ptr _effective_replication_map;
 public:
-    explicit keyspace(lw_shared_ptr<keyspace_metadata> metadata, config cfg);
+    explicit keyspace(lw_shared_ptr<keyspace_metadata> metadata, config cfg, locator::effective_replication_map_registry& erm_registry);
 
     future<> update_from(const locator::shared_token_metadata& stm, lw_shared_ptr<keyspace_metadata>);
 
@@ -1170,7 +1171,7 @@ public:
      */
     lw_shared_ptr<keyspace_metadata> metadata() const;
     future<> create_replication_strategy(const locator::shared_token_metadata& stm, const locator::replication_strategy_config_options& options);
-    void update_effective_replication_map(locator::mutable_effective_replication_map_ptr erm);
+    void update_effective_replication_map(locator::effective_replication_map_ptr erm);
 
     /**
      * This should not really be return by reference, since replication
@@ -1340,6 +1341,7 @@ private:
     service::migration_notifier& _mnotifier;
     gms::feature_service& _feat;
     const locator::shared_token_metadata& _shared_token_metadata;
+    locator::effective_replication_map_registry _effective_replication_map_registry;
 
     sharded<semaphore>& _sst_dir_semaphore;
 
@@ -1361,7 +1363,7 @@ public:
 
 private:
     using system_keyspace = bool_class<struct system_keyspace_tag>;
-    future<> create_in_memory_keyspace(const lw_shared_ptr<keyspace_metadata>& ksm, system_keyspace system);
+    future<> create_in_memory_keyspace(const lw_shared_ptr<keyspace_metadata>& ksm, locator::effective_replication_map_registry& erm_registry, system_keyspace system);
     friend future<> db::system_keyspace_make(database& db, service::storage_service& ss);
     void setup_metrics();
     void setup_scylla_memory_diagnostics_producer();
@@ -1377,7 +1379,7 @@ private:
     template<typename Future>
     Future update_write_metrics(Future&& f);
     void update_write_metrics_for_timed_out_write();
-    future<> create_keyspace(const lw_shared_ptr<keyspace_metadata>&, bool is_bootstrap, system_keyspace system);
+    future<> create_keyspace(const lw_shared_ptr<keyspace_metadata>&, locator::effective_replication_map_registry& erm_registry, bool is_bootstrap, system_keyspace system);
 public:
     static utils::UUID empty_version;
 
@@ -1418,6 +1420,10 @@ public:
     const locator::shared_token_metadata& get_shared_token_metadata() const { return _shared_token_metadata; }
     const locator::token_metadata& get_token_metadata() const { return *_shared_token_metadata.get(); }
 
+    locator::effective_replication_map_registry& get_effective_replication_map_registry() {
+        return _effective_replication_map_registry;
+    }
+
     service::migration_notifier& get_notifier() { return _mnotifier; }
     const service::migration_notifier& get_notifier() const { return _mnotifier; }
 
@@ -1433,7 +1439,7 @@ public:
      *
      * @return ready future when the operation is complete
      */
-    future<> create_keyspace(const lw_shared_ptr<keyspace_metadata>&);
+    future<> create_keyspace(const lw_shared_ptr<keyspace_metadata>&, locator::effective_replication_map_registry& erm_registry);
     /* below, find_keyspace throws no_such_<type> on fail */
     keyspace& find_keyspace(std::string_view name);
     const keyspace& find_keyspace(std::string_view name) const;

@@ -208,6 +208,7 @@ public:
         storage_service_config config,
         sharded<service::migration_manager>& mm,
         locator::shared_token_metadata& stm,
+        sharded<locator::effective_replication_map_registry>& erm_registry,
         sharded<netw::messaging_service>& ms,
         sharded<cdc::generation_service>&,
         sharded<repair_service>& repair,
@@ -271,6 +272,10 @@ public:
         return *_shared_token_metadata.get();
     }
 
+    locator::effective_replication_map_registry& local_effective_replication_map_registry() noexcept {
+        return _erm_registry.local();
+    }
+
 private:
     bool is_auto_bootstrap() const;
     inet_address get_broadcast_address() const {
@@ -278,6 +283,7 @@ private:
     }
     /* This abstraction maintains the token/endpoint metadata information */
     shared_token_metadata& _shared_token_metadata;
+    sharded<locator::effective_replication_map_registry>& _erm_registry;
 
     /* CDC generation management service.
      * It is sharded<>& and not simply a reference because the service will not yet be started

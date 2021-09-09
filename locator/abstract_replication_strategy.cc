@@ -20,9 +20,11 @@
  */
 
 #include "locator/abstract_replication_strategy.hh"
+#include "locator/token_metadata.hh"
 #include "utils/class_registrator.hh"
 #include "exceptions/exceptions.hh"
 #include <boost/range/algorithm/remove_if.hpp>
+#include <memory>
 #include <seastar/core/coroutine.hh>
 #include <seastar/coroutine/maybe_yield.hh>
 #include "utils/stall_free.hh"
@@ -301,7 +303,7 @@ abstract_replication_strategy::get_pending_address_ranges(const token_metadata_p
     co_return ret;
 }
 
-future<mutable_effective_replication_map_ptr> make_effective_replication_map(abstract_replication_strategy::ptr_type rs, token_metadata_ptr tmptr) {
+future<mutable_effective_replication_map_ptr> make_effective_replication_map(abstract_replication_strategy::ptr_type rs, token_metadata_ptr tmptr, effective_replication_map_registry& registry, std::optional<effective_replication_map::registry_key> key_opt) {
     replication_map all_endpoints;
 
     for (const auto &t : tmptr->sorted_tokens()) {
@@ -309,7 +311,14 @@ future<mutable_effective_replication_map_ptr> make_effective_replication_map(abs
     }
 
     auto rf = rs->get_replication_factor(*tmptr);
-    co_return make_effective_replication_map_ptr(std::move(rs), std::move(tmptr), std::move(all_endpoints), rf);
+    auto key = key_opt ? std::move(*key_opt) : effective_replication_map::registry_key(rs, tmptr);
+    co_return make_effective_replication_map_ptr(std::move(rs), std::move(tmptr), std::move(all_endpoints), rf, registry, std::move(key));
+}
+
+sstring effective_replication_map::registry_key::to_sstring() const {
+    std::ostringstream oss;
+    oss << *this;
+    return oss.str();
 }
 
 future<replication_map> effective_replication_map::clone_endpoints_gently() const {
@@ -332,4 +341,86 @@ future<> effective_replication_map::clear_gently() noexcept {
     co_await utils::clear_gently(_tmptr);
 }
 
+effective_replication_map::~effective_replication_map() {
+    if (_is_registered) {
+        _registry.erase(_registry_key);
+    }
+    try {
+        struct background_clear_holder {
+            locator::replication_map all_endpoints;
+            locator::token_metadata_ptr tmptr;
+        };
+        auto holder = make_lw_shared<background_clear_holder>({std::move(_all_endpoints), std::move(_tmptr)});
+        // okay to gently clear in background since
+        // the registry gate is waited on in registery.stop()
+        (void)try_with_gate(_registry.gate(), [holder] () mutable {
+            return when_all(utils::clear_gently(holder->all_endpoints), utils::clear_gently(holder->tmptr)).discard_result();
+        }).then([holder = std::move(holder)] {});
+    } catch (...) {
+        // ignore
+    }
+}
+
+effective_replication_map_ptr effective_replication_map_registry::find(const effective_replication_map::registry_key& key) noexcept {
+    auto it = _maps.find(key);
+    if (it != _maps.end()) {
+        rslogger.debug("Found {} in effective_replication_map_registry", it->second->get_registry_key());
+        return it->second->shared_from_this();
+    }
+    return {};
+}
+
+effective_replication_map_ptr effective_replication_map_registry::insert(mutable_effective_replication_map_ptr erm) noexcept {
+    static_assert(std::is_nothrow_move_constructible_v<effective_replication_map::registry_key>);
+    static_assert(std::is_nothrow_move_constructible_v<mutable_effective_replication_map_ptr>);
+
+    const auto& key = erm->get_registry_key();
+    auto [it, inserted] = _maps.try_emplace(key, erm.get());
+    if (inserted) {
+        erm->set_registred(true);
+        rslogger.debug("Inserted {} in effective_replication_map_registry", key);
+        return erm;
+    }
+    rslogger.debug("{} already found when inserting to effective_replication_map_registry", key);
+    return it->second->shared_from_this();
+}
+
+bool effective_replication_map_registry::erase(const effective_replication_map::registry_key& key) noexcept {
+    if (_maps.erase(key)) {
+        rslogger.debug("Erased {} from effective_replication_map_registry", key);
+        return true;
+    } else {
+        rslogger.debug("{} not found for erasing from effective_replication_map_registry", key);
+        return false;
+    }
+}
+
+future<> effective_replication_map_registry::stop() noexcept {
+    co_await _gate.close();
+    co_await utils::clear_gently(_maps);
+}
+
 } // namespace locator
+
+std::ostream& operator<<(std::ostream& os, locator::replication_strategy_type t) {
+    switch (t) {
+    case locator::replication_strategy_type::simple:
+        return os << "simple";
+    case locator::replication_strategy_type::local:
+        return os << "local";
+    case locator::replication_strategy_type::network_topology:
+        return os << "network_topology";
+    case locator::replication_strategy_type::everywhere_topology:
+        return os << "everywhere_topology";
+    };
+}
+
+std::ostream& operator<<(std::ostream& os, const locator::effective_replication_map::registry_key& key) {
+    os << key.rs_type << '.' << key.ring_version;
+    char sep = ':';
+    for (const auto& [opt, val] : key.rs_config_options) {
+        os << sep << opt << '=' << val;
+        sep = ',';
+    }
+    return os;
+}

@@ -24,6 +24,7 @@
 #include <memory>
 #include <functional>
 #include <unordered_map>
+#include <xxhash.h>
 #include "gms/inet_address.hh"
 #include "locator/snitch_base.hh"
 #include "dht/i_partitioner.hh"
@@ -31,6 +32,7 @@
 #include "snitch_base.hh"
 #include <seastar/util/bool_class.hh>
 #include "utils/maybe_yield.hh"
+#include <seastar/core/gate.hh>
 
 // forward declaration since database.hh includes this file
 class keyspace;
@@ -112,6 +114,9 @@ public:
     // appear in the pending_endpoints.
     virtual bool allow_remove_node_being_replaced_from_natural_endpoints() const = 0;
     replication_strategy_type get_type() const { return _my_type; }
+    const replication_strategy_config_options& get_config_options() const noexcept {
+        return _config_options;
+    };
 
     // Use the token_metadata provided by the caller instead of _token_metadata
     future<dht::token_range_vector> get_ranges(inet_address ep, token_metadata_ptr tmptr) const;
@@ -128,26 +133,63 @@ public:
     future<dht::token_range_vector> get_pending_address_ranges(const token_metadata_ptr tmptr, std::unordered_set<token> pending_tokens, inet_address pending_address) const;
 };
 
+class effective_replication_map_registry;
+
 // Holds the full replication_map resulting from applying the
 // effective replication strategy over the given token_metadata
 // and replication_strategy_config_options.
-class effective_replication_map {
+class effective_replication_map : public enable_lw_shared_from_this<effective_replication_map> {
+public:
+    struct registry_key {
+        replication_strategy_type rs_type;
+        long ring_version;
+        replication_strategy_config_options rs_config_options;
+
+        registry_key(const abstract_replication_strategy::ptr_type& rs, const token_metadata_ptr& tmptr)
+            : rs_type(rs->get_type())
+            , ring_version(tmptr->get_ring_version())
+            , rs_config_options(rs->get_config_options())
+        {}
+
+        bool operator==(const registry_key& o) const noexcept {
+            return rs_type == o.rs_type
+                    && ring_version == o.ring_version
+                    && rs_config_options == o.rs_config_options;
+        }
+        bool operator!=(const registry_key& o) const noexcept {
+            return !operator==(o);
+        }
+
+        sstring to_sstring() const;
+    };
+
 private:
     abstract_replication_strategy::ptr_type _rs;
     token_metadata_ptr _tmptr;
     replication_map _all_endpoints;
     size_t _replication_factor;
+    effective_replication_map_registry& _registry;
+    registry_key _registry_key;
+    bool _is_registered;
 
     friend class abstract_replication_strategy;
 public:
-    explicit effective_replication_map(abstract_replication_strategy::ptr_type rs, token_metadata_ptr tmptr, replication_map all_endpoints, size_t replication_factor) noexcept
+    explicit effective_replication_map(abstract_replication_strategy::ptr_type rs, token_metadata_ptr tmptr, replication_map all_endpoints, size_t replication_factor, effective_replication_map_registry& registry, registry_key registry_key) noexcept
         : _rs(std::move(rs))
         , _tmptr(std::move(tmptr))
         , _all_endpoints(std::move(all_endpoints))
         , _replication_factor(replication_factor)
+        , _registry(registry)
+        , _registry_key(std::move(registry_key))
+        , _is_registered(false)
     { }
     effective_replication_map() = delete;
     effective_replication_map(effective_replication_map&&) = default;
+
+    // If registered, the destructor erases the
+    // key -> effective_replication_map mapping
+    // from the registry.
+    ~effective_replication_map();
 
     const token_metadata_ptr& get_token_metadata_ptr() const noexcept {
         return _tmptr;
@@ -159,6 +201,14 @@ public:
 
     const size_t get_replication_factor() const noexcept {
         return _replication_factor;
+    }
+
+    const registry_key& get_registry_key() const noexcept {
+        return _registry_key;
+    }
+
+    bool is_registered() const noexcept {
+        return _is_registered;
     }
 
     future<> clear_gently() noexcept;
@@ -196,16 +246,106 @@ private:
         { add_range(endpoints) } -> std::same_as<bool>;    // return true to add the token range to the results
     }
     dht::token_range_vector do_get_ranges(Predicate add_range) const;
+
+    void set_registred(bool is_registered) noexcept {
+        _is_registered = is_registered;
+    }
+
+    friend class effective_replication_map_registry;
 };
 
 using effective_replication_map_ptr = lw_shared_ptr<const effective_replication_map>;
 using mutable_effective_replication_map_ptr = lw_shared_ptr<effective_replication_map>;
 
-inline mutable_effective_replication_map_ptr make_effective_replication_map_ptr(abstract_replication_strategy::ptr_type rs, token_metadata_ptr tmptr, replication_map all_endpoints, size_t replication_factor) {
-    return make_lw_shared<effective_replication_map>(std::move(rs), std::move(tmptr), std::move(all_endpoints), replication_factor);
+inline mutable_effective_replication_map_ptr make_effective_replication_map_ptr(abstract_replication_strategy::ptr_type rs, token_metadata_ptr tmptr, replication_map all_endpoints, size_t replication_factor, effective_replication_map_registry& registry, effective_replication_map::registry_key key) {
+    return make_lw_shared<effective_replication_map>(std::move(rs), std::move(tmptr), std::move(all_endpoints), replication_factor, registry, std::move(key));
 }
 
 // Apply the replication strategy over the current configuration and the given token_metadata.
-future<mutable_effective_replication_map_ptr> make_effective_replication_map(abstract_replication_strategy::ptr_type rs, token_metadata_ptr tmptr);
+future<mutable_effective_replication_map_ptr> make_effective_replication_map(abstract_replication_strategy::ptr_type rs, token_metadata_ptr tmptr, effective_replication_map_registry& registry, std::optional<effective_replication_map::registry_key> key_opt = std::nullopt);
+
+} // namespace locator
+
+std::ostream& operator<<(std::ostream& os, locator::replication_strategy_type);
+std::ostream& operator<<(std::ostream& os, const locator::effective_replication_map::registry_key& key);
+
+template <>
+struct fmt::formatter<locator::effective_replication_map::registry_key> {
+    constexpr auto parse(format_parse_context& ctx) {
+        return ctx.end();
+    }
+
+    template <typename FormatContext>
+    auto format(const locator::effective_replication_map::registry_key& key, FormatContext& ctx) {
+        std::ostringstream os;
+        os << key;
+        return format_to(ctx.out(), "{}", os.str());
+    }
+};
+
+template<>
+struct appending_hash<locator::effective_replication_map::registry_key> {
+    template<typename Hasher>
+    void operator()(Hasher& h, const locator::effective_replication_map::registry_key& key) const {
+        feed_hash(h, key.rs_type);
+        feed_hash(h, key.ring_version);
+        for (const auto& [opt, val] : key.rs_config_options) {
+            h.update(opt.c_str(), opt.size());
+            h.update(val.c_str(), opt.size());
+        }
+    }
+};
+
+struct registry_key_hasher : public hasher {
+    XXH64_state_t _state;
+    registry_key_hasher(uint64_t seed = 0) noexcept {
+        XXH64_reset(&_state, seed);
+    }
+    void update(const char* ptr, size_t length) noexcept {
+        XXH64_update(&_state, ptr, length);
+    }
+    size_t finalize() {
+        return static_cast<size_t>(XXH64_digest(&_state));
+    }
+};
+
+namespace std {
+
+template <>
+struct hash<locator::effective_replication_map::registry_key> {
+    size_t operator()(const locator::effective_replication_map::registry_key& key) const {
+        registry_key_hasher h;
+        appending_hash<locator::effective_replication_map::registry_key>{}(h, key);
+        return h.finalize();
+    }
+};
+
+} // namespace std
+
+namespace locator {
+
+class effective_replication_map_registry {
+    std::unordered_map<effective_replication_map::registry_key, effective_replication_map*> _maps;
+    seastar::gate _gate;
+
+public:
+    // Find an effective_replication_map by its registry_key.
+    // Returns the found effective_replication_map_ptr or a disengaged shared ptr if not found.
+    effective_replication_map_ptr find(const effective_replication_map::registry_key& key) noexcept;
+
+    // Insert a new registry_key -> effective_replication_map mapping.
+    // Returns the provided effective_replication_map_ptr if inserted, or an existing one if found in the registry.
+    effective_replication_map_ptr insert(mutable_effective_replication_map_ptr erm) noexcept;
+
+    // Erase a key -> effective_replication_map mapping.
+    // Returns true iff the mapping was found and erased.
+    bool erase(const effective_replication_map::registry_key& key) noexcept;
+
+    seastar::gate& gate() noexcept {
+        return _gate;
+    };
+
+    future<> stop() noexcept;
+};
 
 }

@@ -114,6 +114,7 @@ storage_service::storage_service(abort_source& abort_source,
     storage_service_config config,
     sharded<service::migration_manager>& mm,
     locator::shared_token_metadata& stm,
+    sharded<locator::effective_replication_map_registry>& erm_registry,
     sharded<netw::messaging_service>& ms,
     sharded<cdc::generation_service>& cdc_gen_service,
     sharded<repair_service>& repair,
@@ -129,6 +130,7 @@ storage_service::storage_service(abort_source& abort_source,
         , _repair(repair)
         , _node_ops_abort_thread(node_ops_abort_thread())
         , _shared_token_metadata(stm)
+        , _erm_registry(erm_registry)
         , _cdc_gen_service(cdc_gen_service)
         , _lifecycle_notifier(elc_notif)
         , _sys_dist_ks(sys_dist_ks)
@@ -1390,7 +1392,7 @@ future<> storage_service::replicate_to_all_cores(mutable_token_metadata_ptr tmpt
 
     std::vector<mutable_token_metadata_ptr> pending_token_metadata_ptr;
     pending_token_metadata_ptr.resize(smp::count);
-    std::vector<std::unordered_map<sstring, mutable_effective_replication_map_ptr>> pending_effective_replication_maps;
+    std::vector<std::unordered_map<sstring, effective_replication_map_ptr>> pending_effective_replication_maps;
     pending_effective_replication_maps.resize(smp::count);
 
     try {
@@ -1403,24 +1405,46 @@ future<> storage_service::replicate_to_all_cores(mutable_token_metadata_ptr tmpt
 
         // Precalculate new effective_replication_map for all keyspaces
         // and clone to all shards;
+        //
+        // Note that theoretically insertion to the registry may race
+        // so prepare to get rid of newly made effective_replication_map
+        // if we lost the race.
         auto& db = _db.local();
         auto keyspaces = db.get_non_system_keyspaces();
+        auto& registry = local_effective_replication_map_registry();
         for (auto& ks_name : keyspaces) {
             auto rs = db.find_keyspace(ks_name).get_replication_strategy_ptr();
-            auto erm = co_await make_effective_replication_map(std::move(rs), tmptr);
+            auto& tmptr = pending_token_metadata_ptr[base_shard];
+            auto key = locator::effective_replication_map::registry_key(rs, tmptr);
+            auto erm = registry.find(key);
+            if (!erm) {
+                auto new_erm = co_await make_effective_replication_map(std::move(rs), tmptr, registry);
+                erm = registry.insert(new_erm);
+                if (!new_erm->is_registered()) {
+                    co_await utils::clear_gently(new_erm);
+                }
+            }
             pending_effective_replication_maps[base_shard].emplace(ks_name, std::move(erm));
         }
         co_await container().invoke_on_others([&, base_shard] (storage_service& ss) -> future<> {
             auto& db = ss._db.local();
+            auto& registry = ss.local_effective_replication_map_registry();
             for (auto& ks_name : keyspaces) {
                 auto local_rs = db.find_keyspace(ks_name).get_replication_strategy_ptr();
-                const auto& erm0 = pending_effective_replication_maps[base_shard].at(ks_name);
-                auto rf = erm0->get_replication_factor();
-                auto local_replication_map = co_await erm0->clone_endpoints_gently();
                 auto local_tmptr = pending_token_metadata_ptr[this_shard_id()];
-                auto erm = make_effective_replication_map_ptr(std::move(local_rs), std::move(local_tmptr), std::move(local_replication_map), rf);
+                auto key = locator::effective_replication_map::registry_key(local_rs, local_tmptr);
+                auto erm = registry.find(key);
+                if (!erm) {
+                    const auto& erm0 = pending_effective_replication_maps[base_shard].at(ks_name);
+                    auto rf = erm0->get_replication_factor();
+                    auto local_replication_map = co_await erm0->clone_endpoints_gently();
+                    auto new_erm = make_effective_replication_map_ptr(std::move(local_rs), std::move(local_tmptr), std::move(local_replication_map), rf, registry, std::move(key));
+                    erm = registry.insert(new_erm);
+                    if (!new_erm->is_registered()) {
+                        co_await utils::clear_gently(new_erm);
+                    }
+                }
                 pending_effective_replication_maps[this_shard_id()].emplace(ks_name, std::move(erm));
-
             }
         });
     } catch (...) {

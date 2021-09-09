@@ -21,6 +21,7 @@
 
 #include <boost/test/unit_test.hpp>
 #include <boost/range/adaptor/map.hpp>
+#include "locator/abstract_replication_strategy.hh"
 #include "utils/fb_utilities.hh"
 #include "utils/sequenced_set.hh"
 #include "locator/network_topology_strategy.hh"
@@ -40,6 +41,7 @@
 #include "test/lib/cql_test_env.hh"
 #include "test/lib/random_utils.hh"
 #include <seastar/core/coroutine.hh>
+#include <seastar/util/closeable.hh>
 
 using namespace locator;
 
@@ -151,11 +153,12 @@ auto d2t = [](double d) -> int64_t {
 void full_ring_check(const std::vector<ring_point>& ring_points,
                      const std::map<sstring, sstring>& options,
                      abstract_replication_strategy::ptr_type ars_ptr,
-                     locator::token_metadata_ptr tmptr) {
+                     locator::token_metadata_ptr tmptr,
+                     locator::effective_replication_map_registry& erm_registry) {
     auto& tm = *tmptr;
     strategy_sanity_check(ars_ptr, tm, options);
 
-    auto erm = make_effective_replication_map(ars_ptr, tmptr).get0();
+    auto erm = make_effective_replication_map(ars_ptr, tmptr, erm_registry).get0();
 
     for (auto& rp : ring_points) {
         double cur_point1 = rp.point - 0.5;
@@ -228,7 +231,10 @@ void simple_test() {
         "NetworkTopologyStrategy", options323);
 
 
-    full_ring_check(ring_points, options323, ars_ptr, stm.get());
+    locator::effective_replication_map_registry erm_registry;
+    auto stop_erm_registry = deferred_stop(erm_registry);
+
+    full_ring_check(ring_points, options323, ars_ptr, stm.get(), erm_registry);
 
     ///////////////
     // Create the replication strategy
@@ -241,7 +247,7 @@ void simple_test() {
     ars_ptr = abstract_replication_strategy::create_replication_strategy(
         "NetworkTopologyStrategy", options320);
 
-    full_ring_check(ring_points, options320, ars_ptr, stm.get());
+    full_ring_check(ring_points, options320, ars_ptr, stm.get(), erm_registry);
 
     //
     // Check cache invalidation: invalidate the cache and run a full ring
@@ -253,7 +259,7 @@ void simple_test() {
         tm.invalidate_cached_rings();
         return make_ready_future<>();
     }).get();
-    full_ring_check(ring_points, options320, ars_ptr, stm.get());
+    full_ring_check(ring_points, options320, ars_ptr, stm.get(), erm_registry);
 }
 
 // Run in a seastar thread.
@@ -320,7 +326,10 @@ void heavy_origin_test() {
     auto ars_ptr = abstract_replication_strategy::create_replication_strategy(
         "NetworkTopologyStrategy", config_options);
 
-    full_ring_check(ring_points, config_options, ars_ptr, stm.get());
+    locator::effective_replication_map_registry erm_registry;
+    auto stop_erm_registry = deferred_stop(erm_registry);
+
+    full_ring_check(ring_points, config_options, ars_ptr, stm.get(), erm_registry);
 }
 
 
