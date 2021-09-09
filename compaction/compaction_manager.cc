@@ -923,7 +923,7 @@ future<> compaction_manager::remove(column_family* cf) {
     _postponed.erase(boost::remove(_postponed, cf), _postponed.end());
 
     // Wait for the termination of an ongoing compaction on cf, if any.
-    return do_for_each(*tasks_to_stop, [this, cf] (auto& task) {
+    return parallel_for_each(*tasks_to_stop, [this, cf] (auto& task) {
         return this->task_stop(task);
     }).then([this, cf, tasks_to_stop] {
         _compaction_locks.erase(cf);
