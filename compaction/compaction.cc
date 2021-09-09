@@ -857,7 +857,7 @@ public:
 void compacting_sstable_writer::maybe_abort_compaction() {
     if (_c._info->is_stop_requested()) [[unlikely]] {
         // Compaction manager will catch this exception and re-schedule the compaction.
-        throw compaction_stop_exception(_c._info->ks_name, _c._info->cf_name, _c._info->stop_requested);
+        throw compaction_stopped_exception(_c._info->ks_name, _c._info->cf_name, _c._info->stop_requested);
     }
 }
 
@@ -1275,7 +1275,7 @@ private:
     private:
         void maybe_abort_scrub() {
             if (_scrub_mode == compaction_options::scrub::mode::abort) {
-                throw compaction_stop_exception(_schema->ks_name(), _schema->cf_name(), "scrub compaction found invalid data");
+                throw compaction_abort_exception(_schema->ks_name(), _schema->cf_name(), "scrub compaction found invalid data");
             }
         }
 
@@ -1286,7 +1286,7 @@ private:
 
             auto pe = mutation_fragment(*_schema, _permit, partition_end{});
             if (!_validator(pe)) {
-                throw compaction_stop_exception(
+                throw compaction_abort_exception(
                         _schema->ks_name(),
                         _schema->cf_name(),
                         "scrub compaction failed to rectify unexpected partition-start, validator rejects the injected partition-end");
@@ -1294,7 +1294,7 @@ private:
             push_mutation_fragment(std::move(pe));
 
             if (!_validator(ps)) {
-                throw compaction_stop_exception(
+                throw compaction_abort_exception(
                         _schema->ks_name(),
                         _schema->cf_name(),
                         "scrub compaction failed to rectify unexpected partition-start, validator rejects it even after the injected partition-end");
@@ -1407,7 +1407,7 @@ private:
             }).handle_exception([this] (std::exception_ptr e) {
                 try {
                     std::rethrow_exception(std::move(e));
-                } catch (const compaction_stop_exception&) {
+                } catch (const compaction_job_exception&) {
                     // Propagate these unchanged.
                     throw;
                 } catch (const storage_io_error&) {
@@ -1415,7 +1415,7 @@ private:
                     throw;
                 } catch (...) {
                     // We don't want failed scrubs to be retried.
-                    throw compaction_stop_exception(
+                    throw compaction_abort_exception(
                             _schema->ks_name(),
                             _schema->cf_name(),
                             format("scrub compaction failed due to unrecoverable error: {}", std::current_exception()));
@@ -1651,7 +1651,7 @@ future<bool> scrub_validate_mode_validate_reader(flat_mutation_reader reader, co
         while (auto mf_opt = co_await reader()) {
             if (info.is_stop_requested()) [[unlikely]] {
                 // Compaction manager will catch this exception and re-schedule the compaction.
-                co_return coroutine::make_exception(compaction_stop_exception(info.ks_name, info.cf_name, info.stop_requested));
+                co_return coroutine::make_exception(compaction_stopped_exception(info.ks_name, info.cf_name, info.stop_requested));
             }
 
             const auto& mf = *mf_opt;

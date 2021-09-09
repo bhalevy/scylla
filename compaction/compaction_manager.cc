@@ -274,9 +274,8 @@ future<> compaction_manager::submit_major_compaction(column_family* cf) {
         try {
             f.get();
             _stats.completed_tasks++;
-        } catch (sstables::compaction_stop_exception& e) {
+        } catch (sstables::compaction_stopped_exception& e) {
             cmlog.info("major compaction stopped, reason: {}", e.what());
-            _stats.errors++;
         } catch (...) {
             cmlog.error("major compaction failed, reason: {}", std::current_exception());
             _stats.errors++;
@@ -315,7 +314,7 @@ future<> compaction_manager::run_custom_job(column_family* cf, sstables::compact
         _tasks.remove(task);
         try {
             f.get();
-        } catch (sstables::compaction_stop_exception& e) {
+        } catch (sstables::compaction_stopped_exception& e) {
             cmlog.info("{} was abruptly stopped, reason: {}", task->type, e.what());
             throw;
         } catch (...) {
@@ -464,7 +463,7 @@ future<> compaction_manager::stop_ongoing_compactions(sstring reason) {
             return this->task_stop(task).then_wrapped([](future <> f) {
                 try {
                     f.get();
-                } catch (sstables::compaction_stop_exception& e) {
+                } catch (sstables::compaction_stopped_exception& e) {
                     // swallow stop exception if a given procedure decides to propagate it to the caller,
                     // as it happens with reshard and reshape.
                 } catch (...) {
@@ -537,8 +536,10 @@ inline bool compaction_manager::maybe_stop_on_error(future<> f) {
 
     try {
         f.get();
-    } catch (sstables::compaction_stop_exception& e) {
+    } catch (sstables::compaction_stopped_exception& e) {
         cmlog.info("compaction info: {}: stopping", e.what());
+    } catch (sstables::compaction_abort_exception& e) {
+        cmlog.error("compaction info: {}: stopping", e.what());
     } catch (storage_io_error& e) {
         cmlog.error("compaction failed due to storage io error: {}: stopping", e.what());
         do_stop();
@@ -648,8 +649,11 @@ void compaction_manager::submit_offstrategy(column_family* cf) {
                     try {
                         f.get();
                         _stats.completed_tasks++;
-                    } catch (sstables::compaction_stop_exception& e) {
-                        cmlog.info("off-strategy compaction was abruptly stopped, reason: {}", e.what());
+                    } catch (sstables::compaction_stopped_exception& e) {
+                        cmlog.info("off-strategy compaction: {}", e.what());
+                    } catch (sstables::compaction_abort_exception& e) {
+                        _stats.errors++;
+                        cmlog.error("off-strategy compaction: {}", e.what());
                     } catch (...) {
                         _stats.errors++;
                         _stats.pending_tasks++;
@@ -789,7 +793,7 @@ future<> compaction_manager::perform_sstable_scrub_validate_mode(column_family* 
                             sstables::compaction_options::make_scrub(sstables::compaction_options::scrub::mode::validate));
                     return compact_sstables(std::move(desc), cf);
                 });
-            } catch (sstables::compaction_stop_exception&) {
+            } catch (sstables::compaction_stopped_exception&) {
                 throw; // let run_custom_job() handle this
             } catch (storage_io_error&) {
                 throw; // let run_custom_job() handle this
