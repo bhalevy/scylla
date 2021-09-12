@@ -538,11 +538,9 @@ inline bool compaction_manager::maybe_stop_on_error(future<> f) {
     try {
         f.get();
     } catch (sstables::compaction_stop_exception& e) {
-        retry = false;
         cmlog.info("compaction info: {}: stopping", e.what());
     } catch (storage_io_error& e) {
         cmlog.error("compaction failed due to storage io error: {}: stopping", e.what());
-        retry = false;
         do_stop();
     } catch (...) {
         cmlog.error("compaction failed: {}: retrying", std::current_exception());
