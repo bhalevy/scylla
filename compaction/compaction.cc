@@ -1275,7 +1275,7 @@ private:
     private:
         void maybe_abort_scrub() {
             if (_scrub_mode == compaction_options::scrub::mode::abort) {
-                throw compaction_stop_exception(_schema->ks_name(), _schema->cf_name(), "scrub compaction found invalid data", false);
+                throw compaction_stop_exception(_schema->ks_name(), _schema->cf_name(), "scrub compaction found invalid data");
             }
         }
 
@@ -1289,8 +1289,7 @@ private:
                 throw compaction_stop_exception(
                         _schema->ks_name(),
                         _schema->cf_name(),
-                        "scrub compaction failed to rectify unexpected partition-start, validator rejects the injected partition-end",
-                        false);
+                        "scrub compaction failed to rectify unexpected partition-start, validator rejects the injected partition-end");
             }
             push_mutation_fragment(std::move(pe));
 
@@ -1298,8 +1297,7 @@ private:
                 throw compaction_stop_exception(
                         _schema->ks_name(),
                         _schema->cf_name(),
-                        "scrub compaction failed to rectify unexpected partition-start, validator rejects it even after the injected partition-end",
-                        false);
+                        "scrub compaction failed to rectify unexpected partition-start, validator rejects it even after the injected partition-end");
             }
         }
 
@@ -1420,8 +1418,7 @@ private:
                     throw compaction_stop_exception(
                             _schema->ks_name(),
                             _schema->cf_name(),
-                            format("scrub compaction failed due to unrecoverable error: {}", std::current_exception()),
-                            false);
+                            format("scrub compaction failed due to unrecoverable error: {}", std::current_exception()));
                 }
             });
         }
