@@ -532,7 +532,7 @@ inline future<> compaction_manager::put_task_to_sleep(lw_shared_ptr<task>& task)
     return task->compaction_retry.retry();
 }
 
-inline bool compaction_manager::maybe_stop_on_error(future<> f, stop_iteration will_stop) {
+inline bool compaction_manager::maybe_stop_on_error(future<> f) {
     bool retry = false;
 
     try {
@@ -600,7 +600,7 @@ void compaction_manager::submit(column_family* cf) {
                 task->compaction_running = false;
 
                 if (!can_proceed(task)) {
-                    maybe_stop_on_error(std::move(f), stop_iteration::yes);
+                    maybe_stop_on_error(std::move(f));
                     return make_ready_future<stop_iteration>(stop_iteration::yes);
                 }
                 if (maybe_stop_on_error(std::move(f))) {
@@ -735,7 +735,7 @@ future<> compaction_manager::rewrite_sstables(column_family* cf, sstables::compa
                 task->compaction_running = false;
                 _stats.active_tasks--;
                 if (!can_proceed(task)) {
-                    maybe_stop_on_error(std::move(f), stop_iteration::yes);
+                    maybe_stop_on_error(std::move(f));
                     return make_ready_future<stop_iteration>(stop_iteration::yes);
                 }
                 if (maybe_stop_on_error(std::move(f))) {
