@@ -1669,7 +1669,7 @@ future<std::map<gms::inet_address, float>> storage_service::effective_ownership(
                 // calculate the ownership with replication and add the endpoint to the final ownership map
                 try {
                     float ownership = 0.0f;
-                    auto ranges = ss.get_ranges_for_endpoint(keyspace_name, endpoint);
+                    auto ranges = co_await ss.get_ranges_for_endpoint(keyspace_name, endpoint);
                     for (auto& r : ranges) {
                         // get_ranges_for_endpoint will unwrap the first range.
                         // With t0 t1 t2 t3, the first range (t3,t0] will be splitted
@@ -2720,7 +2720,8 @@ future<> storage_service::rebuild(sstring source_dc) {
             }
             auto keyspaces = ss._db.local().get_non_system_keyspaces();
             for (auto& keyspace_name : keyspaces) {
-                co_await streamer->add_ranges(keyspace_name, ss.get_ranges_for_endpoint(keyspace_name, utils::fb_utilities::get_broadcast_address()));
+                auto ranges = co_await ss.get_ranges_for_endpoint(keyspace_name, utils::fb_utilities::get_broadcast_address());
+                co_await streamer->add_ranges(keyspace_name, std::move(ranges));
             }
             try {
                 co_await streamer->stream_async();
@@ -2753,7 +2754,7 @@ future<bool> storage_service::is_initialized() {
 // Runs inside seastar::async context
 std::unordered_multimap<dht::token_range, inet_address> storage_service::get_changed_ranges_for_leaving(sstring keyspace_name, inet_address endpoint) {
     // First get all ranges the leaving endpoint is responsible for
-    auto ranges = get_ranges_for_endpoint(keyspace_name, endpoint);
+    auto ranges = get_ranges_for_endpoint(keyspace_name, endpoint).get0();
 
     slogger.debug("Node {} ranges [{}]", endpoint, ranges);
 
@@ -3734,9 +3735,9 @@ storage_service::get_splits(const sstring& ks_name, const sstring& cf_name, rang
     return calculate_splits(std::move(tokens), split_count, cf);
 };
 
-dht::token_range_vector
+future<dht::token_range_vector>
 storage_service::get_ranges_for_endpoint(const sstring& name, const gms::inet_address& ep) const {
-    return _db.local().find_keyspace(name).get_replication_strategy().get_ranges(ep);
+    return make_ready_future<dht::token_range_vector>(_db.local().find_keyspace(name).get_replication_strategy().get_ranges(ep));
 }
 
 dht::token_range_vector
