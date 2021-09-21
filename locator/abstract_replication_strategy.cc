@@ -154,6 +154,23 @@ insert_token_range_to_sorted_container_while_unwrapping(
     }
 }
 
+dht::token_range_vector
+effective_replication_map::get_ranges(inet_address ep) const {
+    dht::token_range_vector ret;
+    const auto& tm = *_tmptr;
+    auto prev_tok = tm.sorted_tokens().back();
+    for (const auto& tok : tm.sorted_tokens()) {
+        for (inet_address a : get_natural_endpoints(tok)) {
+            if (a == ep) {
+                insert_token_range_to_sorted_container_while_unwrapping(prev_tok, tok, ret);
+                break;
+            }
+        }
+        prev_tok = tok;
+    }
+    return ret;
+}
+
 // Caller must ensure that token_metadata will not change throughout the call if can_yield::yes.
 dht::token_range_vector
 abstract_replication_strategy::do_get_ranges(inet_address ep, const token_metadata_ptr tmptr, can_yield can_yield) const {
