@@ -148,21 +148,22 @@ auto d2t = [](double d) -> int64_t {
  * @param ring_points ring description
  * @param options strategy options
  * @param ars_ptr strategy object
+ *
+ * Run in a seastar thread.
  */
 void full_ring_check(const std::vector<ring_point>& ring_points,
                      const std::map<sstring, sstring>& options,
                      abstract_replication_strategy* ars_ptr) {
     strategy_sanity_check(ars_ptr, options);
 
+    auto ers = ars_ptr->make_effective().get0();
+
     for (auto& rp : ring_points) {
         double cur_point1 = rp.point - 0.5;
         token t1(dht::token::kind::key, d2t(cur_point1 / ring_points.size()));
-        uint64_t cache_hit_count = ars_ptr->get_cache_hits_count();
-        auto endpoints1 = ars_ptr->get_natural_endpoints(t1);
+        auto endpoints1 = ers->get_natural_endpoints(t1);
 
         endpoints_check(ars_ptr, endpoints1);
-        // validate that the result hasn't been taken from the cache
-        BOOST_CHECK(cache_hit_count == ars_ptr->get_cache_hits_count());
 
         print_natural_endpoints(cur_point1, endpoints1);
 
@@ -171,14 +172,12 @@ void full_ring_check(const std::vector<ring_point>& ring_points,
         // the endpoints has been taken from the cache and that the output is
         // identical to the one not taken from the cache.
         //
-        cache_hit_count = ars_ptr->get_cache_hits_count();
         double cur_point2 = rp.point - 0.2;
         token t2(dht::token::kind::key, d2t(cur_point2 / ring_points.size()));
-        auto endpoints2 = ars_ptr->get_natural_endpoints(t2);
+        auto endpoints2 = ers->get_natural_endpoints(t2);
 
         endpoints_check(ars_ptr, endpoints2);
         check_ranges_are_sorted(ars_ptr, rp.host);
-        BOOST_CHECK(cache_hit_count + 1 == ars_ptr->get_cache_hits_count());
         BOOST_CHECK(endpoints1 == endpoints2);
     }
 }
