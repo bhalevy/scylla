@@ -115,14 +115,6 @@ public:
     virtual bool allow_remove_node_being_replaced_from_natural_endpoints() const = 0;
     replication_strategy_type get_type() const { return _my_type; }
 
-    // get_ranges() returns the list of ranges held by the given endpoint.
-    // The list is sorted, and its elements are non overlapping and non wrap-around.
-    // It the analogue of Origin's getAddressRanges().get(endpoint).
-    // This function is not efficient, and not meant for the fast path.
-    dht::token_range_vector get_ranges(inet_address ep, can_yield can_yield = can_yield::no) const {
-        return do_get_ranges(ep, _shared_token_metadata.get(), can_yield);
-    }
-
     // Use the token_metadata provided by the caller instead of _token_metadata
     // Caller must ensure that token_metadata will not change throughout the call if can_yield::yes
     dht::token_range_vector get_ranges(inet_address ep, const token_metadata_ptr tmptr, can_yield can_yield = can_yield::no) const {
@@ -195,6 +187,12 @@ public:
 
     inet_address_vector_replica_set get_natural_endpoints(const token& search_token) const;
     inet_address_vector_replica_set get_natural_endpoints_without_node_being_replaced(const token& search_token) const;
+
+    // get_ranges() returns the list of ranges held by the given endpoint.
+    // The list is sorted, and its elements are non overlapping and non wrap-around.
+    // It the analogue of Origin's getAddressRanges().get(endpoint).
+    // This function is not efficient, and not meant for the fast path.
+    dht::token_range_vector get_ranges(inet_address ep) const;
 };
 
 using effective_replication_map_ptr = lw_shared_ptr<const effective_replication_map>;
