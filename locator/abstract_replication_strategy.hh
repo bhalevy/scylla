@@ -133,7 +133,6 @@ public:
                                               const shared_token_metadata& stm,
                                               const replication_strategy_config_options& config_options);
     static void validate_replication_factor(sstring rf);
-    inet_address_vector_replica_set get_natural_endpoints(const token& search_token, can_yield = can_yield::no);
     inet_address_vector_replica_set get_natural_endpoints_without_node_being_replaced(const token& search_token, can_yield = can_yield::no);
     virtual void validate_options() const = 0;
     virtual std::optional<std::set<sstring>> recognized_options() const = 0;
