@@ -1069,6 +1069,11 @@ keyspace::get_replication_strategy() const {
     return *_replication_strategy;
 }
 
+const locator::abstract_replication_strategy::ptr_type&
+keyspace::get_replication_strategy_ptr() const {
+    return _replication_strategy;
+}
+
 const locator::effective_replication_map_ptr&
 keyspace::get_effective_replication_map() const {
     return _effective_replication_map;

@@ -1181,6 +1181,7 @@ public:
      */
     locator::abstract_replication_strategy& get_replication_strategy();
     const locator::abstract_replication_strategy& get_replication_strategy() const;
+    const locator::abstract_replication_strategy::ptr_type& get_replication_strategy_ptr() const;
     const locator::effective_replication_map_ptr& get_effective_replication_map() const;
 
     column_family::config make_column_family_config(const schema& s, const database& db) const;

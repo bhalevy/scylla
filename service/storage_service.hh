@@ -42,6 +42,7 @@
 #include "gms/i_endpoint_state_change_subscriber.hh"
 #include "service/endpoint_lifecycle_subscriber.hh"
 #include "locator/token_metadata.hh"
+#include "locator/abstract_replication_strategy.hh"
 #include "inet_address_vectors.hh"
 #include <seastar/core/distributed.hh>
 #include <seastar/core/condition-variable.hh>
@@ -158,6 +159,8 @@ private:
     using shared_token_metadata = locator::shared_token_metadata;
     using token_metadata_ptr = locator::token_metadata_ptr;
     using mutable_token_metadata_ptr = locator::mutable_token_metadata_ptr;
+    using effective_replication_map_ptr = locator::effective_replication_map_ptr;
+    using mutable_effective_replication_map_ptr = locator::mutable_effective_replication_map_ptr;
     using application_state = gms::application_state;
     using inet_address = gms::inet_address;
     using versioned_value = gms::versioned_value;
