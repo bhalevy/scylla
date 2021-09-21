@@ -89,6 +89,7 @@
 #include "service/priority_manager.hh"
 #include "utils/generation-number.hh"
 #include <seastar/core/coroutine.hh>
+#include "utils/stall_free.hh"
 
 #include <boost/algorithm/string/split.hpp>
 #include <boost/algorithm/string/classification.hpp>
@@ -1408,6 +1409,28 @@ future<> storage_service::replicate_to_all_cores(mutable_token_metadata_ptr tmpt
             auto tm = co_await tmptr->clone_async();
             ss._pending_token_metadata_ptr = make_token_metadata_ptr(std::move(tm));
         });
+
+        // Precalculate new effective_replication_map for all keyspaces
+        // and clone to all shards;
+        auto& db = _db.local();
+        auto keyspaces = db.get_non_system_keyspaces();
+        for (auto& ks_name : keyspaces) {
+            locator::effective_replication_map_ptr erm;
+            auto& rs = db.find_keyspace(ks_name).get_replication_strategy();
+            erm = co_await rs.make_effective_replication_map(_pending_token_metadata_ptr);
+            _pending_effective_replication_maps.emplace(ks_name, erm);
+        }
+        auto& erms0 = _pending_effective_replication_maps;
+        co_await container().invoke_on_others([&keyspaces, &erms0] (storage_service& ss) -> future<> {
+            auto& db = ss._db.local();
+            for (auto& ks_name : keyspaces) {
+                auto& rs = db.find_keyspace(ks_name).get_replication_strategy();
+                const auto& erm0 = erms0.at(ks_name);
+                auto local_replication_map = co_await erm0->clone_endpoints_gently();
+                auto erm = make_lw_shared<locator::effective_replication_map>(rs, ss._pending_token_metadata_ptr, std::move(local_replication_map));
+                ss._pending_effective_replication_maps.emplace(ks_name, std::move(erm));
+            }
+        });
     } catch (...) {
         ex = std::current_exception();
     }
@@ -1416,9 +1439,11 @@ future<> storage_service::replicate_to_all_cores(mutable_token_metadata_ptr tmpt
     if (ex) {
         try {
             co_await container().invoke_on_all([] (storage_service& ss) -> future<> {
-                if (auto tmptr = std::move(ss._pending_token_metadata_ptr)) {
-                    co_await tmptr->clear_gently();
-                }
+                auto tmptr = std::move(ss._pending_token_metadata_ptr);
+                auto erms = std::move(ss._pending_effective_replication_maps);
+
+                co_await utils::clear_gently(erms);
+                co_await utils::clear_gently(tmptr);
             });
         } catch (...) {
             slogger.warn("Failure to reset pending token_metadata in cleanup path: {}. Ignored.", std::current_exception());
@@ -1429,8 +1454,15 @@ future<> storage_service::replicate_to_all_cores(mutable_token_metadata_ptr tmpt
 
     // Apply changes on all shards
     try {
-        co_await container().invoke_on_all([] (storage_service& ss) {
+        co_await container().invoke_on_all([] (storage_service& ss) -> future<> {
             ss._shared_token_metadata.set(std::move(ss._pending_token_metadata_ptr));
+
+            for (auto it = ss._pending_effective_replication_maps.begin(); it !=  ss._pending_effective_replication_maps.end(); ) {
+                auto& db = ss._db.local();
+                auto& ks = db.find_keyspace(it->first);
+                co_await ks.update_effective_replication_map(std::move(it->second));
+                it = ss._pending_effective_replication_maps.erase(it);
+            }
         });
     } catch (...) {
         // applying the changes on all shards should never fail

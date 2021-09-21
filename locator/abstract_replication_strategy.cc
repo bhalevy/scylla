@@ -24,6 +24,7 @@
 #include "exceptions/exceptions.hh"
 #include <boost/range/algorithm/remove_if.hpp>
 #include <seastar/core/coroutine.hh>
+#include <seastar/coroutine/maybe_yield.hh>
 #include "utils/stall_free.hh"
 
 namespace locator {
@@ -356,6 +357,17 @@ future<effective_replication_map_ptr> abstract_replication_strategy::make_effect
 future<> effective_replication_map::clear_gently() noexcept {
     co_await utils::clear_gently(_all_endpoints);
     co_await utils::clear_gently(_tmptr);
+}
+
+future<replication_map> effective_replication_map::clone_endpoints_gently() const {
+    replication_map cloned_endpoints;
+
+    for (auto& i : _all_endpoints) {
+        cloned_endpoints.emplace(i.first, i.second);
+        co_await coroutine::maybe_yield();
+    }
+
+    co_return cloned_endpoints;
 }
 
 inet_address_vector_replica_set effective_replication_map::get_natural_endpoints(const token& search_token) const {
