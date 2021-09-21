@@ -74,6 +74,10 @@ private:
 public:
     effective_replication_strategy(const abstract_replication_strategy& rs, token_metadata_ptr tmptr, std::unique_ptr<impl> impl) noexcept;
 
+    const token_metadata_ptr& get_token_metadata_ptr() const noexcept {
+        return _tmptr;
+    }
+
     inet_address_vector_replica_set get_natural_endpoints(const token& search_token) const {
         return _impl->get_natural_endpoints(search_token, *_tmptr);
     }
