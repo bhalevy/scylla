@@ -1468,6 +1468,14 @@ future<> storage_service::replicate_to_all_cores(mutable_token_metadata_ptr tmpt
         }
         return container().invoke_on_all([] (storage_service& ss) {
             ss._shared_token_metadata.set(std::move(ss._pending_token_metadata_ptr));
+        }).then([this] {
+            return _db.invoke_on_all([this] (database& db) -> future<> {
+                return do_with(db.get_non_system_keyspaces(), [&db] (auto& keyspaces) mutable {
+                    return do_for_each(keyspaces, [&db] (auto& keyspace_name) mutable {
+                        return db.find_keyspace(keyspace_name).update_effective_replication_strategy();
+                    });
+                });
+            });
         }).handle_exception([] (auto e) noexcept {
             // applying the changes on all shards should never fail
             // it will end up in an inconsistent state that we can't recover from.
