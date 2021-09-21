@@ -23,6 +23,7 @@
 #define DATABASE_HH_
 
 #include "locator/token_metadata.hh"
+#include "locator/abstract_replication_strategy.hh"
 #include "index/secondary_index_manager.hh"
 #include <seastar/core/abort_source.hh>
 #include <seastar/core/sstring.hh>
@@ -122,14 +123,6 @@ class large_data_handler;
 future<> system_keyspace_make(database& db, service::storage_service& ss);
 
 }
-
-namespace locator {
-
-using replication_strategy_config_options = std::map<sstring, sstring>;
-
-class abstract_replication_strategy;
-
-} // namespace locator
 
 namespace wasm {
 class engine;
@@ -1159,6 +1152,7 @@ public:
     };
 private:
     std::unique_ptr<locator::abstract_replication_strategy> _replication_strategy;
+    lw_shared_ptr<locator::effective_replication_strategy> _effective_replication_strategy;
     lw_shared_ptr<keyspace_metadata> _metadata;
     shared_promise<> _populated;
     config _config;
@@ -1173,6 +1167,7 @@ public:
      */
     lw_shared_ptr<keyspace_metadata> metadata() const;
     future<> create_replication_strategy(const locator::shared_token_metadata& stm, const locator::replication_strategy_config_options& options);
+    future<> update_effective_replication_strategy();
     /**
      * This should not really be return by reference, since replication
      * strategy is also volatile in that it could be replaced at "any" time.
@@ -1182,6 +1177,8 @@ public:
      */
     locator::abstract_replication_strategy& get_replication_strategy();
     const locator::abstract_replication_strategy& get_replication_strategy() const;
+    const lw_shared_ptr<locator::effective_replication_strategy>& get_effective_replication_strategy() const;
+
     column_family::config make_column_family_config(const schema& s, const database& db) const;
     future<> make_directory_for_column_family(const sstring& name, utils::UUID uuid);
     void add_or_update_column_family(const schema_ptr& s);

@@ -1048,7 +1048,16 @@ keyspace::create_replication_strategy(const locator::shared_token_metadata& stm,
             abstract_replication_strategy::create_replication_strategy(
                 _metadata->strategy_name(), stm, options);
 
-    return make_ready_future<>();
+    return update_effective_replication_strategy();
+}
+
+future<>
+keyspace::update_effective_replication_strategy() {
+    // TODO: All keyspaces with the same replication strategy / config options / token_metadata
+    // share the same map, so use a shared registry to share the effective replication strategy.
+    return _replication_strategy->make_effective().then([this] (lw_shared_ptr<locator::effective_replication_strategy> ers) {
+        _effective_replication_strategy = std::move(ers);
+    });
 }
 
 locator::abstract_replication_strategy&
@@ -1060,6 +1069,11 @@ keyspace::get_replication_strategy() {
 const locator::abstract_replication_strategy&
 keyspace::get_replication_strategy() const {
     return *_replication_strategy;
+}
+
+const lw_shared_ptr<locator::effective_replication_strategy>&
+keyspace::get_effective_replication_strategy() const {
+    return _effective_replication_strategy;
 }
 
 future<> keyspace::update_from(const locator::shared_token_metadata& stm, ::lw_shared_ptr<keyspace_metadata> ksm) {
