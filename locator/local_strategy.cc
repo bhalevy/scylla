@@ -54,6 +54,18 @@ size_t local_strategy::get_replication_factor() const {
     return 1;
 }
 
+class effective_local_strategy_impl : public effective_replication_strategy::impl {
+    virtual inet_address_vector_replica_set get_natural_endpoints(const token&, const token_metadata&) const override {
+        return inet_address_vector_replica_set({utils::fb_utilities::get_broadcast_address()});
+    }
+};
+
+future<lw_shared_ptr<effective_replication_strategy>> local_strategy::make_effective(token_metadata_ptr tmptr) const {
+    auto impl = std::make_unique<effective_local_strategy_impl>();
+    auto ers = make_lw_shared<effective_replication_strategy>(*this, std::move(tmptr), std::move(impl));
+    return make_ready_future<lw_shared_ptr<effective_replication_strategy>>(std::move(ers));
+}
+
 using registry = class_registrator<abstract_replication_strategy, local_strategy, const shared_token_metadata&, snitch_ptr&, const replication_strategy_config_options&>;
 static registry registrator("org.apache.cassandra.locator.LocalStrategy");
 static registry registrator_short_name("LocalStrategy");

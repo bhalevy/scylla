@@ -69,6 +69,8 @@ public:
         return true;
     }
 
+    virtual future<lw_shared_ptr<effective_replication_strategy>> make_effective(token_metadata_ptr tmptr) const override;
+
 protected:
     /**
      * calculate endpoints in one pass through the tokens by tracking our

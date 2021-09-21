@@ -322,6 +322,31 @@ std::optional<std::set<sstring>> network_topology_strategy::recognized_options()
     return datacenters;
 }
 
+class effective_network_topology_strategy_impl : public effective_replication_strategy::impl {
+    replication_map _all_endpoints;
+public:
+    explicit effective_network_topology_strategy_impl(replication_map all_endpoints) noexcept
+        : _all_endpoints(std::move(all_endpoints))
+    {}
+
+    virtual inet_address_vector_replica_set get_natural_endpoints(const token& search_token, const token_metadata& tm) const override {
+        const token& key_token = tm.first_token(search_token);
+        auto res = _all_endpoints.find(key_token);
+        return res->second;
+    }
+};
+
+future<lw_shared_ptr<effective_replication_strategy>> network_topology_strategy::make_effective(token_metadata_ptr tmptr) const {
+    replication_map m;
+
+    for (const auto &t : tmptr->sorted_tokens()) {
+        m[t] = co_await calculate_natural_endpoints(t, *tmptr);
+    }
+
+    auto impl = std::make_unique<effective_network_topology_strategy_impl>(std::move(m));
+    co_return make_lw_shared<effective_replication_strategy>(*this, std::move(tmptr), std::move(impl));
+}
+
 using registry = class_registrator<abstract_replication_strategy, network_topology_strategy, const shared_token_metadata&, snitch_ptr&, const replication_strategy_config_options&>;
 static registry registrator("org.apache.cassandra.locator.NetworkTopologyStrategy");
 static registry registrator_short_name("NetworkTopologyStrategy");

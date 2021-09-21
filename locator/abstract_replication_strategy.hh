@@ -53,6 +53,32 @@ using replication_strategy_config_options = std::map<sstring, sstring>;
 
 using replication_map = std::unordered_map<token, inet_address_vector_replica_set>;
 
+// base class for replication strategy type applied over given
+// token_metadata and replication_strategy_config_options
+class effective_replication_strategy {
+public:
+    struct impl {
+        impl() = default;
+        impl(impl&&) = delete;
+        impl(const impl&) = delete;
+        virtual ~impl() = default;
+
+        virtual inet_address_vector_replica_set get_natural_endpoints(const token& search_token, const token_metadata& tm) const = 0;
+    };
+
+    const abstract_replication_strategy& _rs;   // FIXME: public while unused
+private:
+    token_metadata_ptr _tmptr;
+    std::unique_ptr<impl> _impl;
+
+public:
+    effective_replication_strategy(const abstract_replication_strategy& rs, token_metadata_ptr tmptr, std::unique_ptr<impl> impl) noexcept;
+
+    inet_address_vector_replica_set get_natural_endpoints(const token& search_token) const {
+        return _impl->get_natural_endpoints(search_token, *_tmptr);
+    }
+};
+
 class abstract_replication_strategy {
 private:
     long _last_invalidated_ring_version = 0;
@@ -63,6 +89,8 @@ private:
 
     replication_map&
     get_cached_endpoints(const token_metadata& tm);
+
+    friend class effective_replication_strategy;
 protected:
     replication_strategy_config_options _config_options;
     const shared_token_metadata& _shared_token_metadata;
@@ -132,6 +160,14 @@ public:
     dht::token_range_vector get_ranges(inet_address ep, const token_metadata_ptr tmptr, can_yield can_yield = can_yield::no) const {
         return do_get_ranges(ep, std::move(tmptr), can_yield);
     }
+
+    // Apply the replication strategy over the current configuration and token_metadata.
+    virtual future<lw_shared_ptr<effective_replication_strategy>> make_effective() const {
+        return make_effective(_shared_token_metadata.get());
+    }
+
+    // Apply the replication strategy over the current configuration and the given token_metadata.
+    virtual future<lw_shared_ptr<effective_replication_strategy>> make_effective(token_metadata_ptr tmptr) const = 0;
 private:
     // Caller must ensure that token_metadata will not change throughout the call if can_yield::yes.
     dht::token_range_vector do_get_ranges(inet_address ep, const token_metadata_ptr tmptr, can_yield) const;

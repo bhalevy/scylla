@@ -36,7 +36,6 @@
  * along with Scylla.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-
 #include "locator/everywhere_replication_strategy.hh"
 #include "utils/class_registrator.hh"
 #include "utils/fb_utilities.hh"
@@ -64,6 +63,26 @@ inet_address_vector_replica_set everywhere_replication_strategy::do_get_natural_
 
 size_t everywhere_replication_strategy::get_replication_factor() const {
     return _shared_token_metadata.get()->count_normal_token_owners();
+}
+
+class effective_everywhere_replication_strategy_impl : public effective_replication_strategy::impl {
+    inet_address_vector_replica_set _all_endpoints;
+public:
+    explicit effective_everywhere_replication_strategy_impl(const token_metadata& tm) noexcept
+        : _all_endpoints(tm.sorted_tokens().empty()
+                ? inet_address_vector_replica_set({utils::fb_utilities::get_broadcast_address()})
+                : boost::copy_range<inet_address_vector_replica_set>(tm.get_all_endpoints()))
+    { }
+
+    virtual inet_address_vector_replica_set get_natural_endpoints(const token& search_token, const token_metadata& tm) const override {
+        return _all_endpoints;
+    }
+};
+
+future<lw_shared_ptr<effective_replication_strategy>> everywhere_replication_strategy::make_effective(token_metadata_ptr tmptr) const {
+    auto impl = std::make_unique<effective_everywhere_replication_strategy_impl>(*tmptr);
+    auto ers = make_lw_shared<effective_replication_strategy>(*this, std::move(tmptr), std::move(impl));
+    return make_ready_future<lw_shared_ptr<effective_replication_strategy>>(std::move(ers));
 }
 
 using registry = class_registrator<abstract_replication_strategy, everywhere_replication_strategy, const shared_token_metadata&, snitch_ptr&, const replication_strategy_config_options&>;

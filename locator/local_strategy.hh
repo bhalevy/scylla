@@ -58,6 +58,7 @@ public:
         return false;
     }
 
+    virtual future<lw_shared_ptr<effective_replication_strategy>> make_effective(token_metadata_ptr tmptr) const override;
 };
 
 }

@@ -62,5 +62,7 @@ public:
     virtual bool allow_remove_node_being_replaced_from_natural_endpoints() const override {
         return true;
     }
+
+    virtual future<lw_shared_ptr<effective_replication_strategy>> make_effective(token_metadata_ptr tmptr) const override;
 };
 }

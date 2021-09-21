@@ -336,4 +336,11 @@ abstract_replication_strategy::get_pending_address_ranges(const token_metadata_p
     return ret;
 }
 
+effective_replication_strategy::effective_replication_strategy(const abstract_replication_strategy& rs, token_metadata_ptr tmptr, std::unique_ptr<impl> impl) noexcept
+    : _rs(rs)
+    , _tmptr(std::move(tmptr))
+    , _impl(std::move(impl))
+{
+}
+
 } // namespace locator
