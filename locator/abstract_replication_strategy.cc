@@ -24,6 +24,7 @@
 #include "exceptions/exceptions.hh"
 #include <boost/range/algorithm/remove_if.hpp>
 #include <seastar/core/coroutine.hh>
+#include <seastar/coroutine/maybe_yield.hh>
 
 namespace locator {
 
@@ -144,6 +145,24 @@ insert_token_range_to_sorted_container_while_unwrapping(
                 std::nullopt,
                 dht::token_range::bound(tok, true));
     }
+}
+
+future<dht::token_range_vector>
+effective_replication_strategy::get_ranges(inet_address ep) const {
+    dht::token_range_vector ret;
+    const auto& tm = *_tmptr;
+    auto prev_tok = tm.sorted_tokens().back();
+    for (const auto& tok : tm.sorted_tokens()) {
+        for (inet_address a : get_natural_endpoints(tok)) {
+            if (a == ep) {
+                insert_token_range_to_sorted_container_while_unwrapping(prev_tok, tok, ret);
+                break;
+            }
+        }
+        prev_tok = tok;
+        co_await coroutine::maybe_yield();
+    }
+    co_return ret;
 }
 
 // Caller must ensure that token_metadata will not change throughout the call if can_yield::yes.

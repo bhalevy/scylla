@@ -2186,7 +2186,7 @@ const sstring& database::get_snitch_name() const {
 }
 
 future<dht::token_range_vector> database::get_keyspace_local_ranges(sstring ks) {
-    return make_ready_future<dht::token_range_vector>(find_keyspace(ks).get_replication_strategy().get_ranges(utils::fb_utilities::get_broadcast_address()));
+    return find_keyspace(ks).get_effective_replication_strategy()->get_ranges(utils::fb_utilities::get_broadcast_address());
 }
 
 /*!
