@@ -848,7 +848,7 @@ future<> compaction_manager::perform_cleanup(database& db, column_family* cf) {
     }
     return seastar::async([this, cf, &db] {
         auto schema = cf->schema();
-        auto sorted_owned_ranges = db.get_keyspace_local_ranges(schema->ks_name());
+        auto sorted_owned_ranges = db.get_keyspace_local_ranges(schema->ks_name()).get0();
         auto sstables = std::vector<sstables::shared_sstable>{};
         const auto candidates = get_candidates(*cf);
         std::copy_if(candidates.begin(), candidates.end(), std::back_inserter(sstables), [&sorted_owned_ranges, schema] (const sstables::shared_sstable& sst) {

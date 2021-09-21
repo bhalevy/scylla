@@ -1057,7 +1057,7 @@ future<int> repair_service::do_repair_start(sstring keyspace, std::unordered_map
             ranges = get_primary_ranges(db.local(), keyspace);
         }
     } else {
-        ranges = db.local().get_keyspace_local_ranges(keyspace);
+        ranges = co_await db.local().get_keyspace_local_ranges(keyspace);
     }
 
     if (!options.data_centers.empty() && !options.hosts.empty()) {

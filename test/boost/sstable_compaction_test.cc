@@ -2036,7 +2036,7 @@ SEASTAR_TEST_CASE(sstable_cleanup_correctness_test) {
             cf->mark_ready_for_writes();
             cf->start();
 
-            dht::token_range_vector local_ranges = db.get_keyspace_local_ranges(ks_name);
+            dht::token_range_vector local_ranges = db.get_keyspace_local_ranges(ks_name).get0();
             auto descriptor = sstables::compaction_descriptor({std::move(sst)}, cf->get_sstable_set(), default_priority_class(), compaction_descriptor::default_level,
                 compaction_descriptor::default_max_sstable_bytes, run_identifier, compaction_type_options::make_cleanup(std::move(local_ranges)));
             auto ret = compact_sstables(std::move(descriptor), *cf, sst_gen).get0();
