@@ -79,22 +79,6 @@ inet_address_vector_replica_set abstract_replication_strategy::do_calculate_natu
     }
 }
 
-inet_address_vector_replica_set abstract_replication_strategy::do_get_natural_endpoints(const token& search_token, const token_metadata& tm, can_yield can_yield) {
-    const token& key_token = tm.first_token(search_token);
-    auto& cached_endpoints = get_cached_endpoints(tm);
-    auto res = cached_endpoints.find(key_token);
-
-    if (res == cached_endpoints.end()) {
-        auto endpoints = do_calculate_natural_endpoints(search_token, tm, can_yield);
-        cached_endpoints.emplace(key_token, endpoints);
-
-        return endpoints;
-    }
-
-    ++_cache_hits_count;
-    return res->second;
-}
-
 inet_address_vector_replica_set effective_replication_strategy::get_natural_endpoints_without_node_being_replaced(const token& search_token) const {
     inet_address_vector_replica_set natural_endpoints = get_natural_endpoints(search_token);
     if (_tmptr->is_any_node_being_replaced() &&
