@@ -705,27 +705,24 @@ future<> repair_info::repair_range(const dht::token_range& range) {
     });
 }
 
-static dht::token_range_vector get_primary_ranges_for_endpoint(
-        database& db, sstring keyspace, gms::inet_address ep, utils::can_yield can_yield = utils::can_yield::no) {
-    auto& rs = db.find_keyspace(keyspace).get_replication_strategy();
-    return rs.get_primary_ranges(ep, can_yield);
+static future<dht::token_range_vector> get_primary_ranges_for_endpoint(
+        database& db, sstring keyspace, gms::inet_address ep) {
+    return db.find_keyspace(keyspace).get_effective_replication_strategy()->get_primary_ranges(ep);
 }
 
-static dht::token_range_vector get_primary_ranges(
-        database& db, sstring keyspace, utils::can_yield can_yield = utils::can_yield::no) {
+static future<dht::token_range_vector> get_primary_ranges(
+        database& db, sstring keyspace) {
     return get_primary_ranges_for_endpoint(db, keyspace,
-            utils::fb_utilities::get_broadcast_address(), can_yield);
+            utils::fb_utilities::get_broadcast_address());
 }
 
 // get_primary_ranges_within_dc() is similar to get_primary_ranges(),
 // but instead of each range being assigned just one primary owner
 // across the entire cluster, here each range is assigned a primary
 // owner in each of the clusters.
-static dht::token_range_vector get_primary_ranges_within_dc(
-        database& db, sstring keyspace, utils::can_yield can_yield = utils::can_yield::no) {
-    auto& rs = db.find_keyspace(keyspace).get_replication_strategy();
-    return rs.get_primary_ranges_within_dc(
-            utils::fb_utilities::get_broadcast_address(), can_yield);
+static future<dht::token_range_vector> get_primary_ranges_within_dc(
+        database& db, sstring keyspace) {
+    return db.find_keyspace(keyspace).get_effective_replication_strategy()->get_primary_ranges_within_dc(utils::fb_utilities::get_broadcast_address());
 }
 
 static sstring get_local_dc() {
@@ -1050,11 +1047,11 @@ future<int> repair_service::do_repair_start(sstring keyspace, std::unordered_map
         // may be set, except data_centers may contain only local DC (-local)
         if (options.data_centers.size() == 1 &&
             options.data_centers[0] == get_local_dc()) {
-            ranges = get_primary_ranges_within_dc(db.local(), keyspace);
+            ranges = co_await get_primary_ranges_within_dc(db.local(), keyspace);
         } else if (options.data_centers.size() > 0 || options.hosts.size() > 0) {
             throw std::runtime_error("You need to run primary range repair on all nodes in the cluster.");
         } else {
-            ranges = get_primary_ranges(db.local(), keyspace);
+            ranges = co_await get_primary_ranges(db.local(), keyspace);
         }
     } else {
         ranges = co_await db.local().get_keyspace_local_ranges(keyspace);

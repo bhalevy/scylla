@@ -71,13 +71,10 @@ static void verify_sorted(const dht::token_range_vector& trv) {
 }
 
 // Runs in a seastar thread.
-static void check_ranges_are_sorted(abstract_replication_strategy* ars, lw_shared_ptr<effective_replication_strategy> ers, gms::inet_address ep) {
+static void check_ranges_are_sorted(lw_shared_ptr<effective_replication_strategy> ers, gms::inet_address ep) {
     verify_sorted(ers->get_ranges(ep).get0());
-    // Too slow in debug mode
-#ifndef SEASTAR_DEBUG
-    verify_sorted(ars->get_primary_ranges(ep, utils::can_yield::no));
-    verify_sorted(ars->get_primary_ranges_within_dc(ep, utils::can_yield::no));
-#endif
+    verify_sorted(ers->get_primary_ranges(ep).get0());
+    verify_sorted(ers->get_primary_ranges_within_dc(ep).get0());
 }
 
 void strategy_sanity_check(
@@ -176,7 +173,7 @@ void full_ring_check(const std::vector<ring_point>& ring_points,
         auto endpoints2 = ers->get_natural_endpoints(t2);
 
         endpoints_check(ars_ptr, endpoints2);
-        check_ranges_are_sorted(ars_ptr, ers, rp.host);
+        check_ranges_are_sorted(ers, rp.host);
         BOOST_CHECK(endpoints1 == endpoints2);
     }
 }
