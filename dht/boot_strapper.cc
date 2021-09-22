@@ -77,11 +77,11 @@ future<> boot_strapper::bootstrap(streaming::stream_reason reason) {
         blogger.debug("Will stream keyspace={}, ranges={}", keyspace_name, ranges);
         co_await streamer->add_ranges(keyspace_name, ranges);
     }
-        _abort_source.check();
+    _abort_source.check();
     co_await streamer->stream_async().handle_exception([streamer] (std::exception_ptr eptr) {
-            blogger.warn("Error during bootstrap: {}", eptr);
-            return make_exception_future<>(std::move(eptr));
-        });
+        blogger.warn("Error during bootstrap: {}", eptr);
+        return make_exception_future<>(std::move(eptr));
+    });
 }
 
 std::unordered_set<token> boot_strapper::get_bootstrap_tokens(const token_metadata_ptr tmptr, database& db) {
