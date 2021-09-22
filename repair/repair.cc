@@ -706,15 +706,14 @@ future<> repair_info::repair_range(const dht::token_range& range) {
 }
 
 static dht::token_range_vector get_primary_ranges_for_endpoint(
-        database& db, sstring keyspace, gms::inet_address ep, utils::can_yield can_yield = utils::can_yield::no) {
-    auto& rs = db.find_keyspace(keyspace).get_replication_strategy();
-    return rs.get_primary_ranges(ep, can_yield);
+        database& db, sstring keyspace, gms::inet_address ep) {
+    return db.find_keyspace(keyspace).get_effective_replication_map()->get_primary_ranges(ep);
 }
 
 static dht::token_range_vector get_primary_ranges(
-        database& db, sstring keyspace, utils::can_yield can_yield = utils::can_yield::no) {
+        database& db, sstring keyspace) {
     return get_primary_ranges_for_endpoint(db, keyspace,
-            utils::fb_utilities::get_broadcast_address(), can_yield);
+            utils::fb_utilities::get_broadcast_address());
 }
 
 // get_primary_ranges_within_dc() is similar to get_primary_ranges(),
@@ -722,10 +721,8 @@ static dht::token_range_vector get_primary_ranges(
 // across the entire cluster, here each range is assigned a primary
 // owner in each of the clusters.
 static dht::token_range_vector get_primary_ranges_within_dc(
-        database& db, sstring keyspace, utils::can_yield can_yield = utils::can_yield::no) {
-    auto& rs = db.find_keyspace(keyspace).get_replication_strategy();
-    return rs.get_primary_ranges_within_dc(
-            utils::fb_utilities::get_broadcast_address(), can_yield);
+        database& db, sstring keyspace) {
+    return db.find_keyspace(keyspace).get_effective_replication_map()->get_primary_ranges_within_dc(utils::fb_utilities::get_broadcast_address());
 }
 
 static sstring get_local_dc() {
