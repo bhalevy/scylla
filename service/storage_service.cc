@@ -3273,6 +3273,7 @@ future<> storage_service::load_and_stream(sstring ks_name, sstring cf_name,
                     ops_uuid, ks_name, cf_name, eptr);
         }
         co_await reader.close();
+        co_await locator::effective_replication_strategy::dispose(std::move(ers));
         try {
             co_await parallel_for_each(metas.begin(), metas.end(), [failed] (std::pair<const gms::inet_address, send_meta_data>& pair) {
                 auto& meta = pair.second;

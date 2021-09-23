@@ -63,6 +63,10 @@ public:
         impl(const impl&) = delete;
         virtual ~impl() = default;
 
+        virtual future<> clear_gently() noexcept {
+            return make_ready_future<>();
+        }
+
         virtual inet_address_vector_replica_set get_natural_endpoints(const token& search_token, const token_metadata& tm) const = 0;
     };
 
@@ -73,6 +77,19 @@ private:
 
 public:
     effective_replication_strategy(const abstract_replication_strategy& rs, token_metadata_ptr tmptr, std::unique_ptr<impl> impl) noexcept;
+
+    future<> clear_gently() noexcept {
+        return _impl->clear_gently();
+    }
+
+    // Gently clears the effective_replication_strategy before destroying
+    // it via the shared ptr.
+    //
+    // Call this if the lw_shared_ptr<effective_replication_strategy> is kept
+    // asynchronously across yields, as it might have been replaced.
+    static future<> dispose(lw_shared_ptr<effective_replication_strategy>&& ers) {
+        return ers.use_count() == 1 ? ers->clear_gently().then([ers = std::move(ers)] {}) : make_ready_future<>();
+    }
 
     const token_metadata_ptr& get_token_metadata_ptr() const noexcept {
         return _tmptr;

@@ -28,6 +28,7 @@
 #include "utils/class_registrator.hh"
 #include <boost/algorithm/string.hpp>
 #include "utils/sequenced_set.hh"
+#include "utils/stall_free.hh"
 
 namespace locator {
 
@@ -94,6 +95,10 @@ public:
     explicit effective_simple_strategy_impl(replication_map all_endpoints) noexcept
         : _all_endpoints(std::move(all_endpoints))
     {}
+
+    virtual future<> clear_gently() noexcept override {
+        return utils::clear_gently(_all_endpoints);
+    }
 
     virtual inet_address_vector_replica_set get_natural_endpoints(const token& search_token, const token_metadata& tm) const override {
         const token& key_token = tm.first_token(search_token);

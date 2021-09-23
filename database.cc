@@ -1056,7 +1056,7 @@ keyspace::update_effective_replication_strategy() {
     // TODO: All keyspaces with the same replication strategy / config options / token_metadata
     // share the same map, so use a shared registry to share the effective replication strategy.
     return _replication_strategy->make_effective().then([this] (lw_shared_ptr<locator::effective_replication_strategy> ers) {
-        _effective_replication_strategy = std::move(ers);
+        return locator::effective_replication_strategy::dispose(std::exchange(_effective_replication_strategy, std::move(ers)));
     });
 }
 
