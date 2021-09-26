@@ -225,7 +225,7 @@ void simple_test() {
     };
 
     auto ars_uptr = abstract_replication_strategy::create_replication_strategy(
-        "NetworkTopologyStrategy", stm, options323);
+        "NetworkTopologyStrategy", options323);
 
     auto ars_ptr = ars_uptr.get();
 
@@ -240,7 +240,7 @@ void simple_test() {
     };
 
     ars_uptr = abstract_replication_strategy::create_replication_strategy(
-        "NetworkTopologyStrategy", stm, options320);
+        "NetworkTopologyStrategy", options320);
 
     ars_ptr = ars_uptr.get();
 
@@ -321,7 +321,7 @@ void heavy_origin_test() {
     }).get();
 
     auto ars_uptr = abstract_replication_strategy::create_replication_strategy(
-        "NetworkTopologyStrategy", stm, config_options);
+        "NetworkTopologyStrategy", config_options);
 
     auto ars_ptr = ars_uptr.get();
 
@@ -498,7 +498,7 @@ static void test_equivalence(const shared_token_metadata& stm, snitch_ptr& snitc
         using network_topology_strategy::calculate_natural_endpoints;
     };
 
-    my_network_topology_strategy nts(stm, snitch,
+    my_network_topology_strategy nts(snitch,
                     boost::copy_range<std::map<sstring, sstring>>(
                                     datacenters
                                                     | boost::adaptors::transformed(
