@@ -1170,6 +1170,8 @@ public:
     future<> create_replication_strategy(const locator::shared_token_metadata& stm, const locator::replication_strategy_config_options& options);
     future<> update_effective_replication_map(locator::effective_replication_map_ptr erm);
 
+    future<> clear_gently() noexcept;
+
     /**
      * This should not really be return by reference, since replication
      * strategy is also volatile in that it could be replaced at "any" time.
@@ -1438,7 +1440,7 @@ public:
     void validate_keyspace_update(keyspace_metadata& ksm);
     void validate_new_keyspace(keyspace_metadata& ksm);
     future<> update_keyspace(sharded<service::storage_proxy>& proxy, const sstring& name);
-    void drop_keyspace(const sstring& name);
+    future<> drop_keyspace(const sstring& name);
     std::vector<sstring> get_non_system_keyspaces() const;
     column_family& find_column_family(std::string_view ks, std::string_view name);
     const column_family& find_column_family(std::string_view ks, std::string_view name) const;

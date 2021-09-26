@@ -868,8 +868,12 @@ future<> database::update_keyspace(sharded<service::storage_proxy>& proxy, const
     co_await get_notifier().update_keyspace(ks.metadata());
 }
 
-void database::drop_keyspace(const sstring& name) {
-    _keyspaces.erase(name);
+future<> database::drop_keyspace(const sstring& name) {
+    auto it = _keyspaces.find(name);
+    if (it != _keyspaces.end()) {
+        co_await it->second.clear_gently();
+        _keyspaces.erase(it);
+    }
 }
 
 void database::add_column_family(keyspace& ks, schema_ptr schema, column_family::config cfg) {
@@ -1058,6 +1062,10 @@ keyspace::update_effective_replication_map(locator::effective_replication_map_pt
     if (auto prev_erm = std::exchange(_effective_replication_map, std::move(erm))) {
         co_await utils::clear_gently(prev_erm);
     }
+}
+
+future<> keyspace::clear_gently() noexcept {
+    return utils::clear_gently(_effective_replication_map);
 }
 
 locator::abstract_replication_strategy&
@@ -2095,6 +2103,8 @@ future<> database::stop() {
     co_await _streaming_concurrency_sem.stop();
     co_await _compaction_concurrency_sem.stop();
     co_await _system_read_concurrency_sem.stop();
+    // FIXME: can't clear_gently(_keyspaces) since the query processor
+    // and storage proxy aren't stopped before database.
 }
 
 future<> database::flush_all_memtables() {
