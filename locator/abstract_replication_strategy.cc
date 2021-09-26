@@ -297,7 +297,8 @@ future<mutable_effective_replication_map_ptr> make_effective_replication_map(abs
         all_endpoints.emplace(t, co_await rs->calculate_natural_endpoints(t, *tmptr));
     }
 
-    co_return make_effective_replication_map_ptr(std::move(rs), std::move(tmptr), std::move(all_endpoints));
+    auto rf = rs->get_replication_factor(*tmptr);
+    co_return make_effective_replication_map_ptr(std::move(rs), std::move(tmptr), std::move(all_endpoints), rf);
 }
 
 future<replication_map> effective_replication_map::clone_endpoints_gently() const {
