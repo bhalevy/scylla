@@ -65,13 +65,15 @@ private:
     const abstract_replication_strategy& _rs;
     token_metadata_ptr _tmptr;
     replication_map _all_endpoints;
+    size_t _replication_factor;
 
     friend class abstract_replication_strategy;
 public:
-    explicit effective_replication_map(const abstract_replication_strategy& rs, token_metadata_ptr tmptr, replication_map all_endpoints) noexcept
+    explicit effective_replication_map(const abstract_replication_strategy& rs, token_metadata_ptr tmptr, replication_map all_endpoints, size_t replication_factor) noexcept
         : _rs(rs)
         , _tmptr(std::move(tmptr))
         , _all_endpoints(std::move(all_endpoints))
+        , _replication_factor(replication_factor)
     { }
     effective_replication_map() = delete;
     effective_replication_map(effective_replication_map&&) = default;
@@ -82,6 +84,10 @@ public:
 
     const replication_map& get_replication_map() const noexcept {
         return _all_endpoints;
+    }
+
+    const size_t get_replication_factor() const noexcept {
+        return _replication_factor;
     }
 
     future<> clear_gently() noexcept;
@@ -119,8 +125,8 @@ private:
 
 using effective_replication_map_ptr = lw_shared_ptr<effective_replication_map>;
 
-inline effective_replication_map_ptr make_effective_replication_map_ptr(const abstract_replication_strategy& rs, token_metadata_ptr tmptr, replication_map all_endpoints) {
-    return make_lw_shared<effective_replication_map>(rs, std::move(tmptr), std::move(all_endpoints));
+inline effective_replication_map_ptr make_effective_replication_map_ptr(const abstract_replication_strategy& rs, token_metadata_ptr tmptr, replication_map all_endpoints, size_t replication_factor) {
+    return make_lw_shared<effective_replication_map>(rs, std::move(tmptr), std::move(all_endpoints), replication_factor);
 }
 
 class abstract_replication_strategy {
@@ -170,7 +176,7 @@ public:
     virtual inet_address_vector_replica_set get_natural_endpoints(const token& search_token, const effective_replication_map& erm) const;
     virtual void validate_options() const = 0;
     virtual std::optional<std::set<sstring>> recognized_options() const = 0;
-    virtual size_t get_replication_factor() const = 0;
+    virtual size_t get_replication_factor(const token_metadata& tm) const = 0;
     // Decide if the replication strategy allow removing the node being
     // replaced from the natural endpoints when a node is being replaced in the
     // cluster. LocalStrategy is the not allowed to do so because it always

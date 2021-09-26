@@ -1429,7 +1429,8 @@ future<> storage_service::replicate_to_all_cores(mutable_token_metadata_ptr tmpt
                 auto& rs = db.find_keyspace(ks_name).get_replication_strategy();
                 const auto& erm0 = erms0.at(ks_name);
                 auto local_replication_map = co_await erm0->clone_endpoints_gently();
-                auto erm = make_lw_shared<locator::effective_replication_map>(rs, ss._pending_token_metadata_ptr, std::move(local_replication_map));
+                auto rf = erm0->get_replication_factor();
+                auto erm = make_lw_shared<locator::effective_replication_map>(rs, ss._pending_token_metadata_ptr, std::move(local_replication_map), rf);
                 ss._pending_effective_replication_maps.emplace(ks_name, std::move(erm));
             }
         });
