@@ -1055,18 +1055,34 @@ keyspace::create_replication_strategy(const locator::shared_token_metadata& stm,
             abstract_replication_strategy::create_replication_strategy(
                 _metadata->strategy_name(), options);
 
-    co_await update_effective_replication_map(co_await _replication_strategy->make_effective_replication_map(stm.get()));
+    auto tmptr = stm.get();
+    auto key = _replication_strategy->get_registry_key(tmptr);
+    auto erm = _db.get_effective_replication_map_registry().find(key);
+    if (!erm) {
+        auto new_erm = co_await _replication_strategy->make_effective_replication_map(std::move(tmptr), std::move(key));
+        erm = _db.get_effective_replication_map_registry().insert(new_erm);
+        if (erm != new_erm) {
+            // handle theoretical insertion race
+            co_await utils::clear_gently(new_erm);
+        }
+    }
+    co_await update_effective_replication_map(std::move(erm));
 }
 
 future<>
 keyspace::update_effective_replication_map(locator::effective_replication_map_ptr erm) {
+    dblog.debug("keyspace {}: update_effective_replication_map: {} -> {}", metadata()->name(),
+        _effective_replication_map ? _effective_replication_map->get_registry_key() : "<null>",
+        erm ? erm->get_registry_key() : "<null>");
     if (auto prev_erm = std::exchange(_effective_replication_map, std::move(erm))) {
+        auto prev_key = prev_erm->get_registry_key();
         co_await utils::clear_gently(prev_erm);
+        co_await _db.get_effective_replication_map_registry().dispose(std::move(prev_key));
     }
 }
 
 future<> keyspace::clear_gently() noexcept {
-    return utils::clear_gently(_effective_replication_map);
+    return update_effective_replication_map(locator::effective_replication_map_ptr{});
 }
 
 locator::abstract_replication_strategy&

@@ -301,7 +301,7 @@ abstract_replication_strategy::get_pending_address_ranges(const token_metadata_p
     co_return ret;
 }
 
-future<effective_replication_map_ptr> abstract_replication_strategy::make_effective_replication_map(token_metadata_ptr tmptr) const {
+future<effective_replication_map_ptr> abstract_replication_strategy::make_effective_replication_map(token_metadata_ptr tmptr, std::optional<effective_replication_map::key_type> key_opt) const {
     replication_map all_endpoints;
 
     for (const auto &t : tmptr->sorted_tokens()) {
@@ -309,7 +309,16 @@ future<effective_replication_map_ptr> abstract_replication_strategy::make_effect
     }
 
     auto rf = get_replication_factor(*tmptr);
-    co_return make_effective_replication_map_ptr(*this, std::move(tmptr), std::move(all_endpoints), rf);
+    auto key = key_opt ? std::move(*key_opt) : get_registry_key(tmptr);
+    co_return make_effective_replication_map_ptr(*this, std::move(tmptr), std::move(all_endpoints), rf, std::move(key));
+}
+
+effective_replication_map::key_type abstract_replication_strategy::get_registry_key(const token_metadata_ptr& tmptr) const {
+    effective_replication_map::key_type key = format("{}.{}", get_type(), tmptr->get_ring_version());
+    for (auto& opt : _config_options) {
+        key += format(",{}={}", opt.first, opt.second);
+    }
+    return key;
 }
 
 future<> effective_replication_map::clear_gently() noexcept {
@@ -330,6 +339,44 @@ future<replication_map> effective_replication_map::clone_endpoints_gently() cons
 
 inet_address_vector_replica_set effective_replication_map::get_natural_endpoints(const token& search_token) const {
     return _rs.get_natural_endpoints(search_token, *this);
+}
+
+effective_replication_map_ptr effective_replication_map_registry::find(const effective_replication_map::key_type& key) noexcept {
+    auto it = _maps.find(key);
+    if (it != _maps.end()) {
+        rslogger.debug("Found {} in effective_replication_map_registry", it->second->get_registry_key());
+        return it->second;
+    }
+    return {};
+}
+
+effective_replication_map_ptr effective_replication_map_registry::insert(effective_replication_map_ptr erm) noexcept {
+    static_assert(std::is_nothrow_move_constructible_v<effective_replication_map::key_type>);
+    static_assert(std::is_nothrow_move_constructible_v<effective_replication_map_ptr>);
+
+    auto& key = erm->get_registry_key();
+    auto it = _maps.find(key);
+    if (it != _maps.end()) {
+        return it->second;
+    }
+    _maps.insert({key, erm});
+    rslogger.debug("Inserted {} to effective_replication_map_registry", key);
+    return erm;
+}
+
+future<> effective_replication_map_registry::dispose(const effective_replication_map::key_type& key) noexcept {
+    auto it = _maps.find(key);
+    if (it != _maps.end()) {
+        if (it->second.use_count() == 1) {
+            rslogger.debug("Removing {} from effective_replication_map_registry", it->second->get_registry_key());
+            co_await utils::clear_gently(it->second);
+            _maps.erase(it);
+        }
+    }
+}
+
+future<> effective_replication_map_registry::clear_gently() noexcept {
+    return utils::clear_gently(_maps);
 }
 
 } // namespace locator

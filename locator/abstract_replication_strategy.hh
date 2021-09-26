@@ -61,19 +61,25 @@ class abstract_replication_strategy;
 // effective replication strategy over the given token_metadata
 // and replication_strategy_config_options.
 class effective_replication_map {
+public:
+    using key_type = sstring;
+    using key_view_type = sstring_view;
+
 private:
     const abstract_replication_strategy& _rs;
     token_metadata_ptr _tmptr;
     replication_map _all_endpoints;
     size_t _replication_factor;
+    key_type _registry_key;
 
     friend class abstract_replication_strategy;
 public:
-    explicit effective_replication_map(const abstract_replication_strategy& rs, token_metadata_ptr tmptr, replication_map all_endpoints, size_t replication_factor) noexcept
+    explicit effective_replication_map(const abstract_replication_strategy& rs, token_metadata_ptr tmptr, replication_map all_endpoints, size_t replication_factor, key_type registry_key) noexcept
         : _rs(rs)
         , _tmptr(std::move(tmptr))
         , _all_endpoints(std::move(all_endpoints))
         , _replication_factor(replication_factor)
+        , _registry_key(std::move(registry_key))
     { }
     effective_replication_map() = delete;
     effective_replication_map(effective_replication_map&&) = default;
@@ -88,6 +94,10 @@ public:
 
     const size_t get_replication_factor() const noexcept {
         return _replication_factor;
+    }
+
+    const key_type& get_registry_key() const noexcept {
+        return _registry_key;
     }
 
     future<> clear_gently() noexcept;
@@ -128,8 +138,8 @@ private:
 
 using effective_replication_map_ptr = lw_shared_ptr<effective_replication_map>;
 
-inline effective_replication_map_ptr make_effective_replication_map_ptr(const abstract_replication_strategy& rs, token_metadata_ptr tmptr, replication_map all_endpoints, size_t replication_factor) {
-    return make_lw_shared<effective_replication_map>(rs, std::move(tmptr), std::move(all_endpoints), replication_factor);
+inline effective_replication_map_ptr make_effective_replication_map_ptr(const abstract_replication_strategy& rs, token_metadata_ptr tmptr, replication_map all_endpoints, size_t replication_factor, effective_replication_map::key_type key) {
+    return make_lw_shared<effective_replication_map>(rs, std::move(tmptr), std::move(all_endpoints), replication_factor, std::move(key));
 }
 
 class abstract_replication_strategy {
@@ -190,7 +200,12 @@ public:
     future<dht::token_range_vector> get_ranges(inet_address ep, token_metadata_ptr tmptr) const;
 
     // Apply the replication strategy over the current configuration and the given token_metadata.
-    future<effective_replication_map_ptr> make_effective_replication_map(token_metadata_ptr tmptr) const;
+    future<effective_replication_map_ptr> make_effective_replication_map(token_metadata_ptr tmptr, std::optional<effective_replication_map::key_type> key_opt) const;
+    future<effective_replication_map_ptr> make_effective_replication_map(token_metadata_ptr tmptr) const {
+        return make_effective_replication_map(std::move(tmptr), std::nullopt);
+    }
+
+    effective_replication_map::key_type get_registry_key(const token_metadata_ptr&) const;
 
 public:
     future<std::unordered_multimap<inet_address, dht::token_range>> get_address_ranges(const token_metadata& tm) const;
@@ -202,6 +217,25 @@ public:
     future<dht::token_range_vector> get_pending_address_ranges(const token_metadata_ptr tmptr, token pending_token, inet_address pending_address) const;
 
     future<dht::token_range_vector> get_pending_address_ranges(const token_metadata_ptr tmptr, std::unordered_set<token> pending_tokens, inet_address pending_address) const;
+};
+
+class effective_replication_map_registry {
+    std::unordered_map<effective_replication_map::key_view_type, effective_replication_map_ptr> _maps;
+
+public:
+    // Find an effective_replication_map_ptr based on the search key.
+    // Returns the found effective_replication_map_ptr or a disengaged lw_shared_ptr if not found.
+    effective_replication_map_ptr find(const effective_replication_map::key_type& key) noexcept;
+
+    // Insert a new key -> effective_replication_map_ptr mapping.
+    // Returns the provided effective_replication_map_ptr if inserted, or an existing one if found in the registry.
+    effective_replication_map_ptr insert(effective_replication_map_ptr erm) noexcept;
+
+    // Dispose a key -> effective_replication_map_ptr mapping.
+    // Gently clears the effective_replication_map and erases the key mapping on last reference.
+    future<> dispose(const effective_replication_map::key_type& key) noexcept;
+
+    future<> clear_gently() noexcept;
 };
 
 }

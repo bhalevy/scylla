@@ -1414,23 +1414,44 @@ future<> storage_service::replicate_to_all_cores(mutable_token_metadata_ptr tmpt
 
         // Precalculate new effective_replication_map for all keyspaces
         // and clone to all shards;
+        //
+        // Note that theoretically insertion to the registry may race
+        // so prepare to get rid of newly made effective_replication_map
+        // if we lost the race.
         auto& db = _db.local();
+        auto& registry = db.get_effective_replication_map_registry();
         auto keyspaces = db.get_non_system_keyspaces();
         for (auto& ks_name : keyspaces) {
-            locator::effective_replication_map_ptr erm;
             auto& rs = db.find_keyspace(ks_name).get_replication_strategy();
-            erm = co_await rs.make_effective_replication_map(_pending_token_metadata_ptr);
+            auto key = rs.get_registry_key(_pending_token_metadata_ptr);
+            auto erm = registry.find(key);
+            if (!erm) {
+                auto new_erm = co_await rs.make_effective_replication_map(_pending_token_metadata_ptr, std::move(key));
+                erm = registry.insert(new_erm);
+                if (erm != new_erm) {
+                    co_await utils::clear_gently(new_erm);
+                }
+            }
             _pending_effective_replication_maps.emplace(ks_name, erm);
         }
         auto& erms0 = _pending_effective_replication_maps;
         co_await container().invoke_on_others([&keyspaces, &erms0] (storage_service& ss) -> future<> {
             auto& db = ss._db.local();
+            auto& registry = db.get_effective_replication_map_registry();
             for (auto& ks_name : keyspaces) {
                 auto& rs = db.find_keyspace(ks_name).get_replication_strategy();
-                const auto& erm0 = erms0.at(ks_name);
-                auto local_replication_map = co_await erm0->clone_endpoints_gently();
-                auto rf = erm0->get_replication_factor();
-                auto erm = make_lw_shared<locator::effective_replication_map>(rs, ss._pending_token_metadata_ptr, std::move(local_replication_map), rf);
+                auto key = rs.get_registry_key(ss._pending_token_metadata_ptr);
+                auto erm = registry.find(key);
+                if (!erm) {
+                    const auto& erm0 = erms0.at(ks_name);
+                    auto local_replication_map = co_await erm0->clone_endpoints_gently();
+                    auto rf = erm0->get_replication_factor();
+                    auto new_erm = make_lw_shared<locator::effective_replication_map>(rs, ss._pending_token_metadata_ptr, std::move(local_replication_map), rf, std::move(key));
+                    erm = registry.insert(new_erm);
+                    if (erm != new_erm) {
+                        co_await utils::clear_gently(new_erm);
+                    }
+                }
                 ss._pending_effective_replication_maps.emplace(ks_name, std::move(erm));
             }
         });

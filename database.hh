@@ -1344,6 +1344,7 @@ private:
     service::migration_notifier& _mnotifier;
     gms::feature_service& _feat;
     const locator::shared_token_metadata& _shared_token_metadata;
+    locator::effective_replication_map_registry _effective_replication_map_registry;
 
     sharded<semaphore>& _sst_dir_semaphore;
 
@@ -1421,6 +1422,10 @@ public:
 
     const locator::shared_token_metadata& get_shared_token_metadata() const { return _shared_token_metadata; }
     const locator::token_metadata& get_token_metadata() const { return *_shared_token_metadata.get(); }
+
+    locator::effective_replication_map_registry& get_effective_replication_map_registry() {
+        return _effective_replication_map_registry;
+    }
 
     service::migration_notifier& get_notifier() { return _mnotifier; }
     const service::migration_notifier& get_notifier() const { return _mnotifier; }
