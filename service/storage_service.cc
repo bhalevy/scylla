@@ -251,7 +251,7 @@ void storage_service::prepare_to_join(
 
     bool replacing_a_node_with_same_ip = false;
     bool replacing_a_node_with_diff_ip = false;
-    auto tmlock = std::make_unique<token_metadata_lock>(get_token_metadata_lock().get0());
+    auto tmlock = get_token_metadata_lock().get0();
     auto tmptr = get_mutable_token_metadata_ptr().get0();
     if (_db.local().is_replacing()) {
         if (db::system_keyspace::bootstrap_complete()) {
@@ -842,7 +842,7 @@ void storage_service::handle_state_normal(inet_address endpoint) {
 
     slogger.debug("Node {} state normal, token {}", endpoint, tokens);
 
-    auto tmlock = std::make_unique<token_metadata_lock>(get_token_metadata_lock().get0());
+    auto tmlock = get_token_metadata_lock().get0();
     auto tmptr = get_mutable_token_metadata_ptr().get0();
     if (tmptr->is_member(endpoint)) {
         slogger.info("Node {} state jump to normal", endpoint);
@@ -2926,7 +2926,7 @@ void storage_service::excise(std::unordered_set<token> tokens, inet_address endp
     slogger.info("Removing tokens {} for {}", tokens, endpoint);
     // FIXME: HintedHandOffManager.instance.deleteHintsForEndpoint(endpoint);
     remove_endpoint(endpoint);
-    auto tmlock = std::make_optional(get_token_metadata_lock().get0());
+    auto tmlock = get_token_metadata_lock().get0();
     auto tmptr = get_mutable_token_metadata_ptr().get0();
     tmptr->remove_endpoint(endpoint);
     tmptr->remove_bootstrap_tokens(tokens);
@@ -3445,26 +3445,61 @@ std::chrono::milliseconds storage_service::get_ring_delay() {
     return std::chrono::milliseconds(ring_delay);
 }
 
-future<locator::token_metadata_lock> storage_service::get_token_metadata_lock() noexcept {
-    assert(this_shard_id() == 0);
-    return _shared_token_metadata.get_lock();
+storage_service::token_metadata_lock::token_metadata_lock(locator::token_metadata_lock tmlock, std::optional<semaphore_units<>> merge_lock_units) noexcept
+    : _merge_lock_units(std::move(merge_lock_units))
+    , _tmlock(std::move(tmlock))
+{
+    slogger.trace("token_metadata_lock [{}]: units={} merge_lock_units={} at {}", fmt::ptr(this), _tmlock.count(), _merge_lock_units ? _merge_lock_units->count() : 0, current_backtrace());
 }
 
-future<> storage_service::with_token_metadata_lock(std::function<future<> ()> func) noexcept {
+storage_service::token_metadata_lock::token_metadata_lock(token_metadata_lock&& o) noexcept
+    : _merge_lock_units(std::exchange(o._merge_lock_units, std::nullopt))
+    , _tmlock(std::move(o._tmlock))
+{
+    slogger.trace("token_metadata_lock [{}]: moved from [{}]: units={} merge_lock_units={} at {}", fmt::ptr(this), fmt::ptr(&o), _tmlock.count(), _merge_lock_units ? _merge_lock_units->count() : 0, current_backtrace());
+}
+
+storage_service::token_metadata_lock::~token_metadata_lock() {
     assert(this_shard_id() == 0);
-    return get_token_metadata_lock().then([func = std::move(func)] (token_metadata_lock tmlock) {
+    slogger.trace("~token_metadata_lock [{}]: units={} merge_lock_units={} at {}", fmt::ptr(this), _tmlock.count(), _merge_lock_units ? _merge_lock_units->count() : 0, current_backtrace());
+}
+
+void storage_service::token_metadata_lock::reset() noexcept {
+    assert(this_shard_id() == 0);
+    slogger.trace("token_metadata_lock [{}]: reset: units={} merge_lock_units={} at {}", fmt::ptr(this), _tmlock.count(), _merge_lock_units ? _merge_lock_units->count() : 0, current_backtrace());
+    _tmlock.return_all();
+    _merge_lock_units.reset();
+}
+
+future<storage_service::token_metadata_lock> storage_service::get_token_metadata_lock(acquire_merge_lock acquire_merge_lock) noexcept {
+    assert(this_shard_id() == 0);
+
+    // Serialize the metadata changes with
+    // keyspace create, update, or drop.
+    //
+    // Note that to avoid deadlock, the merge_lock must be acquired
+    // before the token_metadata_lock.
+    std::optional<semaphore_units<>> merge_lock_units;
+    if (acquire_merge_lock) {
+        merge_lock_units = co_await db::schema_tables::hold_merge_lock();
+    }
+    co_return token_metadata_lock(co_await _shared_token_metadata.get_lock(), std::move(merge_lock_units));
+}
+
+future<> storage_service::with_token_metadata_lock(std::function<future<> ()> func, acquire_merge_lock acquire_merge_lock) noexcept {
+    return get_token_metadata_lock(acquire_merge_lock).then([func = std::move(func)] (token_metadata_lock tmlock) {
         return func().finally([tmlock = std::move(tmlock)] {});
     });
 }
 
-future<> storage_service::mutate_token_metadata(std::function<future<> (mutable_token_metadata_ptr)> func) noexcept {
+future<> storage_service::mutate_token_metadata(std::function<future<> (mutable_token_metadata_ptr)> func, acquire_merge_lock acquire_merge_lock) noexcept {
     return with_token_metadata_lock([this, func = std::move(func)] () mutable {
         return get_mutable_token_metadata_ptr().then([this, func = std::move(func)] (mutable_token_metadata_ptr tmptr) mutable {
             return func(tmptr).then([this, tmptr = std::move(tmptr)] () mutable {
                 return replicate_to_all_cores(std::move(tmptr));
             });
         });
-    });
+    }, acquire_merge_lock);
 }
 
 future<> storage_service::update_pending_ranges(mutable_token_metadata_ptr tmptr, sstring reason) {
@@ -3487,17 +3522,17 @@ future<> storage_service::update_pending_ranges(mutable_token_metadata_ptr tmptr
     // slogger.debug("finished calculation for {} keyspaces in {}ms", keyspaces.size(), System.currentTimeMillis() - start);
 }
 
-future<> storage_service::update_pending_ranges(sstring reason) {
+future<> storage_service::update_pending_ranges(sstring reason, acquire_merge_lock acquire_merge_lock) {
     return mutate_token_metadata([this, reason = std::move(reason)] (mutable_token_metadata_ptr tmptr) mutable {
         return update_pending_ranges(std::move(tmptr), std::move(reason));
-    });
+    }, acquire_merge_lock);
 }
 
 future<> storage_service::keyspace_changed(const sstring& ks_name) {
     // Update pending ranges since keyspace can be changed after we calculate pending ranges.
     sstring reason = format("keyspace {}", ks_name);
     return container().invoke_on(0, [reason = std::move(reason)] (auto& ss) mutable {
-        return ss.update_pending_ranges(reason).handle_exception([reason = std::move(reason)] (auto ep) {
+        return ss.update_pending_ranges(reason, acquire_merge_lock::no).handle_exception([reason = std::move(reason)] (auto ep) {
             slogger.warn("Failure to update pending ranges for {} ignored", reason);
         });
     });

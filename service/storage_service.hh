@@ -158,7 +158,6 @@ private:
     using shared_token_metadata = locator::shared_token_metadata;
     using token_metadata_ptr = locator::token_metadata_ptr;
     using mutable_token_metadata_ptr = locator::mutable_token_metadata_ptr;
-    using token_metadata_lock = locator::token_metadata_lock;
     using application_state = gms::application_state;
     using inet_address = gms::inet_address;
     using versioned_value = gms::versioned_value;
@@ -218,20 +217,34 @@ public:
     future<> uninit_messaging_service();
 
 private:
-    future<token_metadata_lock> get_token_metadata_lock() noexcept;
-    future<> with_token_metadata_lock(std::function<future<> ()>) noexcept;
+    using acquire_merge_lock = bool_class<class acquire_merge_lock_tag>;
+
+    class token_metadata_lock {
+        std::optional<semaphore_units<>> _merge_lock_units;
+        locator::token_metadata_lock _tmlock;
+
+    public:
+        explicit token_metadata_lock(locator::token_metadata_lock tmlock, std::optional<semaphore_units<>> merge_lock_units) noexcept;
+        token_metadata_lock(token_metadata_lock&& o) noexcept;
+        ~token_metadata_lock();
+
+        void reset() noexcept;
+    };
+
+    future<token_metadata_lock> get_token_metadata_lock(acquire_merge_lock aml = acquire_merge_lock::yes) noexcept;
+    future<> with_token_metadata_lock(std::function<future<> ()>, acquire_merge_lock aml = acquire_merge_lock::yes) noexcept;
 
     // Acquire the token_metadata lock and get a mutable_token_metadata_ptr.
     // Pass that ptr to \c func, and when successfully done,
     // replicate it to all cores.
     // Note: must be called on shard 0.
-    future<> mutate_token_metadata(std::function<future<> (mutable_token_metadata_ptr)> func) noexcept;
+    future<> mutate_token_metadata(std::function<future<> (mutable_token_metadata_ptr)> func, acquire_merge_lock aml = acquire_merge_lock::yes) noexcept;
 
     // Update pending ranges locally and then replicate to all cores.
     // Should be serialized under token_metadata_lock.
     // Must be called on shard 0.
     future<> update_pending_ranges(mutable_token_metadata_ptr tmptr, sstring reason);
-    future<> update_pending_ranges(sstring reason);
+    future<> update_pending_ranges(sstring reason, acquire_merge_lock aml = acquire_merge_lock::yes);
     future<> keyspace_changed(const sstring& ks_name);
     void register_metrics();
     future<> snitch_reconfigured();
