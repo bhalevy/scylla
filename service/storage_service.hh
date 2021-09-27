@@ -257,6 +257,7 @@ private:
 
     future<mutable_token_metadata_ptr> get_mutable_token_metadata_ptr() noexcept {
         return _shared_token_metadata.get()->clone_async().then([] (token_metadata tm) {
+            tm.invalidate_cached_rings();
             return make_ready_future<mutable_token_metadata_ptr>(make_token_metadata_ptr(std::move(tm)));
         });
     }
