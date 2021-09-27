@@ -34,6 +34,7 @@
 #include <seastar/coroutine/maybe_yield.hh>
 #include <boost/range/adaptors.hpp>
 #include "utils/stall_free.hh"
+#include "db/schema_tables.hh"
 
 namespace locator {
 
@@ -1433,7 +1434,9 @@ const endpoint_dc_rack& topology::get_location(const inet_address& ep) const {
 /////////////////// class topology end /////////////////////////////////////////
 
 future<token_metadata_lock> shared_token_metadata::get_lock() noexcept {
-    return get_units(_sem, 1);
+    assert(this_shard_id() == 0);
+
+    return db::schema_tables::hold_merge_lock();
 }
 
 future<> shared_token_metadata::mutate_token_metadata(seastar::noncopyable_function<future<> (token_metadata&)> func) {

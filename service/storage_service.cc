@@ -3450,9 +3450,12 @@ future<locator::token_metadata_lock> storage_service::get_token_metadata_lock() 
     return _shared_token_metadata.get_lock();
 }
 
-future<> storage_service::mutate_token_metadata(std::function<future<> (mutable_token_metadata_ptr)> func) noexcept {
-    assert(this_shard_id() == 0);
-    auto tmlock = co_await get_token_metadata_lock();
+future<> storage_service::mutate_token_metadata(std::function<future<> (mutable_token_metadata_ptr)> func, acquire_merge_lock acquire_merge_lock) noexcept {
+    std::optional<token_metadata_lock> tmlock;
+
+    if (acquire_merge_lock) {
+        tmlock.emplace(co_await get_token_metadata_lock());
+    }
     auto tmptr = co_await get_mutable_token_metadata_ptr();
     co_await func(tmptr);
     co_await replicate_to_all_cores(std::move(tmptr));
@@ -3478,17 +3481,17 @@ future<> storage_service::update_pending_ranges(mutable_token_metadata_ptr tmptr
     // slogger.debug("finished calculation for {} keyspaces in {}ms", keyspaces.size(), System.currentTimeMillis() - start);
 }
 
-future<> storage_service::update_pending_ranges(sstring reason) {
+future<> storage_service::update_pending_ranges(sstring reason, acquire_merge_lock acquire_merge_lock) {
     return mutate_token_metadata([this, reason = std::move(reason)] (mutable_token_metadata_ptr tmptr) mutable {
         return update_pending_ranges(std::move(tmptr), std::move(reason));
-    });
+    }, acquire_merge_lock);
 }
 
 future<> storage_service::keyspace_changed(const sstring& ks_name) {
     // Update pending ranges since keyspace can be changed after we calculate pending ranges.
     sstring reason = format("keyspace {}", ks_name);
     return container().invoke_on(0, [reason = std::move(reason)] (auto& ss) mutable {
-        return ss.update_pending_ranges(reason).handle_exception([reason = std::move(reason)] (auto ep) {
+        return ss.update_pending_ranges(reason, acquire_merge_lock::no).handle_exception([reason = std::move(reason)] (auto ep) {
             slogger.warn("Failure to update pending ranges for {} ignored", reason);
         });
     });

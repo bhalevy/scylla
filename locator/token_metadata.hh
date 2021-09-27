@@ -363,7 +363,6 @@ mutable_token_metadata_ptr make_token_metadata_ptr(Args... args) {
 
 class shared_token_metadata {
     mutable_token_metadata_ptr _shared;
-    semaphore _sem = { 1 };
 public:
     // used to construct the shared object as a sharded<> instance
     shared_token_metadata()
@@ -381,6 +380,10 @@ public:
         _shared = std::move(tmptr);
     }
 
+    // Token metadata changes are serialized
+    // using the schema_tables merge_lock.
+    //
+    // Must be called on shard 0.
     future<token_metadata_lock> get_lock() noexcept;
 
     // mutate_token_metadata acquires the shared_token_metadata lock,
