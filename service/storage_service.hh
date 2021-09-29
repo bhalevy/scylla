@@ -234,13 +234,8 @@ private:
     // db::schema_tables::do_merge_schema.
     //
     // Note: must be called on shard 0.
-    future<> mutate_token_metadata(std::function<future<> (mutable_token_metadata_ptr)> func, acquire_merge_lock aml = acquire_merge_lock::yes) noexcept;
+    future<> mutate_token_metadata(sstring msg, std::function<future<> (mutable_token_metadata_ptr)> func, acquire_merge_lock aml = acquire_merge_lock::yes) noexcept;
 
-    // Update pending ranges locally and then replicate to all cores.
-    // Should be serialized under token_metadata_lock.
-    // Must be called on shard 0.
-    future<> update_pending_ranges(mutable_token_metadata_ptr tmptr, sstring reason);
-    future<> update_pending_ranges(sstring reason, acquire_merge_lock aml = acquire_merge_lock::yes);
     future<> keyspace_changed(const sstring& ks_name);
     void register_metrics();
     future<> snitch_reconfigured();
