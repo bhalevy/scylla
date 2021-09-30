@@ -375,9 +375,7 @@ public:
         return _shared;
     }
 
-    void set(mutable_token_metadata_ptr tmptr) noexcept {
-        _shared = std::move(tmptr);
-    }
+    void set(mutable_token_metadata_ptr tmptr) noexcept;
 
     future<token_metadata_lock> get_lock() noexcept;
 
