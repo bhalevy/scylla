@@ -115,6 +115,9 @@ public:
     // instead of one node globally.
     dht::token_range_vector get_primary_ranges_within_dc(inet_address ep);
 
+    std::unordered_map<dht::token_range, inet_address_vector_replica_set>
+    get_range_addresses() const;
+
 private:
     template <typename Predicate>
     requires requires (Predicate add_range, inet_address_vector_replica_set endpoints) {
