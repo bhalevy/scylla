@@ -22,6 +22,9 @@
 #pragma once
 
 #include <seastar/util/log.hh>
+#include <seastar/core/sstring.hh>
+
+using namespace seastar;
 
 namespace logging {
 
@@ -46,4 +49,18 @@ inline void apply_settings(const settings& s) {
 using seastar::pretty_type_name;
 using seastar::level_name;
 
+} // namespace logging
+
+template <typename... Args>
+sstring log_format(logger& l, log_level level, const char* fmt, Args... args) {
+    if (l.is_enabled(level)) {
+        return format(fmt, std::forward<Args>(args)...);
+    } else {
+        return "";
+    }
+}
+
+template <typename... Args>
+sstring debug_format(logger& l, const char* fmt, Args... args) {
+    return log_format(l, log_level::debug, fmt, std::forward<Args>(args)...);
 }
