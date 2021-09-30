@@ -28,6 +28,8 @@
 #include <boost/icl/interval.hpp>
 #include <boost/icl/interval_map.hpp>
 
+#include <seastar/core/coroutine.hh>
+
 #include "gms/inet_address.hh"
 #include "locator/snitch_base.hh"
 #include "dht/i_partitioner.hh"
@@ -394,7 +396,15 @@ public:
     bool stopped() const noexcept {
         return _stopped;
     }
-
+    template <typename Func>
+    requires requires (Func func, effective_replication_map_ptr erm) {
+        { futurize_invoke(func, erm) } -> std::same_as<future<>>;
+    }
+    future<> do_for_each(Func func) const noexcept {
+        for (const auto& [key, p] : _effective_replication_maps) {
+            co_await futurize_invoke(func, p->shared_from_this());
+        }
+    }
 private:
     effective_replication_map_ptr find_effective_replication_map(const effective_replication_map::factory_key& key) const;
     effective_replication_map_ptr insert_effective_replication_map(mutable_effective_replication_map_ptr erm, effective_replication_map::factory_key key);
