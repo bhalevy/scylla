@@ -2356,6 +2356,7 @@ future<> gossiper::wait_for_gossip(std::chrono::milliseconds initial_delay, std:
                 logger.debug("Gossip looks settled");
                 num_okay++;
             } else {
+                logger.debug("current_size={} ep_size={} _msg_processing={}", current_size, ep_size, _msg_processing);
                 logger.info("Gossip not settled after {} polls.", total_polls);
                 num_okay = 0;
             }
