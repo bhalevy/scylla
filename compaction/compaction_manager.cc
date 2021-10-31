@@ -907,11 +907,21 @@ future<> compaction_manager::perform_sstable_scrub(column_family* cf, sstables::
     // must ensure that all sstables created before we run are scrubbed,
     // we need to barrier out any previously running compaction.
     return cf->run_with_compaction_disabled([this, cf, opts = std::move(opts)] {
-        return rewrite_sstables(cf, sstables::compaction_type_options::make_scrub(opts.operation_mode), [this] (const table& cf) {
+        return rewrite_sstables(cf, sstables::compaction_type_options::make_scrub(opts.operation_mode), [this, opts] (const table& cf) {
             auto all_sstables = cf.get_sstable_set().all();
             std::vector<sstables::shared_sstable> sstables = boost::copy_range<std::vector<sstables::shared_sstable>>(*all_sstables
-                    | boost::adaptors::filtered([] (const sstables::shared_sstable& sst) {
-                return !sst->requires_view_building();
+                    | boost::adaptors::filtered([&opts] (const sstables::shared_sstable& sst) {
+                if (sst->requires_view_building()) {
+                    return false;
+                }
+                switch (opts.quarantine_operation_mode) {
+                case sstables::compaction_type_options::scrub::quarantine_mode::include:
+                    return true;
+                case sstables::compaction_type_options::scrub::quarantine_mode::exclude:
+                    return !sst->is_quarantined();
+                case sstables::compaction_type_options::scrub::quarantine_mode::only:
+                    return sst->is_quarantined();
+                }
             }));
             return sstables;
         }, can_purge_tombstones::no);
