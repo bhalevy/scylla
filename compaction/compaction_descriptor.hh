@@ -80,6 +80,13 @@ public:
             validate, // validate data, printing all errors found (sstables are only read, not rewritten)
         };
         mode operation_mode = mode::abort;
+
+        enum class quarantine_mode {
+            include, // scrub all sstables, including quarantined
+            exclude, // scrub only non-quarantined sstables
+            only, // scrub only quarantined sstables
+        };
+        quarantine_mode quarantine_operation_mode = quarantine_mode::include;
     };
     struct reshard {
     };
