@@ -1857,6 +1857,10 @@ bool sstable::requires_view_building() const {
     return boost::algorithm::ends_with(_dir, staging_dir);
 }
 
+bool sstable::is_eligable_for_compaction() const noexcept {
+    return !requires_view_building();
+}
+
 sstring sstable::component_basename(const sstring& ks, const sstring& cf, version_types version, int64_t generation,
                                     format_types format, sstring component) {
     sstring v = _version_string.at(version);
