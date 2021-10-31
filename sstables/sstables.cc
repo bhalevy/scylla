@@ -1857,8 +1857,12 @@ bool sstable::requires_view_building() const {
     return boost::algorithm::ends_with(_dir, staging_dir);
 }
 
+bool sstable::is_quarantined() const noexcept {
+    return boost::algorithm::ends_with(_dir, quarantine_dir);
+}
+
 bool sstable::is_eligable_for_compaction() const noexcept {
-    return !requires_view_building();
+    return !(requires_view_building() || is_quarantined());
 }
 
 sstring sstable::component_basename(const sstring& ks, const sstring& cf, version_types version, int64_t generation,
