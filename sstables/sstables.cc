@@ -2104,6 +2104,15 @@ future<> sstable::move_to_new_dir(sstring new_dir, int64_t new_generation, bool 
     });
 }
 
+future<> sstable::move_to_quarantine(bool do_sync_dirs) {
+    if (is_quarantined()) {
+        co_return;
+    }
+    auto new_dir = get_dir() + "/" + sstables::quarantine_dir;
+    co_await touch_directory(new_dir);
+    co_await move_to_new_dir(std::move(new_dir), generation(), do_sync_dirs);
+}
+
 flat_mutation_reader_v2
 sstable::make_reader(
         schema_ptr schema,

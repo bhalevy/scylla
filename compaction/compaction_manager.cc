@@ -908,7 +908,9 @@ future<> compaction_manager::perform_sstable_scrub(column_family* cf, sstables::
     // we need to barrier out any previously running compaction.
     return cf->run_with_compaction_disabled([this, cf, scrub_mode] {
         return rewrite_sstables(cf, sstables::compaction_type_options::make_scrub(scrub_mode), [this] (const table& cf) {
-            return get_candidates(cf);
+            auto all_sstables = cf.get_sstable_set().all();
+            std::vector<sstables::shared_sstable> sstables = boost::copy_range<std::vector<sstables::shared_sstable>>(*all_sstables);
+            return get_candidates(cf, std::move(sstables));
         }, can_purge_tombstones::no);
     });
 }

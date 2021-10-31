@@ -202,6 +202,7 @@ public:
 
     future<> set_generation(int64_t generation);
     future<> move_to_new_dir(sstring new_dir, int64_t generation, bool do_sync_dirs = true);
+    future<> move_to_quarantine(bool do_sync_dirs = true);
 
     int64_t generation() const {
         return _generation;
