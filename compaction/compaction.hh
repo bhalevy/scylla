@@ -35,6 +35,8 @@ class flat_mutation_reader;
 
 namespace sstables {
 
+    bool is_eligable_for_compaction(const sstables::shared_sstable& sst) noexcept;
+
     class pretty_printed_data_size {
         uint64_t _size;
     public:
