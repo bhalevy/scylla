@@ -899,15 +899,15 @@ future<> compaction_manager::perform_sstable_upgrade(database& db, column_family
 }
 
 // Submit a column family to be scrubbed and wait for its termination.
-future<> compaction_manager::perform_sstable_scrub(column_family* cf, sstables::compaction_type_options::scrub::mode scrub_mode) {
-    if (scrub_mode == sstables::compaction_type_options::scrub::mode::validate) {
+future<> compaction_manager::perform_sstable_scrub(column_family* cf, sstables::compaction_type_options::scrub opts) {
+    if (opts.operation_mode == sstables::compaction_type_options::scrub::mode::validate) {
         return perform_sstable_scrub_validate_mode(cf);
     }
     // since we might potentially have ongoing compactions, and we
     // must ensure that all sstables created before we run are scrubbed,
     // we need to barrier out any previously running compaction.
-    return cf->run_with_compaction_disabled([this, cf, scrub_mode] {
-        return rewrite_sstables(cf, sstables::compaction_type_options::make_scrub(scrub_mode), [this] (const table& cf) {
+    return cf->run_with_compaction_disabled([this, cf, opts = std::move(opts)] {
+        return rewrite_sstables(cf, sstables::compaction_type_options::make_scrub(opts.operation_mode), [this] (const table& cf) {
             auto all_sstables = cf.get_sstable_set().all();
             std::vector<sstables::shared_sstable> sstables = boost::copy_range<std::vector<sstables::shared_sstable>>(*all_sstables
                     | boost::adaptors::filtered([] (const sstables::shared_sstable& sst) {
