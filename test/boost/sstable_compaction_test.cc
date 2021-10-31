@@ -3597,9 +3597,10 @@ SEASTAR_TEST_CASE(twcs_major_compaction_test) {
             return env.make_sstable(s, tmp.path().string(), (*gen)++, sstables::get_highest_sstable_version(), big);
         };
 
-        auto next_timestamp = [] (auto step) {
+        auto base_timestamp = api::max_timestamp - tests::random::get_int(1L, 36000 * 1000000L);
+        auto next_timestamp = [base_timestamp] (auto step) {
             using namespace std::chrono;
-            return (api::timestamp_clock::now().time_since_epoch() - duration_cast<microseconds>(step)).count();
+            return base_timestamp - duration_cast<microseconds>(step).count();
         };
 
         auto make_insert = [&] (api::timestamp_clock::duration step) {
@@ -3745,9 +3746,10 @@ SEASTAR_TEST_CASE(test_bug_6472) {
             return env.make_sstable(s, tmpdir_path, (*gen)++, sstables::get_highest_sstable_version(), big);
         };
 
-        auto next_timestamp = [] (auto step) {
+        auto base_timestamp = api::max_timestamp - tests::random::get_int(1L, 36000 * 1000000L);
+        auto next_timestamp = [base_timestamp] (auto step) {
             using namespace std::chrono;
-            return (gc_clock::now().time_since_epoch() - duration_cast<microseconds>(step)).count();
+            return base_timestamp - duration_cast<microseconds>(step).count();
         };
 
         auto tokens = token_generation_for_shard(1, this_shard_id(), test_db_config.murmur3_partitioner_ignore_msb_bits(), smp::count);
@@ -3874,10 +3876,11 @@ SEASTAR_TEST_CASE(test_twcs_partition_estimate) {
             return env.make_sstable(s, tmpdir_path, (*gen)++, sstables::get_highest_sstable_version(), big);
         };
 
-        auto next_timestamp = [] (int sstable_idx, int ck_idx) {
+        auto base_timestamp = api::max_timestamp - tests::random::get_int(1L, 36000 * 1000000L);
+        auto next_timestamp = [base_timestamp] (int sstable_idx, int ck_idx) {
             using namespace std::chrono;
             auto window = hours(sstable_idx * rows_per_partition + ck_idx);
-            return (gc_clock::now().time_since_epoch() - duration_cast<microseconds>(window)).count();
+            return base_timestamp - duration_cast<microseconds>(window).count();
         };
 
         auto tokens = token_generation_for_shard(4, this_shard_id(), test_db_config.murmur3_partitioner_ignore_msb_bits(), smp::count);
@@ -4007,9 +4010,10 @@ SEASTAR_TEST_CASE(test_twcs_interposer_on_memtable_flush) {
         builder.set_compaction_strategy_options(std::move(opts));
         auto s = builder.build();
 
-        auto next_timestamp = [] (auto step) {
+        auto base_timestamp = api::max_timestamp - tests::random::get_int(1L, 36000 * 1000000L);
+        auto next_timestamp = [base_timestamp] (auto step) {
             using namespace std::chrono;
-            return (gc_clock::now().time_since_epoch() - duration_cast<microseconds>(step)).count();
+            return base_timestamp - duration_cast<microseconds>(step).count();
         };
         auto tokens = token_generation_for_shard(1, this_shard_id(), test_db_config.murmur3_partitioner_ignore_msb_bits(), smp::count);
 
@@ -4198,8 +4202,10 @@ SEASTAR_TEST_CASE(twcs_reshape_with_disjoint_set_test) {
         now = gc_clock::now().time_since_epoch() + offset_duration;
         assert(std::chrono::duration_cast<minutes>(now).count() % window_size_in_minutes == 0);
 
-        auto next_timestamp = [now](auto step) {
-            return (now + duration_cast<seconds>(step)).count();
+        auto base_timestamp = api::max_timestamp - tests::random::get_int(1L, 36000 * 1000000L);
+        auto next_timestamp = [base_timestamp] (auto step) {
+            using namespace std::chrono;
+            return base_timestamp - duration_cast<microseconds>(step).count();
         };
 
         auto tokens = token_generation_for_shard(disjoint_sstable_count, this_shard_id(), test_db_config.murmur3_partitioner_ignore_msb_bits(), smp::count);
@@ -4487,9 +4493,10 @@ SEASTAR_TEST_CASE(max_ongoing_compaction_test) {
         auto tracker = make_lw_shared<cache_tracker>();
         auto tokens = token_generation_for_shard(1, this_shard_id(), test_db_config.murmur3_partitioner_ignore_msb_bits(), smp::count);
 
-        auto next_timestamp = [] (auto step) {
+        auto base_timestamp = api::max_timestamp - tests::random::get_int(1L, 36000 * 1000000L);
+        auto next_timestamp = [base_timestamp] (auto step) {
             using namespace std::chrono;
-            return (gc_clock::now().time_since_epoch() - duration_cast<microseconds>(step)).count();
+            return base_timestamp - duration_cast<microseconds>(step).count();
         };
         auto make_expiring_cell = [&] (schema_ptr s, std::chrono::hours step) {
             static thread_local int32_t value = 1;
@@ -4686,9 +4693,10 @@ SEASTAR_TEST_CASE(twcs_single_key_reader_through_compound_set_test) {
         auto s = builder.build();
         auto cs = sstables::make_compaction_strategy(sstables::compaction_strategy_type::time_window, std::move(opts));
 
-        auto next_timestamp = [](auto step) {
+        auto base_timestamp = api::min_timestamp + tests::random::get_int(1L, 36000 * 1000000L);
+        auto next_timestamp = [base_timestamp] (auto step) {
             using namespace std::chrono;
-            return (gc_clock::now().time_since_epoch() + duration_cast<microseconds>(step)).count();
+            return base_timestamp + duration_cast<microseconds>(step).count();
         };
         auto tokens = token_generation_for_shard(1, this_shard_id(), test_db_config.murmur3_partitioner_ignore_msb_bits(), smp::count);
 
