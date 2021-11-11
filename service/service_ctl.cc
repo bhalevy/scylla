@@ -227,6 +227,7 @@ future<> base_controller::shutdown() {
     case state::initialized:
     case state::starting:
     case state::shutdown:
+    case state::stopped:
         co_return;
     case state::shutting_down:
         co_return co_await _pending.get_future();

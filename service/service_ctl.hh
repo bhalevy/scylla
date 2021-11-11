@@ -21,13 +21,13 @@
 
 #pragma once
 
-#include "seastar/core/shared_ptr.hh"
 #include <unordered_set>
 #include <functional>
 #include <iostream>
 #include <deque>
 #include <unordered_map>
 #include <type_traits>
+#include <concepts>
 
 #include <seastar/core/future.hh>
 #include <seastar/core/shared_future.hh>
@@ -36,9 +36,13 @@
 #include <seastar/core/sharded.hh>
 #include <seastar/core/semaphore.hh>
 
+#include "log.hh"
+
 using namespace seastar;
 
 namespace service {
+
+extern logging::logger sclog;
 
 class base_controller;
 
@@ -134,6 +138,63 @@ private:
 sstring to_string(enum base_controller::state s);
 std::ostream& operator<<(std::ostream&, enum base_controller::state s);
 
+class service_ctl : public base_controller {
+public:
+    using func_t = std::function<future<> ()>;
+
+public:
+    func_t start_func;
+    func_t serve_func = [] { return make_ready_future<>(); };
+    func_t drain_func = [] { return make_ready_future<>(); };
+    func_t shutdown_func = [] { return make_ready_future<>(); };
+    func_t stop_func = [] { return make_ready_future<>(); };
+
+    service_ctl(services_controller& sctl, sstring name)
+        : base_controller(sctl, std::move(name))
+    {
+    }
+
+    service_ctl(services_controller& sctl, sstring name, func_t start_fn)
+        : base_controller(sctl, std::move(name))
+        , start_func(std::move(start_fn))
+    {
+    }
+
+    service_ctl(services_controller& sctl, sstring name, func_t start_fn, func_t stop_fn)
+        : base_controller(sctl, std::move(name))
+        , start_func(std::move(start_fn))
+        , stop_func(std::move(stop_fn))
+    {
+    }
+
+    auto lookup_dep(base_controller& o) {
+        return base_controller::lookup_dep(o);
+    }
+
+protected:
+    virtual future<> do_start() noexcept override {
+        return futurize_invoke(start_func);
+    }
+
+    virtual future<> do_serve() noexcept override {
+        return futurize_invoke(serve_func);
+    }
+
+    virtual future<> do_drain() noexcept override {
+        return futurize_invoke(drain_func);
+    }
+
+    virtual future<> do_shutdown() noexcept override {
+        return futurize_invoke(shutdown_func);
+    }
+
+    virtual future<> do_stop() noexcept override {
+        return futurize_invoke(stop_func);
+    }
+};
+
+struct default_start_tag {};
+
 template <typename Service>
 class sharded_service_ctl : public base_controller {
 public:
@@ -143,21 +204,32 @@ private:
     sharded<Service> _service;
 
 public:
-    func_t start_func;
+    func_t start_func = [] (sharded<Service>&) { return make_ready_future<>(); };
     func_t serve_func = [] (sharded<Service>&) { return make_ready_future<>(); };
     func_t drain_func = [] (sharded<Service>&) { return make_ready_future<>(); };
     func_t shutdown_func = [] (sharded<Service>&) { return make_ready_future<>(); };
     func_t stop_func = [] (sharded<Service>& s) { return s.stop(); };
 
+    template <typename T = Service>
+    requires std::is_default_constructible_v<T>
+    sharded_service_ctl(services_controller& sctl, sstring name, default_start_tag)
+        : base_controller(sctl, std::move(name))
+        , start_func([] (sharded<T>& s) { return s.start(); })
+    {
+        sclog.debug("{}: default start_func", this->name());
+    }
+
     sharded_service_ctl(services_controller& sctl, sstring name)
         : base_controller(sctl, std::move(name))
     {
+        sclog.debug("{}: no start_func", this->name());
     }
 
     sharded_service_ctl(services_controller& sctl, sstring name, func_t start_fn)
         : base_controller(sctl, std::move(name))
         , start_func(std::move(start_fn))
     {
+        sclog.debug("{}: custom start_func", this->name());
     }
 
     template <typename T>
