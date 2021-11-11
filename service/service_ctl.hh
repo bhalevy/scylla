@@ -186,32 +186,6 @@ protected:
 };
 
 // Top-level controller
-class systemd : public base_controller {
-public:
-    systemd() noexcept;
-
-protected:
-    virtual future<> do_start() noexcept override {
-        return make_ready_future<>();
-    }
-
-    virtual future<> do_serve(base_controller::service_mode) noexcept override {
-        return make_ready_future<>();
-    }
-
-    virtual future<> do_drain() noexcept override {
-        return make_ready_future<>();
-    }
-
-    virtual future<> do_shutdown() noexcept override {
-        return make_ready_future<>();
-    }
-
-    virtual future<> do_stop() noexcept override {
-        return make_ready_future<>();
-    }
-};
-
 class services_controller {
     std::deque<base_controller*> _all_services;
 

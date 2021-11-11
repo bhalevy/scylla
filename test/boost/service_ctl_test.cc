@@ -86,28 +86,33 @@ SEASTAR_THREAD_TEST_CASE(test_service_ctl) {
             .depends_on(stop_signal_ctl)
             .depends_on(sst_dir_semaphore_ctl);
 
-    service::systemd systemd;
-    systemd.depends_on(db_ctl);
+    service::services_controller sctl;
+    sctl.add_service(stop_signal_ctl);
+    sctl.add_service(token_metadata_ctl);
+    sctl.add_service(mm_notifier_ctl);
+    sctl.add_service(feature_service_ctl);
+    sctl.add_service(sst_dir_semaphore_ctl);
+    sctl.add_service(db_ctl);
 
     std::exception_ptr ex;
     try {
         testlog.info("Starting all services");
-        systemd.start().get();
+        sctl.start().get();
 
         testlog.info("Starting to serve");
-        systemd.serve(service::base_controller::service_mode::normal).get();
+        sctl.serve().get();
 
         testlog.info("Draining all services");
-        systemd.drain().get();
+        sctl.drain().get();
 
         testlog.info("Shutting down all services");
-        systemd.shutdown().get();
+        sctl.shutdown().get();
     } catch (...) {
         ex = std::current_exception();
     }
 
     testlog.info("Stopping all services");
-    systemd.stop().get();
+    sctl.stop().get();
 
     BOOST_REQUIRE(!ex);
 }

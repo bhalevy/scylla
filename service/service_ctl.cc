@@ -288,11 +288,6 @@ future<> base_controller::stop() {
     });
 }
 
-systemd::systemd() noexcept
-    : base_controller("systemd")
-{
-}
-
 services_controller::services_controller()
 {
 }
