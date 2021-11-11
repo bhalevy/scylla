@@ -48,7 +48,6 @@ public:
         starting_service,
         serving,
         draining,
-        drained,
         shutting_down,
         shutdown,
         stopping,

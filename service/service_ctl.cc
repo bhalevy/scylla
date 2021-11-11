@@ -41,7 +41,6 @@ sstring to_string(enum base_controller::state s) {
     case base_controller::state::starting_service: return "starting_service";
     case base_controller::state::serving:       return "serving";
     case base_controller::state::draining:      return "draining";
-    case base_controller::state::drained:       return "drained";
     case base_controller::state::shutting_down: return "shutting down";
     case base_controller::state::shutdown:      return "shutdown";
     case base_controller::state::stopping:      return "stopping";
@@ -148,7 +147,6 @@ future<> base_controller::serve(service_mode m) {
         assert(m == _service_mode);
         co_return;
     case state::started:
-    case state::drained:
         assert(_service_mode == service_mode::none);
         break;
     default:
@@ -178,11 +176,10 @@ future<> base_controller::drain() {
     switch (_state) {
     case state::initialized:
     case state::starting:
-    case state::drained:
+    case state::started:
         co_return;
     case state::draining:
         co_return co_await _pending.get_future();
-    case state::started:
     case state::serving:
         break;
     default:
@@ -203,7 +200,7 @@ future<> base_controller::drain() {
             sclog.error("Draining {} failed: {}", _name, _ex);
             throw;
         }
-        _state = state::drained;
+        _state = state::started;
         _service_mode = service_mode::none;
     });
 }
@@ -223,7 +220,6 @@ future<> base_controller::shutdown() {
         });
         [[fallthrough]];
     case state::started:
-    case state::drained:
         break;
     default:
         auto msg = format("Shutting down {} in unexpected state '{}': failed={} error={}", _name, _state, failed(), get_exception());
@@ -262,7 +258,6 @@ future<> base_controller::stop() {
         }
     case state::started:
     case state::serving:
-    case state::drained:
         co_await shutdown().handle_exception([this] (std::exception_ptr ex) {
             auto msg = format("Auto-shutdown while stopping {} failed: {}", _name, _ex);
             on_internal_error_noexcept(sclog, msg);
