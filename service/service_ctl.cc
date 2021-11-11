@@ -23,12 +23,12 @@
 #include <seastar/core/on_internal_error.hh>
 #include <seastar/core/coroutine.hh>
 
-#include "systemd.hh"
+#include "service_ctl.hh"
 #include "log.hh"
 
 namespace service {
 
-logging::logger sclog("systemd");
+logging::logger sclog("service_ctl");
 
 sstring to_string(enum base_controller::state s) {
     switch (s) {

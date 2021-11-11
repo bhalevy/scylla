@@ -512,7 +512,7 @@ scylla_tests = set([
     'test/boost/reader_concurrency_semaphore_test',
     'test/boost/service_level_controller_test',
     'test/boost/schema_loader_test',
-    'test/boost/systemd_test',
+    'test/boost/service_ctl_test',
     'test/manual/ec2_snitch_test',
     'test/manual/enormous_table_scan_test',
     'test/manual/gce_snitch_test',
@@ -1020,7 +1020,7 @@ scylla_core = (['database.cc',
                 'service/raft/raft_rpc.cc',
                 'service/raft/raft_gossip_failure_detector.cc',
                 'service/raft/raft_group_registry.cc',
-                'service/systemd.cc',
+                'service/service_ctl.cc',
                 ] + [Antlr3Grammar('cql3/Cql.g')] + [Thrift('interface/cassandra.thrift', 'Cassandra')] \
                   + scylla_raft_core
                )
