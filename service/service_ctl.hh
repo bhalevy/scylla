@@ -21,6 +21,7 @@
 
 #pragma once
 
+#include "seastar/core/shared_ptr.hh"
 #include <set>
 #include <functional>
 #include <iostream>
@@ -29,8 +30,10 @@
 
 #include <seastar/core/future.hh>
 #include <seastar/core/shared_future.hh>
+#include <seastar/core/shared_ptr.hh>
 #include <seastar/core/sstring.hh>
 #include <seastar/core/sharded.hh>
+#include <seastar/core/semaphore.hh>
 
 using namespace seastar;
 
@@ -41,7 +44,8 @@ public:
     enum class state {
         initialized,
         starting,
-        started,starting_service,
+        started,
+        starting_service,
         serving,
         draining,
         drained,
@@ -62,6 +66,7 @@ private:
     std::set<base_controller*> _dependencies;
     std::set<base_controller*> _dependants;
     state _state = state::initialized;
+    semaphore _sem;
     shared_future<> _pending = {};
     std::exception_ptr _ex;
     service_mode _service_mode = service_mode::none;
@@ -69,6 +74,7 @@ private:
 public:
     explicit base_controller(sstring name) noexcept
         : _name(std::move(name))
+        , _sem(1)
     { }
 
     base_controller(base_controller&&) = default;
@@ -93,18 +99,21 @@ public:
         return _ex;
     }
 
-    future<> start() noexcept;
-    future<> serve(service_mode) noexcept;
-    future<> drain() noexcept;
-    future<> shutdown() noexcept;
-    future<> stop() noexcept;
+    future<> start();
+    future<> serve(service_mode);
+    future<> drain();
+    future<> shutdown();
+    future<> stop();
 
 protected:
-    virtual future<> do_start() noexcept = 0;
-    virtual future<> do_serve(service_mode) noexcept = 0;
-    virtual future<> do_drain() noexcept = 0;
-    virtual future<> do_shutdown() noexcept = 0;
-    virtual future<> do_stop() noexcept = 0;
+    virtual future<> do_start() = 0;
+    virtual future<> do_serve(service_mode) = 0;
+    virtual future<> do_drain() = 0;
+    virtual future<> do_shutdown() = 0;
+    virtual future<> do_stop() = 0;
+
+private:
+    future<> pending_op(std::function<future<>()> func) noexcept;
 };
 
 sstring to_string(enum base_controller::state s);
@@ -157,23 +166,23 @@ public:
 
 protected:
     virtual future<> do_start() noexcept override {
-        return start_func(_service);
+        return futurize_invoke(start_func, _service);
     }
 
     virtual future<> do_serve(base_controller::service_mode m) noexcept override {
-        return serve_func(_service, m);
+        return futurize_invoke(serve_func, _service, m);
     }
 
     virtual future<> do_drain() noexcept override {
-        return drain_func(_service);
+        return futurize_invoke(drain_func, _service);
     }
 
     virtual future<> do_shutdown() noexcept override {
-        return shutdown_func(_service);
+        return futurize_invoke(shutdown_func, _service);
     }
 
     virtual future<> do_stop() noexcept override {
-        return stop_func(_service);
+        return futurize_invoke(stop_func, _service);
     }
 };
 

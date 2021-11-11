@@ -19,9 +19,12 @@
  * along with Scylla.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include <exception>
 #include <seastar/core/loop.hh>
 #include <seastar/core/on_internal_error.hh>
 #include <seastar/core/coroutine.hh>
+#include <seastar/coroutine/exception.hh>
+#include <seastar/core/semaphore.hh>
 
 #include "service_ctl.hh"
 #include "log.hh"
@@ -98,80 +101,87 @@ base_controller& base_controller::depends_on(base_controller& o) noexcept {
     return *this;
 }
 
-future<> base_controller::start() noexcept {
+future<> base_controller::pending_op(std::function<future<>()> func) noexcept {
+    _pending = seastar::with_semaphore(_sem, 1, [&func] {
+        return func();
+    });
+    co_await _pending.get_future();
+}
+
+future<> base_controller::start() {
     switch (_state) {
     case state::initialized:
         break;
     case state::starting:
-        return _pending.get_future();
+        co_return co_await _pending.get_future();
     case state::started:
-        return make_ready_future<>();
+        co_return;
     default:
-        return make_exception_future<>(std::runtime_error(format("Cannot start service in state '{}'", _state)));
+        throw std::runtime_error(format("Cannot start service in state '{}'", _state));
     }
 
     sclog.info("Starting {}", _name);
     _state = state::starting;
-    _pending = parallel_for_each(_dependencies, [] (base_controller* dep) {
-        return dep->start();
-    }).then([this] {
-        return do_start();
-    }).then_wrapped([this] (future<> f) {
-        if (f.failed()) {
-            _ex = f.get_exception();
+    co_await pending_op([this] () -> future<> {
+        try {
+            co_await parallel_for_each(_dependencies, [] (base_controller* dep) {
+                return dep->start();
+            });
+            co_await do_start();
+        } catch (...) {
+            _ex = std::current_exception();
             sclog.error("Starting {} failed: {}", _name, _ex);
-            return make_exception_future<>(get_exception());
+            throw;
         }
         _state = state::started;
         sclog.info("Started {}", _name);
-        return make_ready_future<>();
     });
-    return _pending.get_future();
 }
 
-future<> base_controller::serve(service_mode m) noexcept {
+future<> base_controller::serve(service_mode m) {
     switch (_state) {
     case state::starting_service:
-        return _pending.get_future();
+        assert(m == _service_mode);
+        co_return co_await _pending.get_future();
     case state::serving:
         // FIXME: support service_mode transition
         assert(m == _service_mode);
-        return make_ready_future<>();
+        co_return;
     case state::started:
+    case state::drained:
         assert(_service_mode == service_mode::none);
         break;
     default:
-        return make_exception_future<>(std::runtime_error(format("Cannot start service in state '{}'", _state)));
+        throw std::runtime_error(format("Cannot start service in state '{}'", _state));
     }
 
     _state = state::starting_service;
     _service_mode = m;
     sclog.info("{}: Starting {} service mode", _name, _service_mode);
-    _pending = parallel_for_each(_dependencies, [m] (base_controller* dep) {
-        return dep->serve(m);
-    }).then([this, m] {
-        return do_serve(m);
-    }).then_wrapped([this] (future<> f) {
-        if (f.failed()) {
-            _ex = f.get_exception();
+    co_await pending_op([this, m] () -> future<> {
+        try {
+            co_await parallel_for_each(_dependencies, [m] (base_controller* dep) {
+                return dep->serve(m);
+            });
+            co_await do_serve(m);
+        } catch (...) {
+            _ex = std::current_exception();
             sclog.info("{}: Starting {} service mode {} failed: ", _name, _service_mode, _ex);
-            return make_exception_future<>(get_exception());
+            throw;
         }
         _state = state::serving;
         sclog.info("{}: Started {} service mode", _name, _service_mode);
-        return make_ready_future<>();
     });
-    return _pending.get_future();
 }
 
-future<> base_controller::drain() noexcept {
+future<> base_controller::drain() {
     switch (_state) {
     case state::initialized:
     case state::starting:
     case state::drained:
-        return make_ready_future<>();
+        co_return;
     case state::draining:
-        return _pending.get_future();
+        co_return co_await _pending.get_future();
     case state::started:
     case state::serving:
         break;
@@ -181,32 +191,37 @@ future<> base_controller::drain() noexcept {
     }
     _state = state::draining;
     sclog.info("Draining {}", _name);
-    _pending = do_drain().then([this] {
-        sclog.info("Drained {}", _name);
-        return parallel_for_each(_dependencies, [] (base_controller* dep) {
-            return dep->drain();
-        });
-    }).then_wrapped([this] (future<> f) {
-        if (f.failed()) {
-            _ex = f.get_exception();
+    co_await pending_op([this] () -> future<> {
+        try {
+            co_await do_drain();
+            sclog.info("Drained {}", _name);
+            co_await parallel_for_each(_dependencies, [] (base_controller* dep) {
+                return dep->drain();
+            });
+        } catch (...) {
+            _ex = std::current_exception();
             sclog.error("Draining {} failed: {}", _name, _ex);
-            return make_exception_future<>(get_exception());
+            throw;
         }
         _state = state::drained;
         _service_mode = service_mode::none;
-        return make_ready_future<>();
     });
-    return _pending.get_future();
 }
 
-future<> base_controller::shutdown() noexcept {
+future<> base_controller::shutdown() {
     switch (_state) {
     case state::initialized:
     case state::starting:
     case state::shutdown:
-        return make_ready_future<>();
+        co_return;
     case state::shutting_down:
-        return _pending.get_future();
+        co_return co_await _pending.get_future();
+    case state::serving:
+        co_await drain().handle_exception([this] (std::exception_ptr ex) {
+            auto msg = format("Auto-drain while shutting down {} failed: {}", _name, _ex);
+            on_internal_error_noexcept(sclog, msg);
+        });
+        [[fallthrough]];
     case state::started:
     case state::drained:
         break;
@@ -216,30 +231,29 @@ future<> base_controller::shutdown() noexcept {
     }
     _state = state::shutting_down;
     sclog.info("Shutting down {}", _name);
-    _pending = do_shutdown().then([this] {
-        sclog.info("Shut down {}", _name);
-        return parallel_for_each(_dependencies, [] (base_controller* dep) {
-            return dep->shutdown();
-        });
-    }).then_wrapped([this] (future<> f) {
-        if (f.failed()) {
-            _ex = f.get_exception();
+    co_await pending_op([this] () -> future<> {
+        try {
+            co_await do_shutdown();
+            sclog.info("Shut down {}", _name);
+            co_await parallel_for_each(_dependencies, [] (base_controller* dep) {
+                return dep->shutdown();
+            });
+        } catch (...) {
+            _ex = std::current_exception();
             sclog.error("Shutting down {} failed: {}", _name, _ex);
-            return make_exception_future<>(get_exception());
+            throw;
         }
         _state = state::shutdown;
-        return make_ready_future<>();
     });
-    return _pending.get_future();
 }
 
-future<> base_controller::stop() noexcept {
+future<> base_controller::stop() {
     switch (_state) {
     case state::initialized:
     case state::stopped:
-        return make_ready_future<>();
+        co_return;
     case state::stopping:
-        return _pending.get_future();
+        co_return co_await _pending.get_future();
     case state::starting:
     case state::draining:
     case state::shutting_down:
@@ -247,6 +261,13 @@ future<> base_controller::stop() noexcept {
             break;
         }
     case state::started:
+    case state::serving:
+    case state::drained:
+        co_await shutdown().handle_exception([this] (std::exception_ptr ex) {
+            auto msg = format("Auto-shutdown while stopping {} failed: {}", _name, _ex);
+            on_internal_error_noexcept(sclog, msg);
+        });
+        [[fallthrough]];
     case state::shutdown:
         break;
     default:
@@ -255,21 +276,21 @@ future<> base_controller::stop() noexcept {
     }
     _state = state::stopping;
     sclog.info("Stopping {}", _name);
-    _pending = do_stop().then([this] {
-        sclog.info("Stopped {}", _name);
-        return parallel_for_each(_dependencies, [] (base_controller* dep) {
-            return dep->stop();
-        });
-    }).then_wrapped([this] (future<> f) {
-        if (f.failed()) {
-            _ex = f.get_exception();
-            sclog.error("Stopping {} failed: {}", _name, _ex);
-            return make_exception_future<>(get_exception());
+    co_await pending_op([this] () -> future<> {
+        try {
+            co_await do_stop();
+            sclog.info("Stopped {}", _name);
+            co_await parallel_for_each(_dependencies, [] (base_controller* dep) {
+                return dep->stop();
+            });
+        } catch (...) {
+            _ex = std::current_exception();
+            auto msg = format("Stopping {} failed: {}", _name, _ex);
+            // stop() should never fail
+            on_internal_error(sclog, msg);
         }
         _state = state::stopped;
-        return make_ready_future<>();
     });
-    return _pending.get_future();
 }
 
 services_controller::services_controller()
