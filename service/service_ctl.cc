@@ -103,7 +103,20 @@ base_controller* base_controller::lookup_dep(base_controller& o) {
     return lookup_dep(o.name());
 }
 
-base_controller& base_controller::depends_on(base_controller& o) noexcept {
+bool base_controller::does_depend_on(base_controller* op) noexcept {
+    for (auto* p : _dependencies) {
+        if (p == op || p->does_depend_on(op)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+base_controller& base_controller::depends_on(base_controller& o) {
+    if (o.does_depend_on(this)) {
+        auto msg = format("Circular dependency detected: {} and {} depend on each other", name(), o.name());
+        on_internal_error(sclog, msg);
+    }
     o._dependants.insert(this);
     _dependencies.insert(&o);
     sclog.debug("'{}' depends on '{}'", name(), o.name());

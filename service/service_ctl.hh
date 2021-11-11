@@ -95,7 +95,7 @@ public:
     base_controller* lookup_dep(sstring name);
     base_controller* lookup_dep(base_controller& o);
 
-    base_controller& depends_on(base_controller& o) noexcept;
+    base_controller& depends_on(base_controller& o);
 
     const sstring& name() const noexcept {
         return _name;
@@ -127,6 +127,7 @@ protected:
     virtual future<> do_stop() = 0;
 
 private:
+    bool does_depend_on(base_controller* op) noexcept;
     future<> pending_op(std::function<future<>()> func) noexcept;
 };
 

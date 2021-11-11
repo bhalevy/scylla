@@ -23,6 +23,7 @@
 
 #include <seastar/testing/test_case.hh>
 #include <seastar/testing/thread_test_case.hh>
+#include <seastar/testing/on_internal_error.hh>
 
 #include "test/lib/log.hh"
 
@@ -108,4 +109,20 @@ SEASTAR_THREAD_TEST_CASE(test_service_ctl) {
     sctl.stop().get();
 
     BOOST_REQUIRE(!ex);
+}
+
+SEASTAR_THREAD_TEST_CASE(test_circular_dependency) {
+    service::services_controller sctl;
+
+    struct test_service {
+    };
+    service::sharded_service_ctl<test_service> t0(sctl, "t0");
+    service::sharded_service_ctl<test_service> t1(sctl, "t1");
+    service::sharded_service_ctl<test_service> t2(sctl, "t2");
+
+    auto _ = testing::scoped_no_abort_on_internal_error();
+    t1.depends_on(t0);
+    BOOST_REQUIRE_THROW(t0.depends_on(t1), std::runtime_error);
+    t2.depends_on(t1);
+    BOOST_REQUIRE_THROW(t0.depends_on(t2), std::runtime_error);
 }
