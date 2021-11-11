@@ -54,20 +54,6 @@ std::ostream& operator<<(std::ostream& os, enum base_controller::state s) {
     return os << to_string(s);
 }
 
-sstring to_string(enum base_controller::service_mode m) {
-    switch (m) {
-    case base_controller::service_mode::none:           return "none";
-    case base_controller::service_mode::normal:         return "normal";
-    case base_controller::service_mode::maintenance:    return "maintenance";
-    }
-    on_internal_error_noexcept(sclog, format("Invalid base_controller::service_mode: {}", m));
-    return "(invalid)";
-}
-
-std::ostream& operator<<(std::ostream& os, enum base_controller::service_mode s) {
-    return os << to_string(s);
-}
-
 base_controller::~base_controller() {
     switch (_state) {
     case state::initialized:
@@ -137,38 +123,33 @@ future<> base_controller::start() {
     });
 }
 
-future<> base_controller::serve(service_mode m) {
+future<> base_controller::serve() {
     switch (_state) {
     case state::starting_service:
-        assert(m == _service_mode);
         co_return co_await _pending.get_future();
     case state::serving:
-        // FIXME: support service_mode transition
-        assert(m == _service_mode);
         co_return;
     case state::started:
-        assert(_service_mode == service_mode::none);
         break;
     default:
         throw std::runtime_error(format("Cannot start service in state '{}'", _state));
     }
 
     _state = state::starting_service;
-    _service_mode = m;
-    sclog.info("{}: Starting {} service mode", _name, _service_mode);
-    co_await pending_op([this, m] () -> future<> {
+    sclog.info("{}: Starting to serve", _name);
+    co_await pending_op([this] () -> future<> {
         try {
-            co_await parallel_for_each(_dependencies, [m] (base_controller* dep) {
-                return dep->serve(m);
+            co_await parallel_for_each(_dependencies, [] (base_controller* dep) {
+                return dep->serve();
             });
-            co_await do_serve(m);
+            co_await do_serve();
         } catch (...) {
             _ex = std::current_exception();
-            sclog.info("{}: Starting {} service mode {} failed: ", _name, _service_mode, _ex);
+            sclog.info("{}: Starting to serve failed: {}", _name, _ex);
             throw;
         }
         _state = state::serving;
-        sclog.info("{}: Started {} service mode", _name, _service_mode);
+        sclog.info("{}: Started to serve", _name);
     });
 }
 
@@ -201,7 +182,6 @@ future<> base_controller::drain() {
             throw;
         }
         _state = state::started;
-        _service_mode = service_mode::none;
     });
 }
 
@@ -302,9 +282,9 @@ future<> services_controller::start() noexcept {
     }
 }
 
-future<> services_controller::serve(base_controller::service_mode m) noexcept {
+future<> services_controller::serve() noexcept {
     for (auto it = _all_services.begin(); it != _all_services.end(); it++) {
-        co_await (*it)->serve(m);
+        co_await (*it)->serve();
     }
 }
 

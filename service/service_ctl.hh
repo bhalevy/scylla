@@ -54,12 +54,6 @@ public:
         stopped,
     };
 
-    enum class service_mode {
-        none,
-        normal,
-        maintenance,
-    };
-
 private:
     sstring _name;
     std::set<base_controller*> _dependencies;
@@ -68,7 +62,6 @@ private:
     semaphore _sem;
     shared_future<> _pending = {};
     std::exception_ptr _ex;
-    service_mode _service_mode = service_mode::none;
 
 public:
     explicit base_controller(sstring name) noexcept
@@ -99,14 +92,14 @@ public:
     }
 
     future<> start();
-    future<> serve(service_mode);
+    future<> serve();
     future<> drain();
     future<> shutdown();
     future<> stop();
 
 protected:
     virtual future<> do_start() = 0;
-    virtual future<> do_serve(service_mode) = 0;
+    virtual future<> do_serve() = 0;
     virtual future<> do_drain() = 0;
     virtual future<> do_shutdown() = 0;
     virtual future<> do_stop() = 0;
@@ -118,9 +111,6 @@ private:
 sstring to_string(enum base_controller::state s);
 std::ostream& operator<<(std::ostream&, enum base_controller::state s);
 
-sstring to_string(enum base_controller::service_mode s);
-std::ostream& operator<<(std::ostream&, enum base_controller::service_mode s);
-
 template <typename Service>
 class sharded_service_ctl : public base_controller {
 public:
@@ -131,7 +121,7 @@ private:
 
 public:
     func_t start_func;
-    std::function<future<> (sharded<Service>&, base_controller::service_mode)> serve_func = [] (sharded<Service>&, base_controller::service_mode) { return make_ready_future<>(); };
+    func_t serve_func = [] (sharded<Service>&) { return make_ready_future<>(); };
     func_t drain_func = [] (sharded<Service>&) { return make_ready_future<>(); };
     func_t shutdown_func = [] (sharded<Service>&) { return make_ready_future<>(); };
     func_t stop_func = [] (sharded<Service>& s) { return s.stop(); };
@@ -168,8 +158,8 @@ protected:
         return futurize_invoke(start_func, _service);
     }
 
-    virtual future<> do_serve(base_controller::service_mode m) noexcept override {
-        return futurize_invoke(serve_func, _service, m);
+    virtual future<> do_serve() noexcept override {
+        return futurize_invoke(serve_func, _service);
     }
 
     virtual future<> do_drain() noexcept override {
@@ -195,7 +185,7 @@ public:
     void add_service(base_controller& s) noexcept;
 
     future<> start() noexcept;
-    future<> serve(base_controller::service_mode m = base_controller::service_mode::normal) noexcept;
+    future<> serve() noexcept;
     future<> drain() noexcept;
     future<> shutdown() noexcept;
     future<> stop() noexcept;
