@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2021-present-2020 ScyllaDB
+ * Copyright (C) 2021-present ScyllaDB
  */
 
 /*
