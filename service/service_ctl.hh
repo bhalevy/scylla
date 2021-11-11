@@ -56,8 +56,8 @@ public:
 
 private:
     sstring _name;
-    std::set<base_controller*> _dependencies;
-    std::set<base_controller*> _dependants;
+    std::unordered_set<base_controller*> _dependencies;
+    std::unordered_set<base_controller*> _dependants;
     state _state = state::initialized;
     semaphore _sem;
     shared_future<> _pending = {};
