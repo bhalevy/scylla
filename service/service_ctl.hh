@@ -22,10 +22,11 @@
 #pragma once
 
 #include "seastar/core/shared_ptr.hh"
-#include <set>
+#include <unordered_set>
 #include <functional>
 #include <iostream>
 #include <deque>
+#include <unordered_map>
 #include <type_traits>
 
 #include <seastar/core/future.hh>
@@ -38,6 +39,26 @@
 using namespace seastar;
 
 namespace service {
+
+class base_controller;
+
+// Top-level controller and registry
+class services_controller {
+    std::deque<base_controller*> _all_services;
+    std::unordered_map<sstring, base_controller*> _services_map;
+    std::unordered_set<base_controller*> _top_level;
+
+public:
+    void add_service(base_controller& s);
+    base_controller* lookup_service(sstring name) noexcept;
+    base_controller* lookup_service(base_controller& o);
+
+    future<> start() noexcept;
+    future<> serve() noexcept;
+    future<> drain() noexcept;
+    future<> shutdown() noexcept;
+    future<> stop() noexcept;
+};
 
 class base_controller {
 public:
@@ -55,6 +76,7 @@ public:
     };
 
 private:
+    services_controller& _sctl;
     sstring _name;
     std::unordered_set<base_controller*> _dependencies;
     std::unordered_set<base_controller*> _dependants;
@@ -64,14 +86,14 @@ private:
     std::exception_ptr _ex;
 
 public:
-    explicit base_controller(sstring name) noexcept
-        : _name(std::move(name))
-        , _sem(1)
-    { }
+    explicit base_controller(services_controller& sctl, sstring name);
 
     base_controller(base_controller&&) = default;
 
     ~base_controller();
+
+    base_controller* lookup_dep(sstring name);
+    base_controller* lookup_dep(base_controller& o);
 
     base_controller& depends_on(base_controller& o) noexcept;
 
@@ -126,15 +148,21 @@ public:
     func_t shutdown_func = [] (sharded<Service>&) { return make_ready_future<>(); };
     func_t stop_func = [] (sharded<Service>& s) { return s.stop(); };
 
-    sharded_service_ctl(sstring name)
-        : base_controller(std::move(name))
+    sharded_service_ctl(services_controller& sctl, sstring name)
+        : base_controller(sctl, std::move(name))
     {
     }
 
-    sharded_service_ctl(sstring name, func_t start_fn)
-        : base_controller(std::move(name))
+    sharded_service_ctl(services_controller& sctl, sstring name, func_t start_fn)
+        : base_controller(sctl, std::move(name))
         , start_func(std::move(start_fn))
     {
+    }
+
+    template <typename T>
+    auto lookup_dep(sharded_service_ctl<T>& o) {
+        base_controller::lookup_dep(o);
+        return std::ref(o.service());
     }
 
     sharded<Service>& service() noexcept {
@@ -173,22 +201,6 @@ protected:
     virtual future<> do_stop() noexcept override {
         return futurize_invoke(stop_func, _service);
     }
-};
-
-// Top-level controller
-class services_controller {
-    std::deque<base_controller*> _all_services;
-
-public:
-    services_controller();
-
-    void add_service(base_controller& s) noexcept;
-
-    future<> start() noexcept;
-    future<> serve() noexcept;
-    future<> drain() noexcept;
-    future<> shutdown() noexcept;
-    future<> stop() noexcept;
 };
 
 } // namespace service

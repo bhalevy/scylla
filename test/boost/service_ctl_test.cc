@@ -58,41 +58,34 @@ SEASTAR_THREAD_TEST_CASE(test_service_ctl) {
     dbcfg.gossip_scheduling_group = make_sched_group("gossip", 1000);
     dbcfg.available_memory = memory::stats().total_memory();
 
-    service::sharded_service_ctl<seastar::abort_source> stop_signal_ctl("stop signal", [] (auto& s) { return s.start(); });
-    service::sharded_service_ctl<locator::shared_token_metadata> token_metadata_ctl("token metadata");
+    service::services_controller sctl;
+
+    service::sharded_service_ctl<seastar::abort_source> stop_signal_ctl(sctl, "stop signal", [] (auto& s) { return s.start(); });
+    service::sharded_service_ctl<locator::shared_token_metadata> token_metadata_ctl(sctl, "token metadata");
     token_metadata_ctl.start_func = [] (sharded<locator::shared_token_metadata>& tm) {
         return tm.start([] () noexcept { return db::schema_tables::hold_merge_lock(); });
     };
 
-    service::sharded_service_ctl<service::migration_notifier> mm_notifier_ctl("migration notifier", [] (auto& s) { return s.start(); });
+    service::sharded_service_ctl<service::migration_notifier> mm_notifier_ctl(sctl, "migration notifier", [] (auto& s) { return s.start(); });
     gms::feature_config fcfg = gms::feature_config_from_db_config(*cfg);
-    service::sharded_service_ctl<gms::feature_service> feature_service_ctl("feature service");
+    service::sharded_service_ctl<gms::feature_service> feature_service_ctl(sctl, "feature service");
     feature_service_ctl.start_func = [fcfg] (sharded<gms::feature_service>& fs) {
         return fs.start(fcfg);
     };
-    service::sharded_service_ctl<semaphore> sst_dir_semaphore_ctl("SSTable directory semaphore");
+    service::sharded_service_ctl<semaphore> sst_dir_semaphore_ctl(sctl, "SSTable directory semaphore");
     sst_dir_semaphore_ctl.start_func = [cfg] (sharded<semaphore>& sst_dir_semaphore) {
         return sst_dir_semaphore.start(cfg->initial_sstable_loading_concurrency());
     };
 
-    service::sharded_service_ctl<database> db_ctl("database");
-    db_ctl.start_func = [&] (sharded<database>& db) {
-        return db.start(std::ref(*cfg), dbcfg, std::ref(mm_notifier_ctl.service()), std::ref(feature_service_ctl.service()), std::ref(token_metadata_ctl.service()),
-                std::ref(stop_signal_ctl.service()), std::ref(sst_dir_semaphore_ctl.service()), utils::cross_shard_barrier());
+    service::sharded_service_ctl<database> db_ctl(sctl, "database");
+    db_ctl.start_func = [&,
+            mm_notifier = db_ctl.lookup_dep(mm_notifier_ctl),
+            feature_service = db_ctl.lookup_dep(feature_service_ctl),
+            token_metadata = db_ctl.lookup_dep(token_metadata_ctl),
+            stop_signal = db_ctl.lookup_dep(stop_signal_ctl),
+            sst_dir_semaphore = db_ctl.lookup_dep(sst_dir_semaphore_ctl)] (sharded<database>& db) {
+        return db.start(std::ref(*cfg), dbcfg, mm_notifier, feature_service, token_metadata, stop_signal, sst_dir_semaphore, utils::cross_shard_barrier());
     };
-    db_ctl.depends_on(mm_notifier_ctl)
-            .depends_on(feature_service_ctl)
-            .depends_on(token_metadata_ctl)
-            .depends_on(stop_signal_ctl)
-            .depends_on(sst_dir_semaphore_ctl);
-
-    service::services_controller sctl;
-    sctl.add_service(stop_signal_ctl);
-    sctl.add_service(token_metadata_ctl);
-    sctl.add_service(mm_notifier_ctl);
-    sctl.add_service(feature_service_ctl);
-    sctl.add_service(sst_dir_semaphore_ctl);
-    sctl.add_service(db_ctl);
 
     std::exception_ptr ex;
     try {

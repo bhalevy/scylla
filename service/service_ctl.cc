@@ -19,7 +19,8 @@
  * along with Scylla.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#include <exception>
+#include <stdexcept>
+
 #include <seastar/core/loop.hh>
 #include <seastar/core/on_internal_error.hh>
 #include <seastar/core/coroutine.hh>
@@ -54,6 +55,14 @@ std::ostream& operator<<(std::ostream& os, enum base_controller::state s) {
     return os << to_string(s);
 }
 
+base_controller::base_controller(services_controller& sctl, sstring name)
+    : _sctl(sctl)
+    , _name(std::move(name))
+    , _sem(1)
+{
+    _sctl.add_service(*this);
+}
+
 base_controller::~base_controller() {
     switch (_state) {
     case state::initialized:
@@ -80,9 +89,24 @@ base_controller::~base_controller() {
     }
 }
 
+base_controller* base_controller::lookup_dep(sstring name) {
+    base_controller* sp = _sctl.lookup_service(name);
+    if (sp == nullptr) {
+        throw std::out_of_range(format("{}: controller not found", name));
+    }
+    depends_on(*sp);
+    return sp;
+}
+
+base_controller* base_controller::lookup_dep(base_controller& o) {
+    // for now
+    return lookup_dep(o.name());
+}
+
 base_controller& base_controller::depends_on(base_controller& o) noexcept {
     o._dependants.insert(this);
     _dependencies.insert(&o);
+    sclog.debug("'{}' depends on '{}'", name(), o.name());
     return *this;
 }
 
@@ -105,7 +129,7 @@ future<> base_controller::start() {
         throw std::runtime_error(format("Cannot start service in state '{}'", _state));
     }
 
-    sclog.info("Starting {}", _name);
+    sclog.info("Starting {}: dependencies={}", _name, _dependencies.size());
     _state = state::starting;
     co_await pending_op([this] () -> future<> {
         try {
@@ -268,41 +292,67 @@ future<> base_controller::stop() {
     });
 }
 
-services_controller::services_controller()
-{
+void services_controller::add_service(base_controller& s) {
+    _all_services.emplace_back(&s);
+    try {
+        _top_level.insert(&s);
+        auto [_, inserted] = _services_map.insert({s.name(), &s});
+        if (!inserted) {
+            on_internal_error_noexcept(sclog, format("service '{}' already inserted", s.name()));
+        }
+    } catch (...) {
+        _all_services.pop_back();
+        _top_level.erase(&s);
+        throw;
+    }
 }
 
-void services_controller::add_service(base_controller& s) noexcept {
-    _all_services.emplace_back(&s);
+base_controller* services_controller::lookup_service(sstring name) noexcept {
+    auto it = _services_map.find(name);
+    if (it == _services_map.end()) {
+        return nullptr;
+    }
+    base_controller* sp = it->second;
+    _top_level.erase(sp);
+    return sp;
+}
+
+base_controller* services_controller::lookup_service(base_controller& o) {
+    // for now
+    return lookup_service(o.name());
 }
 
 future<> services_controller::start() noexcept {
-    for (auto it = _all_services.begin(); it != _all_services.end(); it++) {
-        co_await (*it)->start();
+    for (auto sp : _top_level) {
+        co_await sp->start();
     }
 }
 
 future<> services_controller::serve() noexcept {
-    for (auto it = _all_services.begin(); it != _all_services.end(); it++) {
-        co_await (*it)->serve();
+    for (auto sp : _top_level) {
+        co_await sp->serve();
     }
 }
 
 future<> services_controller::drain() noexcept {
-    for (auto it = _all_services.rbegin(); it != _all_services.rend(); it++) {
-        co_await (*it)->drain();
+    for (auto sp : _top_level) {
+        co_await sp->drain();
     }
 }
 
 future<> services_controller::shutdown() noexcept {
-    for (auto it = _all_services.rbegin(); it != _all_services.rend(); it++) {
-        co_await (*it)->shutdown();
+    for (auto sp : _top_level) {
+        co_await sp->shutdown();
     }
 }
 
 future<> services_controller::stop() noexcept {
-    for (auto it = _all_services.rbegin(); it != _all_services.rend(); it++) {
-        co_await (*it)->stop();
+    while (!_all_services.empty()) {
+        auto* sp = _all_services.back();
+        _all_services.pop_back();
+        _top_level.erase(sp);
+        _services_map.erase(sp->name());
+        co_await sp->stop();
     }
 }
 
