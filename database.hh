@@ -1179,8 +1179,18 @@ private:
     lw_shared_ptr<keyspace_metadata> _metadata;
     shared_promise<> _populated;
     config _config;
+    locator::registry& _locator_registry;
+
+    locator::registry& get_locator_registry() noexcept {
+        return _locator_registry;
+    }
+
+    const locator::registry& get_locator_registry() const noexcept {
+        return _locator_registry;
+    }
+
 public:
-    explicit keyspace(lw_shared_ptr<keyspace_metadata> metadata, config cfg);
+    explicit keyspace(lw_shared_ptr<keyspace_metadata> metadata, config cfg, locator::registry& locator_registry);
 
     future<> update_from(const locator::shared_token_metadata& stm, lw_shared_ptr<keyspace_metadata>);
 
@@ -1405,7 +1415,7 @@ private:
     future<> flush_system_column_families();
 
     using system_keyspace = bool_class<struct system_keyspace_tag>;
-    future<> create_in_memory_keyspace(const lw_shared_ptr<keyspace_metadata>& ksm, system_keyspace system);
+    future<> create_in_memory_keyspace(const lw_shared_ptr<keyspace_metadata>& ksm, locator::registry& locator_registry, system_keyspace system);
     friend future<> db::system_keyspace_make(distributed<database>& db, distributed<service::storage_service>& ss, db::config& cfg);
     void setup_metrics();
     void setup_scylla_memory_diagnostics_producer();
@@ -1421,7 +1431,7 @@ private:
     template<typename Future>
     Future update_write_metrics(Future&& f);
     void update_write_metrics_for_timed_out_write();
-    future<> create_keyspace(const lw_shared_ptr<keyspace_metadata>&, bool is_bootstrap, system_keyspace system);
+    future<> create_keyspace(const lw_shared_ptr<keyspace_metadata>&, locator::registry& locator_registry, bool is_bootstrap, system_keyspace system);
 public:
     static utils::UUID empty_version;
 
@@ -1496,7 +1506,7 @@ public:
      *
      * @return ready future when the operation is complete
      */
-    future<> create_keyspace(const lw_shared_ptr<keyspace_metadata>&);
+    future<> create_keyspace(const lw_shared_ptr<keyspace_metadata>&, locator::registry& locator_registry);
     /* below, find_keyspace throws no_such_<type> on fail */
     keyspace& find_keyspace(std::string_view name);
     const keyspace& find_keyspace(std::string_view name) const;
