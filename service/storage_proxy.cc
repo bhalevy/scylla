@@ -1802,10 +1802,10 @@ using namespace std::literals::chrono_literals;
 
 storage_proxy::~storage_proxy() {}
 storage_proxy::storage_proxy(distributed<database>& db, gms::gossiper& gossiper, storage_proxy::config cfg, db::view::node_update_backlog& max_view_update_backlog,
-        scheduling_group_key stats_key, gms::feature_service& feat, const locator::shared_token_metadata& stm, netw::messaging_service& ms)
+        scheduling_group_key stats_key, gms::feature_service& feat, locator::registry& locator_registry, netw::messaging_service& ms)
     : _db(db)
     , _gossiper(gossiper)
-    , _shared_token_metadata(stm)
+    , _locator_registry(locator_registry)
     , _read_smp_service_group(cfg.read_smp_service_group)
     , _write_smp_service_group(cfg.write_smp_service_group)
     , _hints_write_smp_service_group(cfg.hints_write_smp_service_group)
@@ -5487,10 +5487,6 @@ future<> storage_proxy::drain_on_shutdown() {
 future<>
 storage_proxy::stop() {
     return make_ready_future<>();
-}
-
-locator::token_metadata_ptr storage_proxy::get_token_metadata_ptr() const noexcept {
-    return _shared_token_metadata.get();
 }
 
 }

@@ -65,7 +65,7 @@
 #include "service_permit.hh"
 #include "service/client_state.hh"
 #include "cdc/stats.hh"
-#include "locator/token_metadata.hh"
+#include "locator/abstract_replication_strategy.hh"
 #include "db/hints/host_filter.hh"
 #include "utils/small_vector.hh"
 #include "service/endpoint_lifecycle_subscriber.hh"
@@ -250,14 +250,24 @@ public:
     gms::feature_service& features() noexcept { return _features; }
     const gms::feature_service& features() const { return _features; }
 
-    locator::token_metadata_ptr get_token_metadata_ptr() const noexcept;
+    locator::registry& get_locator_registry() noexcept {
+        return _locator_registry;
+    }
+
+    const locator::registry& get_locator_registry() const noexcept {
+        return _locator_registry;
+    }
+
+    locator::token_metadata_ptr get_token_metadata_ptr() const noexcept {
+        return get_locator_registry().get_shared_token_metadata().get();
+    }
 
     query::max_result_size get_max_result_size(const query::partition_slice& slice) const;
 
 private:
     distributed<database>& _db;
     gms::gossiper& _gossiper;
-    const locator::shared_token_metadata& _shared_token_metadata;
+    locator::registry& _locator_registry;
     smp_service_group _read_smp_service_group;
     smp_service_group _write_smp_service_group;
     smp_service_group _hints_write_smp_service_group;
@@ -451,9 +461,10 @@ private:
 
     void retire_view_response_handlers(noncopyable_function<bool(const abstract_write_response_handler&)> filter_fun);
     void connection_dropped(gms::inet_address);
+
 public:
     storage_proxy(distributed<database>& db, gms::gossiper& gossiper, config cfg, db::view::node_update_backlog& max_view_update_backlog,
-            scheduling_group_key stats_key, gms::feature_service& feat, const locator::shared_token_metadata& stm, netw::messaging_service& ms);
+            scheduling_group_key stats_key, gms::feature_service& feat, locator::registry& locator_registry, netw::messaging_service& ms);
     ~storage_proxy();
     const distributed<database>& get_db() const {
         return _db;
