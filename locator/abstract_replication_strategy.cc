@@ -356,6 +356,17 @@ future<> effective_replication_map::clear_gently() noexcept {
 effective_replication_map::~effective_replication_map() {
     if (_registry) {
         _registry->erase_effective_replication_map(this);
+        try {
+            struct background_clear_holder {
+                locator::replication_map replication_map;
+                locator::token_metadata_ptr tmptr;
+            };
+            auto holder = make_lw_shared<background_clear_holder>({std::move(_replication_map), std::move(_tmptr)});
+            auto fut = when_all(utils::clear_gently(holder->replication_map), utils::clear_gently(holder->tmptr)).discard_result().then([holder] {});
+            _registry->submit_background_work(std::move(fut));
+        } catch (...) {
+            // ignore
+        }
     }
 }
 
@@ -475,6 +486,32 @@ bool registry::erase_effective_replication_map(effective_replication_map* erm) {
     }
     _effective_replication_maps.erase(it);
     return true;
+}
+
+future<> registry::stop() noexcept {
+    _stopped = true;
+    for (auto& [_, rs] : _replication_strategies) {
+        rs->unset_registry();
+    }
+    for (auto& [_, erm] : _effective_replication_maps) {
+        erm->unset_registry();
+    }
+    return std::exchange(_background_work, make_ready_future<>());
+}
+
+void registry::submit_background_work(future<> fut) {
+    if (fut.available() && !fut.failed()) {
+        return;
+    }
+    if (_stopped) {
+        on_internal_error(rslogger, "Cannot submit background work: registry already stopped");
+    }
+    _background_work = _background_work.then([fut = std::move(fut)] () mutable {
+        return std::move(fut).handle_exception([] (std::exception_ptr ex) {
+            // Ignore errors since we have nothing else to do about them.
+            rslogger.warn("registry background task failed: {}. Ignored.", std::move(ex));
+        });
+    });
 }
 
 } // namespace locator

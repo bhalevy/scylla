@@ -170,6 +170,10 @@ private:
         _registry = &registry;
     }
 
+    void unset_registry() noexcept {
+        _registry = nullptr;
+    }
+
     friend class registry;
 };
 
@@ -262,6 +266,11 @@ private:
         _registry = &registry;
         _registry_key.emplace(std::move(key));
     }
+
+    void unset_registry() noexcept {
+        _registry = nullptr;
+        _registry_key.reset();
+    }
 };
 
 using effective_replication_map_ptr = lw_shared_ptr<const effective_replication_map>;
@@ -338,6 +347,8 @@ class registry : public peering_sharded_service<registry> {
     shared_token_metadata& _shared_token_metadata;
     std::unordered_map<abstract_replication_strategy::registry_key, abstract_replication_strategy*> _replication_strategies;
     std::unordered_map<abstract_replication_strategy::registry_key, effective_replication_map*> _effective_replication_maps;
+    future<> _background_work = make_ready_future<>();
+    bool _stopped = false;
 
 public:
     explicit registry(shared_token_metadata& stm) noexcept;
@@ -362,11 +373,19 @@ public:
     // the returned future is resolved.
     future<effective_replication_map_ptr> create_effective_replication_map(abstract_replication_strategy::ptr_type rs, const effective_replication_map* ref_erm = nullptr);
 
+    future<> stop() noexcept;
+
+    bool stopped() const noexcept {
+        return _stopped;
+    }
+
 private:
     effective_replication_map_ptr insert_effective_replication_map(mutable_effective_replication_map_ptr erm, abstract_replication_strategy::registry_key key);
 
     bool erase_replication_strategy(abstract_replication_strategy* rs);
     bool erase_effective_replication_map(effective_replication_map* erm);
+
+    void submit_background_work(future<> fut);
 
     friend class abstract_replication_strategy;
     friend class effective_replication_map;
