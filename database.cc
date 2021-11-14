@@ -1058,9 +1058,7 @@ keyspace::create_replication_strategy(const locator::replication_strategy_config
     using namespace locator;
 
     auto& locator_registry = get_locator_registry();
-    _replication_strategy =
-            abstract_replication_strategy::create_replication_strategy(
-                _metadata->strategy_name(), options);
+    _replication_strategy = locator_registry.create_replication_strategy(_metadata->strategy_name(), options);
 
     const auto& stm = locator_registry.get_shared_token_metadata();
     update_effective_replication_map(co_await calculate_effective_replication_map(_replication_strategy, stm.get()));

@@ -24,6 +24,8 @@
 #include <memory>
 #include <functional>
 #include <unordered_map>
+#include <xxhash.h>
+
 #include "gms/inet_address.hh"
 #include "locator/snitch_base.hh"
 #include "dht/i_partitioner.hh"
@@ -56,8 +58,9 @@ using replication_strategy_config_options = std::map<sstring, sstring>;
 using replication_map = std::unordered_map<token, inet_address_vector_replica_set>;
 
 class effective_replication_map;
+class registry;
 
-class abstract_replication_strategy {
+class abstract_replication_strategy : public enable_shared_from_this<abstract_replication_strategy> {
     friend class effective_replication_map;
 protected:
     replication_strategy_config_options _config_options;
@@ -94,7 +97,7 @@ public:
     // in a loop.
     virtual future<inet_address_vector_replica_set> calculate_natural_endpoints(const token& search_token, const token_metadata& tm) const  = 0;
 
-    virtual ~abstract_replication_strategy() {}
+    virtual ~abstract_replication_strategy();
     static ptr_type create_replication_strategy(const sstring& strategy_name, const replication_strategy_config_options& config_options);
     static void validate_replication_strategy(const sstring& ks_name,
                                               const sstring& strategy_name,
@@ -115,6 +118,9 @@ public:
     // appear in the pending_endpoints.
     virtual bool allow_remove_node_being_replaced_from_natural_endpoints() const = 0;
     replication_strategy_type get_type() const { return _my_type; }
+    const replication_strategy_config_options& get_config_options() const noexcept {
+        return _config_options;
+    };
 
     // Use the token_metadata provided by the caller instead of _token_metadata
     // Note: must be called with initialized, non-empty token_metadata.
@@ -130,6 +136,39 @@ public:
     future<dht::token_range_vector> get_pending_address_ranges(const token_metadata_ptr tmptr, token pending_token, inet_address pending_address) const;
 
     future<dht::token_range_vector> get_pending_address_ranges(const token_metadata_ptr tmptr, std::unordered_set<token> pending_tokens, inet_address pending_address) const;
+
+public:
+    struct registry_key {
+        replication_strategy_type rs_type;
+        replication_strategy_config_options rs_config_options;
+
+        registry_key(replication_strategy_type rs_type_, const replication_strategy_config_options& rs_config_options_)
+            : rs_type(rs_type_)
+            , rs_config_options(rs_config_options_)
+        {}
+
+        registry_key(registry_key&&) = default;
+        registry_key(const registry_key&) = default;
+
+        bool operator==(const registry_key& o) const = default;
+        bool operator!=(const registry_key& o) const = default;
+
+        sstring to_sstring() const;
+    };
+
+    const registry_key& get_registry_key() const noexcept {
+        return _registry_key;
+    }
+
+private:
+    registry_key _registry_key;
+    registry* _registry = nullptr;
+
+    void set_registry(registry& registry) noexcept {
+        _registry = &registry;
+    }
+
+    friend class registry;
 };
 
 // Holds the full replication_map resulting from applying the
@@ -214,8 +253,68 @@ inline mutable_effective_replication_map_ptr make_effective_replication_map(abst
 // Apply the replication strategy over the current configuration and the given token_metadata.
 future<mutable_effective_replication_map_ptr> calculate_effective_replication_map(abstract_replication_strategy::ptr_type rs, token_metadata_ptr tmptr);
 
+} // namespace locator
+
+std::ostream& operator<<(std::ostream& os, locator::replication_strategy_type);
+std::ostream& operator<<(std::ostream& os, const locator::abstract_replication_strategy::registry_key& key);
+
+template <>
+struct fmt::formatter<locator::abstract_replication_strategy::registry_key> {
+    constexpr auto parse(format_parse_context& ctx) {
+        return ctx.end();
+    }
+
+    template <typename FormatContext>
+    auto format(const locator::abstract_replication_strategy::registry_key& key, FormatContext& ctx) {
+        std::ostringstream os;
+        os << key;
+        return format_to(ctx.out(), "{}", os.str());
+    }
+};
+
+template<>
+struct appending_hash<locator::abstract_replication_strategy::registry_key> {
+    template<typename Hasher>
+    void operator()(Hasher& h, const locator::abstract_replication_strategy::registry_key& key) const {
+        feed_hash(h, key.rs_type);
+        for (const auto& [opt, val] : key.rs_config_options) {
+            h.update(opt.c_str(), opt.size());
+            h.update(val.c_str(), val.size());
+        }
+    }
+};
+
+struct registry_key_hasher : public hasher {
+    XXH64_state_t _state;
+    registry_key_hasher(uint64_t seed = 0) noexcept {
+        XXH64_reset(&_state, seed);
+    }
+    void update(const char* ptr, size_t length) noexcept {
+        XXH64_update(&_state, ptr, length);
+    }
+    size_t finalize() {
+        return static_cast<size_t>(XXH64_digest(&_state));
+    }
+};
+
+namespace std {
+
+template <>
+struct hash<locator::abstract_replication_strategy::registry_key> {
+    size_t operator()(const locator::abstract_replication_strategy::registry_key& key) const {
+        registry_key_hasher h;
+        appending_hash<locator::abstract_replication_strategy::registry_key>{}(h, key);
+        return h.finalize();
+    }
+};
+
+} // namespace std
+
+namespace locator {
+
 class registry : public peering_sharded_service<registry> {
     shared_token_metadata& _shared_token_metadata;
+    std::unordered_map<abstract_replication_strategy::registry_key, abstract_replication_strategy*> _replication_strategies;
 
 public:
     explicit registry(shared_token_metadata& stm) noexcept;
@@ -233,6 +332,13 @@ public:
     //   - May throw if fails to replicate the new token_metadata, in which case
     //     the new token_metadata is not applied.
     future<> update_token_metadata(mutable_token_metadata_ptr tmptr) noexcept;
+
+    abstract_replication_strategy::ptr_type create_replication_strategy(const sstring& strategy_class_name, const replication_strategy_config_options& rs_config_options);
+
+private:
+    bool erase_replication_strategy(abstract_replication_strategy* rs);
+
+    friend class abstract_replication_strategy;
 };
 
 }

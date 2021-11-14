@@ -37,7 +37,15 @@ abstract_replication_strategy::abstract_replication_strategy(
     replication_strategy_type my_type)
         : _config_options(config_options)
         , _snitch(snitch)
-        , _my_type(my_type) {}
+        , _my_type(my_type)
+        , _registry_key(_my_type, _config_options)
+{}
+
+abstract_replication_strategy::~abstract_replication_strategy() {
+    if (_registry) {
+        _registry->erase_replication_strategy(this);
+    }
+}
 
 abstract_replication_strategy::ptr_type abstract_replication_strategy::create_replication_strategy(const sstring& strategy_name, const replication_strategy_config_options& config_options) {
     assert(locator::i_endpoint_snitch::get_local_snitch_ptr());
@@ -393,4 +401,55 @@ future<> registry::update_token_metadata(mutable_token_metadata_ptr tmptr) noexc
     }
 }
 
+abstract_replication_strategy::ptr_type registry::create_replication_strategy(const sstring& strategy_class_name, const replication_strategy_config_options& rs_config_options) {
+    auto qualified_class_name = abstract_replication_strategy::to_qualified_class_name(strategy_class_name);
+    auto rs = abstract_replication_strategy::create_replication_strategy(qualified_class_name, rs_config_options);
+    const auto& key = rs->get_registry_key();
+    auto [it, inserted] = _replication_strategies.insert({key, rs.get()});
+    if (inserted) {
+        rslogger.debug("Registered replication strategy {} [{}]", key, fmt::ptr(rs.get()));
+        rs->set_registry(*this);
+        return rs;
+    }
+    return it->second->shared_from_this();
+}
+
+bool registry::erase_replication_strategy(abstract_replication_strategy* rs) {
+    const auto& key = rs->get_registry_key();
+    auto it = _replication_strategies.find(key);
+    if (it == _replication_strategies.end()) {
+        rslogger.debug("Could not unregister replication strategy {} [{}]: key not found", key, fmt::ptr(rs));
+        return false;
+    }
+    if (it->second != rs) {
+        rslogger.debug("Could not unregister replication strategy {} [{}]: different instance [{}] is currently registered", key, fmt::ptr(rs), fmt::ptr(it->second));
+        return false;
+    }
+    _replication_strategies.erase(it);
+    return true;
+}
+
 } // namespace locator
+
+std::ostream& operator<<(std::ostream& os, locator::replication_strategy_type t) {
+    switch (t) {
+    case locator::replication_strategy_type::simple:
+        return os << "simple";
+    case locator::replication_strategy_type::local:
+        return os << "local";
+    case locator::replication_strategy_type::network_topology:
+        return os << "network_topology";
+    case locator::replication_strategy_type::everywhere_topology:
+        return os << "everywhere_topology";
+    };
+}
+
+std::ostream& operator<<(std::ostream& os, const locator::abstract_replication_strategy::registry_key& key) {
+    os << key.rs_type;
+    char sep = ':';
+    for (const auto& [opt, val] : key.rs_config_options) {
+        os << sep << opt << '=' << val;
+        sep = ',';
+    }
+    return os;
+}
