@@ -41,7 +41,7 @@
 
 #include "gms/i_endpoint_state_change_subscriber.hh"
 #include "service/endpoint_lifecycle_subscriber.hh"
-#include "locator/token_metadata.hh"
+#include "locator/abstract_replication_strategy.hh"
 #include "inet_address_vectors.hh"
 #include <seastar/core/distributed.hh>
 #include <seastar/core/condition-variable.hh>
@@ -153,7 +153,6 @@ private:
     using endpoint_details = dht::endpoint_details;
     using boot_strapper = dht::boot_strapper;
     using token_metadata = locator::token_metadata;
-    using shared_token_metadata = locator::shared_token_metadata;
     using token_metadata_ptr = locator::token_metadata_ptr;
     using mutable_token_metadata_ptr = locator::mutable_token_metadata_ptr;
     using token_metadata_lock = locator::token_metadata_lock;
@@ -195,7 +194,7 @@ public:
         gms::feature_service& feature_service,
         storage_service_config config,
         sharded<service::migration_manager>& mm,
-        locator::shared_token_metadata& stm,
+        locator::registry& locator_registry,
         sharded<netw::messaging_service>& ms,
         sharded<cdc::generation_service>&,
         sharded<repair_service>& repair,
@@ -241,7 +240,7 @@ private:
     void install_schema_version_change_listener();
 
     future<mutable_token_metadata_ptr> get_mutable_token_metadata_ptr() noexcept {
-        return _shared_token_metadata.get()->clone_async().then([] (token_metadata tm) {
+        return get_token_metadata_ptr()->clone_async().then([] (token_metadata tm) {
             // bump the token_metadata ring_version
             // to invalidate cached token/replication mappings
             // when the modified token_metadata is committed.
@@ -251,12 +250,20 @@ private:
     }
 public:
 
+    locator::registry& get_locator_registry() noexcept {
+        return _locator_registry;
+    }
+
+    const locator::registry& get_locator_registry() const noexcept {
+        return _locator_registry;
+    }
+
     token_metadata_ptr get_token_metadata_ptr() const noexcept {
-        return _shared_token_metadata.get();
+        return get_locator_registry().get_shared_token_metadata().get();
     }
 
     const locator::token_metadata& get_token_metadata() const noexcept {
-        return *_shared_token_metadata.get();
+        return *get_token_metadata_ptr();
     }
 
 private:
@@ -265,7 +272,7 @@ private:
         return utils::fb_utilities::get_broadcast_address();
     }
     /* This abstraction maintains the token/endpoint metadata information */
-    shared_token_metadata& _shared_token_metadata;
+    locator::registry& _locator_registry;
 
     /* CDC generation management service.
      * It is sharded<>& and not simply a reference because the service will not yet be started

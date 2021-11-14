@@ -104,7 +104,7 @@ SEASTAR_TEST_CASE(test_boot_shutdown){
             std::ref(db), std::ref(gms::get_gossiper()),
             std::ref(sys_dist_ks),
             std::ref(feature_service), sscfg,
-            std::ref(migration_manager), std::ref(token_metadata),
+            std::ref(migration_manager), std::ref(locator_registry),
             std::ref(_messaging),
             std::ref(cdc_generation_service), std::ref(repair),
             std::ref(raft_gr), std::ref(elc_notif)).get();

@@ -574,7 +574,7 @@ public:
                 std::ref(gossiper),
                 std::ref(sys_dist_ks),
                 std::ref(feature_service), sscfg, std::ref(mm),
-                std::ref(token_metadata), std::ref(ms),
+                std::ref(locator_registry), std::ref(ms),
                 std::ref(cdc_generation_service),
                 std::ref(repair),
                 std::ref(raft_gr), std::ref(elc_notif)).get();

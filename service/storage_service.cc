@@ -111,7 +111,7 @@ storage_service::storage_service(abort_source& abort_source,
     gms::feature_service& feature_service,
     storage_service_config config,
     sharded<service::migration_manager>& mm,
-    locator::shared_token_metadata& stm,
+    locator::registry& locator_registry,
     sharded<netw::messaging_service>& ms,
     sharded<cdc::generation_service>& cdc_gen_service,
     sharded<repair_service>& repair,
@@ -126,7 +126,7 @@ storage_service::storage_service(abort_source& abort_source,
         , _migration_manager(mm)
         , _repair(repair)
         , _node_ops_abort_thread(node_ops_abort_thread())
-        , _shared_token_metadata(stm)
+        , _locator_registry(locator_registry)
         , _cdc_gen_service(cdc_gen_service)
         , _lifecycle_notifier(elc_notif)
         , _sys_dist_ks(sys_dist_ks)
@@ -1444,7 +1444,7 @@ future<> storage_service::replicate_to_all_cores(mutable_token_metadata_ptr tmpt
     // Apply changes on all shards
     try {
         co_await container().invoke_on_all([&] (storage_service& ss) {
-            ss._shared_token_metadata.set(std::move(pending_token_metadata_ptr[this_shard_id()]));
+            ss.get_locator_registry().get_shared_token_metadata().set(std::move(pending_token_metadata_ptr[this_shard_id()]));
 
             auto& erms = pending_effective_replication_maps[this_shard_id()];
             for (auto it = erms.begin(); it != erms.end(); ) {
@@ -3166,7 +3166,7 @@ std::chrono::milliseconds storage_service::get_ring_delay() {
 
 future<locator::token_metadata_lock> storage_service::get_token_metadata_lock() noexcept {
     assert(this_shard_id() == 0);
-    return _shared_token_metadata.get_lock();
+    return get_locator_registry().get_shared_token_metadata().get_lock();
 }
 
 // Acquire the token_metadata lock and get a mutable_token_metadata_ptr.
