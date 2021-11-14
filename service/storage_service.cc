@@ -1388,7 +1388,7 @@ future<> storage_service::replicate_to_all_cores(mutable_token_metadata_ptr tmpt
 
     std::exception_ptr ex;
 
-    std::vector<std::unordered_map<sstring, locator::mutable_effective_replication_map_ptr>> pending_effective_replication_maps;
+    std::vector<std::unordered_map<sstring, locator::effective_replication_map_ptr>> pending_effective_replication_maps;
     pending_effective_replication_maps.resize(smp::count);
 
     try {
@@ -1400,18 +1400,25 @@ future<> storage_service::replicate_to_all_cores(mutable_token_metadata_ptr tmpt
         auto keyspaces = db.get_all_keyspaces();
         for (auto& ks_name : keyspaces) {
             auto rs = db.find_keyspace(ks_name).get_replication_strategy_ptr();
-            auto erm = co_await calculate_effective_replication_map(std::move(rs), tmptr);
+            auto erm = co_await get_locator_registry().create_effective_replication_map(rs);
             pending_effective_replication_maps[base_shard].emplace(ks_name, std::move(erm));
         }
+        // Note: the reason replication of the newly create e_r_m
+        // is not done under the covers in the registry itself
+        // is that, unlike token_metadata, the registry doesn't
+        // keep shared pointers of the dispatched e_r_m:s.
+        // They erase themselves when the last reference is released
+        // so there is noone to hold them at creation time.
+        // Therefore they are created first on shard 0 here
+        // and then on all other shards, given the ref_erm,
+        // keeping the newly create e_r_m:s in pending_effective_replication_maps
+        // until applied below to the respective keyspaces.
         co_await container().invoke_on_others([&, base_shard] (storage_service& ss) -> future<> {
             auto& db = ss._db.local();
             for (auto& ks_name : keyspaces) {
-                auto local_rs = db.find_keyspace(ks_name).get_replication_strategy_ptr();
-                const auto& erm0 = pending_effective_replication_maps[base_shard].at(ks_name);
-                auto rf = erm0->get_replication_factor();
-                auto local_replication_map = co_await erm0->clone_endpoints_gently();
-                auto local_tmptr = ss.get_locator_registry().get_shared_token_metadata().get();
-                auto erm = make_effective_replication_map(std::move(local_rs), std::move(local_tmptr), std::move(local_replication_map), rf);
+                auto rs = db.find_keyspace(ks_name).get_replication_strategy_ptr();
+                auto erm0 = pending_effective_replication_maps[base_shard].at(ks_name).get();
+                auto erm = co_await ss.get_locator_registry().create_effective_replication_map(rs, erm0);
                 pending_effective_replication_maps[this_shard_id()].emplace(ks_name, std::move(erm));
 
             }

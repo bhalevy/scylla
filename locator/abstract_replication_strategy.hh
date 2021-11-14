@@ -176,14 +176,17 @@ private:
 // Holds the full replication_map resulting from applying the
 // effective replication strategy over the given token_metadata
 // and replication_strategy_config_options.
-class effective_replication_map {
+class effective_replication_map : public enable_lw_shared_from_this<effective_replication_map> {
 private:
     abstract_replication_strategy::ptr_type _rs;
     token_metadata_ptr _tmptr;
     replication_map _replication_map;
     size_t _replication_factor;
+    registry* _registry = nullptr;
+    std::optional<abstract_replication_strategy::registry_key> _registry_key = std::nullopt;
 
     friend class abstract_replication_strategy;
+    friend class registry;
 public:
     explicit effective_replication_map(abstract_replication_strategy::ptr_type rs, token_metadata_ptr tmptr, replication_map replication_map, size_t replication_factor) noexcept
         : _rs(std::move(rs))
@@ -193,6 +196,7 @@ public:
     { }
     effective_replication_map() = delete;
     effective_replication_map(effective_replication_map&&) = default;
+    ~effective_replication_map();
 
     const token_metadata_ptr& get_token_metadata_ptr() const noexcept {
         return _tmptr;
@@ -243,6 +247,21 @@ public:
 
 private:
     dht::token_range_vector do_get_ranges(noncopyable_function<bool(inet_address_vector_replica_set)> should_add_range) const;
+
+    static abstract_replication_strategy::registry_key make_registry_key(const abstract_replication_strategy::ptr_type& rs, const token_metadata_ptr& tmptr) {
+        auto key = rs->get_registry_key();
+        key.ring_version = tmptr->get_ring_version();
+        return key;
+    }
+
+    const abstract_replication_strategy::registry_key& get_registry_key() const {
+        return *_registry_key;
+    }
+
+    void set_registry(registry& registry, abstract_replication_strategy::registry_key key) noexcept {
+        _registry = &registry;
+        _registry_key.emplace(std::move(key));
+    }
 };
 
 using effective_replication_map_ptr = lw_shared_ptr<const effective_replication_map>;
@@ -318,6 +337,7 @@ namespace locator {
 class registry : public peering_sharded_service<registry> {
     shared_token_metadata& _shared_token_metadata;
     std::unordered_map<abstract_replication_strategy::registry_key, abstract_replication_strategy*> _replication_strategies;
+    std::unordered_map<abstract_replication_strategy::registry_key, effective_replication_map*> _effective_replication_maps;
 
 public:
     explicit registry(shared_token_metadata& stm) noexcept;
@@ -338,10 +358,18 @@ public:
 
     abstract_replication_strategy::ptr_type create_replication_strategy(const sstring& strategy_class_name, const replication_strategy_config_options& rs_config_options);
 
+    // if ref_erm is passed, caller must make sure it remains valid until
+    // the returned future is resolved.
+    future<effective_replication_map_ptr> create_effective_replication_map(abstract_replication_strategy::ptr_type rs, const effective_replication_map* ref_erm = nullptr);
+
 private:
+    effective_replication_map_ptr insert_effective_replication_map(mutable_effective_replication_map_ptr erm, abstract_replication_strategy::registry_key key);
+
     bool erase_replication_strategy(abstract_replication_strategy* rs);
+    bool erase_effective_replication_map(effective_replication_map* erm);
 
     friend class abstract_replication_strategy;
+    friend class effective_replication_map;
 };
 
 }

@@ -1175,7 +1175,7 @@ public:
     };
 private:
     locator::abstract_replication_strategy::ptr_type _replication_strategy;
-    locator::mutable_effective_replication_map_ptr _effective_replication_map;
+    locator::effective_replication_map_ptr _effective_replication_map;
     lw_shared_ptr<keyspace_metadata> _metadata;
     shared_promise<> _populated;
     config _config;
@@ -1200,7 +1200,7 @@ public:
      */
     lw_shared_ptr<keyspace_metadata> metadata() const;
     future<> create_replication_strategy(const locator::replication_strategy_config_options& options);
-    void update_effective_replication_map(locator::mutable_effective_replication_map_ptr erm);
+    void update_effective_replication_map(locator::effective_replication_map_ptr erm);
 
     /**
      * This should not really be return by reference, since replication

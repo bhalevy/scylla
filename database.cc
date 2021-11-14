@@ -1060,12 +1060,11 @@ keyspace::create_replication_strategy(const locator::replication_strategy_config
     auto& locator_registry = get_locator_registry();
     _replication_strategy = locator_registry.create_replication_strategy(_metadata->strategy_name(), options);
 
-    const auto& stm = locator_registry.get_shared_token_metadata();
-    update_effective_replication_map(co_await calculate_effective_replication_map(_replication_strategy, stm.get()));
+    update_effective_replication_map(co_await locator_registry.create_effective_replication_map(_replication_strategy));
 }
 
 void
-keyspace::update_effective_replication_map(locator::mutable_effective_replication_map_ptr erm) {
+keyspace::update_effective_replication_map(locator::effective_replication_map_ptr erm) {
     _effective_replication_map = std::move(erm);
 }
 
