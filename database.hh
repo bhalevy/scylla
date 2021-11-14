@@ -1192,14 +1192,14 @@ private:
 public:
     explicit keyspace(lw_shared_ptr<keyspace_metadata> metadata, config cfg, locator::registry& locator_registry);
 
-    future<> update_from(const locator::shared_token_metadata& stm, lw_shared_ptr<keyspace_metadata>);
+    future<> update_from(lw_shared_ptr<keyspace_metadata>);
 
     /** Note: return by shared pointer value, since the meta data is
      * semi-volatile. I.e. we could do alter keyspace at any time, and
      * boom, it is replaced.
      */
     lw_shared_ptr<keyspace_metadata> metadata() const;
-    future<> create_replication_strategy(const locator::shared_token_metadata& stm, const locator::replication_strategy_config_options& options);
+    future<> create_replication_strategy(const locator::replication_strategy_config_options& options);
     void update_effective_replication_map(locator::mutable_effective_replication_map_ptr erm);
 
     /**
@@ -1488,7 +1488,6 @@ public:
         return *_compaction_manager;
     }
 
-    const locator::shared_token_metadata& get_shared_token_metadata() const { return _shared_token_metadata; }
     const locator::token_metadata& get_token_metadata() const { return *_shared_token_metadata.get(); }
 
     service::migration_notifier& get_notifier() { return _mnotifier; }

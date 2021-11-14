@@ -866,7 +866,7 @@ future<> database::update_keyspace(sharded<service::storage_proxy>& proxy, const
         }
     }
 
-    co_await ks.update_from(get_shared_token_metadata(), std::move(new_ksm));
+    co_await ks.update_from(std::move(new_ksm));
     co_await get_notifier().update_keyspace(ks.metadata());
 }
 
@@ -1054,13 +1054,15 @@ bool database::column_family_exists(const utils::UUID& uuid) const {
 }
 
 future<>
-keyspace::create_replication_strategy(const locator::shared_token_metadata& stm, const locator::replication_strategy_config_options& options) {
+keyspace::create_replication_strategy(const locator::replication_strategy_config_options& options) {
     using namespace locator;
 
+    auto& locator_registry = get_locator_registry();
     _replication_strategy =
             abstract_replication_strategy::create_replication_strategy(
                 _metadata->strategy_name(), options);
 
+    const auto& stm = locator_registry.get_shared_token_metadata();
     update_effective_replication_map(co_await calculate_effective_replication_map(_replication_strategy, stm.get()));
 }
 
@@ -1080,9 +1082,9 @@ keyspace::get_replication_strategy() const {
     return *_replication_strategy;
 }
 
-future<> keyspace::update_from(const locator::shared_token_metadata& stm, ::lw_shared_ptr<keyspace_metadata> ksm) {
+future<> keyspace::update_from(::lw_shared_ptr<keyspace_metadata> ksm) {
     _metadata = std::move(ksm);
-   return create_replication_strategy(stm, _metadata->strategy_options());
+   return create_replication_strategy(_metadata->strategy_options());
 }
 
 future<> keyspace::ensure_populated() const {
@@ -1291,7 +1293,7 @@ future<> database::create_in_memory_keyspace(const lw_shared_ptr<keyspace_metada
         kscfg.dirty_memory_manager = &_system_dirty_memory_manager;
     }
     keyspace ks(ksm, std::move(kscfg), locator_registry);
-    co_await ks.create_replication_strategy(get_shared_token_metadata(), ksm->strategy_options());
+    co_await ks.create_replication_strategy(ksm->strategy_options());
     _keyspaces.emplace(ksm->name(), std::move(ks));
 }
 
