@@ -140,11 +140,13 @@ public:
 public:
     struct registry_key {
         replication_strategy_type rs_type;
+        long ring_version;
         replication_strategy_config_options rs_config_options;
 
-        registry_key(replication_strategy_type rs_type_, const replication_strategy_config_options& rs_config_options_)
-            : rs_type(rs_type_)
-            , rs_config_options(rs_config_options_)
+        registry_key(replication_strategy_type rs_type_, replication_strategy_config_options rs_config_options_, long ring_version_ = 0)
+            : rs_type(std::move(rs_type_))
+            , ring_version(ring_version_)
+            , rs_config_options(std::move(rs_config_options_))
         {}
 
         registry_key(registry_key&&) = default;
@@ -277,6 +279,7 @@ struct appending_hash<locator::abstract_replication_strategy::registry_key> {
     template<typename Hasher>
     void operator()(Hasher& h, const locator::abstract_replication_strategy::registry_key& key) const {
         feed_hash(h, key.rs_type);
+        feed_hash(h, key.ring_version);
         for (const auto& [opt, val] : key.rs_config_options) {
             h.update(opt.c_str(), opt.size());
             h.update(val.c_str(), val.size());

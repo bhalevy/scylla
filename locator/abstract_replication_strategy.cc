@@ -446,6 +446,7 @@ std::ostream& operator<<(std::ostream& os, locator::replication_strategy_type t)
 
 std::ostream& operator<<(std::ostream& os, const locator::abstract_replication_strategy::registry_key& key) {
     os << key.rs_type;
+    os << '.' << key.ring_version;
     char sep = ':';
     for (const auto& [opt, val] : key.rs_config_options) {
         os << sep << opt << '=' << val;
