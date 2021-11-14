@@ -349,4 +349,48 @@ registry::registry(shared_token_metadata& stm) noexcept
     : _shared_token_metadata(stm)
 {}
 
+future<> registry::update_token_metadata(mutable_token_metadata_ptr tmptr) noexcept {
+    std::exception_ptr ex;
+    std::vector<mutable_token_metadata_ptr> pending_token_metadata_ptr;
+    pending_token_metadata_ptr.resize(smp::count);
+
+    try {
+        auto base_shard = this_shard_id();
+        pending_token_metadata_ptr[base_shard] = tmptr;
+        // clone a local copy of updated token_metadata on all other shards
+        // TODO: replicate only to NUMA nodes and keep a shared ptr on other shards.
+        co_await smp::invoke_on_others(base_shard, [&, base_shard, tmptr] () -> future<> {
+            pending_token_metadata_ptr[this_shard_id()] = make_token_metadata_ptr(co_await tmptr->clone_async());
+        });
+    } catch (...) {
+        ex = std::current_exception();
+    }
+
+    // Rollback on metadata replication error
+    if (ex) {
+        try {
+            co_await smp::invoke_on_all([&] () -> future<> {
+                auto tmptr = std::move(pending_token_metadata_ptr[this_shard_id()]);
+
+                co_await utils::clear_gently(tmptr);
+            });
+        } catch (...) {
+            rslogger.warn("Failure to reset pending token_metadata in cleanup path: {}. Ignored.", std::current_exception());
+        }
+
+        std::rethrow_exception(std::move(ex));
+    }
+
+    try {
+        co_await container().invoke_on_all([&pending_token_metadata_ptr] (registry& reg) {
+            reg.get_shared_token_metadata().set(std::move(pending_token_metadata_ptr[this_shard_id()]));
+        });
+    } catch (...) {
+        // applying the changes on all shards must never fail
+        // it will end up in an inconsistent state that we can't recover from.
+        rslogger.error("Failed to update token metadata: {}. Aborting.", std::current_exception());
+        abort();
+    }
+}
+
 } // namespace locator

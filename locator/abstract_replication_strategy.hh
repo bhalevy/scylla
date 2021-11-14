@@ -226,6 +226,13 @@ public:
     const shared_token_metadata& get_shared_token_metadata() const noexcept {
         return _shared_token_metadata;
     }
+
+    // Must be serialized under the shared_token_metadata lock.
+    // Exception safety:
+    //   - Always atomically updates the token_metadata atomically on all cores.
+    //   - May throw if fails to replicate the new token_metadata, in which case
+    //     the new token_metadata is not applied.
+    future<> update_token_metadata(mutable_token_metadata_ptr tmptr) noexcept;
 };
 
 }
