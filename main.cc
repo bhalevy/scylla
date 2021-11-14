@@ -466,6 +466,7 @@ int main(int ac, char** av) {
     print_starting_message(ac, av, parsed_opts);
 
     sharded<locator::shared_token_metadata> token_metadata;
+    sharded<locator::registry> locator_registry;
     sharded<service::migration_notifier> mm_notifier;
     sharded<service::endpoint_lifecycle_notifier> lifecycle_notifier;
     distributed<database> db;
@@ -514,7 +515,7 @@ int main(int ac, char** av) {
 
         return seastar::async([cfg, ext, &db, &qp, &proxy, &mm, &mm_notifier, &ctx, &opts, &dirs,
                 &prometheus_server, &cf_cache_hitrate_calculator, &load_meter, &feature_service,
-                &token_metadata, &snapshot_ctl, &messaging, &sst_dir_semaphore, &raft_gr, &service_memory_limiter,
+                &token_metadata, &locator_registry, &snapshot_ctl, &messaging, &sst_dir_semaphore, &raft_gr, &service_memory_limiter,
                 &repair, &sst_loader, &ss, &lifecycle_notifier] {
           try {
             // disable reactor stall detection during startup
@@ -677,6 +678,10 @@ int main(int ac, char** av) {
             //auto stop_token_metadata = defer_verbose_shutdown("token metadata", [ &token_metadata ] {
             //    token_metadata.stop().get();
             //});
+
+            supervisor::notify("starting locator registry");
+            locator_registry.start(std::ref(token_metadata)).get();
+            auto stop_locator_registry = deferred_stop(locator_registry);
 
             supervisor::notify("starting migration manager notifier");
             mm_notifier.start().get();

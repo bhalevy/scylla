@@ -345,4 +345,8 @@ future<> effective_replication_map::clear_gently() noexcept {
     co_await utils::clear_gently(_tmptr);
 }
 
+registry::registry(shared_token_metadata& stm) noexcept
+    : _shared_token_metadata(stm)
+{}
+
 } // namespace locator

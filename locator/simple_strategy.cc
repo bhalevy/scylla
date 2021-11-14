@@ -88,8 +88,8 @@ std::optional<std::set<sstring>>simple_strategy::recognized_options(const topolo
     return {{ "replication_factor" }};
 }
 
-using registry = class_registrator<abstract_replication_strategy, simple_strategy, snitch_ptr&, const replication_strategy_config_options&>;
-static registry registrator("org.apache.cassandra.locator.SimpleStrategy");
-static registry registrator_short_name("SimpleStrategy");
+using class_registry = class_registrator<abstract_replication_strategy, simple_strategy, snitch_ptr&, const replication_strategy_config_options&>;
+static class_registry registrator("org.apache.cassandra.locator.SimpleStrategy");
+static class_registry registrator_short_name("SimpleStrategy");
 
 }

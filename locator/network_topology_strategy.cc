@@ -307,7 +307,7 @@ std::optional<std::set<sstring>> network_topology_strategy::recognized_options(c
     return datacenters;
 }
 
-using registry = class_registrator<abstract_replication_strategy, network_topology_strategy, snitch_ptr&, const replication_strategy_config_options&>;
-static registry registrator("org.apache.cassandra.locator.NetworkTopologyStrategy");
-static registry registrator_short_name("NetworkTopologyStrategy");
+using class_registry = class_registrator<abstract_replication_strategy, network_topology_strategy, snitch_ptr&, const replication_strategy_config_options&>;
+static class_registry registrator("org.apache.cassandra.locator.NetworkTopologyStrategy");
+static class_registry registrator_short_name("NetworkTopologyStrategy");
 }

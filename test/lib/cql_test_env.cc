@@ -484,6 +484,10 @@ public:
             token_metadata.start([] () noexcept { return db::schema_tables::hold_merge_lock(); }).get();
             auto stop_token_metadata = defer([&token_metadata] { token_metadata.stop().get(); });
 
+            sharded<locator::registry> locator_registry;
+            locator_registry.start(std::ref(token_metadata)).get();
+            auto stop_locator_registry = deferred_stop(locator_registry);
+
             sharded<service::migration_notifier> mm_notif;
             mm_notif.start().get();
             auto stop_mm_notify = defer([&mm_notif] { mm_notif.stop().get(); });

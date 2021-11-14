@@ -214,4 +214,18 @@ inline mutable_effective_replication_map_ptr make_effective_replication_map(abst
 // Apply the replication strategy over the current configuration and the given token_metadata.
 future<mutable_effective_replication_map_ptr> calculate_effective_replication_map(abstract_replication_strategy::ptr_type rs, token_metadata_ptr tmptr);
 
+class registry : public peering_sharded_service<registry> {
+    shared_token_metadata& _shared_token_metadata;
+
+public:
+    explicit registry(shared_token_metadata& stm) noexcept;
+
+    shared_token_metadata& get_shared_token_metadata() noexcept {
+        return _shared_token_metadata;
+    }
+    const shared_token_metadata& get_shared_token_metadata() const noexcept {
+        return _shared_token_metadata;
+    }
+};
+
 }

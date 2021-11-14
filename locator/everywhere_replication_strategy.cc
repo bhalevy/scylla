@@ -63,7 +63,7 @@ inet_address_vector_replica_set everywhere_replication_strategy::get_natural_end
     return boost::copy_range<inet_address_vector_replica_set>(tm.get_all_endpoints());
 }
 
-using registry = class_registrator<abstract_replication_strategy, everywhere_replication_strategy, snitch_ptr&, const replication_strategy_config_options&>;
-static registry registrator("org.apache.cassandra.locator.EverywhereStrategy");
-static registry registrator_short_name("EverywhereStrategy");
+using class_registry = class_registrator<abstract_replication_strategy, everywhere_replication_strategy, snitch_ptr&, const replication_strategy_config_options&>;
+static class_registry registrator("org.apache.cassandra.locator.EverywhereStrategy");
+static class_registry registrator_short_name("EverywhereStrategy");
 }
