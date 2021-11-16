@@ -539,11 +539,10 @@ future<> compaction_manager::stop_tasks(std::vector<lw_shared_ptr<task>> tasks, 
 }
 
 future<> compaction_manager::stop_ongoing_compactions(sstring reason) {
-    cmlog.info("Stopping {} ongoing compactions due to {}", get_compactions().size(), reason);
-
     // Wait for each task handler to stop. Copy list because task remove itself
     // from the list when done.
     auto tasks = boost::copy_range<std::vector<lw_shared_ptr<task>>>(_tasks);
+    cmlog.info("Stopping {} ongoing compactions due to {}", tasks.size(), reason);
     return stop_tasks(std::move(tasks), std::move(reason));
 }
 
