@@ -130,7 +130,8 @@ private:
 
         bool compaction_disabled() const;
     };
-    std::unordered_map<table*, compaction_state> _compaction_state;
+    using compaction_state_ptr = lw_shared_ptr<compaction_state>;
+    std::unordered_map<table*, compaction_state_ptr> _compaction_state;
 
     semaphore _custom_job_sem{1};
     seastar::named_semaphore _rewrite_sstables_sem = {1, named_semaphore_exception_factory{"rewrite sstables"}};
@@ -196,6 +197,10 @@ private:
     future<> stop_ongoing_compactions(sstring reason);
     future<> stop_ongoing_compactions(sstring reason, column_family* cf);
     optimized_optional<abort_source::subscription> _early_abort_subscription;
+
+    compaction_state_ptr try_get_compaction_state(table* t) const noexcept;
+    compaction_state_ptr get_compaction_state(table* t);
+
 public:
     compaction_manager(compaction_scheduling_group csg, maintenance_scheduling_group msg, size_t available_memory, abort_source& as);
     compaction_manager(compaction_scheduling_group csg, maintenance_scheduling_group msg, size_t available_memory, uint64_t shares, abort_source& as);
@@ -276,7 +281,7 @@ public:
     };
 
     bool compaction_disabled(table* t) const {
-        return _compaction_state.contains(t) && _compaction_state.at(t).compaction_disabled();
+        return _compaction_state.contains(t) && _compaction_state.at(t)->compaction_disabled();
     }
 
     // Stops ongoing compaction of a given type.

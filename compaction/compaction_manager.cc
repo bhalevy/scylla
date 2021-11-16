@@ -272,7 +272,7 @@ future<> compaction_manager::perform_major_compaction(column_family* cf) {
     // it cannot be the other way around, or minor compaction for this column family would be
     // prevented while an ongoing major compaction doesn't release the semaphore.
     task->compaction_done = with_semaphore(_major_compaction_sem, 1, [this, task, cf] {
-        return with_lock(_compaction_state[cf].lock.for_write(), [this, task, cf] {
+        return with_lock(get_compaction_state(cf)->lock.for_write(), [this, task, cf] {
             _stats.active_tasks++;
             if (!can_proceed(task)) {
                 return make_ready_future<>();
@@ -328,7 +328,7 @@ future<> compaction_manager::run_custom_job(column_family* cf, sstables::compact
 
     task->compaction_done = with_semaphore(_custom_job_sem, 1, [this, task, cf, &job = *job_ptr] () mutable {
         // take read lock for cf, so major compaction and resharding can't proceed in parallel.
-        return with_lock(_compaction_state[cf].lock.for_read(), [this, task, cf, &job] () mutable {
+        return with_lock(get_compaction_state(cf)->lock.for_read(), [this, task, cf, &job] () mutable {
             _stats.active_tasks++;
             if (!can_proceed(task)) {
                 return make_ready_future<>();
@@ -363,8 +363,8 @@ bool compaction_manager::compaction_state::compaction_disabled() const {
 
 future<>
 compaction_manager::run_with_compaction_disabled(table* t, std::function<future<> ()> func) {
-    auto& c_state = _compaction_state[t];
-    auto holder = c_state.with_compaction_disabled_gate.hold();
+    auto c_state = get_compaction_state(t);
+    auto holder = c_state->with_compaction_disabled_gate.hold();
     co_await stop_ongoing_compactions("user-triggered operation", t);
 
     std::exception_ptr err;
@@ -378,7 +378,7 @@ compaction_manager::run_with_compaction_disabled(table* t, std::function<future<
     assert(_compaction_state.contains(t));
 #endif
     // submit compaction request if we're the last holder of the gate which is still opened.
-    if (!c_state.with_compaction_disabled_gate.is_closed() && c_state.with_compaction_disabled_gate.get_count() == 1) {
+    if (!c_state->with_compaction_disabled_gate.is_closed() && c_state->with_compaction_disabled_gate.get_count() == 1) {
         holder.release();
         submit(t);
     }
@@ -386,6 +386,24 @@ compaction_manager::run_with_compaction_disabled(table* t, std::function<future<
         std::rethrow_exception(err);
     }
     co_return;
+}
+
+compaction_manager::compaction_state_ptr compaction_manager::try_get_compaction_state(table* t) const noexcept {
+    auto it = _compaction_state.find(t);
+    if (it != _compaction_state.end()) {
+        return it->second;
+    }
+    return compaction_state_ptr{};
+}
+
+compaction_manager::compaction_state_ptr compaction_manager::get_compaction_state(table* t) {
+    auto it = _compaction_state.find(t);
+    if (it != _compaction_state.end()) {
+        return it->second;
+    }
+    auto res = make_lw_shared<compaction_state>();
+    _compaction_state.insert({t, res});
+    return res;
 }
 
 void compaction_manager::task::setup_new_compaction() {
@@ -617,8 +635,11 @@ void compaction_manager::do_stop() noexcept {
 }
 
 inline bool compaction_manager::can_proceed(const lw_shared_ptr<task>& task) {
-    return (_state == state::enabled) && !task->stopping &&
-        (task->type != sstables::compaction_type::Compaction || !_compaction_state[task->compacting_cf].compaction_disabled());
+    if (_state != state::enabled || task->stopping) {
+        return false;
+    }
+    auto csptr = try_get_compaction_state(task->compacting_cf);
+    return csptr && (task->type != sstables::compaction_type::Compaction || !csptr->compaction_disabled());
 }
 
 inline future<> compaction_manager::put_task_to_sleep(lw_shared_ptr<task>& task) {
@@ -664,7 +685,7 @@ void compaction_manager::submit(column_family* cf) {
             _stats.pending_tasks--;
             return make_ready_future<stop_iteration>(stop_iteration::yes);
         }
-        return with_lock(_compaction_state[cf].lock.for_read(), [this, task] () mutable {
+        return with_lock(get_compaction_state(cf)->lock.for_read(), [this, task] () mutable {
           return with_scheduling_group(_compaction_controller.sg(), [this, task = std::move(task)] () mutable {
             column_family& cf = *task->compacting_cf;
             sstables::compaction_strategy cs = cf.get_compaction_strategy();
@@ -734,7 +755,7 @@ void compaction_manager::submit_offstrategy(column_family* cf) {
             return make_ready_future<stop_iteration>(stop_iteration::yes);
         }
         return with_semaphore(_custom_job_sem, 1, [this, task, cf] () mutable {
-            return with_lock(_compaction_state[cf].lock.for_read(), [this, task, cf] () mutable {
+            return with_lock(get_compaction_state(cf)->lock.for_read(), [this, task, cf] () mutable {
                 _stats.pending_tasks--;
                 if (!can_proceed(task)) {
                     return make_ready_future<stop_iteration>(stop_iteration::yes);
@@ -817,7 +838,7 @@ future<> compaction_manager::rewrite_sstables(column_family* cf, sstables::compa
 
             return with_semaphore(_rewrite_sstables_sem, 1, [this, task, &cf, descriptor = std::move(descriptor), compacting] () mutable {
               // Take write lock for cf to serialize cleanup/upgrade sstables/scrub with major compaction/reshape/reshard.
-              return with_lock(_compaction_state[&cf].lock.for_write(), [this, task, &cf, descriptor = std::move(descriptor), compacting] () mutable {
+              return with_lock(get_compaction_state(&cf)->lock.for_write(), [this, task, &cf, descriptor = std::move(descriptor), compacting] () mutable {
                 _stats.pending_tasks--;
                 _stats.active_tasks++;
                 task->setup_new_compaction();
@@ -1009,7 +1030,7 @@ future<> compaction_manager::remove(column_family* cf) {
     _postponed.erase(cf);
 
     // Wait for all functions running under with_compaction_disabled_gate to terminate.
-    auto close_gate = _compaction_state[cf].with_compaction_disabled_gate.close();
+    auto close_gate = get_compaction_state(cf)->with_compaction_disabled_gate.close();
 
     // Wait for the termination of an ongoing compaction on cf, if any.
     co_await when_all_succeed(stop_ongoing_compactions("column family removal", cf), std::move(close_gate));
