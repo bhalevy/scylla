@@ -1037,8 +1037,11 @@ future<> compaction_manager::remove(column_family* cf) {
         // Wait for all functions running under with_compaction_disabled_gate to terminate.
         auto close_gate = csptr->with_compaction_disabled_gate.close();
 
+        // Acquire the write lock to make sure all tasks that acquired it are done.
+        auto write_lock = csptr->lock.write_lock();
+
         // Wait for the termination of an ongoing compaction on cf, if any.
-        co_await when_all_succeed(stop_ongoing_compactions("column family removal", cf), std::move(close_gate));
+        co_await when_all_succeed(stop_ongoing_compactions("column family removal", cf), std::move(close_gate), std::move(write_lock));
     }
 #ifdef DEBUG
     auto found = false;
