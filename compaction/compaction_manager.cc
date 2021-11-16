@@ -618,7 +618,7 @@ void compaction_manager::do_stop() noexcept {
 }
 
 inline bool compaction_manager::can_proceed(const lw_shared_ptr<task>& task) {
-    return (_state == state::enabled) && !task->stopping &&
+    return (_state == state::enabled) && !task->stopping && _compaction_state.contains(task->compacting_cf) &&
         (task->type != sstables::compaction_type::Compaction || !_compaction_state[task->compacting_cf].compaction_disabled());
 }
 
@@ -1004,16 +1004,22 @@ future<> compaction_manager::perform_sstable_scrub(column_family* cf, sstables::
 }
 
 future<> compaction_manager::remove(column_family* cf) {
+    auto handle = _compaction_state.extract(cf);
+
+  if (!handle.empty()) {
+    auto& c_state = handle.mapped();
+
     // We need to guarantee that a task being stopped will not retry to compact
     // a column family being removed.
     // The requirement above is provided by stop_ongoing_compactions().
     _postponed.erase(cf);
 
     // Wait for all functions running under gate to terminate.
-    auto close_gate = _compaction_state[cf].gate.close();
+    auto close_gate = c_state.gate.close();
 
     // Wait for the termination of an ongoing compaction on cf, if any.
     co_await when_all_succeed(stop_ongoing_compactions("column family removal", cf), std::move(close_gate));
+  }
 #ifdef DEBUG
     auto found = false;
     sstring msg;
@@ -1030,8 +1036,6 @@ future<> compaction_manager::remove(column_family* cf) {
         on_internal_error_noexcept(cmlog, msg);
     }
 #endif
-    _compaction_state.erase(cf);
-    co_return;
 }
 
 const std::vector<sstables::compaction_info> compaction_manager::get_compactions() const {
