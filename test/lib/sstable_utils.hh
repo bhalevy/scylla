@@ -349,7 +349,7 @@ public:
     explicit compaction_manager_test(compaction_manager& cm) : _cm(cm) {}
 
     sstables::compaction_data& register_compaction(utils::UUID output_run_id = {}, column_family* cf = nullptr) {
-        auto task = make_lw_shared<compaction_manager::task>(cf, sstables::compaction_type::Compaction);
+        auto task = make_lw_shared<compaction_manager::task>(cf, sstables::compaction_type::Compaction, _cm._compaction_state[cf]);
         task->compaction_running = true;
         task->compaction_data = compaction_manager::create_compaction_data();
         task->output_run_identifier = std::move(output_run_id);
