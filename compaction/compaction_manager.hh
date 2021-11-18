@@ -78,6 +78,10 @@ private:
 
         explicit task(column_family* cf, sstables::compaction_type type) : compacting_cf(cf), type(type) {}
 
+        task(task&& o) noexcept;
+
+        task& operator=(task&& o) = delete;
+
         void setup_new_compaction();
         void finish_compaction();
     };

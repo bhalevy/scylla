@@ -388,6 +388,13 @@ compaction_manager::run_with_compaction_disabled(table* t, std::function<future<
     co_return;
 }
 
+compaction_manager::task::task(compaction_manager::task&& o) noexcept
+        : compacting_cf(std::exchange(o.compacting_cf, nullptr))
+        , type(o.type)
+{
+    cmlog.debug("Compaction task {} moved to {}", fmt::ptr(&o), fmt::ptr(this));
+}
+
 void compaction_manager::task::setup_new_compaction() {
     compaction_data = create_compaction_data();
     compaction_running = true;
