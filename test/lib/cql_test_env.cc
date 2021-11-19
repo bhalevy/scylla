@@ -69,6 +69,7 @@
 #include "sstables/sstables_manager.hh"
 #include "init.hh"
 #include "utils/fb_utilities.hh"
+#include "service/service_ctl.hh"
 
 #include <sys/time.h>
 #include <sys/resource.h>
@@ -131,42 +132,54 @@ public:
     static constexpr std::string_view ks_name = "ks";
     static std::atomic<bool> active;
 private:
-    sharded<replica::database> _db;
-    sharded<gms::feature_service> _feature_service;
-    sharded<sstables::storage_manager> _sstm;
-    sharded<service::storage_proxy> _proxy;
-    sharded<cql3::query_processor> _qp;
-    sharded<auth::service> _auth_service;
-    sharded<db::view::view_builder> _view_builder;
-    sharded<db::view::view_update_generator> _view_update_generator;
-    sharded<service::migration_notifier> _mnotifier;
-    sharded<qos::service_level_controller> _sl_controller;
-    sharded<service::migration_manager> _mm;
-    sharded<db::batchlog_manager> _batchlog_manager;
-    sharded<gms::gossiper> _gossiper;
-    sharded<service::raft_group_registry> _group0_registry;
-    sharded<db::system_keyspace> _sys_ks;
-    sharded<service::tablet_allocator> _tablet_allocator;
-    sharded<db::system_distributed_keyspace> _sys_dist_ks;
-    sharded<locator::snitch_ptr> _snitch;
-    sharded<compaction_manager> _cm;
-    sharded<tasks::task_manager> _task_manager;
-    sharded<netw::messaging_service> _ms;
-    sharded<service::storage_service> _ss;
-    sharded<locator::shared_token_metadata> _token_metadata;
-    sharded<locator::effective_replication_map_factory> _erm_factory;
-    sharded<sstables::directory_semaphore> _sst_dir_semaphore;
-    sharded<wasm::manager> _wasm;
-    sharded<cql3::cql_config> _cql_config;
-    sharded<service::endpoint_lifecycle_notifier> _elc_notif;
-    sharded<cdc::generation_service> _cdc_generation_service;
-    sharded<repair_service> _repair;
-    sharded<streaming::stream_manager> _stream_manager;
-    sharded<service::forward_service> _forward_service;
-    sharded<direct_failure_detector::failure_detector> _fd;
-    sharded<service::raft_address_map> _raft_address_map;
-    sharded<service::direct_fd_pinger> _fd_pinger;
-    sharded<cdc::cdc_service> _cdc;
+    service::services_controller _sctl;
+    // FIXME: handle signals (SIGINT, SIGTERM) - request aborts
+    service::sharded_service_ctl<abort_source> _abort_source_ctl;
+    service::sharded_service_ctl<replica::database> _db_ctl;
+    service::sharded_service_ctl<gms::feature_service> _feature_service_ctl;
+    service::sharded_service_ctl<sstables::storage_manager> _sstm_ctl;
+    service::sharded_service_ctl<service::storage_proxy> _proxy_ctl;
+    service::sharded_service_ctl<cql3::query_processor> _qp_ctl;
+    service::service_ctl<void> _qp_remote_ctl;
+    service::sharded_service_ctl<auth::service> _auth_service_ctl;
+    service::sharded_service_ctl<db::view::view_builder> _view_builder_ctl;
+    service::sharded_service_ctl<db::view::view_update_generator> _view_update_generator_ctl;
+    service::sharded_service_ctl<service::migration_notifier> _mnotifier_ctl;
+    service::sharded_service_ctl<qos::service_level_controller> _sl_controller_ctl;
+    service::sharded_service_ctl<service::migration_manager> _mm_ctl;
+    service::sharded_service_ctl<db::batchlog_manager> _batchlog_manager_ctl;
+    service::sharded_service_ctl<gms::gossiper> _gossiper_ctl;
+    service::sharded_service_ctl<service::raft_group_registry> _group0_registry_ctl;
+    service::sharded_service_ctl<db::system_keyspace> _sys_ks_ctl;
+    service::sharded_service_ctl<service::tablet_allocator> _tablet_allocator_ctl;
+    service::sharded_service_ctl<db::system_distributed_keyspace> _sys_dist_ks_ctl;
+    service::sharded_service_ctl<locator::snitch_ptr> _snitch_ctl;
+    service::sharded_service_ctl<compaction_manager> _cm_ctl;
+    service::sharded_service_ctl<tasks::task_manager> _task_manager_ctl;
+    service::sharded_service_ctl<netw::messaging_service> _ms_ctl;
+    service::sharded_service_ctl<service::storage_service> _ss_ctl;
+    service::sharded_service_ctl<locator::shared_token_metadata> _token_metadata_ctl;
+    service::sharded_service_ctl<locator::effective_replication_map_factory> _erm_factory_ctl;
+    service::sharded_service_ctl<sstables::directory_semaphore> _sst_dir_semaphore_ctl;
+    service::sharded_service_ctl<wasm::manager> _wasm_ctl;
+    service::service_ctl<wasm::startup_context> _wasm_ctx_ctl;
+    service::sharded_service_ctl<cql3::cql_config> _cql_config_ctl;
+    service::sharded_service_ctl<service::endpoint_lifecycle_notifier> _elc_notif_ctl;
+    service::sharded_service_ctl<cdc::generation_service> _cdc_generation_service_ctl;
+    service::sharded_service_ctl<repair_service> _repair_ctl;
+    service::sharded_service_ctl<streaming::stream_manager> _stream_manager_ctl;
+    service::sharded_service_ctl<service::forward_service> _forward_service_ctl;
+    service::direct_fd_clock _fd_clock;
+    service::sharded_service_ctl<direct_failure_detector::failure_detector> _fd_ctl;
+    service::sharded_service_ctl<service::raft_address_map> _raft_address_map_ctl;
+    service::sharded_service_ctl<service::direct_fd_pinger> _fd_pinger_ctl;
+    service::sharded_service_ctl<cdc::cdc_service> _cdc_ctl;
+    service::service_ctl<scheduling_groups> _scheduling_groups_ctl;
+    service::service_ctl<replica::database_config> _db_cfg_ctl;
+    service::service_ctl<configurable::notify_set> _notify_set_ctl;
+    service::service_ctl<locator::host_id> _host_id_ctl;
+    service::service_ctl<service::raft_group0_client> _raft_group0_client_ctl;
+    service::service_ctl<service::raft_group0> _raft_group0_ctl;
 
     service::raft_group0_client* _group0_client;
 
@@ -187,8 +200,8 @@ private:
     distributed<core_local_state> _core_local;
 private:
     auto make_query_state() {
-        if (_db.local().has_keyspace(ks_name)) {
-            _core_local.local().client_state.set_keyspace(_db.local(), ks_name);
+        if (_db_ctl.local().has_keyspace(ks_name)) {
+            _core_local.local().client_state.set_keyspace(_db_ctl.local(), ks_name);
         }
         return ::make_shared<service::query_state>(_core_local.local().client_state, empty_service_permit());
     }
@@ -210,6 +223,51 @@ private:
     }
 public:
     single_node_cql_env()
+        : _abort_source_ctl(_sctl, "abort_source", service::default_start_tag{})
+        , _db_ctl(_sctl, "db")
+        , _feature_service_ctl(_sctl, "feature_service")
+        , _sstm_ctl(_sctl, "sstables::storage_manager")
+        , _proxy_ctl(_sctl, "storage_proxy")
+        , _qp_ctl(_sctl, "cql3::query_processor")
+        , _qp_remote_ctl(_sctl, "qp_remote")
+        , _auth_service_ctl(_sctl, "auth")
+        , _view_builder_ctl(_sctl, "view_builder")
+        , _view_update_generator_ctl(_sctl, "view_update_generator")
+        , _mnotifier_ctl(_sctl, "migration_notifier", service::default_start_tag{})
+        , _sl_controller_ctl(_sctl, "service_level_controller")
+        , _mm_ctl(_sctl, "migration_manager")
+        , _batchlog_manager_ctl(_sctl, "batchlog_manager")
+        , _gossiper_ctl(_sctl, "gossiper")
+        , _group0_registry_ctl(_sctl, "raft_group_registry")
+        , _sys_ks_ctl(_sctl, "system_keyspace")
+        , _tablet_allocator_ctl(_sctl, "tablet_allocator")
+        , _sys_dist_ks_ctl(_sctl, "system_distributed_keyspace")
+        , _snitch_ctl(_sctl, "snitch")
+        , _cm_ctl(_sctl, "compaction_manager")
+        , _task_manager_ctl(_sctl, "task_manager")
+        , _ms_ctl(_sctl, "messaging_service")
+        , _ss_ctl(_sctl, "storage_service")
+        , _token_metadata_ctl(_sctl, "shared_token_metadata")
+        , _erm_factory_ctl(_sctl, "effective_replication_map_factory", service::default_start_tag{})
+        , _sst_dir_semaphore_ctl(_sctl, "directory_semaphore")
+        , _wasm_ctl(_sctl, "wasm")
+        , _wasm_ctx_ctl(_sctl, "wasm_startup_context")
+        , _cql_config_ctl(_sctl, "cql_config")
+        , _elc_notif_ctl(_sctl, "endpoint_lifecycle_notifier", service::default_start_tag{})
+        , _cdc_generation_service_ctl(_sctl, "generation_service")
+        , _repair_ctl(_sctl, "repair")
+        , _stream_manager_ctl(_sctl, "stream_manager")
+        , _forward_service_ctl(_sctl, "forward_service")
+        , _fd_ctl(_sctl, "failure_detector")
+        , _raft_address_map_ctl(_sctl, "raft_address_map", service::default_start_tag{})
+        , _fd_pinger_ctl(_sctl, "fd_pinger")
+        , _cdc_ctl(_sctl, "cdc")
+        , _scheduling_groups_ctl(_sctl, "scheduling_groups")
+        , _db_cfg_ctl(_sctl, "db_cfg")
+        , _notify_set_ctl(_sctl, "notify_set")
+        , _host_id_ctl(_sctl, "host_id")
+        , _raft_group0_client_ctl(_sctl, "raft_group0_client")
+        , _raft_group0_ctl(_sctl, "raft_group0")
     {
         adjust_rlimit();
     }
@@ -298,9 +356,9 @@ public:
     virtual future<> create_table(std::function<schema(std::string_view)> schema_maker) override {
         schema_builder builder(make_lw_shared<schema>(schema_maker(ks_name)));
         auto s = builder.build(schema_builder::compact_storage::no);
-        auto group0_guard = co_await _mm.local().start_group0_operation();
+        auto group0_guard = co_await _mm_ctl.local().start_group0_operation();
         auto ts = group0_guard.write_timestamp();
-        co_return co_await _mm.local().announce(co_await service::prepare_new_column_family_announcement(_proxy.local(), s, ts), std::move(group0_guard), "");
+        co_return co_await _mm_ctl.local().announce(co_await service::prepare_new_column_family_announcement(_proxy_ctl.local(), s, ts), std::move(group0_guard), "");
     }
 
     virtual service::client_state& local_client_state() override {
@@ -308,47 +366,47 @@ public:
     }
 
     virtual replica::database& local_db() override {
-        return _db.local();
+        return _db_ctl.local();
     }
 
     cql3::query_processor& local_qp() override {
-        return _qp.local();
+        return _qp_ctl.local();
     }
 
     sharded<replica::database>& db() override {
-        return _db;
+        return _db_ctl.service();
     }
 
     distributed<cql3::query_processor>& qp() override {
-        return _qp;
+        return _qp_ctl.service();
     }
 
     auth::service& local_auth_service() override {
-        return _auth_service.local();
+        return _auth_service_ctl.local();
     }
 
     virtual db::view::view_builder& local_view_builder() override {
-        return _view_builder.local();
+        return _view_builder_ctl.local();
     }
 
     virtual db::view::view_update_generator& local_view_update_generator() override {
-        return _view_update_generator.local();
+        return _view_update_generator_ctl.local();
     }
 
     virtual service::migration_notifier& local_mnotifier() override {
-        return _mnotifier.local();
+        return _mnotifier_ctl.local();
     }
 
     virtual sharded<service::migration_manager>& migration_manager() override {
-        return _mm;
+        return _mm_ctl.service();
     }
 
     virtual sharded<db::batchlog_manager>& batchlog_manager() override {
-        return _batchlog_manager;
+        return _batchlog_manager_ctl.service();
     }
 
     virtual sharded<gms::gossiper>& gossiper() override {
-        return _gossiper;
+        return _gossiper_ctl.service();
     }
 
     virtual service::raft_group0_client& get_raft_group0_client() override {
@@ -356,27 +414,27 @@ public:
     }
 
     virtual sharded<service::raft_group_registry>& get_raft_group_registry() override {
-        return _group0_registry;
+        return _group0_registry_ctl.service();
     }
 
     virtual sharded<db::system_keyspace>& get_system_keyspace() override {
-        return _sys_ks;
+        return _sys_ks_ctl.service();
     }
 
     virtual sharded<service::tablet_allocator>& get_tablet_allocator() override {
-        return _tablet_allocator;
+        return _tablet_allocator_ctl.service();
     }
 
     virtual sharded<service::storage_proxy>& get_storage_proxy() override {
-        return _proxy;
+        return _proxy_ctl.service();
     }
 
     virtual sharded<gms::feature_service>& get_feature_service() override {
-        return _feature_service;
+        return _feature_service_ctl.service();
     }
 
     virtual sharded<sstables::storage_manager>& get_sstorage_manager() override {
-        return _sstm;
+        return _sstm_ctl.service();
     }
 
     virtual future<> refresh_client_state() override {
@@ -429,15 +487,9 @@ private:
                 engine().update_blocked_reactor_notify_ms(std::chrono::milliseconds(1000000));
             }).get();
 
-            sharded<abort_source> abort_sources;
-            abort_sources.start().get();
-            // FIXME: handle signals (SIGINT, SIGTERM) - request aborts
-            auto stop_abort_sources = defer([&] { abort_sources.stop().get(); });
+            set_abort_on_internal_error(true);
+            const gms::inet_address listen("127.0.0.1");
 
-            debug::the_database = &_db;
-            auto reset_db_ptr = defer([] {
-                debug::the_database = nullptr;
-            });
             auto cfg = cfg_in.db_config;
             if (!cfg->reader_concurrency_semaphore_serialize_limit_multiplier.is_set()) {
                 cfg->reader_concurrency_semaphore_serialize_limit_multiplier.set(std::numeric_limits<uint32_t>::max());
@@ -477,104 +529,157 @@ private:
                 cfg->max_memory_for_unlimited_query_hard_limit.set(uint64_t(query::result_memory_limiter::unlimited_result_size));
             }
 
-            auto scheduling_groups = get_scheduling_groups().get();
+            _scheduling_groups_ctl.start_func = [&] () {
+                return get_scheduling_groups();
+            };
 
-            auto notify_set = init_configurables
-                ? configurable::init_all(*cfg, init_configurables->extensions, service_set(
-                    _db, _ss, _mm, _proxy, _feature_service, _ms, _qp, _batchlog_manager
-                )).get0()
-                : configurable::notify_set{}
-                ;
-
-            auto stop_configurables = defer([&] { notify_set.notify_all(configurable::system_state::stopped).get(); });
+            _notify_set_ctl.start_func = [&,
+                db = _notify_set_ctl.lookup_dep(_db_ctl),
+                ss = _notify_set_ctl.lookup_dep(_ss_ctl),
+                mm = _notify_set_ctl.lookup_dep(_mm_ctl),
+                proxy = _notify_set_ctl.lookup_dep(_proxy_ctl),
+                feature_service = _notify_set_ctl.lookup_dep(_feature_service_ctl),
+                ms = _notify_set_ctl.lookup_dep(_ms_ctl),
+                qp = _notify_set_ctl.lookup_dep(_qp_ctl),
+                bm = _notify_set_ctl.lookup_dep(_batchlog_manager_ctl)
+            ] () -> future<configurable::notify_set> {
+                if (init_configurables) {
+                    co_return co_await configurable::init_all(*cfg, init_configurables->extensions,
+                            service_set(db.get(), ss.get(), mm.get(), proxy.get(), feature_service.get(), ms.get(), qp.get(), bm.get()));
+                } else {
+                    co_return configurable::notify_set{};
+                }
+            };
+            _notify_set_ctl.stop_func = [] (configurable::notify_set& s) {
+                return s.notify_all(configurable::system_state::stopped);
+            };
 
             gms::feature_config fcfg = gms::feature_config_from_db_config(*cfg, cfg_in.disabled_features);
-            _feature_service.start(fcfg).get();
-            auto stop_feature_service = defer([this] { _feature_service.stop().get(); });
+            _feature_service_ctl.start_func = [&fcfg] (auto& fs) { return fs.start(fcfg); };
+            _feature_service_ctl.serve_func = [] (auto& fs) {
+                return fs.invoke_on_all([] (auto& fs) {
+                    return fs.enable(fs.supported_feature_set());
+                });
+            };
 
-            _snitch.start(locator::snitch_config{}).get();
-            auto stop_snitch = defer([this] { _snitch.stop().get(); });
-            _snitch.invoke_on_all(&locator::snitch_ptr::start).get();
+            _snitch_ctl.start_func = [] (auto& s) -> future<> {
+                co_await s.start(locator::snitch_config{});
+                co_await s.invoke_on_all(&locator::snitch_ptr::start);
+            };
 
             locator::token_metadata::config tm_cfg;
             tm_cfg.topo_cfg.this_endpoint = utils::fb_utilities::get_broadcast_address();
-            tm_cfg.topo_cfg.local_dc_rack = { _snitch.local()->get_datacenter(), _snitch.local()->get_rack() };
-            _token_metadata.start([] () noexcept { return db::schema_tables::hold_merge_lock(); }, tm_cfg).get();
-            auto stop_token_metadata = defer([this] { _token_metadata.stop().get(); });
+            tm_cfg.topo_cfg.local_dc_rack = { _snitch_ctl.local()->get_datacenter(), _snitch_ctl.local()->get_rack() };
+            _token_metadata_ctl.start_func = [&] (auto& s) {
+                return s.start([] () noexcept { return db::schema_tables::hold_merge_lock(); }, tm_cfg);
+            };
 
-            _erm_factory.start().get();
-            auto stop_erm_factory = deferred_stop(_erm_factory);
+            _sst_dir_semaphore_ctl.start_func = [&] (auto& s) { return s.start(cfg->initial_sstable_loading_concurrency()); };
 
-            _mnotifier.start().get();
-            auto stop_mm_notify = defer([this] { _mnotifier.stop().get(); });
+            _db_cfg_ctl.start_func = [&,
+                sg_ref = _db_ctl.lookup_dep(_scheduling_groups_ctl)
+            ] () {
+                replica::database_config dbcfg;
+                if (cfg_in.dbcfg) {
+                    dbcfg = std::move(*cfg_in.dbcfg);
+                } else {
+                    dbcfg.available_memory = memory::stats().total_memory();
+                }
+                const auto& sg = sg_ref.get();
+                dbcfg.compaction_scheduling_group = sg->compaction_scheduling_group;
+                dbcfg.memory_compaction_scheduling_group = sg->memory_compaction_scheduling_group;
+                dbcfg.streaming_scheduling_group = sg->streaming_scheduling_group;
+                dbcfg.statement_scheduling_group = sg->statement_scheduling_group;
+                dbcfg.memtable_scheduling_group = sg->memtable_scheduling_group;
+                dbcfg.memtable_to_cache_scheduling_group = sg->memtable_to_cache_scheduling_group;
+                dbcfg.gossip_scheduling_group = sg->gossip_scheduling_group;
+                dbcfg.sstables_format = sstables::version_from_string(cfg->sstable_format());
+                return make_ready_future<replica::database_config>(std::move(dbcfg));
+            };
 
-            _sst_dir_semaphore.start(cfg->initial_sstable_loading_concurrency()).get();
-            auto stop_sst_dir_sem = defer([this] {
-                _sst_dir_semaphore.stop().get();
-            });
-
-            replica::database_config dbcfg;
-            if (cfg_in.dbcfg) {
-                dbcfg = std::move(*cfg_in.dbcfg);
-            } else {
-                dbcfg.available_memory = memory::stats().total_memory();
-            }
-
-            dbcfg.compaction_scheduling_group = scheduling_groups.compaction_scheduling_group;
-            dbcfg.memory_compaction_scheduling_group = scheduling_groups.memory_compaction_scheduling_group;
-            dbcfg.streaming_scheduling_group = scheduling_groups.streaming_scheduling_group;
-            dbcfg.statement_scheduling_group = scheduling_groups.statement_scheduling_group;
-            dbcfg.memtable_scheduling_group = scheduling_groups.memtable_scheduling_group;
-            dbcfg.memtable_to_cache_scheduling_group = scheduling_groups.memtable_to_cache_scheduling_group;
-            dbcfg.gossip_scheduling_group = scheduling_groups.gossip_scheduling_group;
-            dbcfg.sstables_format = sstables::version_from_string(cfg->sstable_format());
+            _db_ctl.start_func = [&, cfg = std::ref(*cfg),
+                db_cfg = _db_ctl.lookup_dep(_db_cfg_ctl),
+                mn = _db_ctl.lookup_dep(_mnotifier_ctl),
+                feature_service = _db_ctl.lookup_dep(_feature_service_ctl),
+                token_metadata = _db_ctl.lookup_dep(_token_metadata_ctl),
+                cm = _db_ctl.lookup_dep(_cm_ctl),
+                sstm = _db_ctl.lookup_dep(_sstm_ctl),
+                sst_dir_semaphore = _db_ctl.lookup_dep(_sst_dir_semaphore_ctl)
+            ] (auto& db) -> future<> {
+                co_await db.start(cfg, *db_cfg.get(), mn, feature_service, token_metadata, cm, sstm, sst_dir_semaphore);
+                debug::the_database = &db;
+                co_await db.invoke_on_all(&replica::database::start);
+            };
+            _db_ctl.shutdown_func = [] (auto& db) {
+                return db.invoke_on_all(&replica::database::shutdown);
+            };
+            _db_ctl.stop_func = [] (auto& db) -> future<> {
+                co_await db.stop();
+                debug::the_database = nullptr;
+            };
 
             auto get_tm_cfg = sharded_parameter([&] {
                 return tasks::task_manager::config {
                     .task_ttl = cfg->task_ttl_seconds,
                 };
             });
-            _task_manager.start(std::move(get_tm_cfg), std::ref(abort_sources)).get();
-            auto stop_task_manager = defer([this] {
-                _task_manager.stop().get();
-            });
+            _task_manager_ctl.start_func = [&,
+                as = _task_manager_ctl.lookup_dep(_abort_source_ctl)
+            ] (auto& tm) {
+                return tm.start(std::move(get_tm_cfg), as);
+            };
 
-            // get_cm_cfg is called on each shard when starting a sharded<compaction_manager>
-            // we need the getter since updateable_value is not shard-safe (#7316)
-            auto get_cm_cfg = sharded_parameter([&] {
-                return compaction_manager::config {
-                    .compaction_sched_group = compaction_manager::scheduling_group{dbcfg.compaction_scheduling_group},
-                    .maintenance_sched_group = compaction_manager::scheduling_group{dbcfg.streaming_scheduling_group},
-                    .available_memory = dbcfg.available_memory,
-                    .static_shares = cfg->compaction_static_shares,
-                    .throughput_mb_per_sec = cfg->compaction_throughput_mb_per_sec,
-                };
-            });
-            _cm.start(std::move(get_cm_cfg), std::ref(abort_sources), std::ref(_task_manager)).get();
-            auto stop_cm = deferred_stop(_cm);
+            _cm_ctl.start_func = [&,
+                db_cfg = _cm_ctl.lookup_dep(_db_cfg_ctl),
+                as = _cm_ctl.lookup_dep(_abort_source_ctl),
+                tm = _cm_ctl.lookup_dep(_task_manager_ctl)
+            ] (auto& cm) {
+                // get_cm_cfg is called on each shard when starting a service::sharded_service_ctl<compaction_manager>
+                // we need the getter since updateable_value is not shard-safe (#7316)
+                auto get_cm_cfg = sharded_parameter([&] {
+                    return compaction_manager::config {
+                        .compaction_sched_group = compaction_manager::scheduling_group{db_cfg.get()->compaction_scheduling_group},
+                        .maintenance_sched_group = compaction_manager::scheduling_group{db_cfg.get()->streaming_scheduling_group},
+                        .available_memory = db_cfg.get()->available_memory,
+                        .static_shares = cfg->compaction_static_shares,
+                        .throughput_mb_per_sec = cfg->compaction_throughput_mb_per_sec,
+                    };
+                });
+                return cm.start(get_cm_cfg, as, tm);
+            };
+            _cm_ctl.serve_func = [this] (auto& cm) {
+                return cm.invoke_on_all([&](compaction_manager& cm) {
+                    auto cl = local_db().commitlog();
+                    auto scl = local_db().schema_commitlog();
+                    if (cl && scl) {
+                        cm.get_tombstone_gc_state().set_gc_time_min_source([cl, scl](const table_id& id) {
+                            return std::min(cl->min_gc_time(id), scl->min_gc_time(id));
+                        });
+                    } else if (cl) {
+                        cm.get_tombstone_gc_state().set_gc_time_min_source([cl](const table_id& id) {
+                            return cl->min_gc_time(id);
+                        });
+                    } else if (scl) {
+                        cm.get_tombstone_gc_state().set_gc_time_min_source([scl](const table_id& id) {
+                            return scl->min_gc_time(id);
+                        });
+                    }
+                });
+            };
 
-            _sstm.start(std::ref(*cfg), sstables::storage_manager::config{}).get();
-            auto stop_sstm = deferred_stop(_sstm);
+            _sstm_ctl.start_func = [&] (auto& s) {
+                return s.start(std::ref(*cfg), sstables::storage_manager::config{});
+            };
 
-            std::optional<wasm::startup_context> wasm_ctx;
             if (cfg->enable_user_defined_functions() && cfg->check_experimental(db::experimental_features_t::feature::UDF)) {
-                wasm_ctx.emplace(*cfg, dbcfg);
+                _wasm_ctx_ctl.start_func = [&, db_cfg = _cm_ctl.lookup_dep(_db_cfg_ctl)] {
+                    return make_ready_future<wasm::startup_context>(*cfg, *db_cfg.get());
+                };
             }
 
-            _wasm.start(std::ref(wasm_ctx)).get();
-            auto stop_wasm = defer([this] { _wasm.stop().get(); });
-
-
-            _db.start(std::ref(*cfg), dbcfg, std::ref(_mnotifier), std::ref(_feature_service), std::ref(_token_metadata), std::ref(_cm), std::ref(_sstm), std::ref(_wasm), std::ref(_sst_dir_semaphore), utils::cross_shard_barrier()).get();
-            auto stop_db = defer([this] {
-                _db.stop().get();
-            });
-
-            _db.invoke_on_all(&replica::database::start).get();
-
-            smp::invoke_on_all([blocked_reactor_notify_ms] {
-                engine().update_blocked_reactor_notify_ms(blocked_reactor_notify_ms);
-            }).get();
+            _wasm_ctl.start_func = [&, wasm_ctx = _wasm_ctl.lookup_dep(_wasm_ctx_ctl)] (auto& s) {
+                return s.start(wasm_ctx);
+            };
 
             service::storage_proxy::config spcfg {
                 .hints_directory_initializer = db::hints::directory_initializer::make_dummy(),
@@ -583,11 +688,16 @@ private:
             db::view::node_update_backlog b(smp::count, 10ms);
             scheduling_group_key_config sg_conf =
                     make_scheduling_group_key_config<service::storage_proxy_stats::stats>();
-            _proxy.start(std::ref(_db), spcfg, std::ref(b), scheduling_group_key_create(sg_conf).get0(), std::ref(_feature_service), std::ref(_token_metadata), std::ref(_erm_factory)).get();
-            auto stop_proxy = defer([this] { _proxy.stop().get(); });
+            _proxy_ctl.start_func = [&,
+                db = _proxy_ctl.lookup_dep(_db_ctl),
+                feature_service = _proxy_ctl.lookup_dep(_feature_service_ctl),
+                tm = _proxy_ctl.lookup_dep(_token_metadata_ctl),
+                erm_factory = _proxy_ctl.lookup_dep(_erm_factory_ctl)
+            ] (auto& sp) {
+                return sp.start(db, spcfg, std::ref(b), scheduling_group_key_create(sg_conf).get0(), feature_service, tm, erm_factory);
+            };
 
-            _cql_config.start(cql3::cql_config::default_tag{}).get();
-            auto stop_cql_config = defer([this] { _cql_config.stop().get(); });
+            _cql_config_ctl.start_func = [] (auto& s) { return s.start(cql3::cql_config::default_tag{}); };
 
             cql3::query_processor::memory_config qp_mcfg;
             if (cfg_in.qp_mcfg) {
@@ -595,7 +705,6 @@ private:
             } else {
                 qp_mcfg = {memory::stats().total_memory() / 256, memory::stats().total_memory() / 2560};
             }
-            auto local_data_dict = seastar::sharded_parameter([] (const replica::database& db) { return db.as_data_dictionary(); }, std::ref(_db));
 
             utils::loading_cache_config auth_prep_cache_config;
             auth_prep_cache_config.max_size = qp_mcfg.authorized_prepared_cache_size;
@@ -603,57 +712,64 @@ private:
                                                      std::chrono::duration_cast<std::chrono::milliseconds>(cql3::prepared_statements_cache::entry_expiry));
             auth_prep_cache_config.refresh = std::chrono::milliseconds(cfg->permissions_update_interval_in_ms());
 
-            _qp.start(std::ref(_proxy), std::move(local_data_dict), std::ref(_mnotifier), qp_mcfg, std::ref(_cql_config), auth_prep_cache_config, std::ref(_wasm)).get();
-            auto stop_qp = defer([this] { _qp.stop().get(); });
+            _qp_ctl.start_func = [&,
+                proxy = _qp_ctl.lookup_dep(_proxy_ctl),
+                local_data_dict = seastar::sharded_parameter([] (const replica::database& db) { return db.as_data_dictionary(); }, _qp_ctl.lookup_dep(_db_ctl)),
+                mn = _qp_ctl.lookup_dep(_mnotifier_ctl),
+                cql_config = _qp_ctl.lookup_dep(_cql_config_ctl),
+                wasm = _qp_ctl.lookup_dep(_wasm_ctl)
+            ] (auto& qp) mutable {
+                return qp.start(proxy, std::move(local_data_dict), mn, qp_mcfg, cql_config, auth_prep_cache_config, wasm);
+            };
 
-            _elc_notif.start().get();
-            auto stop_elc_notif = defer([this] { _elc_notif.stop().get(); });
+            _sl_controller_ctl.start_func = [&,
+                auth_service = _sl_controller_ctl.lookup_dep(_auth_service_ctl)
+            ] (auto& slc) -> future<> {
+                co_await slc.start(auth_service, qos::service_level_options{});
+                co_await slc.invoke_on_all(&qos::service_level_controller::start);
+            };
 
-            set_abort_on_internal_error(true);
-            const gms::inet_address listen("127.0.0.1");
-            _sl_controller.start(std::ref(_auth_service), qos::service_level_options{}).get();
-            auto stop_sl_controller = defer([this] { _sl_controller.stop().get(); });
-            _sl_controller.invoke_on_all(&qos::service_level_controller::start).get();
+            _sys_ks_ctl.start_func = [&,
+                qp = _sys_ks_ctl.lookup_dep(_qp_ctl),
+                erm_factory = _sys_ks_ctl.lookup_dep(_erm_factory_ctl),
+                db = _sys_ks_ctl.lookup_dep(_db_ctl)
+            ] (auto& sys_ks) -> future<> {
+                co_await sys_ks.start(qp, db);
+                replica::distributed_loader::init_system_keyspace(sys_ks, erm_factory.get(), db.get()).get();
+                db.get().local().maybe_init_schema_commitlog();
+                co_await sys_ks.invoke_on_all(&db::system_keyspace::mark_writable);
+            };
 
-            _sys_ks.start(std::ref(_qp), std::ref(_db)).get();
-            auto stop_sys_kd = defer([this] { _sys_ks.stop().get(); });
-
-            replica::distributed_loader::init_system_keyspace(_sys_ks, _erm_factory, _db).get();
-            _db.local().maybe_init_schema_commitlog();
-            _sys_ks.invoke_on_all(&db::system_keyspace::mark_writable).get();
-
-            auto host_id = cfg_in.host_id;
-            if (!host_id) {
-                auto linfo = _sys_ks.local().load_local_info().get0();
-                if (!linfo.host_id) {
-                    linfo.host_id = locator::host_id::create_random_id();
+            _host_id_ctl.start_func = [&,
+                sys_ks = _host_id_ctl.lookup_dep(_sys_ks_ctl),
+                tm = _host_id_ctl.lookup_dep(_token_metadata_ctl)
+            ] () -> future<locator::host_id> {
+                auto host_id = cfg_in.host_id;
+                if (!host_id) {
+                    auto linfo = co_await sys_ks.get().local().load_local_info();
+                    if (!linfo.host_id) {
+                        linfo.host_id = locator::host_id::create_random_id();
+                    }
+                    host_id = linfo.host_id;
+                    co_await sys_ks.get().local().save_local_info(std::move(linfo), _snitch_ctl.local()->get_location());
                 }
-                host_id = linfo.host_id;
-                _sys_ks.local().save_local_info(std::move(linfo), _snitch.local()->get_location()).get();
-            }
-            locator::shared_token_metadata::mutate_on_all_shards(_token_metadata, [hostid = host_id] (locator::token_metadata& tm) {
-                auto& topo = tm.get_topology();
-                topo.set_host_id_cfg(hostid);
-                topo.add_or_update_endpoint(utils::fb_utilities::get_broadcast_address(),
-                                            hostid,
-                                            std::nullopt,
-                                            locator::node::state::normal,
-                                            smp::count);
-                return make_ready_future<>();
-            }).get();
+                co_await locator::shared_token_metadata::mutate_on_all_shards(tm.get(), [hostid = host_id] (locator::token_metadata& tm) {
+                    auto& topo = tm.get_topology();
+                    topo.set_host_id_cfg(hostid);
+                    topo.add_or_update_endpoint(utils::fb_utilities::get_broadcast_address(),
+                                                hostid,
+                                                std::nullopt,
+                                                locator::node::state::normal,
+                                                smp::count);
+                    return make_ready_future<>();
+                });
+                co_return host_id;
+            };
 
             // don't start listening so tests can be run in parallel
-            _ms.start(host_id, listen, std::move(7000)).get();
-            auto stop_ms = defer([this] { _ms.stop().get(); });
-
-            // Normally the auth server is already stopped in here,
-            // but if there is an initialization failure we have to
-            // make sure to stop it now or ~sharded will assert.
-            auto stop_auth_server = defer([this] {
-                _auth_service.stop().get();
-            });
-
-            auto stop_sys_dist_ks = defer([this] { _sys_dist_ks.stop().get(); });
+            _ms_ctl.start_func = [&, host_id = _ms_ctl.lookup_dep(_host_id_ctl)] (auto& ms) {
+                return ms.start(*host_id.get(), listen, std::move(7000));
+            };
 
             // Init gossiper
             std::set<gms::inet_address> seeds;
@@ -675,163 +791,204 @@ private:
             gcfg.cluster_name = "Test Cluster";
             gcfg.seeds = std::move(seeds);
             gcfg.skip_wait_for_gossip_to_settle = 0;
-            _gossiper.start(std::ref(abort_sources), std::ref(_token_metadata), std::ref(_ms), std::ref(*cfg), std::move(gcfg)).get();
-            auto stop_ms_fd_gossiper = defer([this] {
-                _gossiper.stop().get();
-            });
-            _gossiper.invoke_on_all(&gms::gossiper::start).get();
+            _gossiper_ctl.start_func = [&,
+                as = _gossiper_ctl.lookup_dep(_abort_source_ctl),
+                tm = _gossiper_ctl.lookup_dep(_token_metadata_ctl),
+                ms = _gossiper_ctl.lookup_dep(_ms_ctl)
+            ] (auto& g) -> future<> {
+                co_await g.start(as, tm, ms, std::ref(*cfg), gcfg);
+                co_await g.invoke_on_all(&gms::gossiper::start);
+            };
 
-            _raft_address_map.start().get();
-            auto stop_address_map = defer([this] {
-                _raft_address_map.stop().get();
-            });
+            _fd_pinger_ctl.start_func = [&,
+                ms = _fd_pinger_ctl.lookup_dep(_ms_ctl),
+                am = _fd_pinger_ctl.lookup_dep(_raft_address_map_ctl)
+            ] (auto& fd_pinger) {
+                return fd_pinger.start(ms, am);
+            };
 
-            _fd_pinger.start(std::ref(_ms), std::ref(_raft_address_map)).get();
-            auto stop_fd_pinger = defer([this] { _fd_pinger.stop().get(); });
+            _fd_ctl.start_func = [&,
+                fd_pinger = _fd_ctl.lookup_dep(_fd_pinger_ctl)
+            ] (auto& fd) {
+                return fd.start(fd_pinger, _fd_clock,
+                        service::direct_fd_clock::base::duration{std::chrono::milliseconds{100}}.count());
+            };
 
-            service::direct_fd_clock fd_clock;
-            _fd.start(
-                std::ref(_fd_pinger), std::ref(fd_clock),
-                service::direct_fd_clock::base::duration{std::chrono::milliseconds{100}}.count()).get();
+            _group0_registry_ctl.start_func = [&,
+                host_id = _group0_registry_ctl.lookup_dep(_host_id_ctl),
+                am = _fd_pinger_ctl.lookup_dep(_raft_address_map_ctl),
+                ms = _fd_pinger_ctl.lookup_dep(_ms_ctl),
+                gossiper = _fd_pinger_ctl.lookup_dep(_gossiper_ctl),
+                fd = _fd_pinger_ctl.lookup_dep(_fd_ctl)
+            ] (auto& raft_gr) {
+                return raft_gr.start(cfg->consistent_cluster_management(),
+                    raft::server_id{host_id.get()->id}, am, ms, gossiper, fd);
+            };
 
-            auto stop_fd = defer([this] {
-                _fd.stop().get();
-            });
+            _stream_manager_ctl.start_func = [&,
+                db = _fd_pinger_ctl.lookup_dep(_db_ctl),
+                sys_dist_ks = _fd_pinger_ctl.lookup_dep(_sys_dist_ks_ctl),
+                vug = _fd_pinger_ctl.lookup_dep(_view_update_generator_ctl),
+                ms = _fd_pinger_ctl.lookup_dep(_ms_ctl),
+                mm = _fd_pinger_ctl.lookup_dep(_mm_ctl),
+                gossiper = _fd_pinger_ctl.lookup_dep(_gossiper_ctl),
+                sg = _fd_pinger_ctl.lookup_dep(_scheduling_groups_ctl)
+            ] (auto& sm) -> future<> {
+                return sm.start(std::ref(*cfg), db, sys_dist_ks, vug, ms, mm, gossiper, sg.get()->streaming_scheduling_group);
+            };
 
-            _group0_registry.start(cfg->consistent_cluster_management(),
-                raft::server_id{host_id.id},
-                std::ref(_raft_address_map),
-                std::ref(_ms), std::ref(_gossiper), std::ref(_fd)).get();
-            auto stop_raft_gr = deferred_stop(_group0_registry);
+            _forward_service_ctl.start_func = [&,
+                ms = _forward_service_ctl.lookup_dep(_ms_ctl),
+                proxy = _forward_service_ctl.lookup_dep(_proxy_ctl),
+                db = _forward_service_ctl.lookup_dep(_db_ctl),
+                tm = _forward_service_ctl.lookup_dep(_token_metadata_ctl),
+                as = _forward_service_ctl.lookup_dep(_abort_source_ctl)
+            ] (auto& fs) {
+                return fs.start(ms, proxy, db, tm, as);
+            };
 
-            _stream_manager.start(std::ref(*cfg), std::ref(_db), std::ref(_sys_dist_ks), std::ref(_view_update_generator), std::ref(_ms), std::ref(_mm), std::ref(_gossiper), scheduling_groups.streaming_scheduling_group).get();
-            auto stop_streaming = defer([this] { _stream_manager.stop().get(); });
+            // group0 client exists only on shard 0
+            _raft_group0_client_ctl.start_func = [&,
+                raft_gr = _raft_group0_client_ctl.lookup_dep(_group0_registry_ctl),
+                sys_ks = _raft_group0_client_ctl.lookup_dep(_sys_ks_ctl)
+            ] () {
+                return make_ready_future<service::raft_group0_client>(raft_gr.get().local(), sys_ks.get().local());
+            };
 
-            _feature_service.invoke_on_all([] (auto& fs) {
-                return fs.enable(fs.supported_feature_set());
-            }).get();
+            _mm_ctl.start_func = [&,
+                mn = _mm_ctl.lookup_dep(_mnotifier_ctl),
+                fs = _mm_ctl.lookup_dep(_feature_service_ctl),
+                ms = _fd_pinger_ctl.lookup_dep(_ms_ctl),
+                proxy = _mm_ctl.lookup_dep(_proxy_ctl),
+                gossiper = _mm_ctl.lookup_dep(_gossiper_ctl),
+                group0_client = _mm_ctl.lookup_dep(_raft_group0_client_ctl),
+                sys_ks = _mm_ctl.lookup_dep(_sys_ks_ctl)
+            ] (auto& mm) {
+                return mm.start(mn, fs, ms, proxy, gossiper, *group0_client.get(), sys_ks);
+            };
 
-            _forward_service.start(std::ref(_ms), std::ref(_proxy), std::ref(_db), std::ref(_token_metadata), std::ref(abort_sources)).get();
-            auto stop_forward_service =  defer([this] { _forward_service.stop().get(); });
+            _tablet_allocator_ctl.start_func = [&,
+                mn = _tablet_allocator_ctl.lookup_dep(_mnotifier_ctl),
+                db = _tablet_allocator_ctl.lookup_dep(_db_ctl)
+            ] (auto& ta) -> future<> {
+                co_await ta.start(mn, db);
+            };
 
-            // gropu0 client exists only on shard 0
-            service::raft_group0_client group0_client(_group0_registry.local(), _sys_ks.local());
+            _qp_remote_ctl.start_func = [&,
+                ta = _qp_remote_ctl.lookup_dep(_tablet_allocator_ctl),
+                mm = _qp_remote_ctl.lookup_dep(_mm_ctl),
+                qp = _qp_remote_ctl.lookup_dep(_qp_ctl),
+                fs = _qp_remote_ctl.lookup_dep(_forward_service_ctl),
+                group0_client = _qp_remote_ctl.lookup_dep(_raft_group0_client_ctl)
+            ] () {
+                return qp.get().invoke_on_all([&] (cql3::query_processor& qp) {
+                    qp.start_remote(mm.get().local(), fs.get().local(), *group0_client.get());
+                });
+            };
+            _qp_remote_ctl.stop_func = [&] {
+                return _qp_ctl.service().invoke_on_all(&cql3::query_processor::stop_remote);
+            };
 
-            _mm.start(std::ref(_mnotifier), std::ref(_feature_service), std::ref(_ms), std::ref(_proxy), std::ref(_gossiper), std::ref(group0_client), std::ref(_sys_ks)).get();
-            auto stop_mm = defer([this] { _mm.stop().get(); });
+            _raft_group0_ctl.start_func = [&,
+                as = _raft_group0_ctl.lookup_dep(_abort_source_ctl),
+                raft_gr = _raft_group0_ctl.lookup_dep(_group0_registry_ctl),
+                ms = _raft_group0_ctl.lookup_dep(_ms_ctl),
+                gossiper = _raft_group0_ctl.lookup_dep(_gossiper_ctl),
+                fs = _raft_group0_ctl.lookup_dep(_feature_service_ctl),
+                sys_ks = _raft_group0_ctl.lookup_dep(_sys_ks_ctl),
+                group0_client = _raft_group0_ctl.lookup_dep(_raft_group0_client_ctl)
+            ] () {
+                return make_ready_future<service::raft_group0>(
+                    as.get().local(), raft_gr.get().local(), ms,
+                    gossiper.get().local(), fs.get().local(), sys_ks.get().local(), *group0_client.get());
+            };
 
-            _tablet_allocator.start(std::ref(_mnotifier), std::ref(_db)).get();
-            auto stop_tablet_allocator = defer([this] {
-                _tablet_allocator.stop().get();
-            });
+            _ss_ctl.start_func = [&,
+                as = _ss_ctl.lookup_dep(_abort_source_ctl),
+                db = _ss_ctl.lookup_dep(_db_ctl),
+                gossiper = _ss_ctl.lookup_dep(_gossiper_ctl),
+                sys_ks = _ss_ctl.lookup_dep(_sys_ks_ctl),
+                fs = _ss_ctl.lookup_dep(_feature_service_ctl),
+                mm = _ss_ctl.lookup_dep(_mm_ctl),
+                tm = _ss_ctl.lookup_dep(_token_metadata_ctl),
+                erm_factory = _ss_ctl.lookup_dep(_erm_factory_ctl),
+                ms = _ss_ctl.lookup_dep(_ms_ctl),
+                repair = _ss_ctl.lookup_dep(_repair_ctl),
+                sm = _ss_ctl.lookup_dep(_stream_manager_ctl),
+                elc_notif = _ss_ctl.lookup_dep(_elc_notif_ctl),
+                bm = _ss_ctl.lookup_dep(_batchlog_manager_ctl),
+                snitch = _ss_ctl.lookup_dep(_snitch_ctl),
+                ta = _ss_ctl.lookup_dep(_tablet_allocator_ctl),
+                cdc = _ss_ctl.lookup_dep(_cdc_generation_service_ctl)
+            ] (auto& ss) {
+                return ss.start(as, db, gossiper, sys_ks, fs, mm, tm, erm_factory, ms, repair, sm,
+                        elc_notif, bm, snitch, ta, cdc);
+            };
+            _ss_ctl.serve_func = [&] (auto& ss) -> future<> {
+                local_mnotifier().register_listener(&ss.local());
+                co_await ss.invoke_on_all([this] (service::storage_service& ss) {
+                    ss.set_query_processor(local_qp());
+                });
+                co_await smp::invoke_on_all([&] {
+                    return db::initialize_virtual_tables(db(), ss, gossiper(), get_raft_group_registry(), get_system_keyspace(), *cfg);
+                });
+            };
+            _ss_ctl.drain_func = [this] (auto& ss, service::on_shutdown) {
+                return local_mnotifier().unregister_listener(&ss.local());
+            };
 
-            _qp.invoke_on_all([this, &group0_client] (cql3::query_processor& qp) {
-                qp.start_remote(_mm.local(), _forward_service.local(), group0_client);
-            }).get();
-            auto stop_qp_remote = defer([this] {
-                _qp.invoke_on_all(&cql3::query_processor::stop_remote).get();
-            });
+            replica::distributed_loader::init_non_system_keyspaces(_db_ctl, _proxy_ctl, _sys_ks_ctl).get();
 
-            service::raft_group0 group0_service{
-                    abort_sources.local(), _group0_registry.local(), _ms,
-                    _gossiper.local(), _feature_service.local(), _sys_ks.local(), group0_client};
-
-            _ss.start(std::ref(abort_sources), std::ref(_db),
-                std::ref(_gossiper),
-                std::ref(_sys_ks),
-                std::ref(_feature_service), std::ref(_mm),
-                std::ref(_token_metadata), std::ref(_erm_factory), std::ref(_ms),
-                std::ref(_repair),
-                std::ref(_stream_manager),
-                std::ref(_elc_notif),
-                std::ref(_batchlog_manager),
-                std::ref(_snitch),
-                std::ref(_tablet_allocator),
-                std::ref(_cdc_generation_service)).get();
-            auto stop_storage_service = defer([this] { _ss.stop().get(); });
-
-            _mnotifier.local().register_listener(&_ss.local());
-            auto stop_mm_listener = defer([this] {
-                _mnotifier.local().unregister_listener(&_ss.local()).get();
-            });
-
-            _ss.invoke_on_all([this] (service::storage_service& ss) {
-                ss.set_query_processor(_qp.local());
-            }).get();
-            smp::invoke_on_all([&] {
-                return db::initialize_virtual_tables(_db, _ss, _gossiper, _group0_registry, _sys_ks, *cfg);
-            }).get();
-
-            _cm.invoke_on_all([&](compaction_manager& cm) {
-                auto cl = _db.local().commitlog();
-                auto scl = _db.local().schema_commitlog();
-                if (cl && scl) {
-                    cm.get_tombstone_gc_state().set_gc_time_min_source([cl, scl](const table_id& id) {
-                        return std::min(cl->min_gc_time(id), scl->min_gc_time(id));
-                    });
-                } else if (cl) {
-                    cm.get_tombstone_gc_state().set_gc_time_min_source([cl](const table_id& id) {
-                        return cl->min_gc_time(id);
-                    });
-                } else if (scl) {
-                    cm.get_tombstone_gc_state().set_gc_time_min_source([scl](const table_id& id) {
-                        return scl->min_gc_time(id);
-                    });
-                }
-            }).get();
-
-            replica::distributed_loader::init_non_system_keyspaces(_db, _proxy, _sys_ks).get();
-
-            _db.invoke_on_all([] (replica::database& db) {
+            _db_ctl.invoke_on_all([] (replica::database& db) {
                 db.get_tables_metadata().for_each_table([] (table_id, lw_shared_ptr<replica::table> table) {
                     replica::table& t = *table;
                     t.enable_auto_compaction();
                 });
             }).get();
 
-            if (_group0_registry.local().is_enabled()) {
-                _group0_registry.invoke_on_all([] (service::raft_group_registry& raft_gr) {
+            if (_group0_registry_ctl.local().is_enabled()) {
+                _group0_registry_ctl.invoke_on_all([] (service::raft_group_registry& raft_gr) {
                     return raft_gr.start();
                 }).get();
             }
 
             group0_client.init().get();
             auto stop_system_keyspace = defer([this] {
-                _sys_ks.invoke_on_all(&db::system_keyspace::shutdown).get();
+                _sys_ks_ctl.invoke_on_all(&db::system_keyspace::shutdown).get();
             });
 
             auto shutdown_db = defer([this] {
-                _db.invoke_on_all(&replica::database::shutdown).get();
+                _db_ctl.invoke_on_all(&replica::database::shutdown).get();
             });
             // XXX: drain_on_shutdown raft before stopping the database and
             // query processor. Group registry stop raft groups
             // when stopped, and until then the groups may use
             // the database and the query processor.
             auto drain_raft = defer([this] {
-                _group0_registry.invoke_on_all(&service::raft_group_registry::drain_on_shutdown).get();
+                _group0_registry_ctl.invoke_on_all(&service::raft_group_registry::drain_on_shutdown).get();
             });
 
-            _view_update_generator.start(std::ref(_db), std::ref(_proxy), std::ref(abort_sources)).get();
-            _view_update_generator.invoke_on_all(&db::view::view_update_generator::start).get();
+            _view_update_generator_ctl.start(std::ref(_db_ctl), std::ref(_proxy_ctl), std::ref(abort_sources)).get();
+            _view_update_generator_ctl.invoke_on_all(&db::view::view_update_generator::start).get();
             auto stop_view_update_generator = defer([this] {
-                _view_update_generator.stop().get();
+                _view_update_generator_ctl.stop().get();
             });
 
-            _sys_dist_ks.start(std::ref(_qp), std::ref(_mm), std::ref(_proxy)).get();
+            _sys_dist_ks_ctl.start(std::ref(_qp_ctl), std::ref(_mm_ctl), std::ref(_proxy_ctl)).get();
 
             if (cfg_in.need_remote_proxy) {
-                _proxy.invoke_on_all(&service::storage_proxy::start_remote, std::ref(_ms), std::ref(_gossiper), std::ref(_mm), std::ref(_sys_ks)).get();
+                _proxy_ctl.invoke_on_all(&service::storage_proxy::start_remote, std::ref(_ms_ctl), std::ref(_gossiper_ctl), std::ref(_mm_ctl), std::ref(_sys_ks_ctl)).get();
             }
             auto stop_proxy_remote = defer([this, need = cfg_in.need_remote_proxy] {
                 if (need) {
-                    _proxy.invoke_on_all(&service::storage_proxy::stop_remote).get();
+                    _proxy_ctl.invoke_on_all(&service::storage_proxy::stop_remote).get();
                 }
             });
 
-            _sl_controller.invoke_on_all([this] (qos::service_level_controller& service) {
+            _sl_controller_ctl.invoke_on_all([this] (qos::service_level_controller& service) {
                 qos::service_level_controller::service_level_distributed_data_accessor_ptr service_level_data_accessor =
                         ::static_pointer_cast<qos::service_level_controller::service_level_distributed_data_accessor>(
-                                make_shared<qos::unit_test_service_levels_accessor>(_sl_controller, _sys_dist_ks));
+                                make_shared<qos::unit_test_service_levels_accessor>(_sl_controller_ctl, _sys_dist_ks_ctl));
                 return service.set_distributed_data_accessor(std::move(service_level_data_accessor));
             }).get();
 
@@ -844,15 +1001,15 @@ private:
              * and would only slow down tests (by having them wait).
              */
             cdc_config.ring_delay = std::chrono::milliseconds(0);
-            _cdc_generation_service.start(std::ref(cdc_config), std::ref(_gossiper), std::ref(_sys_dist_ks), std::ref(_sys_ks), std::ref(abort_sources), std::ref(_token_metadata), std::ref(_feature_service), std::ref(_db)).get();
+            _cdc_generation_service_ctl.start(std::ref(cdc_config), std::ref(_gossiper_ctl), std::ref(_sys_dist_ks_ctl), std::ref(_sys_ks_ctl), std::ref(abort_sources), std::ref(_token_metadata_ctl), std::ref(_feature_service_ctl), std::ref(_db_ctl)).get();
             auto stop_cdc_generation_service = defer([this] {
-                _cdc_generation_service.stop().get();
+                _cdc_generation_service_ctl.stop().get();
             });
 
             auto get_cdc_metadata = [] (cdc::generation_service& svc) { return std::ref(svc.get_cdc_metadata()); };
-            _cdc.start(std::ref(_proxy), sharded_parameter(get_cdc_metadata, std::ref(_cdc_generation_service)), std::ref(_mnotifier)).get();
+            _cdc_ctl.start(std::ref(_proxy_ctl), sharded_parameter(get_cdc_metadata, std::ref(_cdc_generation_service_ctl)), std::ref(_mnotifier_ctl)).get();
             auto stop_cdc_service = defer([this] {
-                _cdc.stop().get();
+                _cdc_ctl.stop().get();
             });
 
             group0_service.start().get();
@@ -863,10 +1020,10 @@ private:
             const bool raft_topology_change_enabled = group0_service.is_raft_enabled()
                     && cfg->check_experimental(db::experimental_features_t::feature::CONSISTENT_TOPOLOGY_CHANGES);
 
-            _ss.local().set_group0(group0_service, raft_topology_change_enabled);
+            _ss_ctl.local().set_group0(group0_service, raft_topology_change_enabled);
 
             try {
-                _ss.local().join_cluster(_sys_dist_ks, _proxy).get();
+                _ss_ctl.local().join_cluster(_sys_dist_ks_ctl, _proxy_ctl).get();
             } catch (std::exception& e) {
                 // if any of the defers crashes too, we'll never see
                 // the error
@@ -888,30 +1045,30 @@ private:
             auth_config.authenticator_java_name = qualified_authenticator_name;
             auth_config.role_manager_java_name = qualified_role_manager_name;
 
-            _auth_service.start(perm_cache_config, std::ref(_qp), std::ref(_mnotifier), std::ref(_mm), auth_config).get();
-            _auth_service.invoke_on_all([this] (auth::service& auth) {
-                return auth.start(_mm.local());
+            _auth_service_ctl.start(perm_cache_config, std::ref(_qp_ctl), std::ref(_mnotifier_ctl), std::ref(_mm_ctl), auth_config).get();
+            _auth_service_ctl.invoke_on_all([this] (auth::service& auth) {
+                return auth.start(_mm_ctl.local());
             }).get();
 
             auto deinit_storage_service_server = defer([this] {
-                _gossiper.invoke_on_all(&gms::gossiper::shutdown).get();
-                _auth_service.stop().get();
+                _gossiper_ctl.invoke_on_all(&gms::gossiper::shutdown).get();
+                _auth_service_ctl.stop().get();
             });
 
             db::batchlog_manager_config bmcfg;
             bmcfg.replay_rate = 100000000;
             bmcfg.write_request_timeout = 2s;
-            _batchlog_manager.start(std::ref(_qp), std::ref(_sys_ks), bmcfg).get();
+            _batchlog_manager_ctl.start(std::ref(_qp_ctl), std::ref(_sys_ks_ctl), bmcfg).get();
             auto stop_bm = defer([this] {
-                _batchlog_manager.stop().get();
+                _batchlog_manager_ctl.stop().get();
             });
 
-            _view_builder.start(std::ref(_db), std::ref(_sys_ks), std::ref(_sys_dist_ks), std::ref(_mnotifier), std::ref(_view_update_generator)).get();
-            _view_builder.invoke_on_all([this] (db::view::view_builder& vb) {
-                return vb.start(_mm.local());
+            _view_builder_ctl.start(std::ref(_db_ctl), std::ref(_sys_ks_ctl), std::ref(_sys_dist_ks_ctl), std::ref(_mnotifier_ctl), std::ref(_view_update_generator_ctl)).get();
+            _view_builder_ctl.invoke_on_all([this] (db::view::view_builder& vb) {
+                return vb.start(_mm_ctl.local());
             }).get();
             auto stop_view_builder = defer([this] {
-                _view_builder.stop().get();
+                _view_builder_ctl.stop().get();
             });
 
             // Create the testing user.
@@ -921,7 +1078,7 @@ private:
                 config.can_login = true;
 
                 auth::create_role(
-                        _auth_service.local(),
+                        _auth_service_ctl.local(),
                         testing_superuser,
                         config,
                         auth::authentication_options()).get0();
@@ -933,12 +1090,16 @@ private:
 
             _group0_client = &group0_client;
 
-            _core_local.start(std::ref(_auth_service), std::ref(_sl_controller)).get();
+            _core_local.start(std::ref(_auth_service_ctl), std::ref(_sl_controller_ctl)).get();
             auto stop_core_local = defer([this] { _core_local.stop().get(); });
 
             if (!local_db().has_keyspace(ks_name)) {
                 create_keyspace(cfg_in, ks_name).get();
             }
+
+            smp::invoke_on_all([blocked_reactor_notify_ms] {
+                engine().update_blocked_reactor_notify_ms(blocked_reactor_notify_ms);
+            }).get();
 
             with_scheduling_group(dbcfg.statement_scheduling_group, [&func, this] {
                 return func(*this);

@@ -35,6 +35,7 @@
 #include <seastar/core/sstring.hh>
 #include <seastar/core/sharded.hh>
 #include <seastar/core/semaphore.hh>
+#include <seastar/core/coroutine.hh>
 
 #include "log.hh"
 
@@ -156,17 +157,28 @@ private:
 sstring to_string(enum base_controller::state s);
 std::ostream& operator<<(std::ostream&, enum base_controller::state s);
 
-class service_ctl : public base_controller {
+template <typename T>
+class sharded_service_ctl;
+
+template <typename Service>
+class service_ctl;
+
+template <>
+class service_ctl<void> : public base_controller {
 public:
+    using start_func_t = std::function<future<> ()>;
     using func_t = std::function<future<> ()>;
     using drain_func_t = std::function<future<> (on_shutdown)>;
 
+private:
+    std::optional<bool> _service;
+
 public:
-    func_t start_func;
-    func_t serve_func = [] { return make_ready_future<>(); };
+    start_func_t start_func = [] { return make_ready_future<>(); };
+    func_t serve_func = [] () { return make_ready_future<>(); };
     drain_func_t drain_func = [] (on_shutdown) { return make_ready_future<>(); };
-    func_t shutdown_func = [] { return make_ready_future<>(); };
-    func_t stop_func = [] { return make_ready_future<>(); };
+    func_t shutdown_func = [] () { return make_ready_future<>(); };
+    func_t stop_func = [] () { return make_ready_future<>(); };
 
     service_ctl(services_controller& sctl, sstring name)
         : base_controller(sctl, std::move(name))
@@ -186,13 +198,26 @@ public:
     {
     }
 
-    auto lookup_dep(base_controller& o) {
-        return base_controller::lookup_dep(o);
+    template <typename T>
+    auto lookup_dep(service_ctl<T>& o) {
+        base_controller::lookup_dep(o);
+        return std::ref(o.service());
+    }
+
+    template <typename T>
+    auto lookup_dep(sharded_service_ctl<T>& o) {
+        base_controller::lookup_dep(o);
+        return std::ref(o.service());
+    }
+
+    std::optional<bool>& service() {
+        return _service;
     }
 
 protected:
     virtual future<> do_start() noexcept override {
-        return futurize_invoke(start_func);
+        co_await start_func();
+        _service.emplace(true);
     }
 
     virtual future<> do_serve() noexcept override {
@@ -208,7 +233,82 @@ protected:
     }
 
     virtual future<> do_stop() noexcept override {
-        return futurize_invoke(stop_func);
+        co_await futurize_invoke(stop_func);
+        _service.reset();
+    }
+};
+
+template <typename Service>
+class service_ctl : public base_controller {
+public:
+    using start_func_t = std::function<future<Service> ()>;
+    using func_t = std::function<future<> (Service&)>;
+    using drain_func_t = std::function<future<> (Service&, on_shutdown)>;
+
+private:
+    std::optional<Service> _service;
+
+public:
+    start_func_t start_func = [] { return make_ready_future<Service>(); };
+    func_t serve_func = [] (Service&) { return make_ready_future<>(); };
+    drain_func_t drain_func = [] (Service&, on_shutdown) { return make_ready_future<>(); };
+    func_t shutdown_func = [] (Service&) { return make_ready_future<>(); };
+    func_t stop_func = [] (Service&) { return make_ready_future<>(); };
+
+    service_ctl(services_controller& sctl, sstring name)
+        : base_controller(sctl, std::move(name))
+    {
+    }
+
+    service_ctl(services_controller& sctl, sstring name, func_t start_fn)
+        : base_controller(sctl, std::move(name))
+        , start_func(std::move(start_fn))
+    {
+    }
+
+    service_ctl(services_controller& sctl, sstring name, func_t start_fn, func_t stop_fn)
+        : base_controller(sctl, std::move(name))
+        , start_func(std::move(start_fn))
+        , stop_func(std::move(stop_fn))
+    {
+    }
+
+    template <typename T>
+    auto lookup_dep(service_ctl<T>& o) {
+        base_controller::lookup_dep(o);
+        return std::ref(o.service());
+    }
+
+    template <typename T>
+    auto lookup_dep(sharded_service_ctl<T>& o) {
+        base_controller::lookup_dep(o);
+        return std::ref(o.service());
+    }
+
+    std::optional<Service>& service() {
+        return _service;
+    }
+
+protected:
+    virtual future<> do_start() noexcept override {
+        _service.emplace(co_await start_func());
+    }
+
+    virtual future<> do_serve() noexcept override {
+        return futurize_invoke(serve_func, *_service);
+    }
+
+    virtual future<> do_drain(on_shutdown os_flag) noexcept override {
+        return futurize_invoke(drain_func, *_service, os_flag);
+    }
+
+    virtual future<> do_shutdown() noexcept override {
+        return futurize_invoke(shutdown_func, *_service);
+    }
+
+    virtual future<> do_stop() noexcept override {
+        co_await futurize_invoke(stop_func, *_service);
+        _service.reset();
     }
 };
 
@@ -250,6 +350,12 @@ public:
         , start_func(std::move(start_fn))
     {
         sclog.debug("{}: custom start_func", this->name());
+    }
+
+    template <typename T>
+    auto lookup_dep(service_ctl<T>& o) {
+        base_controller::lookup_dep(o);
+        return std::ref(o.service());
     }
 
     template <typename T>
