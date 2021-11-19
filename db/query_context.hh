@@ -36,10 +36,8 @@ class storage_proxy;
 
 
 namespace db {
-class query_context {
+struct query_context {
     distributed<cql3::query_processor>& _qp;
-
-public:
     query_context(distributed<cql3::query_processor>& qp) : _qp(qp) {}
 
     template <typename... Args>
@@ -73,10 +71,6 @@ public:
                 { data_value(std::forward<Args>(args))... },
                 true);
         });
-    }
-
-    sharded<cql3::query_processor>& qp_service() {
-        return _qp;
     }
 
     cql3::query_processor& qp() {
