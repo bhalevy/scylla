@@ -940,7 +940,7 @@ int main(int ac, char** av) {
 
             system_keyspace.start().get();
             auto stop_sys_ks = deferred_stop(system_keyspace);
-            db::system_keyspace::minimal_setup(qp);
+            system_keyspace.local().minimal_setup(qp).get();
 
             db::sstables_format_selector sst_format_selector(gossiper.local(), feature_service, db);
 

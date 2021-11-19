@@ -123,7 +123,7 @@ SEASTAR_TEST_CASE(test_boot_shutdown){
 
         system_keyspace.start().get();
         auto stop_sys_ks = deferred_stop(system_keyspace);
-        db::system_keyspace::minimal_setup(qp);
+        system_keyspace.local().minimal_setup(qp).get();
 
         cdc::generation_service::config cdc_cfg;
         cdc_generation_service.start(std::move(cdc_cfg), std::ref(gms::get_gossiper()), std::ref(sys_dist_ks), std::ref(abort_sources), std::ref(token_metadata), std::ref(feature_service), std::ref(db), std::ref(system_keyspace)).get();

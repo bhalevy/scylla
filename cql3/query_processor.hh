@@ -62,6 +62,10 @@ class migration_manager;
 class query_state;
 }
 
+namespace db {
+struct query_context;
+}
+
 namespace cql3 {
 
 namespace statements {
@@ -108,7 +112,7 @@ class cql_config;
 class query_options;
 class cql_statement;
 
-class query_processor {
+class query_processor : public peering_sharded_service<query_processor> {
 public:
     class migration_subscriber;
     struct memory_config {
@@ -123,6 +127,10 @@ private:
     service::migration_notifier& _mnotifier;
     service::migration_manager& _mm;
     const cql_config& _cql_config;
+    // This does not have to be thread local, because all cores will share the same context.
+    // It is instantiated only on shard 0.
+    std::unique_ptr<db::query_context> _the_qctx;
+    db::query_context* _qctx_ptr = nullptr;
 
     struct stats {
         uint64_t prepare_invocations = 0;
@@ -175,6 +183,13 @@ public:
 
     const service::migration_manager& get_migration_manager() const noexcept { return _mm; }
     service::migration_manager& get_migration_manager() noexcept { return _mm; }
+
+
+    db::query_context* qctx() noexcept {
+        return _qctx_ptr;
+    }
+
+    future<db::query_context*> setup_qctx();
 
     cql_stats& get_cql_stats() {
         return _cql_stats;

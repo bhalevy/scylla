@@ -591,7 +591,7 @@ future<> generation_service::maybe_rewrite_streams_descriptions() {
         co_return;
     }
 
-    if (co_await db::system_keyspace::cdc_is_rewritten()) {
+    if (co_await _sys_ks.cdc_is_rewritten()) {
         co_return;
     }
 
@@ -621,7 +621,7 @@ future<> generation_service::maybe_rewrite_streams_descriptions() {
     if (times_and_ttls.empty()) {
         // There's no point in rewriting old generations' streams (they don't contain any data).
         cdc_log.info("No CDC log tables present, not rewriting stream tables.");
-        co_return co_await db::system_keyspace::cdc_set_rewritten(std::nullopt);
+        co_return co_await _sys_ks.cdc_set_rewritten(std::nullopt);
     }
 
     auto get_num_token_owners = [tm = _token_metadata.get()] { return tm->count_normal_token_owners(); };
@@ -639,7 +639,7 @@ future<> generation_service::maybe_rewrite_streams_descriptions() {
             std::move(get_num_token_owners),
             _abort_src);
 
-    co_await db::system_keyspace::cdc_set_rewritten(last_rewritten);
+    co_await _sys_ks.cdc_set_rewritten(last_rewritten);
 }
 
 static void assert_shard_zero(const sstring& where) {
@@ -694,8 +694,6 @@ generation_service::generation_service(
         , _db(db)
         , _sys_ks(sys_ks)
 {
-    // FIXME: use _sys_ks to calm the compiler down
-    assert(&_sys_ks != nullptr);
 }
 
 future<> generation_service::stop() {
@@ -718,7 +716,7 @@ generation_service::~generation_service() {
 
 future<> generation_service::after_join(std::optional<cdc::generation_id>&& startup_gen_id) {
     assert_shard_zero(__PRETTY_FUNCTION__);
-    assert(db::system_keyspace::bootstrap_complete());
+    assert(_sys_ks.bootstrap_complete());
 
     _gen_id = std::move(startup_gen_id);
     _gossiper.register_(shared_from_this());
@@ -874,7 +872,7 @@ future<> generation_service::check_and_repair_cdc_streams() {
             { gms::application_state::CDC_GENERATION_ID, gms::versioned_value::cdc_generation_id(new_gen_id) },
             { gms::application_state::STATUS, *status }
     });
-    co_await db::system_keyspace::update_cdc_generation_id(new_gen_id);
+    co_await _sys_ks.update_cdc_generation_id(new_gen_id);
 }
 
 future<> generation_service::handle_cdc_generation(std::optional<cdc::generation_id> gen_id) {
@@ -884,7 +882,7 @@ future<> generation_service::handle_cdc_generation(std::optional<cdc::generation
         co_return;
     }
 
-    if (!db::system_keyspace::bootstrap_complete() || !_sys_dist_ks.local_is_initialized()
+    if (!_sys_ks.bootstrap_complete() || !_sys_dist_ks.local_is_initialized()
             || !_sys_dist_ks.local().started()) {
         // The service should not be listening for generation changes until after the node
         // is bootstrapped. Therefore we would previously assume that this condition
@@ -1017,7 +1015,7 @@ future<bool> generation_service::do_handle_cdc_generation(cdc::generation_id gen
     // The assumption follows from the requirement of bootstrapping nodes sequentially.
     if (!_gen_id || get_ts(*_gen_id) < get_ts(gen_id)) {
         _gen_id = gen_id;
-        co_await db::system_keyspace::update_cdc_generation_id(gen_id);
+        co_await _sys_ks.update_cdc_generation_id(gen_id);
         co_await _gossiper.add_local_application_state(
                 gms::application_state::CDC_GENERATION_ID, gms::versioned_value::cdc_generation_id(gen_id));
     }

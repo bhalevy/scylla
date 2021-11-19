@@ -640,7 +640,7 @@ public:
             // minimal_setup and init_local_cache
             system_keyspace.start().get();
             auto stop_sys_ks = deferred_stop(system_keyspace);
-            db::system_keyspace::minimal_setup(qp);
+            system_keyspace.local().minimal_setup(qp).get();
 
             db::batchlog_manager_config bmcfg;
             bmcfg.replay_rate = 100000000;

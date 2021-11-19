@@ -41,6 +41,7 @@
 
 #include "cql3/query_processor.hh"
 
+#include <seastar/core/coroutine.hh>
 #include <seastar/core/metrics.hh>
 
 #include "cql3/CqlParser.hpp"
@@ -50,6 +51,7 @@
 #include "cql3/util.hh"
 #include "cql3/untyped_result_set.hh"
 #include "db/config.hh"
+#include "db/query_context.hh"
 #include "database.hh"
 #include "hashers.hh"
 
@@ -470,6 +472,19 @@ future<> query_processor::stop() {
     return _mnotifier.unregister_listener(_migration_subscriber.get()).then([this] {
         return _authorized_prepared_cache.stop().finally([this] { return _prepared_cache.stop(); });
     });
+}
+
+future<db::query_context*> query_processor::setup_qctx() {
+    auto qctx_ptr = co_await container().invoke_on(0, [] (query_processor& qp) {
+        qp._the_qctx = std::make_unique<db::query_context>(qp.container());
+        return qp._the_qctx.get();
+    });
+
+    co_await container().invoke_on_all([qctx_ptr] (query_processor& qp) {
+        qp._qctx_ptr = qctx_ptr;
+    });
+
+    co_return qctx_ptr;
 }
 
 future<::shared_ptr<result_message>>
