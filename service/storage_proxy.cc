@@ -138,7 +138,8 @@ seastar::metrics::label_instance current_scheduling_group_label() {
 
 thread_local uint64_t paxos_response_handler::next_id = 0;
 
-distributed<service::storage_proxy> _the_storage_proxy;
+static distributed<service::storage_proxy> _the_global_storage_proxy;
+distributed<service::storage_proxy>* _the_storage_proxy = &_the_global_storage_proxy;
 
 using namespace exceptions;
 using fbu = utils::fb_utilities;

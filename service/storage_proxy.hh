@@ -797,24 +797,30 @@ public:
     bool learned(gms::inet_address ep);
 };
 
-extern distributed<storage_proxy> _the_storage_proxy;
+extern distributed<storage_proxy>* _the_storage_proxy;
+
+// DEPRECATED, DON'T USE!
+// Pass references to services through constructor/function parameters. Don't use globals.
+inline void set_the_storage_proxy(distributed<storage_proxy>* sp) {
+    _the_storage_proxy = sp;
+}
 
 // DEPRECATED, DON'T USE!
 // Pass references to services through constructor/function parameters. Don't use globals.
 inline distributed<storage_proxy>& get_storage_proxy() {
-    return _the_storage_proxy;
+    return *_the_storage_proxy;
 }
 
 // DEPRECATED, DON'T USE!
 // Pass references to services through constructor/function parameters. Don't use globals.
 inline storage_proxy& get_local_storage_proxy() {
-    return _the_storage_proxy.local();
+    return _the_storage_proxy->local();
 }
 
 // DEPRECATED, DON'T USE!
 // Pass references to services through constructor/function parameters. Don't use globals.
 inline shared_ptr<storage_proxy> get_local_shared_storage_proxy() {
-    return _the_storage_proxy.local_shared();
+    return _the_storage_proxy->local_shared();
 }
 
 }
