@@ -684,7 +684,7 @@ constexpr char could_not_retrieve_msg_template[]
 generation_service::generation_service(
             config cfg, gms::gossiper& g, sharded<db::system_distributed_keyspace>& sys_dist_ks,
             abort_source& abort_src, const locator::shared_token_metadata& stm, gms::feature_service& f,
-            database& db)
+            database& db, db::system_keyspace& sys_ks)
         : _cfg(std::move(cfg))
         , _gossiper(g)
         , _sys_dist_ks(sys_dist_ks)
@@ -692,7 +692,10 @@ generation_service::generation_service(
         , _token_metadata(stm)
         , _feature_service(f)
         , _db(db)
+        , _sys_ks(sys_ks)
 {
+    // FIXME: use _sys_ks to calm the compiler down
+    assert(&_sys_ks != nullptr);
 }
 
 future<> generation_service::stop() {

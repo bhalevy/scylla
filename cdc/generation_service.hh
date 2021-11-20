@@ -29,6 +29,7 @@
 
 namespace db {
 class system_distributed_keyspace;
+class system_keyspace;
 }
 
 namespace gms {
@@ -69,6 +70,7 @@ private:
     const locator::shared_token_metadata& _token_metadata;
     gms::feature_service& _feature_service;
     database& _db;
+    db::system_keyspace& _sys_ks;
 
     /* Maintains the set of known CDC generations used to pick streams for log writes (i.e., the partition keys of these log writes).
      * Updated in response to certain gossip events (see the handle_cdc_generation function).
@@ -92,7 +94,7 @@ private:
 public:
     generation_service(config cfg, gms::gossiper&,
             sharded<db::system_distributed_keyspace>&, abort_source&, const locator::shared_token_metadata&,
-            gms::feature_service&, database& db);
+            gms::feature_service&, database& db, db::system_keyspace&);
 
     future<> stop();
     ~generation_service();

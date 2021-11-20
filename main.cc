@@ -1094,7 +1094,7 @@ int main(int ac, char** av) {
             cdc_config.ring_delay = std::chrono::milliseconds(cfg->ring_delay_ms());
             cdc_config.dont_rewrite_streams = cfg->cdc_dont_rewrite_streams();
             cdc_generation_service.start(std::move(cdc_config), std::ref(gossiper), std::ref(sys_dist_ks),
-                    std::ref(stop_signal.as_sharded_abort_source()), std::ref(token_metadata), std::ref(feature_service), std::ref(db)).get();
+                    std::ref(stop_signal.as_sharded_abort_source()), std::ref(token_metadata), std::ref(feature_service), std::ref(db), std::ref(system_keyspace)).get();
             auto stop_cdc_generation_service = defer_verbose_shutdown("CDC Generation Management service", [] {
                 cdc_generation_service.stop().get();
             });
