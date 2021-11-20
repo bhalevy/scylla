@@ -563,6 +563,7 @@ public:
             sharded<cdc::generation_service> cdc_generation_service;
             sharded<repair_service> repair;
             sharded<cql3::query_processor> qp;
+            sharded<db::system_keyspace> system_keyspace;
             sharded<service::raft_group_registry> raft_gr;
             raft_gr.start(std::ref(ms), std::ref(gossiper), std::ref(qp)).get();
             auto stop_raft = defer([&raft_gr] { raft_gr.stop().get(); });
@@ -637,6 +638,8 @@ public:
 
             // In main.cc we call db::system_keyspace::setup which calls
             // minimal_setup and init_local_cache
+            system_keyspace.start().get();
+            auto stop_sys_ks = deferred_stop(system_keyspace);
             db::system_keyspace::minimal_setup(qp);
 
             db::batchlog_manager_config bmcfg;

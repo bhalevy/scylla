@@ -39,6 +39,7 @@
 #include "repair/repair.hh"
 #include "database.hh"
 #include "db/system_distributed_keyspace.hh"
+#include "db/system_keyspace.hh"
 #include "db/config.hh"
 #include "compaction/compaction_manager.hh"
 #include "service/endpoint_lifecycle_subscriber.hh"
@@ -57,6 +58,7 @@ SEASTAR_TEST_CASE(test_boot_shutdown){
         sharded<gms::feature_service> feature_service;
         sharded<locator::shared_token_metadata> token_metadata;
         sharded<netw::messaging_service> _messaging;
+        sharded<db::system_keyspace> system_keyspace;
         sharded<cdc::generation_service> cdc_generation_service;
         sharded<repair_service> repair;
         sharded<service::migration_manager> migration_manager;
@@ -118,6 +120,10 @@ SEASTAR_TEST_CASE(test_boot_shutdown){
 
         db.start(std::ref(*cfg), dbcfg, std::ref(mm_notif), std::ref(feature_service), std::ref(token_metadata), std::ref(abort_sources), std::ref(sst_dir_semaphore)).get();
         auto stop_db = defer([&] { db.stop().get(); });
+
+        system_keyspace.start().get();
+        auto stop_sys_ks = deferred_stop(system_keyspace);
+        db::system_keyspace::minimal_setup(qp);
 
         cdc::generation_service::config cdc_cfg;
         cdc_generation_service.start(std::move(cdc_cfg), std::ref(gms::get_gossiper()), std::ref(sys_dist_ks), std::ref(abort_sources), std::ref(token_metadata), std::ref(feature_service), std::ref(db)).get();

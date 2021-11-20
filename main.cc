@@ -482,6 +482,7 @@ int main(int ac, char** av) {
     sharded<db::snapshot_ctl> snapshot_ctl;
     sharded<netw::messaging_service> messaging;
     sharded<cql3::query_processor> qp;
+    sharded<db::system_keyspace> system_keyspace;
     sharded<semaphore> sst_dir_semaphore;
     sharded<service::raft_group_registry> raft_gr;
     sharded<service::memory_limiter> service_memory_limiter;
@@ -513,7 +514,7 @@ int main(int ac, char** av) {
 
         tcp_syncookies_sanity();
 
-        return seastar::async([cfg, ext, &db, &qp, &proxy, &mm, &mm_notifier, &ctx, &opts, &dirs,
+        return seastar::async([cfg, ext, &db, &qp, &system_keyspace, &proxy, &mm, &mm_notifier, &ctx, &opts, &dirs,
                 &prometheus_server, &cf_cache_hitrate_calculator, &load_meter, &feature_service,
                 &token_metadata, &erm_factory, &snapshot_ctl, &messaging, &sst_dir_semaphore, &raft_gr, &service_memory_limiter,
                 &repair, &sst_loader, &ss, &lifecycle_notifier] {
@@ -937,6 +938,8 @@ int main(int ac, char** av) {
             // #293 - do not stop anything
             sstables::init_metrics().get();
 
+            system_keyspace.start().get();
+            auto stop_sys_ks = deferred_stop(system_keyspace);
             db::system_keyspace::minimal_setup(qp);
 
             db::sstables_format_selector sst_format_selector(gossiper.local(), feature_service, db);
