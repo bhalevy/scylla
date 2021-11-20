@@ -2061,21 +2061,30 @@ void database::revert_initial_system_read_concurrency_boost() {
 }
 
 future<> database::start() {
+    dblog.info("start: large_data_handler");
     _large_data_handler->start();
     // We need the compaction manager ready early so we can reshard.
+    dblog.info("start: compaction_manager");
     _compaction_manager->enable();
+    dblog.info("start: commitlog");
     co_await init_commitlog();
 }
 
 future<> database::shutdown() {
     _shutdown = true;
+    dblog.info("shutdown: compaction_manager");
     co_await _compaction_manager->stop();
+    dblog.info("shutdown: stop_barrier");
     co_await _stop_barrier.arrive_and_wait();
     // Closing a table can cause us to find a large partition. Since we want to record that, we have to close
     // system.large_partitions after the regular tables.
+    dblog.info("shutdown: close user tables");
     co_await close_tables(database::table_kind::user);
+    dblog.info("shutdown: close sys tables");
     co_await close_tables(database::table_kind::system);
+    dblog.info("shutdown: large_data_handler");
     co_await _large_data_handler->stop();
+    dblog.info("shutdown: keyspaces");
     for (auto& [ks_name, ks] : _keyspaces) {
         co_await ks.shutdown();
     }
@@ -2094,12 +2103,19 @@ future<> database::stop() {
     if (_commitlog) {
         co_await _commitlog->release();
     }
+    dblog.info("stop: sys dirty mem manager");
     co_await _system_dirty_memory_manager.shutdown();
+    dblog.info("stop: use dirty mem manager");
     co_await _dirty_memory_manager.shutdown();
+    dblog.info("stop: memtable_controller");
     co_await _memtable_controller.shutdown();
+    dblog.info("stop: user sstables_manager");
     co_await _user_sstables_manager->close();
+    dblog.info("stop: sys sstables_manager");
     co_await _system_sstables_manager->close();
+    dblog.info("stop: querier cache");
     co_await _querier_cache.stop();
+    dblog.info("stop: comcurrency semaphores");
     co_await _read_concurrency_sem.stop();
     co_await _streaming_concurrency_sem.stop();
     co_await _compaction_concurrency_sem.stop();
