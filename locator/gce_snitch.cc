@@ -47,7 +47,9 @@
 
 namespace locator {
 
-gce_snitch::gce_snitch(const sstring& fname, unsigned io_cpuid, const sstring& meta_server_url) : production_snitch_base(fname) {
+gce_snitch::gce_snitch(db::system_keyspace& sys_ks, const sstring& fname, unsigned io_cpuid, const sstring& meta_server_url)
+    : production_snitch_base(sys_ks, fname)
+{
     if (this_shard_id() == io_cpuid) {
         io_cpu_id() = io_cpuid;
         _meta_server_url = std::move(meta_server_url);
@@ -167,20 +169,20 @@ future<sstring> gce_snitch::read_property_file() {
     });
 }
 
-using registry_3_params = class_registrator<i_endpoint_snitch, gce_snitch, const sstring&, const unsigned&, const sstring&>;
+using registry_3_params = class_registrator<i_endpoint_snitch, gce_snitch, db::system_keyspace&, const sstring&, const unsigned&, const sstring&>;
 static registry_3_params registrator3("org.apache.cassandra.locator.GoogleCloudSnitch");
 static registry_3_params registrator3_short_name("GoogleCloudSnitch");
 
-using registry_2_params = class_registrator<i_endpoint_snitch, gce_snitch, const sstring&, const unsigned&>;
+using registry_2_params = class_registrator<i_endpoint_snitch, gce_snitch, db::system_keyspace&, const sstring&, const unsigned&>;
 static registry_2_params registrator2("org.apache.cassandra.locator.GoogleCloudSnitch");
 static registry_2_params registrator2_short_name("GoogleCloudSnitch");
 
 
-using registry_1_param = class_registrator<i_endpoint_snitch, gce_snitch, const sstring&>;
+using registry_1_param = class_registrator<i_endpoint_snitch, gce_snitch, db::system_keyspace&, const sstring&>;
 static registry_1_param registrator1("org.apache.cassandra.locator.GoogleCloudSnitch");
 static registry_1_param registrator1_short_name("GoogleCloudSnitch");
 
-using registry_default = class_registrator<i_endpoint_snitch, gce_snitch>;
+using registry_default = class_registrator<i_endpoint_snitch, gce_snitch, db::system_keyspace&>;
 static registry_default registrator_default("org.apache.cassandra.locator.GoogleCloudSnitch");
 static registry_default registrator_default_short_name("GoogleCloudSnitch");
 

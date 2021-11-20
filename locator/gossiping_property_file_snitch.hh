@@ -74,6 +74,7 @@ public:
     }
 
     gossiping_property_file_snitch(
+        db::system_keyspace& sys_ks,
         const sstring& fname = "",
         unsigned io_cpuid = 0);
 

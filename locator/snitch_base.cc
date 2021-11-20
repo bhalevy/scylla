@@ -41,6 +41,14 @@
 #include "gms/application_state.hh"
 
 namespace locator {
+
+snitch_base::snitch_base(db::system_keyspace& sys_ks) noexcept
+    : _sys_ks(sys_ks)
+{
+    // FIXME: use _sys_ks to calm the compiler down
+    assert(&_sys_ks != nullptr);
+}
+
 std::optional<sstring>
 snitch_base::get_endpoint_info(inet_address endpoint,
                                gms::application_state key) {

@@ -43,7 +43,7 @@
 namespace locator {
 class ec2_multi_region_snitch : public ec2_snitch {
 public:
-    ec2_multi_region_snitch(const sstring& fname = "", unsigned io_cpu_id = 0);
+    ec2_multi_region_snitch(db::system_keyspace& sys_ks, const sstring& fname = "", unsigned io_cpu_id = 0);
     virtual future<> gossiper_starting() override;
     virtual future<> start() override;
     virtual void set_local_private_addr(const sstring& addr_str) override;

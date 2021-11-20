@@ -47,8 +47,8 @@ static constexpr const char* PUBLIC_IPV6_QUERY_REQ  = "/latest/meta-data/network
 static constexpr const char* PRIVATE_MAC_QUERY = "/latest/meta-data/network/interfaces/macs";
 
 namespace locator {
-ec2_multi_region_snitch::ec2_multi_region_snitch(const sstring& fname, unsigned io_cpu_id)
-    : ec2_snitch(fname, io_cpu_id) {}
+ec2_multi_region_snitch::ec2_multi_region_snitch(db::system_keyspace& sys_ks, const sstring& fname, unsigned io_cpu_id)
+    : ec2_snitch(sys_ks, fname, io_cpu_id) {}
 
 future<> ec2_multi_region_snitch::start() {
     _state = snitch_state::initializing;
@@ -140,16 +140,16 @@ future<> ec2_multi_region_snitch::gossiper_starting() {
 
 }
 
-using registry_2_params = class_registrator<i_endpoint_snitch, ec2_multi_region_snitch, const sstring&, unsigned>;
+using registry_2_params = class_registrator<i_endpoint_snitch, ec2_multi_region_snitch, db::system_keyspace&, const sstring&, unsigned>;
 static registry_2_params registrator2("org.apache.cassandra.locator.Ec2MultiRegionSnitch");
 static registry_2_params registrator2_short_name("Ec2MultiRegionSnitch");
 
 
-using registry_1_param = class_registrator<i_endpoint_snitch, ec2_multi_region_snitch, const sstring&>;
+using registry_1_param = class_registrator<i_endpoint_snitch, ec2_multi_region_snitch, db::system_keyspace&, const sstring&>;
 static registry_1_param registrator1("org.apache.cassandra.locator.Ec2MultiRegionSnitch");
 static registry_1_param registrator1_short_name("Ec2MultiRegionSnitch");
 
-using registry_default = class_registrator<i_endpoint_snitch, ec2_multi_region_snitch>;
+using registry_default = class_registrator<i_endpoint_snitch, ec2_multi_region_snitch, db::system_keyspace&>;
 static registry_default registrator_default("org.apache.cassandra.locator.Ec2MultiRegionSnitch");
 static registry_default registrator_default_short_name("Ec2MultiRegionSnitch");
 

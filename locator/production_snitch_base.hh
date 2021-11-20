@@ -68,7 +68,7 @@ public:
     static constexpr const char* dc_suffix_property_key    = "dc_suffix";
     const std::unordered_set<sstring> allowed_property_keys;
 
-    production_snitch_base(const sstring& prop_file_name = "");
+    production_snitch_base(db::system_keyspace& sys_ks, const sstring& prop_file_name = "");
 
     virtual sstring get_rack(inet_address endpoint) override;
     virtual sstring get_datacenter(inet_address endpoint) override;

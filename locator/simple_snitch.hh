@@ -49,7 +49,9 @@ namespace locator {
  * which improves cache locality.
  */
 struct simple_snitch : public snitch_base {
-    simple_snitch() {
+    simple_snitch(db::system_keyspace& sys_ks)
+        : snitch_base(sys_ks)
+    {
         _my_dc = get_datacenter(utils::fb_utilities::get_broadcast_address());
         _my_rack = get_rack(utils::fb_utilities::get_broadcast_address());
 

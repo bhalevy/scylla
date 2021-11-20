@@ -53,8 +53,9 @@
 
 namespace locator {
 
-production_snitch_base::production_snitch_base(const sstring& prop_file_name)
-        : allowed_property_keys({ dc_property_key,
+production_snitch_base::production_snitch_base(db::system_keyspace& sys_ks, const sstring& prop_file_name)
+        : snitch_base(sys_ks)
+        , allowed_property_keys({ dc_property_key,
                           rack_property_key,
                           prefer_local_property_key,
                           dc_suffix_property_key }) {

@@ -68,8 +68,11 @@ future<bool> gossiping_property_file_snitch::property_file_was_modified() {
 }
 
 gossiping_property_file_snitch::gossiping_property_file_snitch(
+    db::system_keyspace& sys_ks,
     const sstring& fname, unsigned io_cpuid)
-: production_snitch_base(fname), _file_reader_cpu_id(io_cpuid) {
+        : production_snitch_base(sys_ks, fname)
+        , _file_reader_cpu_id(io_cpuid)
+{
     if (this_shard_id() == _file_reader_cpu_id) {
         io_cpu_id() = _file_reader_cpu_id;
     }
@@ -327,16 +330,17 @@ future<> gossiping_property_file_snitch::reload_gossiper_state() {
 
 using registry_2_params = class_registrator<i_endpoint_snitch,
                                    gossiping_property_file_snitch,
-                                   const sstring&, unsigned>;
+                                   db::system_keyspace&, const sstring&, unsigned>;
 static registry_2_params registrator2("org.apache.cassandra.locator.GossipingPropertyFileSnitch");
 
 using registry_1_param = class_registrator<i_endpoint_snitch,
                                    gossiping_property_file_snitch,
-                                   const sstring&>;
+                                   db::system_keyspace&, const sstring&>;
 static registry_1_param registrator1("org.apache.cassandra.locator.GossipingPropertyFileSnitch");
 
 using registry_default = class_registrator<i_endpoint_snitch,
-                                           gossiping_property_file_snitch>;
+                                           gossiping_property_file_snitch,
+                                           db::system_keyspace&>;
 static registry_default registrator_default("org.apache.cassandra.locator.GossipingPropertyFileSnitch");
 static registry_default registrator_default_short_name("GossipingPropertyFileSnitch");
 } // namespace locator

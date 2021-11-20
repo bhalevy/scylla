@@ -518,7 +518,7 @@ static void test_equivalence(const shared_token_metadata& stm, snitch_ptr& snitc
 }
 
 
-std::unique_ptr<i_endpoint_snitch> generate_snitch(const std::unordered_map<sstring, size_t> datacenters, const std::vector<inet_address>& nodes) {
+std::unique_ptr<i_endpoint_snitch> generate_snitch(db::system_keyspace& sys_ks, const std::unordered_map<sstring, size_t> datacenters, const std::vector<inet_address>& nodes) {
     auto& e1 = seastar::testing::local_random_engine;
 
     using addr_to_string_type = std::unordered_map<inet_address, sstring>;
@@ -551,9 +551,9 @@ std::unique_ptr<i_endpoint_snitch> generate_snitch(const std::unordered_map<sstr
 
     class my_snitch : public snitch_base {
     public:
-        my_snitch(addr_to_string_type node_to_rack,
-                        addr_to_string_type node_to_dc)
-            : _node_to_rack(std::move(node_to_rack))
+        my_snitch(db::system_keyspace& sys_ks, addr_to_string_type node_to_rack, addr_to_string_type node_to_dc)
+            : snitch_base(sys_ks)
+            , _node_to_rack(std::move(node_to_rack))
             , _node_to_dc(std::move(node_to_dc))
         {}
         sstring get_rack(inet_address endpoint) override {
@@ -569,7 +569,7 @@ std::unique_ptr<i_endpoint_snitch> generate_snitch(const std::unordered_map<sstr
         addr_to_string_type _node_to_rack, _node_to_dc;
     };
 
-    return std::make_unique<my_snitch>(std::move(node_to_rack), std::move(node_to_dc));
+    return std::make_unique<my_snitch>(sys_ks, std::move(node_to_rack), std::move(node_to_dc));
 }
 
 SEASTAR_THREAD_TEST_CASE(testCalculateEndpoints) {

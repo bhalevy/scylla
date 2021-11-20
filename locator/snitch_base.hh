@@ -58,6 +58,12 @@ enum class application_state;
 
 }
 
+namespace db {
+
+class system_keyspace;
+
+}
+
 namespace locator {
 
 using snitch_signal_t = boost::signals2::signal_type<void (), boost::signals2::keywords::mutex_type<boost::signals2::dummy_mutex>>::type;
@@ -77,7 +83,7 @@ public:
     using ptr_type = std::unique_ptr<i_endpoint_snitch>;
 
     template <typename... A>
-    static future<> create_snitch(const sstring& snitch_name, A&&... a);
+    static future<> create_snitch(db::system_keyspace& sys_ks, const sstring& snitch_name, A&&... a);
 
     template <typename... A>
     static future<> reset_snitch(const sstring& snitch_name, A&&... a);
@@ -426,7 +432,11 @@ future<> i_endpoint_snitch::reset_snitch(
 }
 
 class snitch_base : public i_endpoint_snitch {
+    db::system_keyspace& _sys_ks;
+
 public:
+    snitch_base(db::system_keyspace& sys_ks) noexcept;
+
     //
     // Sons have to implement:
     // virtual sstring get_rack(inet_address endpoint)        = 0;
