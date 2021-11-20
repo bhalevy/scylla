@@ -99,7 +99,7 @@ using days = std::chrono::duration<int, std::ratio<24 * 3600>>;
 
 namespace db {
 
-query_context* qctx;
+query_context* the_qctx;
 
 static logging::logger slogger("system_keyspace");
 static const api::timestamp_type creation_timestamp = api::new_timestamp();
