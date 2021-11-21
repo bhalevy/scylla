@@ -27,6 +27,7 @@
 #include <seastar/core/future-util.hh>
 #include <seastar/core/sharded.hh>
 #include <seastar/core/shared_ptr.hh>
+#include <seastar/core/coroutine.hh>
 
 #include "auth/allow_all_authenticator.hh"
 #include "auth/allow_all_authorizer.hh"
@@ -177,17 +178,22 @@ future<> service::start(::service::migration_manager& mm) {
     });
 }
 
-future<> service::stop() {
+future<> service::shutdown() noexcept {
+    if (_shutdown) {
+        co_return;
+    }
+    _shutdown = true;
     // Only one of the shards has the listener registered, but let's try to
     // unregister on each one just to make sure.
-    return _mnotifier.unregister_listener(_migration_listener.get()).then([this] {
-        if (_permissions_cache) {
-            return _permissions_cache->stop();
-        }
-        return make_ready_future<>();
-    }).then([this] {
-        return when_all_succeed(_role_manager->stop(), _authorizer->stop(), _authenticator->stop()).discard_result();
-    });
+    co_await _mnotifier.unregister_listener(_migration_listener.get());
+    if (_permissions_cache) {
+        co_await _permissions_cache->stop();
+    }
+    co_await when_all_succeed(_role_manager->stop(), _authorizer->stop(), _authenticator->stop()).discard_result();
+}
+
+future<> service::stop() noexcept {
+    return shutdown();
 }
 
 future<bool> service::has_existing_legacy_users() const {

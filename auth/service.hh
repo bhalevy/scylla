@@ -97,6 +97,8 @@ class service final : public seastar::peering_sharded_service<service> {
     // Only one of these should be registered, so we end up with some unused instances. Not the end of the world.
     std::unique_ptr<::service::migration_listener> _migration_listener;
 
+    bool _shutdown = false;
+
 public:
     service(
             permissions_cache_config,
@@ -119,8 +121,8 @@ public:
             const service_config&);
 
     future<> start(::service::migration_manager&);
-
-    future<> stop();
+    future<> shutdown() noexcept;
+    future<> stop() noexcept;
 
     ///
     /// \returns an exceptional future with \ref nonexistant_role if the named role does not exist.
