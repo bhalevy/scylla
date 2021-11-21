@@ -991,6 +991,15 @@ def find_db(shard=None):
     return sharded(db).instance(shard)
 
 
+def find_gossiper(shard=None):
+    try:
+        gossiper = gdb.parse_and_eval('::debug::the_gossiper')
+    except Exception as e:
+        gossiper = gdb.parse_and_eval('gms::_the_gossiper')
+
+    return sharded(gossiper).instance(shard)
+
+
 def find_dbs():
     return [find_db(shard) for shard in range(cpus())]
 
@@ -3486,7 +3495,7 @@ class scylla_gms(gdb.Command):
         gdb.Command.__init__(self, 'scylla gms', gdb.COMMAND_USER, gdb.COMPLETE_NONE, True)
 
     def invoke(self, arg, for_tty):
-        gossiper = sharded(gdb.parse_and_eval('gms::_the_gossiper')).local()
+        gossiper = find_gossiper()
         for (endpoint, state) in unordered_map(gossiper['endpoint_state_map']):
             ip = ip_to_str(int(get_ip(endpoint)), byteorder=sys.byteorder)
             gdb.write('%s: (gms::endpoint_state*) %s (%s)\n' % (ip, state.address, state['_heart_beat_state']))
@@ -4535,7 +4544,7 @@ class scylla_features(gdb.Command):
         gdb.Command.__init__(self, 'scylla features', gdb.COMMAND_USER, gdb.COMPLETE_NONE, True)
 
     def invoke(self, arg, for_tty):
-        gossiper = sharded(gdb.parse_and_eval('gms::_the_gossiper')).local()
+        gossiper = find_gossiper()
         for (name, f) in unordered_map(gossiper['_feature_service']['_registered_features']):
             f = reference_wrapper(f).get()
             gdb.write('%s: %s\n' % (f['_name'], f['_enabled']))

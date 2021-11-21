@@ -630,18 +630,24 @@ private:
     future<> update_live_endpoints_version();
 };
 
-extern distributed<gossiper> _the_gossiper;
+extern distributed<gossiper>* _the_gossiper;
+
+// DEPRECATED, DON'T USE!
+// Pass references to services through constructor/function parameters. Don't use globals.
+inline void set_the_gossiper(distributed<gossiper>* gossiper) {
+    _the_gossiper = gossiper;
+}
 
 // DEPRECATED, DON'T USE!
 // Pass references to services through constructor/function parameters. Don't use globals.
 inline gossiper& get_local_gossiper() {
-    return _the_gossiper.local();
+    return _the_gossiper->local();
 }
 
 // DEPRECATED, DON'T USE!
 // Pass references to services through constructor/function parameters. Don't use globals.
 inline distributed<gossiper>& get_gossiper() {
-    return _the_gossiper;
+    return *_the_gossiper;
 }
 
 inline future<sstring> get_all_endpoint_states(gossiper& g) {

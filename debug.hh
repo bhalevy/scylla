@@ -25,10 +25,16 @@
 
 class database;
 
+namespace gms {
+
+class gossiper;
+
+}
+
 namespace debug {
 
 extern seastar::sharded<database>* the_database;
-
+extern seastar::sharded<gms::gossiper>* the_gossiper;
 
 }
 
