@@ -97,7 +97,15 @@ int main(int ac, char ** av) {
             for (auto s : config["seed"].as<std::vector<std::string>>()) {
                 gcfg.seeds.emplace(std::move(s));
             }
-            gms::get_gossiper().start(std::ref(abort_sources), std::ref(feature_service), std::ref(token_metadata), std::ref(messaging), std::ref(*cfg), std::move(gcfg)).get();
+            sharded<gms::gossiper> sharded_gossiper;
+            // FIXME: until we deglobalize the gossiper
+            gms::set_the_gossiper(&sharded_gossiper);
+            sharded_gossiper.start(std::ref(abort_sources), std::ref(feature_service), std::ref(token_metadata), std::ref(messaging), std::ref(*cfg), std::move(gcfg)).get();
+            auto stop_gossiper = defer([&] {
+                sharded_gossiper.stop().get();
+                // FIXME: until we deglobalize the gossiper
+                gms::set_the_gossiper(nullptr);
+            });
 
             auto& server = messaging.local();
             auto port = server.port();
@@ -105,7 +113,7 @@ int main(int ac, char ** av) {
             fmt::print("Messaging server listening on ip {} port {:d} ...\n", msg_listen, port);
 
             std::cout << "Start gossiper service ...\n";
-            auto& gossiper = gms::get_local_gossiper();
+            auto& gossiper = sharded_gossiper.local();
 
             std::map<gms::application_state, gms::versioned_value> app_states = {
                 { gms::application_state::LOAD, gms::versioned_value::load(0.5) },
@@ -119,7 +127,7 @@ int main(int ac, char ** av) {
             for (;;) {
                 auto value = gms::versioned_value::load(load);
                 load += 0.0001;
-                gms::get_local_gossiper().add_local_application_state(gms::application_state::LOAD, value).get();
+                gossiper.add_local_application_state(gms::application_state::LOAD, value).get();
                 sleep(std::chrono::seconds(1)).get();
            }
         });

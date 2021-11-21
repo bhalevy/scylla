@@ -533,7 +533,9 @@ public:
             feature_service.start(fcfg).get();
             auto stop_feature_service = defer([&] { feature_service.stop().get(); });
 
-            sharded<gms::gossiper>& gossiper = gms::get_gossiper();
+            sharded<gms::gossiper> gossiper;
+            // FIXME: until we deglobalize the gossiper
+            gms::set_the_gossiper(&gossiper);
 
             // Init gossiper
             std::set<gms::inet_address> seeds;
@@ -557,6 +559,8 @@ public:
             gossiper.start(std::ref(abort_sources), std::ref(feature_service), std::ref(token_metadata), std::ref(ms), std::ref(*cfg), std::move(gcfg)).get();
             auto stop_ms_fd_gossiper = defer([&gossiper] {
                 gossiper.stop().get();
+                // FIXME: until we deglobalize the gossiper
+                gms::set_the_gossiper(nullptr);
             });
             gossiper.invoke_on_all(&gms::gossiper::start).get();
 

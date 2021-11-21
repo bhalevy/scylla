@@ -395,6 +395,7 @@ sharded<qos::service_level_controller>* the_sl_controller;
 sharded<service::migration_manager>* the_migration_manager;
 sharded<service::storage_service>* the_storage_service;
 sharded<database>* the_database;
+sharded<gms::gossiper>* the_gossiper;
 }
 
 int main(int ac, char** av) {
@@ -484,6 +485,7 @@ int main(int ac, char** av) {
     sharded<cql3::query_processor> qp;
     sharded<db::batchlog_manager> bm;
     sharded<semaphore> sst_dir_semaphore;
+    sharded<gms::gossiper> gossiper;
     sharded<service::raft_group_registry> raft_gr;
     sharded<service::memory_limiter> service_memory_limiter;
     sharded<repair_service> repair;
@@ -516,7 +518,7 @@ int main(int ac, char** av) {
 
         return seastar::async([cfg, ext, &db, &qp, &bm, &proxy, &mm, &mm_notifier, &ctx, &opts, &dirs,
                 &prometheus_server, &cf_cache_hitrate_calculator, &load_meter, &feature_service,
-                &token_metadata, &erm_factory, &snapshot_ctl, &messaging, &sst_dir_semaphore, &raft_gr, &service_memory_limiter,
+                &token_metadata, &erm_factory, &snapshot_ctl, &messaging, &sst_dir_semaphore, &gossiper, &raft_gr, &service_memory_limiter,
                 &repair, &sst_loader, &ss, &lifecycle_notifier] {
           try {
             // disable reactor stall detection during startup
@@ -806,11 +808,14 @@ int main(int ac, char** av) {
                 startlog.warn("Using default cluster name is not recommended. Using a unique cluster name will reduce the chance of adding nodes to the wrong cluster by mistake");
             }
 
-            auto& gossiper = gms::get_gossiper();
+            // FIXME: until we deglobalize the gossiper
+            gms::set_the_gossiper(&gossiper);
+            debug::the_gossiper = &gossiper;
             gossiper.start(std::ref(stop_signal.as_sharded_abort_source()), std::ref(feature_service), std::ref(token_metadata), std::ref(messaging), std::ref(*cfg), std::ref(gcfg)).get();
             auto stop_gossiper = defer_verbose_shutdown("gossiper", [&gossiper] {
-                // call stop on each instance, but leave the sharded<> pointers alive
-                gossiper.invoke_on_all(&gms::gossiper::stop).get();
+                gossiper.stop().get();
+                // FIXME: until we deglobalize the gossiper
+                gms::set_the_gossiper(nullptr);
             });
             gossiper.invoke_on_all(&gms::gossiper::start).get();
 
@@ -1234,7 +1239,7 @@ int main(int ac, char** av) {
             });
 
             supervisor::notify("starting load meter");
-            load_meter.init(db, gms::get_local_gossiper()).get();
+            load_meter.init(db, gossiper.local()).get();
             auto stop_load_meter = defer_verbose_shutdown("load meter", [&load_meter] {
                 load_meter.exit().get();
             });
@@ -1250,7 +1255,7 @@ int main(int ac, char** av) {
 
             supervisor::notify("starting view update backlog broker");
             static sharded<service::view_update_backlog_broker> view_backlog_broker;
-            view_backlog_broker.start(std::ref(proxy), std::ref(gms::get_gossiper())).get();
+            view_backlog_broker.start(std::ref(proxy), std::ref(gossiper)).get();
             view_backlog_broker.invoke_on_all(&service::view_update_backlog_broker::start).get();
             auto stop_view_backlog_broker = defer_verbose_shutdown("view update backlog broker", [] {
                 view_backlog_broker.stop().get();
@@ -1259,7 +1264,7 @@ int main(int ac, char** av) {
             //FIXME: discarded future
             (void)api::set_server_cache(ctx);
             startlog.info("Waiting for gossip to settle before accepting client requests...");
-            gms::get_local_gossiper().wait_for_gossip_to_settle().get();
+            gossiper.local().wait_for_gossip_to_settle().get();
             api::set_server_gossip_settle(ctx, gossiper).get();
 
             supervisor::notify("allow replaying hints");
