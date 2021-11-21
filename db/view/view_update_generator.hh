@@ -71,7 +71,8 @@ public:
     ~view_update_generator();
 
     future<> start();
-    future<> stop();
+    future<> shutdown() noexcept;
+    future<> stop() noexcept;
     future<> register_staging_sstable(sstables::shared_sstable sst, lw_shared_ptr<replica::table> table);
 
     replica::database& get_db() noexcept { return _db; }

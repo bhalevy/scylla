@@ -239,11 +239,15 @@ void view_update_generator::do_abort() noexcept {
     _pending_sstables.signal();
 }
 
-future<> view_update_generator::stop() {
+future<> view_update_generator::shutdown() noexcept {
     do_abort();
-    return std::move(_started).then([this] {
-        _registration_sem.broken();
-    });
+    return make_ready_future<>();
+}
+
+future<> view_update_generator::stop() noexcept {
+    co_await shutdown();
+    co_await std::move(_started);
+    _registration_sem.broken();
 }
 
 bool view_update_generator::should_throttle() const {
