@@ -50,7 +50,8 @@ public:
     }
 
     future<> start();
-    future<> stop();
+    future<> shutdown() noexcept;
+    future<> stop() noexcept;
     future<> register_staging_sstable(sstables::shared_sstable sst, lw_shared_ptr<table> table);
 
     ssize_t available_register_units() const { return _registration_sem.available_units(); }

@@ -137,12 +137,19 @@ future<> view_update_generator::start() {
     return make_ready_future<>();
 }
 
-future<> view_update_generator::stop() {
+future<> view_update_generator::shutdown() noexcept {
+    if (_as.abort_requested()) {
+        return make_ready_future<>();
+    }
     _as.request_abort();
     _pending_sstables.signal();
     return std::move(_started).then([this] {
         _registration_sem.broken();
     });
+}
+
+future<> view_update_generator::stop() noexcept {
+    return shutdown();
 }
 
 bool view_update_generator::should_throttle() const {
