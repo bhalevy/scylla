@@ -1,0 +1,299 @@
+/*
+ * Copyright (C) 2021-present ScyllaDB
+ */
+
+/*
+ * This file is part of Scylla.
+ *
+ * Scylla is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * Scylla is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with Scylla.  If not, see <http://www.gnu.org/licenses/>.
+ */
+
+#pragma once
+
+#include <unordered_set>
+#include <functional>
+#include <iostream>
+#include <deque>
+#include <unordered_map>
+#include <type_traits>
+#include <concepts>
+
+#include <seastar/core/future.hh>
+#include <seastar/core/shared_future.hh>
+#include <seastar/core/shared_ptr.hh>
+#include <seastar/core/sstring.hh>
+#include <seastar/core/sharded.hh>
+#include <seastar/core/semaphore.hh>
+
+#include "log.hh"
+
+using namespace seastar;
+
+namespace service {
+
+extern logging::logger sclog;
+
+class base_controller;
+
+class on_shutdown_tag;
+using on_shutdown = seastar::bool_class<on_shutdown_tag>;
+
+// Top-level controller and registry
+class services_controller {
+    std::deque<base_controller*> _all_services;
+    std::unordered_map<sstring, base_controller*> _services_map;
+    std::unordered_set<base_controller*> _bottom;   // services with no dependencies
+    std::unordered_set<base_controller*> _top;      // services with no dependants
+
+public:
+    void add_service(base_controller& s);
+    base_controller* lookup_service(base_controller* parent, sstring name) noexcept;
+    base_controller* lookup_service(base_controller* parent, base_controller& o);
+
+    future<> start() noexcept;
+    future<> serve() noexcept;
+    future<> drain(on_shutdown) noexcept;
+    future<> shutdown() noexcept;
+    future<> stop() noexcept;
+
+private:
+    void set_dependency(base_controller* parent, base_controller* child);
+
+    friend class base_controller;
+};
+
+class base_controller {
+public:
+    enum class state {
+        initialized,
+        starting,
+        started,
+        starting_service,
+        serving,
+        draining,
+        drained,
+        shutting_down,
+        shutdown,
+        stopping,
+        stopped,
+    };
+
+private:
+    services_controller& _sctl;
+    sstring _name;
+    std::unordered_set<base_controller*> _dependencies;
+    std::unordered_set<base_controller*> _dependants;
+    state _state = state::initialized;
+    semaphore _sem;
+    shared_future<> _pending = {};
+    std::exception_ptr _ex;
+
+public:
+    explicit base_controller(services_controller& sctl, sstring name);
+
+    base_controller(base_controller&&) = default;
+
+    ~base_controller();
+
+    base_controller* lookup_dep(sstring name);
+    base_controller* lookup_dep(base_controller& o);
+
+    base_controller& depends_on(base_controller& o);
+
+    const sstring& name() const noexcept {
+        return _name;
+    }
+
+    state state() const noexcept {
+        return _state;
+    }
+
+    bool failed() const noexcept {
+        return bool(_ex);
+    }
+
+    std::exception_ptr get_exception() const noexcept {
+        return _ex;
+    }
+
+    future<> start();
+    future<> serve();
+    future<> drain(on_shutdown = on_shutdown::no);
+    future<> shutdown();
+    future<> stop();
+
+    bool has_dependencies() const noexcept {
+        return !_dependencies.empty();
+    }
+
+    bool has_dependants() const noexcept {
+        return !_dependants.empty();
+    }
+
+protected:
+    virtual future<> do_start() = 0;
+    virtual future<> do_serve() = 0;
+    virtual future<> do_drain(on_shutdown) = 0;
+    virtual future<> do_shutdown() = 0;
+    virtual future<> do_stop() = 0;
+
+private:
+    bool does_depend_on(base_controller* op) noexcept;
+    future<> pending_op(std::function<future<>()> func) noexcept;
+};
+
+sstring to_string(enum base_controller::state s);
+std::ostream& operator<<(std::ostream&, enum base_controller::state s);
+
+class service_ctl : public base_controller {
+public:
+    using func_t = std::function<future<> ()>;
+    using drain_func_t = std::function<future<> (on_shutdown)>;
+
+public:
+    func_t start_func;
+    func_t serve_func = [] { return make_ready_future<>(); };
+    drain_func_t drain_func = [] (on_shutdown) { return make_ready_future<>(); };
+    func_t shutdown_func = [] { return make_ready_future<>(); };
+    func_t stop_func = [] { return make_ready_future<>(); };
+
+    service_ctl(services_controller& sctl, sstring name)
+        : base_controller(sctl, std::move(name))
+    {
+    }
+
+    service_ctl(services_controller& sctl, sstring name, func_t start_fn)
+        : base_controller(sctl, std::move(name))
+        , start_func(std::move(start_fn))
+    {
+    }
+
+    service_ctl(services_controller& sctl, sstring name, func_t start_fn, func_t stop_fn)
+        : base_controller(sctl, std::move(name))
+        , start_func(std::move(start_fn))
+        , stop_func(std::move(stop_fn))
+    {
+    }
+
+    auto lookup_dep(base_controller& o) {
+        return base_controller::lookup_dep(o);
+    }
+
+protected:
+    virtual future<> do_start() noexcept override {
+        return futurize_invoke(start_func);
+    }
+
+    virtual future<> do_serve() noexcept override {
+        return futurize_invoke(serve_func);
+    }
+
+    virtual future<> do_drain(on_shutdown os_flag) noexcept override {
+        return futurize_invoke(drain_func, os_flag);
+    }
+
+    virtual future<> do_shutdown() noexcept override {
+        return futurize_invoke(shutdown_func);
+    }
+
+    virtual future<> do_stop() noexcept override {
+        return futurize_invoke(stop_func);
+    }
+};
+
+struct default_start_tag {};
+
+template <typename Service>
+class sharded_service_ctl : public base_controller {
+public:
+    using func_t = std::function<future<> (sharded<Service>&)>;
+    using drain_func_t = std::function<future<> (sharded<Service>&, on_shutdown)>;
+
+private:
+    sharded<Service> _service;
+
+public:
+    func_t start_func = [] (sharded<Service>&) { return make_ready_future<>(); };
+    func_t serve_func = [] (sharded<Service>&) { return make_ready_future<>(); };
+    drain_func_t drain_func = [] (sharded<Service>&, on_shutdown) { return make_ready_future<>(); };
+    func_t shutdown_func = [] (sharded<Service>&) { return make_ready_future<>(); };
+    func_t stop_func = [] (sharded<Service>& s) { return s.stop(); };
+
+    template <typename T = Service>
+    requires std::is_default_constructible_v<T>
+    sharded_service_ctl(services_controller& sctl, sstring name, default_start_tag)
+        : base_controller(sctl, std::move(name))
+        , start_func([] (sharded<T>& s) { return s.start(); })
+    {
+        sclog.debug("{}: default start_func", this->name());
+    }
+
+    sharded_service_ctl(services_controller& sctl, sstring name)
+        : base_controller(sctl, std::move(name))
+    {
+        sclog.debug("{}: no start_func", this->name());
+    }
+
+    sharded_service_ctl(services_controller& sctl, sstring name, func_t start_fn)
+        : base_controller(sctl, std::move(name))
+        , start_func(std::move(start_fn))
+    {
+        sclog.debug("{}: custom start_func", this->name());
+    }
+
+    template <typename T>
+    auto lookup_dep(sharded_service_ctl<T>& o) {
+        base_controller::lookup_dep(o);
+        return std::ref(o.service());
+    }
+
+    sharded<Service>& service() noexcept {
+        return _service;
+    }
+
+    const sharded<Service>& service() const noexcept {
+        return _service;
+    }
+
+    Service& local() noexcept {
+        return _service.local();
+    }
+
+    const Service& local() const noexcept {
+        return _service.local();
+    }
+
+protected:
+    virtual future<> do_start() noexcept override {
+        return futurize_invoke(start_func, _service);
+    }
+
+    virtual future<> do_serve() noexcept override {
+        return futurize_invoke(serve_func, _service);
+    }
+
+    virtual future<> do_drain(on_shutdown os_flag) noexcept override {
+        return futurize_invoke(drain_func, _service, os_flag);
+    }
+
+    virtual future<> do_shutdown() noexcept override {
+        return futurize_invoke(shutdown_func, _service);
+    }
+
+    virtual future<> do_stop() noexcept override {
+        return futurize_invoke(stop_func, _service);
+    }
+};
+
+} // namespace service
