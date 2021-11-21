@@ -19,6 +19,7 @@
  * along with Scylla.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include <boost/test/unit_test_log.hpp>
 #include <seastar/testing/test_case.hh>
 #include "test/lib/cql_test_env.hh"
 #include "test/lib/cql_assertions.hh"
@@ -1614,33 +1615,49 @@ SEASTAR_TEST_CASE(test_select_with_token_range_cases) {
         auto equal_range = [](int64_t value) { return format("token(pk) = {}", value); };
 
         auto do_tests = [&] {
+            BOOST_TEST_MESSAGE("do_tests");
             assert_that(q(inclusive_inclusive_range(testset_tokens[1], testset_tokens[5]))).is_rows().with_rows(get_result_rows(1, 5));
+            BOOST_REQUIRE(true);
             assert_that(q(inclusive_inclusive_range(testset_tokens[1], testset_tokens[5] - 1))).is_rows().with_rows(get_result_rows(1, 4));
+            BOOST_REQUIRE(true);
             assert_that(q(inclusive_inclusive_range(testset_tokens[1], testset_tokens[5] + 1))).is_rows().with_rows(get_result_rows(1, 5));
+            BOOST_REQUIRE(true);
             assert_that(q(inclusive_inclusive_range(testset_tokens[1] + 1, testset_tokens[5]))).is_rows().with_rows(get_result_rows(2, 5));
+            BOOST_REQUIRE(true);
 
             assert_that(q(exclusive_inclusive_range(testset_tokens[1], testset_tokens[4]))).is_rows().with_rows(get_result_rows(2, 4));
+            BOOST_REQUIRE(true);
 
             assert_that(q(inclusive_exclusive_range(testset_tokens[1], testset_tokens[4]))).is_rows().with_rows(get_result_rows(1, 3));
+            BOOST_REQUIRE(true);
 
             assert_that(q(exclusive_exclusive_range(testset_tokens[1], testset_tokens[4]))).is_rows().with_rows(get_result_rows(2, 3));
+            BOOST_REQUIRE(true);
 
             assert_that(q(inclusive_infinity_range(testset_tokens[3]))).is_rows().with_rows(get_result_rows(3, testset_pks.size() - 1));
+            BOOST_REQUIRE(true);
 
             assert_that(q(exclusive_infinity_range(testset_tokens[3]))).is_rows().with_rows(get_result_rows(4, testset_pks.size() - 1));
+            BOOST_REQUIRE(true);
 
             assert_that(q(infinity_inclusive_range(testset_tokens[3]))).is_rows().with_rows(get_result_rows(0, 3));
+            BOOST_REQUIRE(true);
 
             assert_that(q(infinity_exclusive_range(testset_tokens[3]))).is_rows().with_rows(get_result_rows(0, 2));
-            
+            BOOST_REQUIRE(true);
+
             assert_that(q("token(pk) < 0")).is_rows().with_rows(get_result_rows(0, 4));
+            BOOST_REQUIRE(true);
 
             assert_that(q("token(pk) > 0")).is_rows().with_rows(get_result_rows(5, testset_pks.size() - 1));
+            BOOST_REQUIRE(true);
 
             assert_that(q(equal_range(testset_tokens[3]))).is_rows().with_rows(get_result_rows(3, 3));
+            BOOST_REQUIRE(true);
 
             // empty range
             assert_that(q("token(pk) < 5 AND token(pk) > 100")).is_rows().with_size(0);
+            BOOST_REQUIRE(true);
 
             // prepared statement
             auto prepared_id = e.prepare(get_query("token(pk) >= ? AND token(pk) <= ?")).get0();
@@ -1648,11 +1665,13 @@ SEASTAR_TEST_CASE(test_select_with_token_range_cases) {
                 cql3::raw_value::make_value(long_type->decompose(testset_tokens[1])), cql3::raw_value::make_value(long_type->decompose(testset_tokens[5]))
             }).get0();
             assert_that(msg).is_rows().with_rows(get_result_rows(1, 5));
+            BOOST_REQUIRE(true);
 
             msg = e.execute_prepared(prepared_id, {
                 cql3::raw_value::make_value(long_type->decompose(testset_tokens[2])), cql3::raw_value::make_value(long_type->decompose(testset_tokens[6]))
             }).get0();
             assert_that(msg).is_rows().with_rows(get_result_rows(2, 6));
+            BOOST_REQUIRE(true);
         };
 
         do_tests();

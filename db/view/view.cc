@@ -2117,10 +2117,15 @@ future<> view_builder::maybe_mark_view_as_built(view_ptr view, dht::token next_t
                     if (it != builder._build_notifiers.end()) {
                         it->second.set_value();
                     }
+                }).then([view] {
+                    vlogger.info("Removed view build progress for {}.{}", view->ks_name(), view->cf_name());
                 });
             });
         }
-        return system_keyspace::update_view_build_progress(view->ks_name(), view->cf_name(), next_token);
+        vlogger.info("Updating view build progress for {}.{}", view->ks_name(), view->cf_name());
+        return system_keyspace::update_view_build_progress(view->ks_name(), view->cf_name(), next_token).then([view] {
+            vlogger.info("Update view build progress for {}.{}", view->ks_name(), view->cf_name());
+        });
     });
 }
 
@@ -2210,8 +2215,8 @@ view_updating_consumer::view_updating_consumer(schema_ptr schema, reader_permit 
     : view_updating_consumer(std::move(schema), std::move(permit), as, staging_reader_handle,
             [table = table.shared_from_this(), excluded_sstables = std::move(excluded_sstables)] (mutation m) mutable {
         auto s = m.schema();
-        auto op = table->write_in_progress();
-        return table->stream_view_replica_updates(std::move(s), std::move(m), db::no_timeout, excluded_sstables).finally([op = std::move(op)] {});
+//        auto op = table->write_in_progress();
+        return table->stream_view_replica_updates(std::move(s), std::move(m), db::no_timeout, excluded_sstables)/* .finally([op = std::move(op)] {}) */;
     })
 { }
 

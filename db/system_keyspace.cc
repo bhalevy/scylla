@@ -2779,8 +2779,9 @@ future<> system_keyspace::remove_view_build_progress(sstring ks_name, sstring vi
 future<> system_keyspace::mark_view_as_built(sstring ks_name, sstring view_name) {
     return qctx->execute_cql(
             format("INSERT INTO system.{} (keyspace_name, view_name) VALUES (?, ?)", v3::BUILT_VIEWS),
-            std::move(ks_name),
-            std::move(view_name)).discard_result();
+                    ks_name, view_name).discard_result().then([ks_name, view_name] {
+                slogger.info("View {}.{} mark as built", ks_name, view_name);
+            });
 }
 
 future<> system_keyspace::remove_built_view(sstring ks_name, sstring view_name) {

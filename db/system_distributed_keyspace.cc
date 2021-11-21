@@ -310,13 +310,15 @@ future<> system_distributed_keyspace::start_view_build(sstring ks_name, sstring 
 }
 
 future<> system_distributed_keyspace::finish_view_build(sstring ks_name, sstring view_name) const {
-    return db::system_keyspace::load_local_host_id().then([this, ks_name = std::move(ks_name), view_name = std::move(view_name)] (utils::UUID host_id) {
+    return db::system_keyspace::load_local_host_id().then([this, ks_name, view_name] (utils::UUID host_id) {
         return _qp.execute_internal(
                 format("UPDATE {}.{} SET status = ? WHERE keyspace_name = ? AND view_name = ? AND host_id = ?", NAME, VIEW_BUILD_STATUS),
                 db::consistency_level::ONE,
                 internal_distributed_query_state(),
                 { "SUCCESS", std::move(ks_name), std::move(view_name), std::move(host_id) },
-                false).discard_result();
+                false).discard_result().then([ks_name, view_name] {
+                    dlogger.info("View {}.{} finished", ks_name, view_name);
+                });
     });
 }
 

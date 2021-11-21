@@ -23,6 +23,7 @@
 #include <boost/test/unit_test.hpp>
 #include <boost/range/adaptor/transformed.hpp>
 #include "test/lib/cql_assertions.hh"
+#include "test/lib/log.hh"
 #include "transport/messages/result_message.hh"
 #include "to_string.hh"
 #include "bytes.hh"
@@ -200,11 +201,15 @@ rows_assertions rows_assertions::with_serialized_columns_count(size_t columns_co
 shared_ptr<cql_transport::messages::result_message> cquery_nofail(
         cql_test_env& env, sstring_view query, std::unique_ptr<cql3::query_options>&& qo, const std::experimental::source_location& loc) {
     try {
+        testlog.info("cquery_nofail: {}: starting", query);
+        shared_ptr<cql_transport::messages::result_message> res;
         if (qo) {
-            return env.execute_cql(query, std::move(qo)).get0();
+            res = env.execute_cql(query, std::move(qo)).get0();
         } else {
-            return env.execute_cql(query).get0();
+            res = env.execute_cql(query).get0();
         }
+        testlog.info("cquery_nofail: {}: done", query);
+        return res;
     } catch (...) {
         BOOST_FAIL(format("query '{}' failed: {}\n{}:{}: originally from here",
                           query, std::current_exception(), loc.file_name(), loc.line()));
