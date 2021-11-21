@@ -92,6 +92,7 @@ class service final : public seastar::peering_sharded_service<service> {
     utils::observer<uint32_t> _permissions_cache_max_entries_observer;
     utils::observer<uint32_t> _permissions_cache_update_interval_in_ms_observer;
     utils::observer<uint32_t> _permissions_cache_validity_in_ms_observer;
+    bool _shutdown = false;
 
 public:
     service(
@@ -115,8 +116,8 @@ public:
             const service_config&);
 
     future<> start(::service::migration_manager&);
-
-    future<> stop();
+    future<> shutdown() noexcept;
+    future<> stop() noexcept;
 
     void update_cache_config();
 
