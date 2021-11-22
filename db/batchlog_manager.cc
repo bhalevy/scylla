@@ -93,29 +93,39 @@ db::batchlog_manager::batchlog_manager(cql3::query_processor& qp, batchlog_manag
     });
 }
 
-future<> db::batchlog_manager::do_batch_log_replay() {
-    // Use with_semaphore is much simpler, but nested invoke_on can
-    // cause deadlock.
-    return get_batchlog_manager().invoke_on(0, [] (auto& bm) {
+future<> db::batchlog_manager::do_batch_log_replay() noexcept {
+    auto& bm = get_batchlog_manager();
+    std::exception_ptr err;
+
+    auto dest = co_await bm.invoke_on(0, [] (auto& bm) {
         bm._gate.enter();
-        return bm._sem.wait().then([&bm] {
+        return bm._sem.wait().then_wrapped([&bm] (future<> f) {
+            if (f.failed()) {
+                bm._gate.leave();
+                std::rethrow_exception(f.get_exception());
+            }
             return bm._cpu++ % smp::count;
         });
-    }).then([] (auto dest) {
-        blogger.debug("Batchlog replay on shard {}: starts", dest);
-        return get_batchlog_manager().invoke_on(dest, [] (auto& bm) {
-            return with_gate(bm._gate, [&bm] {
-                return bm.replay_all_failed_batches();
-            });
-        }).then([dest] {
-            blogger.debug("Batchlog replay on shard {}: done", dest);
-        });
-    }).finally([] {
-        return get_batchlog_manager().invoke_on(0, [] (auto& bm) {
-            bm._sem.signal();
-            bm._gate.leave();
-        });
     });
+
+    blogger.debug("Batchlog replay on shard {}: starts", dest);
+    co_await bm.invoke_on(dest, [] (auto& bm) {
+        return with_gate(bm._gate, [&bm] {
+            return bm.replay_all_failed_batches();
+        });
+    }).handle_exception([&err] (std::exception_ptr ex) {
+        err = std::move(ex);
+    });
+    blogger.debug("Batchlog replay on shard {}: done", dest);
+
+    co_await bm.invoke_on(0, [] (auto& bm) {
+        bm._sem.signal();
+        bm._gate.leave();
+    });
+
+    if (err) {
+        std::rethrow_exception(std::move(err));
+    }
 }
 
 future<> db::batchlog_manager::batchlog_replay_loop() {

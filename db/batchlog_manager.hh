@@ -111,7 +111,7 @@ public:
     future<> drain();
     future<> stop();
 
-    future<> do_batch_log_replay();
+    future<> do_batch_log_replay() noexcept;
 
     future<size_t> count_all_batches() const;
     size_t get_total_batches_replayed() const {
