@@ -94,7 +94,7 @@ db::batchlog_manager::batchlog_manager(cql3::query_processor& qp, batchlog_manag
 }
 
 future<> db::batchlog_manager::do_batch_log_replay() noexcept {
-    auto& bm = get_batchlog_manager();
+    auto& bm = container();
     std::exception_ptr err;
 
     auto dest = co_await bm.invoke_on(0, [] (auto& bm) {
