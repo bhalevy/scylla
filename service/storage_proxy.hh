@@ -96,6 +96,10 @@ class gossiper;
 class feature_service;
 }
 
+namespace db {
+class batchlog_manager;
+}
+
 namespace service {
 
 namespace paxos {
@@ -331,6 +335,15 @@ private:
     cdc::cdc_service* _cdc = nullptr;
 
     cdc_stats _cdc_stats;
+
+    // There is a circular dependency between the storage_proxy
+    // and the batchlog_manager, where the latter depends on the query_processor
+    // that, in turn, depends on the storage_proxy.
+    // Since we need the batchlog_manager only for executing queries,
+    // let the batchlog_manager patch-in its address when started.
+    db::batchlog_manager* _batchlog_manager;
+
+    friend class db::batchlog_manager;
 private:
     future<coordinator_query_result> query_singular(lw_shared_ptr<query::read_command> cmd,
             dht::partition_range_vector&& partition_ranges,
@@ -497,6 +510,10 @@ public:
     }
     void init_messaging_service(shared_ptr<migration_manager>);
     future<> uninit_messaging_service();
+
+    db::batchlog_manager& get_batchlog_manager() noexcept {
+        return *_batchlog_manager;
+    }
 
 private:
     // Applies mutation on this node.
