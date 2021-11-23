@@ -132,7 +132,7 @@ future<> ec2_multi_region_snitch::gossiper_starting() {
         { application_state::INTERNAL_IP, versioned_value::internal_ip(_local_private_address) }
     }).then([this] {
         if (!_gossip_started) {
-            _gossiper.local().register_(::make_shared<reconnectable_snitch_helper>(_my_dc));
+            _gossiper.local().register_(::make_shared<reconnectable_snitch_helper>(_gossiper.local().get_local_messaging(), _my_dc));
             _gossip_started = true;
         }
     });

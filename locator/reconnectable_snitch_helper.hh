@@ -40,18 +40,25 @@
 
 #include "gms/i_endpoint_state_change_subscriber.hh"
 
+namespace netw {
+
+class messaging_service;
+
+}
+
 namespace locator {
 
 // @note all callbacks should be called in seastar::async() context
 class reconnectable_snitch_helper : public  gms::i_endpoint_state_change_subscriber {
 private:
     static logging::logger& logger();
+    netw::messaging_service& _ms;
     sstring _local_dc;
 private:
     void reconnect(gms::inet_address public_address, const gms::versioned_value& local_address_value);
     void reconnect(gms::inet_address public_address, gms::inet_address local_address);
 public:
-    reconnectable_snitch_helper(sstring local_dc);
+    reconnectable_snitch_helper(netw::messaging_service& ms, sstring local_dc);
     void before_change(gms::inet_address endpoint, gms::endpoint_state cs, gms::application_state new_state_key, const gms::versioned_value& new_value) override;
     void on_join(gms::inet_address endpoint, gms::endpoint_state ep_state) override;
     void on_change(gms::inet_address endpoint, gms::application_state state, const gms::versioned_value& value) override;
