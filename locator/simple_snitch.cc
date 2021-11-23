@@ -24,7 +24,7 @@
 #include "utils/class_registrator.hh"
 
 namespace locator {
-using registry = class_registrator<i_endpoint_snitch, simple_snitch>;
+using registry = class_registrator<i_endpoint_snitch, simple_snitch, sharded<gms::gossiper>&>;
 static registry registrator1("org.apache.cassandra.locator.SimpleSnitch");
 static registry registrator2("SimpleSnitch");
 }

@@ -707,7 +707,7 @@ int main(int ac, char** av) {
                 tracing::tracing::tracing_instance().stop().get();
             });
             supervisor::notify("creating snitch");
-            i_endpoint_snitch::create_snitch(cfg->endpoint_snitch()).get();
+            i_endpoint_snitch::create_snitch(cfg->endpoint_snitch(), gossiper).get();
             // #293 - do not stop anything
             // engine().at_exit([] { return i_endpoint_snitch::stop_snitch(); });
 

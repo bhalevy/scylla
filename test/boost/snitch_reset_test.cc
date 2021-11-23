@@ -28,6 +28,7 @@
 #include <vector>
 #include <string>
 #include <tuple>
+#include "gms/gossiper.hh"
 
 namespace fs = std::filesystem;
 
@@ -53,6 +54,8 @@ future<> one_test(const std::string& property_fname1,
         auto cpu0_rack_new = make_lw_shared<sstring>();
         auto my_address = utils::fb_utilities::get_broadcast_address();
 
+        sharded<gms::gossiper> gossiper;
+
         try {
             path fname1(test_files_subdir);
             fname1 /= path(property_fname1);
@@ -63,6 +66,7 @@ future<> one_test(const std::string& property_fname1,
             try {
                 i_endpoint_snitch::create_snitch<const sstring&>(
                     "org.apache.cassandra.locator.GossipingPropertyFileSnitch",
+                    gossiper,
                     sstring(fname1.string())
                 ).get();
             } catch (std::exception& e) {

@@ -75,8 +75,11 @@ std::vector<schema_ptr> do_load_schemas(std::string_view schema_str) {
     auto sst_dir_sem_stop = deferred_stop(sst_dir_sem);
 
     utils::fb_utilities::set_broadcast_address(gms::inet_address(0x7f000001)); // 127.0.0.1
+
+    sharded<gms::gossiper> gossiper;
+
     if (!locator::i_endpoint_snitch::snitch_instance().local_is_initialized()) {
-        locator::i_endpoint_snitch::create_snitch(cfg.endpoint_snitch()).get();
+        locator::i_endpoint_snitch::create_snitch(cfg.endpoint_snitch(), gossiper).get();
     }
 
     database db(cfg, dbcfg, migration_notifier, feature_service, token_metadata.local(), as, sst_dir_sem);

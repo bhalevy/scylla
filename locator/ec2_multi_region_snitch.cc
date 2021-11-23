@@ -47,8 +47,8 @@ static constexpr const char* PUBLIC_IPV6_QUERY_REQ  = "/latest/meta-data/network
 static constexpr const char* PRIVATE_MAC_QUERY = "/latest/meta-data/network/interfaces/macs";
 
 namespace locator {
-ec2_multi_region_snitch::ec2_multi_region_snitch(const sstring& fname, unsigned io_cpu_id)
-    : ec2_snitch(fname, io_cpu_id) {}
+ec2_multi_region_snitch::ec2_multi_region_snitch(sharded<gms::gossiper>& gossiper, const sstring& fname, unsigned io_cpu_id)
+    : ec2_snitch(gossiper, fname, io_cpu_id) {}
 
 future<> ec2_multi_region_snitch::start() {
     _state = snitch_state::initializing;
@@ -127,29 +127,28 @@ future<> ec2_multi_region_snitch::gossiper_starting() {
     //
 
     using namespace gms;
-    auto& g = get_local_gossiper();
 
     return gossip_snitch_info({
         { application_state::INTERNAL_IP, versioned_value::internal_ip(_local_private_address) }
     }).then([this] {
         if (!_gossip_started) {
-            gms::get_local_gossiper().register_(::make_shared<reconnectable_snitch_helper>(_my_dc));
+            _gossiper.local().register_(::make_shared<reconnectable_snitch_helper>(_my_dc));
             _gossip_started = true;
         }
     });
 
 }
 
-using registry_2_params = class_registrator<i_endpoint_snitch, ec2_multi_region_snitch, const sstring&, unsigned>;
+using registry_2_params = class_registrator<i_endpoint_snitch, ec2_multi_region_snitch, sharded<gms::gossiper>&, const sstring&, unsigned>;
 static registry_2_params registrator2("org.apache.cassandra.locator.Ec2MultiRegionSnitch");
 static registry_2_params registrator2_short_name("Ec2MultiRegionSnitch");
 
 
-using registry_1_param = class_registrator<i_endpoint_snitch, ec2_multi_region_snitch, const sstring&>;
+using registry_1_param = class_registrator<i_endpoint_snitch, ec2_multi_region_snitch, sharded<gms::gossiper>&, const sstring&>;
 static registry_1_param registrator1("org.apache.cassandra.locator.Ec2MultiRegionSnitch");
 static registry_1_param registrator1_short_name("Ec2MultiRegionSnitch");
 
-using registry_default = class_registrator<i_endpoint_snitch, ec2_multi_region_snitch>;
+using registry_default = class_registrator<i_endpoint_snitch, ec2_multi_region_snitch, sharded<gms::gossiper>&>;
 static registry_default registrator_default("org.apache.cassandra.locator.Ec2MultiRegionSnitch");
 static registry_default registrator_default_short_name("Ec2MultiRegionSnitch");
 

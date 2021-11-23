@@ -50,8 +50,11 @@ future<> one_test(const std::string& property_fname, bool exp_result) {
 
     engine().set_strict_dma(false);
 
+    sharded<gms::gossiper> gossiper;
+
     return i_endpoint_snitch::create_snitch<const sstring&>(
         "org.apache.cassandra.locator.GossipingPropertyFileSnitch",
+        gossiper,
         sstring(fname.string()))
         .then_wrapped([exp_result] (auto&& f) {
             try {

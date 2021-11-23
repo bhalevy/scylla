@@ -446,8 +446,6 @@ public:
 
             utils::fb_utilities::set_broadcast_address(gms::inet_address("localhost"));
             utils::fb_utilities::set_broadcast_rpc_address(gms::inet_address("localhost"));
-            locator::i_endpoint_snitch::create_snitch("SimpleSnitch").get();
-            auto stop_snitch = defer([] { locator::i_endpoint_snitch::stop_snitch().get(); });
 
             sharded<abort_source> abort_sources;
             abort_sources.start().get();
@@ -563,6 +561,9 @@ public:
                 gms::set_the_gossiper(nullptr);
             });
             gossiper.invoke_on_all(&gms::gossiper::start).get();
+
+            locator::i_endpoint_snitch::create_snitch("SimpleSnitch", gossiper).get();
+            auto stop_snitch = defer([] { locator::i_endpoint_snitch::stop_snitch().get(); });
 
             distributed<service::storage_proxy>& proxy = service::get_storage_proxy();
             distributed<service::migration_manager> mm;

@@ -68,8 +68,11 @@ future<bool> gossiping_property_file_snitch::property_file_was_modified() {
 }
 
 gossiping_property_file_snitch::gossiping_property_file_snitch(
+    sharded<gms::gossiper>& gossiper,
     const sstring& fname, unsigned io_cpuid)
-: production_snitch_base(fname), _file_reader_cpu_id(io_cpuid) {
+        : production_snitch_base(gossiper, fname)
+        , _file_reader_cpu_id(io_cpuid)
+{
     if (this_shard_id() == _file_reader_cpu_id) {
         io_cpu_id() = _file_reader_cpu_id;
     }
@@ -312,7 +315,7 @@ future<> gossiping_property_file_snitch::reload_gossiper_state() {
 
     future<> ret = make_ready_future<>();
     if (_reconnectable_helper) {
-        ret = gms::get_local_gossiper().unregister_(_reconnectable_helper);
+        ret = _gossiper.local().unregister_(_reconnectable_helper);
     }
 
     if (!_prefer_local) {
@@ -321,22 +324,23 @@ future<> gossiping_property_file_snitch::reload_gossiper_state() {
 
     return ret.then([this] {
         _reconnectable_helper = ::make_shared<reconnectable_snitch_helper>(_my_dc);
-        gms::get_local_gossiper().register_(_reconnectable_helper);
+        _gossiper.local().register_(_reconnectable_helper);
     });
 }
 
 using registry_2_params = class_registrator<i_endpoint_snitch,
                                    gossiping_property_file_snitch,
-                                   const sstring&, unsigned>;
+                                   sharded<gms::gossiper>&, const sstring&, unsigned>;
 static registry_2_params registrator2("org.apache.cassandra.locator.GossipingPropertyFileSnitch");
 
 using registry_1_param = class_registrator<i_endpoint_snitch,
                                    gossiping_property_file_snitch,
-                                   const sstring&>;
+                                   sharded<gms::gossiper>&, const sstring&>;
 static registry_1_param registrator1("org.apache.cassandra.locator.GossipingPropertyFileSnitch");
 
 using registry_default = class_registrator<i_endpoint_snitch,
-                                           gossiping_property_file_snitch>;
+                                           gossiping_property_file_snitch,
+                                           sharded<gms::gossiper>&>;
 static registry_default registrator_default("org.apache.cassandra.locator.GossipingPropertyFileSnitch");
 static registry_default registrator_default_short_name("GossipingPropertyFileSnitch");
 } // namespace locator

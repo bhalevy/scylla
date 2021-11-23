@@ -74,6 +74,7 @@ public:
     }
 
     gossiping_property_file_snitch(
+        sharded<gms::gossiper>& gossiper,
         const sstring& fname = "",
         unsigned io_cpuid = 0);
 

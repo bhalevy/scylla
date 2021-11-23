@@ -84,6 +84,8 @@ future<> one_test(const std::string& property_fname, bool exp_result) {
 
         httpd::http_server_control http_server;
 
+        sharded<gms::gossiper> gossiper;
+
         try {
             if (use_dummy_server) {
                 http_server.start("dummy_GCE_meta_server").get();
@@ -93,7 +95,7 @@ future<> one_test(const std::string& property_fname, bool exp_result) {
                 http_server.listen(ipv4_addr(meta_url.c_str(), 80)).get();
             }
 
-            i_endpoint_snitch::create_snitch<const sstring&, const unsigned&, const sstring&>("GoogleCloudSnitch", sstring(fname.string()), 0, meta_url).get();
+            i_endpoint_snitch::create_snitch<const sstring&, const unsigned&, const sstring&>("GoogleCloudSnitch", gossiper, sstring(fname.string()), 0, meta_url).get();
             if (!exp_result) {
                 BOOST_ERROR("Failed to catch an error in a malformed configuration file");
                 i_endpoint_snitch::stop_snitch().get();

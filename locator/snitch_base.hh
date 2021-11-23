@@ -55,6 +55,7 @@
 namespace gms {
 
 enum class application_state;
+class gossiper;
 
 }
 
@@ -72,12 +73,14 @@ struct i_endpoint_snitch {
 private:
     template <typename... A>
     static future<> init_snitch_obj(
-        distributed<snitch_ptr>& snitch_obj, const sstring& snitch_name, A&&... a);
+        distributed<snitch_ptr>& snitch_obj, const sstring& snitch_name, sharded<gms::gossiper>& gossiper, A&&... a);
 public:
     using ptr_type = std::unique_ptr<i_endpoint_snitch>;
 
+    i_endpoint_snitch(sharded<gms::gossiper>& gossiper) noexcept : _gossiper(gossiper) {}
+
     template <typename... A>
-    static future<> create_snitch(const sstring& snitch_name, A&&... a);
+    static future<> create_snitch(const sstring& snitch_name, sharded<gms::gossiper>& gossiper, A&&... a);
 
     template <typename... A>
     static future<> reset_snitch(const sstring& snitch_name, A&&... a);
@@ -228,6 +231,7 @@ protected:
         stopped
     } _state = snitch_state::initializing;
     bool _gossip_started = false;
+    sharded<gms::gossiper>& _gossiper;
 };
 
 struct snitch_ptr {
@@ -285,17 +289,17 @@ private:
  */
 template <typename... A>
 future<> i_endpoint_snitch::init_snitch_obj(
-    distributed<snitch_ptr>& snitch_obj, const sstring& snitch_name, A&&... a) {
+    distributed<snitch_ptr>& snitch_obj, const sstring& snitch_name, sharded<gms::gossiper>& gossiper, A&&... a) {
 
     // First, create the snitch_ptr objects...
     return snitch_obj.start().then(
-        [&snitch_obj, snitch_name = std::move(snitch_name), a = std::make_tuple(std::forward<A>(a)...)] () {
+        [&snitch_obj, snitch_name = std::move(snitch_name), a = std::make_tuple(std::ref(gossiper), std::forward<A>(a)...)] () {
         // ...then, create the snitches...
         return snitch_obj.invoke_on_all(
             [snitch_name, a, &snitch_obj] (snitch_ptr& local_inst) {
             try {
-                auto s(std::move(apply([snitch_name] (A&&... a) {
-                    return create_object<i_endpoint_snitch>(snitch_name, std::forward<A>(a)...);
+                auto s(std::move(apply([snitch_name] (sharded<gms::gossiper>& gossiper, A&&... a) {
+                    return create_object<i_endpoint_snitch>(snitch_name, gossiper, std::forward<A>(a)...);
                 }, std::move(a))));
 
                 s->set_my_distributed(&snitch_obj);
@@ -320,10 +324,10 @@ future<> i_endpoint_snitch::init_snitch_obj(
  */
 template <typename... A>
 future<> i_endpoint_snitch::create_snitch(
-    const sstring& snitch_name, A&&... a) {
+    const sstring& snitch_name, sharded<gms::gossiper>&gossiper, A&&... a) {
 
     // First, create and "start" the distributed snitch object...
-    return init_snitch_obj(snitch_instance(), snitch_name, std::forward<A>(a)...).then([snitch_name] {
+    return init_snitch_obj(snitch_instance(), snitch_name, gossiper, std::forward<A>(a)...).then([snitch_name] {
         // ...and then start each local snitch.
         return snitch_instance().invoke_on_all([] (snitch_ptr& local_inst) {
             return local_inst.start();
@@ -364,11 +368,14 @@ future<> i_endpoint_snitch::reset_snitch(
     return seastar::async(
             [snitch_name, a = std::make_tuple(std::forward<A>(a)...)] {
 
+        // (0) get the gossiper from the current snitch
+        sharded<gms::gossiper>& gossiper =  snitch_instance().local()->_gossiper;
+
         // (1) create a new snitch
         distributed<snitch_ptr> tmp_snitch;
         try {
-            apply([snitch_name,&tmp_snitch](A&& ... a) {
-                return init_snitch_obj(tmp_snitch, snitch_name, std::forward<A>(a)...);
+            apply([&gossiper, snitch_name,&tmp_snitch](A&& ... a) {
+                return init_snitch_obj(tmp_snitch, snitch_name, gossiper, std::forward<A>(a)...);
             }, std::move(a)).get();
 
             // (2) start the local instances of the new snitch
@@ -427,6 +434,8 @@ future<> i_endpoint_snitch::reset_snitch(
 
 class snitch_base : public i_endpoint_snitch {
 public:
+    snitch_base(sharded<gms::gossiper>& gossiper) noexcept : i_endpoint_snitch(gossiper) {}
+
     //
     // Sons have to implement:
     // virtual sstring get_rack(inet_address endpoint)        = 0;
