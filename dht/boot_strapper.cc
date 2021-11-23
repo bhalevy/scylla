@@ -76,7 +76,7 @@ future<> boot_strapper::bootstrap(gms::gossiper& gossiper, streaming::stream_rea
             auto& strategy = ks.get_replication_strategy();
             dht::token_range_vector ranges = co_await strategy.get_pending_address_ranges(_token_metadata_ptr, _tokens, _address);
             blogger.debug("Will stream keyspace={}, ranges={}", keyspace_name, ranges);
-            co_await streamer->add_ranges(keyspace_name, ranges);
+            co_await streamer->add_ranges(gossiper, keyspace_name, ranges);
         }
         _abort_source.check();
         co_await streamer->stream_async();
