@@ -652,7 +652,7 @@ future<> repair_info::repair_range(const dht::token_range& range) {
     repair_neighbors neighbors = get_repair_neighbors(range);
     return do_with(std::move(neighbors.all), std::move(neighbors.mandatory), [this, range] (auto& neighbors, auto& mandatory_neighbors) {
       auto live_neighbors = boost::copy_range<std::vector<gms::inet_address>>(neighbors |
-                    boost::adaptors::filtered([] (const gms::inet_address& node) { return gms::get_local_gossiper().is_alive(node); }));
+                    boost::adaptors::filtered([&gosiper = mm.get_local_gossiper()] (const gms::inet_address& node) { return gosiper.is_alive(node); }));
       for (auto& node : mandatory_neighbors) {
            auto it = std::find(live_neighbors.begin(), live_neighbors.end(), node);
            if (it == live_neighbors.end()) {

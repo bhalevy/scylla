@@ -179,6 +179,11 @@ public:
     bool have_schema_agreement();
 
     void init_messaging_service();
+
+    gms::gossiper& get_local_gossiper() noexcept {
+        return _gossiper;
+    };
+
 private:
     future<> uninit_messaging_service();
 
