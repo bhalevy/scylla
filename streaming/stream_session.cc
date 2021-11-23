@@ -109,7 +109,7 @@ static sstables::offstrategy is_offstrategy_supported(streaming::stream_reason r
     return sstables::offstrategy(operations_supported.contains(reason));
 }
 
-void stream_session::init_messaging_service_handler(netw::messaging_service& ms, shared_ptr<service::migration_manager> mm, shared_ptr<streaming::stream_manager> stream_manager) {
+void stream_session::init_messaging_service_handler(netw::messaging_service& ms, shared_ptr<service::migration_manager> mm) {
     ms.register_prepare_message([] (const rpc::client_info& cinfo, prepare_message msg, UUID plan_id, sstring description, rpc::optional<stream_reason> reason_opt) {
         const auto& src_cpu_id = cinfo.retrieve_auxiliary<uint32_t>("src_cpu_id");
         const auto& from = cinfo.retrieve_auxiliary<gms::inet_address>("baddr");
@@ -132,7 +132,7 @@ void stream_session::init_messaging_service_handler(netw::messaging_service& ms,
             return make_ready_future<>();
         });
     });
-    ms.register_stream_mutation_fragments([&ms, mm, stream_manager = std::move(stream_manager)] (const rpc::client_info& cinfo, UUID plan_id, UUID schema_id, UUID cf_id, uint64_t estimated_partitions, rpc::optional<stream_reason> reason_opt, rpc::source<frozen_mutation_fragment, rpc::optional<stream_mutation_fragments_cmd>> source) {
+    ms.register_stream_mutation_fragments([&ms, mm] (const rpc::client_info& cinfo, UUID plan_id, UUID schema_id, UUID cf_id, uint64_t estimated_partitions, rpc::optional<stream_reason> reason_opt, rpc::source<frozen_mutation_fragment, rpc::optional<stream_mutation_fragments_cmd>> source) {
         auto from = netw::messaging_service::get_source(cinfo);
         auto reason = reason_opt ? *reason_opt: stream_reason::unspecified;
         sslog.trace("Got stream_mutation_fragments from {} reason {}", from, int(reason));
@@ -142,16 +142,16 @@ void stream_session::init_messaging_service_handler(netw::messaging_service& ms,
                     utils::fb_utilities::get_broadcast_address())));
         }
 
-        return mm->get_schema_for_write(schema_id, from, ms).then([from, estimated_partitions, plan_id, schema_id, &cf, source, reason, stream_manager] (schema_ptr s) mutable {
-          return get_local_db().obtain_reader_permit(cf, "stream-session", db::no_timeout).then([from, estimated_partitions, plan_id, schema_id, &cf, source, reason, stream_manager, s] (reader_permit permit) mutable {
+        return mm->get_schema_for_write(schema_id, from, ms).then([from, estimated_partitions, plan_id, schema_id, &cf, source, reason] (schema_ptr s) mutable {
+          return get_local_db().obtain_reader_permit(cf, "stream-session", db::no_timeout).then([from, estimated_partitions, plan_id, schema_id, &cf, source, reason, s] (reader_permit permit) mutable {
             auto sink = stream_session::ms().make_sink_for_stream_mutation_fragments(source);
             struct stream_mutation_fragments_cmd_status {
                 bool got_cmd = false;
                 bool got_end_of_stream = false;
             };
             auto cmd_status = make_lw_shared<stream_mutation_fragments_cmd_status>();
-            auto get_next_mutation_fragment = [source, plan_id, from, s, cmd_status, permit, stream_manager] () mutable {
-                return source().then([plan_id, from, s, cmd_status, permit, stream_manager] (std::optional<std::tuple<frozen_mutation_fragment, rpc::optional<stream_mutation_fragments_cmd>>> opt) mutable {
+            auto get_next_mutation_fragment = [source, plan_id, from, s, cmd_status, permit] () mutable {
+                return source().then([plan_id, from, s, cmd_status, permit] (std::optional<std::tuple<frozen_mutation_fragment, rpc::optional<stream_mutation_fragments_cmd>>> opt) mutable {
                     if (opt) {
                         auto cmd = std::get<1>(*opt);
                         if (cmd) {
@@ -171,7 +171,7 @@ void stream_session::init_messaging_service_handler(netw::messaging_service& ms,
                         frozen_mutation_fragment& fmf = std::get<0>(*opt);
                         auto sz = fmf.representation().size();
                         auto mf = fmf.unfreeze(*s, permit);
-                        stream_manager->update_progress(plan_id, from.addr, progress_info::direction::IN, sz);
+                        streaming::get_local_stream_manager().update_progress(plan_id, from.addr, progress_info::direction::IN, sz);
                         return make_ready_future<mutation_fragment_opt>(std::move(mf));
                     } else {
                         // If the sender has sent stream_mutation_fragments_cmd it means it is
@@ -262,15 +262,19 @@ stream_session::stream_session(inet_address peer_)
 stream_session::~stream_session() = default;
 
 future<> stream_session::init_streaming_service(distributed<database>& db, distributed<db::system_distributed_keyspace>& sys_dist_ks,
-        distributed<db::view::view_update_generator>& view_update_generator, sharded<netw::messaging_service>& ms,
-        sharded<service::migration_manager>& mm, sharded<streaming::stream_manager>& stream_manager) {
+        distributed<db::view::view_update_generator>& view_update_generator, sharded<netw::messaging_service>& ms, sharded<service::migration_manager>& mm) {
     _db = &db;
     _sys_dist_ks = &sys_dist_ks;
     _view_update_generator = &view_update_generator;
     _messaging = &ms;
-    auto local_stream_manager = stream_manager.local().shared_from_this();
-    gms::get_local_gossiper().register_(local_stream_manager);
-    return ms.invoke_on_all([&mm, local_stream_manager = std::move(local_stream_manager)] (netw::messaging_service& ms) { init_messaging_service_handler(ms, mm.local().shared_from_this(), local_stream_manager); });
+    // #293 - do not stop anything
+    // engine().at_exit([] {
+    //     return get_stream_manager().stop();
+    // });
+    return get_stream_manager().start().then([&ms, &mm] {
+        gms::get_local_gossiper().register_(get_local_stream_manager().shared_from_this());
+        return ms.invoke_on_all([&mm] (netw::messaging_service& ms) { init_messaging_service_handler(ms, mm.local().shared_from_this()); });
+    });
 }
 
 future<> stream_session::uninit_streaming_service() {
