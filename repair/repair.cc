@@ -1032,7 +1032,7 @@ int repair_service::do_repair_start(sstring keyspace, std::unordered_map<sstring
     auto id = repair_tracker().next_repair_command();
     rlogger.info("starting user-requested repair for keyspace {}, repair id {}, options {}", keyspace, id, options_map);
 
-    if (!gms::get_local_gossiper().is_normal(utils::fb_utilities::get_broadcast_address())) {
+    if (!get_local_gossiper().is_normal(utils::fb_utilities::get_broadcast_address())) {
         throw std::runtime_error("Node is not in NORMAL status yet!");
     }
 

@@ -107,6 +107,8 @@ public:
     service::migration_manager& get_migration_manager() noexcept { return _mm; }
     sharded<db::system_distributed_keyspace>& get_sys_dist_ks() noexcept { return _sys_dist_ks; }
     sharded<db::view::view_update_generator>& get_view_update_generator() noexcept { return _view_update_generator; }
+    sharded<gms::gossiper>& gossiper() noexcept { return _gossiper; }
+    gms::gossiper& get_local_gossiper() noexcept { return _gossiper.local(); }
 };
 
 class repair_info;
