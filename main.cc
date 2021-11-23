@@ -488,6 +488,7 @@ int main(int ac, char** av) {
     sharded<gms::gossiper> gossiper;
     sharded<service::raft_group_registry> raft_gr;
     sharded<service::memory_limiter> service_memory_limiter;
+    sharded<streaming::stream_manager> stream_manager;
     sharded<repair_service> repair;
     sharded<sstables_loader> sst_loader;
 
@@ -519,7 +520,7 @@ int main(int ac, char** av) {
         return seastar::async([cfg, ext, &db, &qp, &bm, &proxy, &mm, &mm_notifier, &ctx, &opts, &dirs,
                 &prometheus_server, &cf_cache_hitrate_calculator, &load_meter, &feature_service,
                 &token_metadata, &erm_factory, &snapshot_ctl, &messaging, &sst_dir_semaphore, &gossiper, &raft_gr, &service_memory_limiter,
-                &repair, &sst_loader, &ss, &lifecycle_notifier] {
+                &stream_manager, &repair, &sst_loader, &ss, &lifecycle_notifier] {
           try {
             // disable reactor stall detection during startup
             auto blocked_reactor_notify_ms = engine().get_blocked_reactor_notify_ms();
@@ -1043,8 +1044,18 @@ int main(int ac, char** av) {
                 stop_raft_rpc->cancel();
             }
 
+            supervisor::notify("starting stream manager");
+            stream_manager.start().get();
+            // FIXME: until we deglobalize the stream_manager
+            streaming::set_the_stream_manager(&stream_manager);
+            auto stop_stream_manager = defer([&stream_manager] {
+                stream_manager.stop().get();
+                // FIXME: until we deglobalize the stream_manager
+                streaming::set_the_stream_manager(nullptr);
+            });
+
             supervisor::notify("starting streaming service");
-            streaming::stream_session::init_streaming_service(db, sys_dist_ks, view_update_generator, messaging, mm).get();
+            streaming::stream_session::init_streaming_service(db, sys_dist_ks, view_update_generator, messaging, mm, stream_manager).get();
             auto stop_streaming_service = defer_verbose_shutdown("streaming service", [] {
                 streaming::stream_session::uninit_streaming_service().get();
             });
