@@ -45,6 +45,12 @@
 #include <seastar/core/distributed.hh>
 #include <seastar/core/abort_source.hh>
 
+namespace gms {
+
+class gossiper;
+
+}
+
 namespace dht {
 
 class boot_strapper {
@@ -68,7 +74,7 @@ public:
         , _token_metadata_ptr(std::move(tmptr)) {
     }
 
-    future<> bootstrap(streaming::stream_reason reason);
+    future<> bootstrap(gms::gossiper& gossiper, streaming::stream_reason reason);
 
     /**
      * if initialtoken was specified, use that (split on comma).
