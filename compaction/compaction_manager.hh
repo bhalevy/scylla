@@ -306,7 +306,7 @@ public:
     }
 
     // Stops ongoing compaction of a given type.
-    void stop_compaction(sstring type);
+    future<> stop_compaction(sstring type);
 
     double backlog() {
         return _backlog_manager.backlog();
