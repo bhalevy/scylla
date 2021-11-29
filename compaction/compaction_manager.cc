@@ -566,12 +566,19 @@ future<> compaction_manager::stop_ongoing_compactions(sstring reason) {
     return stop_tasks(std::move(tasks), std::move(reason));
 }
 
-future<> compaction_manager::stop_ongoing_compactions(sstring reason, column_family* cf) {
+future<> compaction_manager::stop_ongoing_compactions(sstring reason, column_family* cf, std::optional<sstables::compaction_type> type_opt) {
     auto ongoing_compactions = get_compactions(cf).size();
-    auto tasks = boost::copy_range<std::vector<lw_shared_ptr<task>>>(_tasks | boost::adaptors::filtered([cf] (auto& task) {
-        return task->compacting_cf == cf;
+    auto tasks = boost::copy_range<std::vector<lw_shared_ptr<task>>>(_tasks | boost::adaptors::filtered([cf, type_opt] (auto& task) {
+        return (!cf || task->compacting_cf == cf) && (!type_opt || task->type == *type_opt);
     }));
-    cmlog.info("Stopping {} tasks for {} ongoing compactions for table {}.{} due to {}", tasks.size(), ongoing_compactions, cf->schema()->ks_name(), cf->schema()->cf_name(), reason);
+    sstring scope = "";
+    if (cf) {
+        scope = format(" for table {}.{}", cf->schema()->ks_name(), cf->schema()->cf_name());
+    }
+    if (type_opt) {
+        scope += format(" {} type={}", scope.size() ? "and" : "for", *type_opt);
+    }
+    cmlog.info("Stopping {} tasks for {} ongoing compactions{} due to {}", tasks.size(), ongoing_compactions, scope, reason);
     return stop_tasks(std::move(tasks), std::move(reason));
 }
 
@@ -1072,19 +1079,14 @@ const std::vector<sstables::compaction_info> compaction_manager::get_compactions
             }) | boost::adaptors::transformed(to_info));
 }
 
-void compaction_manager::stop_compaction(sstring type) {
+future<> compaction_manager::stop_compaction(sstring type) {
     sstables::compaction_type target_type;
     try {
         target_type = sstables::to_compaction_type(type);
     } catch (...) {
         throw std::runtime_error(format("Compaction of type {} cannot be stopped by compaction manager: {}", type.c_str(), std::current_exception()));
     }
-    // FIXME: switch to task_stop(), and wait for their termination, so API user can know when compactions actually stopped.
-    for (auto& task : _tasks) {
-        if (task->compaction_running && target_type == task->type) {
-            task->compaction_data.stop("user request");
-        }
-    }
+    return stop_ongoing_compactions("user request", nullptr, target_type);
 }
 
 void compaction_manager::propagate_replacement(column_family* cf,
