@@ -562,6 +562,7 @@ future<> compaction_manager::stop_ongoing_compactions(sstring reason, column_fam
         return (!cf || task->compacting_cf == cf) && (!type_opt || task->type == *type_opt);
     }));
     if (cmlog.is_enabled(logging::log_level::info)) {
+        logging::log_level level = tasks.empty() ? log_level::debug : log_level::info;
         sstring scope = "";
         if (cf) {
             scope = format(" for table {}.{}", cf->schema()->ks_name(), cf->schema()->cf_name());
@@ -569,7 +570,7 @@ future<> compaction_manager::stop_ongoing_compactions(sstring reason, column_fam
         if (type_opt) {
             scope += format(" {} type={}", scope.size() ? "and" : "for", *type_opt);
         }
-        cmlog.info("Stopping {} tasks for {} ongoing compactions{} due to {}", tasks.size(), ongoing_compactions, scope, reason);
+        cmlog.log(level, "Stopping {} tasks for {} ongoing compactions{} due to {}", tasks.size(), ongoing_compactions, scope, reason);
     }
     return stop_tasks(std::move(tasks), std::move(reason));
 }
