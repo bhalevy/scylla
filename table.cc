@@ -2178,8 +2178,7 @@ table::disable_auto_compaction() {
     // - it will break computation of major compaction descriptor
     //   for new submissions
     _compaction_disabled_by_user = true;
-    // FIXME: stop ongoing compactions
-    return make_ready_future<>();
+    return compaction_manager().stop_ongoing_compactions("disable auto-compaction", this);
 }
 
 flat_mutation_reader
