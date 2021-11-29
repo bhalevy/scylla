@@ -561,14 +561,17 @@ future<> compaction_manager::stop_ongoing_compactions(sstring reason, column_fam
     auto tasks = boost::copy_range<std::vector<lw_shared_ptr<task>>>(_tasks | boost::adaptors::filtered([cf, type_opt] (auto& task) {
         return (!cf || task->compacting_cf == cf) && (!type_opt || task->type == *type_opt);
     }));
-    sstring scope = "";
-    if (cf) {
-        scope = format(" for table {}.{}", cf->schema()->ks_name(), cf->schema()->cf_name());
+    if (cmlog.is_enabled(logging::log_level::debug)) {
+        logging::log_level level = tasks.empty() ? log_level::debug : log_level::info;
+        sstring scope = "";
+        if (cf) {
+            scope = format(" for table {}.{}", cf->schema()->ks_name(), cf->schema()->cf_name());
+        }
+        if (type_opt) {
+            scope += format(" {} type={}", scope.size() ? "and" : "for", *type_opt);
+        }
+        cmlog.log(level, "Stopping {} tasks for {} ongoing compactions{} due to {}", tasks.size(), ongoing_compactions, scope, reason);
     }
-    if (type_opt) {
-        scope += format(" {} type={}", scope.size() ? "and" : "for", *type_opt);
-    }
-    cmlog.info("Stopping {} tasks for {} ongoing compactions{} due to {}", tasks.size(), ongoing_compactions, scope, reason);
     return stop_tasks(std::move(tasks), std::move(reason));
 }
 
