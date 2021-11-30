@@ -52,7 +52,7 @@ class chunked_vector {
     size_t _size = 0;
     size_t _capacity = 0;
 private:
-    static size_t max_chunk_capacity() {
+    static constexpr size_t max_chunk_capacity() {
         return std::max(max_contiguous_allocation / sizeof(T), size_t(1));
     }
     void reserve_for_push_back() {
