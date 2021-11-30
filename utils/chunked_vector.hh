@@ -46,7 +46,6 @@ struct chunked_vector_free_deleter {
 
 template <typename T, size_t max_contiguous_allocation = 128*1024>
 class chunked_vector {
-    static_assert(std::is_nothrow_move_constructible<T>::value, "T must be nothrow move constructible");
     using chunk_ptr = std::unique_ptr<T[], chunked_vector_free_deleter>;
     // Each chunk holds max_chunk_capacity() items, except possibly the last
     utils::small_vector<chunk_ptr, 1> _chunks;
