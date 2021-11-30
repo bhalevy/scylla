@@ -132,14 +132,14 @@ public:
         ++_size;
         return ret;
     }
-    void pop_back() {
+    void pop_back() noexcept {
         --_size;
         addr(_size)->~T();
     }
-    const T& back() const {
+    const T& back() const noexcept {
         return *addr(_size - 1);
     }
-    T& back() {
+    T& back() noexcept {
         return *addr(_size - 1);
     }
 
