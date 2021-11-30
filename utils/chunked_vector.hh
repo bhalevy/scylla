@@ -91,13 +91,13 @@ public:
     chunked_vector& operator=(const chunked_vector& x);
     chunked_vector& operator=(chunked_vector&& x) noexcept;
 
-    bool empty() const {
+    bool empty() const noexcept {
         return !_size;
     }
-    size_t size() const {
+    size_t size() const noexcept {
         return _size;
     }
-    size_t capacity() const {
+    size_t capacity() const noexcept {
         return _capacity;
     }
     T& operator[](size_t i) noexcept {
@@ -173,7 +173,7 @@ public:
         return 0;
     }
 
-    size_t memory_size() const {
+    size_t memory_size() const noexcept {
         return _capacity * sizeof(T);
     }
 public:
