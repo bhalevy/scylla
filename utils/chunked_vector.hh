@@ -63,7 +63,7 @@ private:
     void do_reserve_for_push_back();
     size_t make_room(size_t n, bool stop_after_one);
     chunk_ptr new_chunk(size_t n);
-    T* addr(size_t i) const {
+    T* addr(size_t i) const noexcept {
         return &_chunks[i / max_chunk_capacity()][i % max_chunk_capacity()];
     }
     void check_bounds(size_t i) const {
@@ -100,10 +100,10 @@ public:
     size_t capacity() const {
         return _capacity;
     }
-    T& operator[](size_t i) {
+    T& operator[](size_t i) noexcept {
         return *addr(i);
     }
-    const T& operator[](size_t i) const {
+    const T& operator[](size_t i) const noexcept {
         return *addr(i);
     }
     T& at(size_t i) {
