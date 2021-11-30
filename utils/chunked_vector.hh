@@ -188,20 +188,20 @@ public:
         using pointer = ValueType*;
         using reference = ValueType&;
     private:
-        pointer addr() const {
+        pointer addr() const noexcept {
             return &_chunks[_i / max_chunk_capacity()][_i % max_chunk_capacity()];
         }
         iterator_type(const chunk_ptr* chunks, size_t i) noexcept : _chunks(chunks), _i(i) {}
     public:
         iterator_type() = default;
         iterator_type(const iterator_type<std::remove_const_t<ValueType>>& x) noexcept : _chunks(x._chunks), _i(x._i) {} // needed for iterator->const_iterator conversion
-        reference operator*() const {
+        reference operator*() const noexcept {
             return *addr();
         }
-        pointer operator->() const {
+        pointer operator->() const noexcept {
             return addr();
         }
-        reference operator[](ssize_t n) const {
+        reference operator[](ssize_t n) const noexcept {
             return *(*this + n);
         }
         iterator_type& operator++() {
