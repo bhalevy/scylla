@@ -204,62 +204,62 @@ public:
         reference operator[](ssize_t n) const noexcept {
             return *(*this + n);
         }
-        iterator_type& operator++() {
+        iterator_type& operator++() noexcept {
             ++_i;
             return *this;
         }
-        iterator_type operator++(int) {
+        iterator_type operator++(int) noexcept {
             auto x = *this;
             ++_i;
             return x;
         }
-        iterator_type& operator--() {
+        iterator_type& operator--() noexcept {
             --_i;
             return *this;
         }
-        iterator_type operator--(int) {
+        iterator_type operator--(int) noexcept {
             auto x = *this;
             --_i;
             return x;
         }
-        iterator_type& operator+=(ssize_t n) {
+        iterator_type& operator+=(ssize_t n) noexcept {
             _i += n;
             return *this;
         }
-        iterator_type& operator-=(ssize_t n) {
+        iterator_type& operator-=(ssize_t n) noexcept {
             _i -= n;
             return *this;
         }
-        iterator_type operator+(ssize_t n) const {
+        iterator_type operator+(ssize_t n) const noexcept {
             auto x = *this;
             return x += n;
         }
-        iterator_type operator-(ssize_t n) const {
+        iterator_type operator-(ssize_t n) const noexcept {
             auto x = *this;
             return x -= n;
         }
-        friend iterator_type operator+(ssize_t n, iterator_type a) {
+        friend iterator_type operator+(ssize_t n, iterator_type a) noexcept {
             return a + n;
         }
-        friend ssize_t operator-(iterator_type a, iterator_type b) {
+        friend ssize_t operator-(iterator_type a, iterator_type b) noexcept {
             return a._i - b._i;
         }
-        bool operator==(iterator_type x) const {
+        bool operator==(iterator_type x) const noexcept {
             return _i == x._i;
         }
-        bool operator!=(iterator_type x) const {
+        bool operator!=(iterator_type x) const noexcept {
             return _i != x._i;
         }
-        bool operator<(iterator_type x) const {
+        bool operator<(iterator_type x) const noexcept {
             return _i < x._i;
         }
-        bool operator<=(iterator_type x) const {
+        bool operator<=(iterator_type x) const noexcept {
             return _i <= x._i;
         }
-        bool operator>(iterator_type x) const {
+        bool operator>(iterator_type x) const noexcept {
             return _i > x._i;
         }
-        bool operator>=(iterator_type x) const {
+        bool operator>=(iterator_type x) const noexcept {
             return _i >= x._i;
         }
         friend class chunked_vector;
