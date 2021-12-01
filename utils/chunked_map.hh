@@ -33,64 +33,103 @@
 
 namespace utils {
 
+namespace internal {
+
+namespace bi = boost::intrusive;
+
+template<typename Key, typename T,
+    typename ValueType = std::pair<const Key, T>>
+struct chunked_unordered_map_node : public ValueType {
+    using value_type = ValueType;
+
+    using node_list_hook = bi::list_base_hook<>;
+    using node_bucket_list_hook = bi::list_base_hook<bi::link_mode<bi::auto_unlink>>;
+
+    node_list_hook all_link = {};
+    node_bucket_list_hook bucket_link = {};
+
+    using node_list = bi::list<chunked_unordered_map_node,
+            bi::member_hook<chunked_unordered_map_node, node_list_hook, &chunked_unordered_map_node::all_link>,
+            bi::constant_time_size<true>>;
+
+    using node_bucket_list = bi::list<chunked_unordered_map_node,
+            bi::member_hook<chunked_unordered_map_node, node_bucket_list_hook, &chunked_unordered_map_node::bucket_link>,
+            bi::constant_time_size<false>>;
+
+    chunked_unordered_map_node() = delete;
+
+    explicit chunked_unordered_map_node(const value_type& value) noexcept(std::is_nothrow_copy_constructible_v<value_type>)
+        : value_type(value)
+    {}
+
+    explicit chunked_unordered_map_node(value_type&& value) noexcept(std::is_nothrow_move_constructible_v<value_type>)
+        : value_type(std::move(value))
+    {}
+
+    chunked_unordered_map_node& operator=(const value_type&) = delete;
+    chunked_unordered_map_node& operator=(value_type&&) = delete;
+
+    value_type& value() noexcept {
+        return *this;
+    }
+
+    const value_type& value() const noexcept {
+        return *this;
+    }
+};
+
+} // namespace internal
+
 template<typename Key, class T, size_t max_contiguous_allocation = 128*1024,
         typename Hash = std::hash<Key>,
         typename KeyEqual = std::equal_to<Key>,
-        typename Allocator = std::allocator<std::pair<const Key, T>>
+        typename Allocator = std::allocator<internal::chunked_unordered_map_node<Key, T>>
 >
-requires (std::is_nothrow_move_constructible_v<Key> && std::is_nothrow_move_constructible_v<T>)
 class chunked_unordered_map {
+    using value_node_type = internal::chunked_unordered_map_node<Key, T>;
+    using node_list = typename value_node_type::node_list;
+    using node_bucket_list = typename value_node_type::node_bucket_list;
+
 public:
     using key_type = Key;
     using mapped_type = T;
-    using value_type = std::pair<const Key, T>;
     using size_type = size_t;
     using difference_type = std::ptrdiff_t;
     using hasher = Hash;
     using key_equal = KeyEqual;
     using allocator_type = Allocator;
+    using value_type = typename value_node_type::value_type;
     using reference = value_type&;
     using const_reference = const value_type&;
     using pointer = typename std::allocator_traits<Allocator>::pointer;
     using const_pointer = typename std::allocator_traits<Allocator>::const_pointer;
 
 private:
-    struct node : public value_type {
-        boost::intrusive::list_base_hook<> all_link = {};
-        boost::intrusive::list_base_hook<boost::intrusive::link_mode<boost::intrusive::auto_unlink>> bucket_link = {};
-
-        node(const value_type& value) noexcept(std::is_nothrow_copy_constructible_v<value_type>)
-            : value_type(value)
-        {}
-
-        node(value_type&& value) noexcept(std::is_nothrow_move_constructible_v<value_type>)
-            : value_type(std::move(value))
-        {}
-
-        value_type& value() noexcept {
-            return *this;
-        }
-
-        const value_type& value() const noexcept {
-            return *this;
-        }
-    };
-
-    using node_list = boost::intrusive::list<node, boost::intrusive::member_hook<node, boost::intrusive::list_base_hook<>, &node::all_link>, boost::intrusive::constant_time_size<true>>;
-    using node_bucket_list = boost::intrusive::list<node, boost::intrusive::member_hook<node, boost::intrusive::list_base_hook<boost::intrusive::link_mode<boost::intrusive::auto_unlink>>, &node::bucket_link>, boost::intrusive::constant_time_size<false>>;
-
-    static node& make_node(const value_type& value) {
-        auto np = new node(value);
-        return *np;
+    static value_node_type& make_value_node(const value_type& value, allocator_type& alloc) {
+        auto np = alloc.allocate(1);
+        return *std::construct_at(np, value);
     }
 
-    static node& make_node(value_type&& value) {
-        auto np = new node(std::move(value));
-        return *np;
+    static value_node_type& make_value_node(value_type&& value, allocator_type& alloc) {
+        auto np = alloc.allocate(1);
+        return *std::construct_at(np, std::move(value));
     }
 
-    static void dispose_node(node* np) {
-        delete np;
+    static void dispose_value_node(value_node_type* np, allocator_type& alloc) {
+        std::destroy_at(np);
+        alloc.deallocate(np, 1);
+    }
+
+    value_node_type& make_value_node(const value_type& value) {
+        return make_value_node(value, _alloc);
+    }
+
+    value_node_type& make_value_node(value_type&& value) {
+        return make_value_node(std::move(value), _alloc);
+    }
+
+    void dispose_value_node(value_node_type* np) {
+        dispose_value_node(np, _alloc);
     }
 
 public:
@@ -105,32 +144,30 @@ public:
         using allocator_type = Allocator;
     
     private:
-        std::optional<value_type> _value = {};
+        std::unique_ptr<value_node_type, std::function<void (value_node_type*)>> _value = {nullptr, [] (value_node_type*) {}};
 
     public:
         constexpr node_type() = default;
         node_type(node_type&& o) = default;
 
-        explicit node_type(const value_type& v) noexcept(std::is_nothrow_copy_constructible_v<value_type>)
-            : _value(v)
-        {}
-
-        explicit node_type(value_type&& v) noexcept(std::is_nothrow_move_constructible_v<value_type>)
-            : _value(std::move(v))
+        explicit node_type(value_node_type* np, allocator_type& alloc) noexcept(std::is_nothrow_move_constructible_v<value_node_type>)
+            : _value(np, [&alloc] (value_node_type* np) {
+                chunked_unordered_map::dispose_value_node(np, alloc);
+            })
         {}
 
         node_type& operator=(node_type&& o) = default;
 
         [[nodiscard]] bool empty() const noexcept {
-            return bool(_value);
+            return !_value;
         }
 
         explicit operator bool() const noexcept {
-            return empty();
+            return !empty();
         }
 
         key_type& key() const noexcept {
-            return _value->first;
+            return *const_cast<key_type*>(&_value->first);
         }
 
         mapped_type& mapped() const noexcept {
@@ -149,14 +186,149 @@ public:
     };
 
 private:
+    Hash _hash = Hash();
+    key_equal _key_equal = KeyEqual();
+    Allocator _alloc = Allocator();
+
     node_list _all;
     chunked_vector<node_bucket_list> _buckets;
+
+    size_t _min_bucket_count = 0;
     ssize_t _bucket_bits = -1;
     size_t _bucket_mask = 0;
-    float _max_load_factor = 2.0;
+    float _max_load_factor = 1.0;
 
 public:
+    chunked_unordered_map() = default;
+
+    chunked_unordered_map(chunked_unordered_map&& o, const Allocator& alloc) noexcept
+        : _hash(std::move(o._hash))
+        , _key_equal(std::move(o._key_equal))
+        , _alloc(alloc)
+        , _all(std::move(o._all))
+        , _buckets(std::move(o._buckets))
+        , _min_bucket_count(std::exchange(o._min_bucket_count, 0))
+        , _bucket_bits(std::exchange(o._bucket_bits, -1))
+        , _bucket_mask(std::exchange(o._bucket_mask, 0))
+        , _max_load_factor(std::exchange(o._max_load_factor, 1.0))
+    {}
+
+    chunked_unordered_map(chunked_unordered_map&& o) noexcept
+        : chunked_unordered_map(std::move(o), Allocator())
+    {}
+
+    chunked_unordered_map(const chunked_unordered_map& o, const Allocator& alloc)
+        : _hash(o._hash)
+        , _key_equal(o._key_equal)
+        , _alloc(o._alloc)
+        , _all()
+        , _buckets()
+        , _min_bucket_count(o._min_bucket_count)
+        , _bucket_bits(o._bucket_bits)
+        , _bucket_mask(o._bucket_mask)
+        , _max_load_factor(o._max_load_factor)
+    {
+        _buckets.resize(o._buckets.size());
+        for (size_t i = 0; i < o._buckets.size(); i++) {
+            auto& b = _buckets[i];
+            for (auto it = o._buckets[i].cbegin(); it != o._buckets[i].cend(); it++) {
+                auto* np = _alloc.allocate(1);
+                _alloc.construct(*np, *it);
+                b.push_back(*np);
+                _all.push_back(*np);
+            }
+        }
+    }
+
+    chunked_unordered_map(const chunked_unordered_map& o)
+        : chunked_unordered_map(o, Allocator())
+    {}
+
+    explicit chunked_unordered_map(size_type bucket_count,
+            const Hash& hash = Hash(),
+            const key_equal& key_equal = KeyEqual(),
+            const Allocator& alloc = Allocator())
+            : _hash(hash)
+            , _key_equal(key_equal)
+            , _alloc(alloc)
+    {
+        if (bucket_count) {
+            while ((1ULL << ++_bucket_bits) < bucket_count) {}
+            _min_bucket_count = (1ULL << _bucket_bits);
+            _bucket_mask = _min_bucket_count - 1;
+        }
+    }
+
+    explicit chunked_unordered_map(const Allocator& alloc)
+            : chunked_unordered_map(0, Hash(), KeyEqual(), alloc)
+    {}
+
+    chunked_unordered_map(size_type bucket_count,
+            const Allocator& alloc)
+            : chunked_unordered_map(bucket_count, Hash(), KeyEqual(), alloc)
+    {}
+
+    chunked_unordered_map(size_type bucket_count,
+            const Hash& hash,
+            const Allocator& alloc)
+            : chunked_unordered_map(bucket_count, hash, KeyEqual(), alloc)
+    {}
+
+    template <typename InputIt>
+    chunked_unordered_map(InputIt first, InputIt last,
+            size_type bucket_count = std::numeric_limits<size_type>::max(),
+            const Hash& hash = Hash(),
+            const key_equal& key_equal = KeyEqual(),
+            const Allocator& alloc = Allocator())
+            : chunked_unordered_map(bucket_count == std::numeric_limits<size_type>::max() ? std::distance(first, last) : bucket_count,
+                    hash, key_equal, alloc)
+    {
+        for (auto it = first; it != last; ++it) {
+            insert(*it);
+        }
+    }
+
+    template <typename InputIt>
+    chunked_unordered_map(InputIt first, InputIt last, size_type bucket_count,
+            const Allocator& alloc = Allocator())
+            : chunked_unordered_map(first, last, bucket_count, Hash(), KeyEqual(), alloc)
+    {}
+
+    template <typename InputIt>
+    chunked_unordered_map(InputIt first, InputIt last, size_type bucket_count,
+            const Hash& hash,
+            const Allocator& alloc)
+            : chunked_unordered_map(first, last, bucket_count, hash, KeyEqual(), alloc)
+    {}
+
+    chunked_unordered_map(std::initializer_list<value_type> init,
+            size_type bucket_count = std::numeric_limits<size_type>::max(),
+            const Hash& hash = Hash(),
+            const key_equal& key_equal = KeyEqual(),
+            const Allocator& alloc = Allocator())
+            : chunked_unordered_map(init.begin(), init.end(), bucket_count, hash, key_equal, alloc)
+    {}
+
+    chunked_unordered_map(std::initializer_list<value_type> init, size_type bucket_count,
+            const Allocator& alloc)
+            : chunked_unordered_map(init.begin(), init.end(), bucket_count, Hash(), KeyEqual(), alloc)
+    {}
+
+    chunked_unordered_map(std::initializer_list<value_type> init, size_type bucket_count,
+            const Hash& hash,
+            const Allocator& alloc)
+            : chunked_unordered_map(init.begin(), init.end(), bucket_count, hash, KeyEqual(), alloc)
+    {}
+
     ~chunked_unordered_map() {
+        clear();
+    }
+
+    chunked_unordered_map& operator=(chunked_unordered_map&& o) noexcept {
+        clear();
+    }
+
+    chunked_unordered_map& operator=(const chunked_unordered_map& o) {
         clear();
     }
 
@@ -229,7 +401,9 @@ public:
     }
 
     void clear() noexcept {
-        _all.clear_and_dispose(dispose_node);
+        _all.clear_and_dispose([this] (value_node_type* np) {
+            dispose_value_node(np);
+        });
     }
 
     bool contains(const Key& key) {
@@ -280,7 +454,7 @@ public:
                 }
             }
         }
-        auto& n = make_node(value);
+        auto& n = make_value_node(value);
         make_room(size() + 1);
         _all.push_back(n);
         auto it = _all.end();
@@ -299,7 +473,7 @@ public:
                 }
             }
         }
-        auto& n = make_node(std::move(value));
+        auto& n = make_value_node(std::move(value));
         make_room(size() + 1);
         _all.push_back(n);
         auto it = _all.end();
@@ -318,7 +492,7 @@ public:
                 }
             }
         }
-        auto& n = make_node(value_type(std::piecewise_construct,
+        auto& n = make_value_node(value_type(std::piecewise_construct,
                 std::forward_as_tuple(key),
                 std::forward_as_tuple(std::forward<Args>(args)...)));
         make_room(size() + 1);
@@ -339,7 +513,7 @@ public:
                 }
             }
         }
-        auto& n = make_node(value_type(std::piecewise_construct,
+        auto& n = make_value_node(value_type(std::piecewise_construct,
                 std::forward_as_tuple(std::move(key)),
                 std::forward_as_tuple(std::forward<Args>(args)...)));
         make_room(size() + 1);
@@ -360,20 +534,41 @@ public:
         return try_emplace(std::forward<Key>(key), std::forward<Args>(args)...);
     }
 
+    node_type extract(const_iterator pos) {
+        value_node_type* np = const_cast<value_node_type*>(&*pos);
+        auto ret = node_type(np, _alloc);
+        _all.erase(pos);
+        return ret;
+    }
+
+    node_type extract(const Key& key) {
+        auto it = find(key);
+        if (it != end()) {
+            return extract(it);
+        }
+        return node_type();
+    }
+
     iterator erase(iterator pos) {
-        auto ret = _all.erase_and_dispose(pos, dispose_node);
+        auto ret = _all.erase_and_dispose(pos, [this] (value_node_type* np) {
+            dispose_value_node(np);
+        });
         shrink_to_fit(_all.size());
         return ret;
     }
 
     iterator erase(const_iterator pos) {
-        auto ret = _all.erase_and_dispose(pos, dispose_node);
+        auto ret = _all.erase_and_dispose(pos, [this] (value_node_type* np) {
+            dispose_value_node(np);
+        });
         shrink_to_fit(_all.size());
         return ret;
     }
 
     iterator erase(const_iterator first, const_iterator last) {
-        auto ret = _all.erase_and_dispose(first, last, dispose_node);
+        auto ret = _all.erase_and_dispose(first, last, [this] (value_node_type* np) {
+            dispose_value_node(np);
+        });
         shrink_to_fit(_all.size());
         return ret;
     }
@@ -394,7 +589,9 @@ public:
         auto old_size = size();
         for (auto it = _all.begin(); it != _all.end(); ) {
             if (pred(*it)) {
-                it = _all.erase_and_dispose(it, dispose_node);
+                it = _all.erase_and_dispose(it, [this] (value_node_type* np) {
+                    dispose_value_node(np);
+                });
             } else {
                 ++it;
             }
