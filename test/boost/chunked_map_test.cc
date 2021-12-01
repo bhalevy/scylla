@@ -134,6 +134,21 @@ SEASTAR_THREAD_TEST_CASE(test_chunked_unordered_map_erase) {
     BOOST_REQUIRE(m.size() == 0);
 }
 
+SEASTAR_THREAD_TEST_CASE(test_chunked_unordered_map_contains) {
+    utils::chunked_unordered_map<int, std::string> m;
+
+    BOOST_REQUIRE(!m.contains(0));
+
+    m.emplace(3, "three");
+    m.emplace(1, "one");
+    m.emplace(2, "two");
+
+    BOOST_REQUIRE(m.contains(1));
+    BOOST_REQUIRE(m.contains(2));
+    BOOST_REQUIRE(m.contains(3));
+    BOOST_REQUIRE(!m.contains(0));
+}
+
 SEASTAR_THREAD_TEST_CASE(test_chunked_unordered_map_erase_if) {
     using map_type = utils::chunked_unordered_map<int, std::string>;
     map_type m;

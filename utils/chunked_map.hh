@@ -224,6 +224,18 @@ public:
         _all.clear_and_dispose(dispose_node);
     }
 
+    bool contains(const Key& key) {
+        if (!empty()) {
+            auto& bucket = get_bucket(key);
+            for (auto it = bucket.begin(); it != bucket.end(); it++) {
+                if (it->first == key) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
     template <class K>
     iterator find(const K& key) {
         if (!empty()) {
