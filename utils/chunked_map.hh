@@ -160,6 +160,14 @@ public:
         clear();
     }
 
+    void swap(chunked_unordered_map& o) noexcept {
+        std::swap(_all, o._all);
+        std::swap(_buckets, o._buckets);
+        std::swap(_bucket_bits, o._bucket_bits);
+        std::swap(_bucket_mask, o._bucket_mask);
+        std::swap(_max_load_factor, o._max_load_factor);
+    }
+
     iterator begin() noexcept {
         return _all.begin();
     }
@@ -484,6 +492,12 @@ requires std::is_invocable_r_v<bool, Pred, const typename utils::chunked_unorder
 typename utils::chunked_unordered_map<Key, T, max_contiguous_allocation, Hash, KeyEqual, Allocator>::size_type
 erase_if(utils::chunked_unordered_map<Key, T, max_contiguous_allocation, Hash, KeyEqual, Allocator>& m, Pred&& pred) {
     return m.erase_if(std::forward<Pred>(pred));
+}
+
+template<typename Key, class T, size_t max_contiguous_allocation, typename Hash, typename KeyEqual, typename Allocator>
+void
+swap(utils::chunked_unordered_map<Key, T, max_contiguous_allocation, Hash, KeyEqual, Allocator>& lhs, utils::chunked_unordered_map<Key, T, max_contiguous_allocation, Hash, KeyEqual, Allocator>& rhs) {
+    lhs.swap(rhs);
 }
 
 } // namespace std
