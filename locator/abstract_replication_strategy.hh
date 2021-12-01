@@ -31,6 +31,7 @@
 #include "snitch_base.hh"
 #include <seastar/util/bool_class.hh>
 #include "utils/maybe_yield.hh"
+#include "utils/chunked_map.hh"
 
 // forward declaration since database.hh includes this file
 class keyspace;
@@ -53,7 +54,7 @@ using can_yield = utils::can_yield;
 
 using replication_strategy_config_options = std::map<sstring, sstring>;
 
-using replication_map = std::unordered_map<token, inet_address_vector_replica_set>;
+using replication_map = utils::chunked_unordered_map<token, inet_address_vector_replica_set>;
 
 class effective_replication_map;
 class effective_replication_map_factory;
