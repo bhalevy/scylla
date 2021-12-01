@@ -24,6 +24,7 @@
 #include <utility>
 #include <memory>
 #include <optional>
+#include <concepts>
 
 #include <boost/intrusive/list.hpp>
 
@@ -366,6 +367,26 @@ public:
         return 0;
     }
 
+    template <typename Pred>
+    requires std::is_invocable_r_v<bool, Pred, const value_type&>
+    size_type
+    erase_if(Pred pred) {
+        auto old_size = size();
+        for (auto it = _all.begin(); it != _all.end(); ) {
+            if (pred(*it)) {
+                it = _all.erase_and_dispose(it, dispose_node);
+            } else {
+                ++it;
+            }
+        }
+        auto new_size = size();
+        auto ret = old_size - new_size;
+        if (ret) {
+            shrink_to_fit(new_size);
+        }
+        return ret;
+    }
+
 private:
     static size_t hash(const Key& key, size_t bucket_mask) noexcept {
         return hasher{}(key) & bucket_mask;
@@ -443,3 +464,14 @@ private:
 };
 
 } // namespace utils
+
+namespace std {
+
+template<typename Key, class T, size_t max_contiguous_allocation, typename Hash, typename KeyEqual, typename Allocator, typename Pred>
+requires std::is_invocable_r_v<bool, Pred, const typename utils::chunked_unordered_map<Key, T, max_contiguous_allocation, Hash, KeyEqual, Allocator>::value_type&>
+typename utils::chunked_unordered_map<Key, T, max_contiguous_allocation, Hash, KeyEqual, Allocator>::size_type
+erase_if(utils::chunked_unordered_map<Key, T, max_contiguous_allocation, Hash, KeyEqual, Allocator>& m, Pred&& pred) {
+    return m.erase_if(std::forward<Pred>(pred));
+}
+
+} // namespace std
