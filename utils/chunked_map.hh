@@ -605,11 +605,11 @@ public:
     }
 
 private:
-    static size_t hash(const Key& key, size_t bucket_mask) noexcept {
-        return hasher{}(key) & bucket_mask;
+    size_t hash(const Key& key, size_t mask) const noexcept {
+        return _hash(key) & mask;
     }
 
-    size_t hash(const Key& key) noexcept {
+    size_t hash(const Key& key) const noexcept {
         return hash(key, _bucket_mask);
     }
 
