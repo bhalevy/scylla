@@ -410,7 +410,7 @@ public:
         if (!empty()) {
             auto& bucket = get_bucket(key);
             for (auto it = bucket.begin(); it != bucket.end(); it++) {
-                if (it->first == key) {
+                if (_key_equal(it->first, key)) {
                     return true;
                 }
             }
@@ -423,7 +423,7 @@ public:
         if (!empty()) {
             auto& bucket = get_bucket(key);
             for (auto it = bucket.begin(); it != bucket.end(); it++) {
-                if (it->first == key) {
+                if (_key_equal(it->first, key)) {
                     return _all.iterator_to(*it);
                 }
             }
@@ -436,7 +436,7 @@ public:
         if (!empty()) {
             auto& bucket = get_bucket(key);
             for (auto it = bucket.cbegin(); it != bucket.cend(); it++) {
-                if (it->first == key) {
+                if (_key_equal(it->first, key)) {
                     return _all.iterator_to(*it);
                 }
             }
@@ -449,7 +449,7 @@ public:
         if (!empty()) {
             auto& bucket = get_bucket(key);
             for (auto it = bucket.begin(); it != bucket.end(); it++) {
-                if (it->first == key) {
+                if (_key_equal(it->first, key)) {
                     return {_all.iterator_to(*it), false};
                 }
             }
@@ -468,7 +468,7 @@ public:
         if (!empty()) {
             auto& bucket = get_bucket(key);
             for (auto it = bucket.begin(); it != bucket.end(); it++) {
-                if (it->first == key) {
+                if (_key_equal(it->first, key)) {
                     return {_all.iterator_to(*it), false};
                 }
             }
@@ -487,7 +487,7 @@ public:
         if (!empty()) {
             auto& bucket = get_bucket(key);
             for (auto it = bucket.begin(); it != bucket.end(); it++) {
-                if (it->first == key) {
+                if (_key_equal(it->first, key)) {
                     return {_all.iterator_to(*it), false};
                 }
             }
@@ -508,7 +508,7 @@ public:
         if (!empty()) {
             auto& bucket = get_bucket(key);
             for (auto it = bucket.begin(); it != bucket.end(); it++) {
-                if (it->first == key) {
+                if (_key_equal(it->first, key)) {
                     return {_all.iterator_to(*it), false};
                 }
             }
