@@ -65,6 +65,8 @@ std::vector<schema_ptr> do_load_schemas(std::string_view schema_str) {
     abort_source as;
     sharded<semaphore> sst_dir_sem;
 
+    utils::fb_utilities::set_broadcast_address(gms::inet_address(0x7f000001)); // 127.0.0.1
+
     token_metadata.start([] () noexcept { return db::schema_tables::hold_merge_lock(); }).get();
     auto stop_token_metadata = deferred_stop(token_metadata);
 
@@ -74,7 +76,6 @@ std::vector<schema_ptr> do_load_schemas(std::string_view schema_str) {
     sst_dir_sem.start(1).get();
     auto sst_dir_sem_stop = deferred_stop(sst_dir_sem);
 
-    utils::fb_utilities::set_broadcast_address(gms::inet_address(0x7f000001)); // 127.0.0.1
     if (!locator::i_endpoint_snitch::snitch_instance().local_is_initialized()) {
         locator::i_endpoint_snitch::create_snitch(cfg.endpoint_snitch()).get();
     }
