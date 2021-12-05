@@ -262,15 +262,14 @@ effective_replication_map::get_range_addresses() const {
         auto eps = get_natural_endpoints(t);
         ret.emplace(r, eps);
     } else {
-    // FIXME: indentation
-    const token_metadata& tm = *_tmptr;
-    for (auto& t : tm.sorted_tokens()) {
-        dht::token_range_vector ranges = tm.get_primary_ranges_for(t);
-        auto eps = get_natural_endpoints(t);
-        for (auto& r : ranges) {
-            ret.emplace(r, eps);
+        const token_metadata& tm = *_tmptr;
+        for (auto& t : tm.sorted_tokens()) {
+            dht::token_range_vector ranges = tm.get_primary_ranges_for(t);
+            auto eps = get_natural_endpoints(t);
+            for (auto& r : ranges) {
+                ret.emplace(r, eps);
+            }
         }
-    }
     }
     return ret;
 }
@@ -284,14 +283,13 @@ abstract_replication_strategy::get_range_addresses(const token_metadata& tm) con
         auto eps = co_await calculate_natural_endpoints(t, tm);
         ret.emplace(r, eps);
     } else {
-    // FIXME: indentation
-    for (auto& t : tm.sorted_tokens()) {
-        dht::token_range_vector ranges = tm.get_primary_ranges_for(t);
-        auto eps = co_await calculate_natural_endpoints(t, tm);
-        for (auto& r : ranges) {
-            ret.emplace(r, eps);
+        for (auto& t : tm.sorted_tokens()) {
+            dht::token_range_vector ranges = tm.get_primary_ranges_for(t);
+            auto eps = co_await calculate_natural_endpoints(t, tm);
+            for (auto& r : ranges) {
+                ret.emplace(r, eps);
+            }
         }
-    }
     }
     co_return ret;
 }
