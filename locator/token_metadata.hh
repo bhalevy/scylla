@@ -331,10 +331,7 @@ class shared_token_metadata {
 public:
     // used to construct the shared object as a sharded<> instance
     // lock_func returns semaphore_units<>
-    explicit shared_token_metadata(token_metadata_lock_func lock_func)
-        : _shared(make_token_metadata_ptr())
-        , _lock_func(std::move(lock_func))
-    { }
+    explicit shared_token_metadata(token_metadata_lock_func lock_func);
 
     shared_token_metadata(const shared_token_metadata& x) = delete;
     shared_token_metadata(shared_token_metadata&& x) = default;
