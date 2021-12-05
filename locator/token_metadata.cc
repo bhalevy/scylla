@@ -32,6 +32,7 @@
 #include <seastar/coroutine/maybe_yield.hh>
 #include <boost/range/adaptors.hpp>
 #include "utils/stall_free.hh"
+#include "utils/fb_utilities.hh"
 
 namespace locator {
 
@@ -53,6 +54,7 @@ public:
     using UUID = utils::UUID;
     using inet_address = gms::inet_address;
 private:
+    bool _single_token;
     /**
      * Maintains token to endpoint map of every node in the cluster.
      * Each Token is associated with exactly one Address, but each Address may have
@@ -73,7 +75,7 @@ private:
 
     topology _topology;
 
-    long _ring_version = 0;
+    long _ring_version;
     static thread_local long _static_ring_version;
 
     // Note: if any member is added to this class
@@ -82,9 +84,21 @@ private:
     void sort_tokens();
 
 public:
-    token_metadata_impl() noexcept {};
+    token_metadata_impl(bool single_token) noexcept
+        : _single_token(single_token)
+        , _ring_version(single_token ? 0 : 1)
+    {
+        if (_single_token) {
+            auto t = dht::maximum_token();
+            _token_to_endpoint_map.emplace(t, utils::fb_utilities::get_broadcast_address());
+            _sorted_tokens.push_back(t);
+        }
+    };
     token_metadata_impl(const token_metadata_impl&) = default;
     token_metadata_impl(token_metadata_impl&&) noexcept = default;
+    bool is_single_token() const noexcept {
+        return _single_token;
+    }
     const std::vector<token>& sorted_tokens() const;
     future<> update_normal_token(token token, inet_address endpoint);
     future<> update_normal_tokens(std::unordered_set<token> tokens, inet_address endpoint);
@@ -258,13 +272,15 @@ public:
     }
 
     void invalidate_cached_rings() {
-        _ring_version = ++_static_ring_version;
+        if (!_single_token) {
+            _ring_version = ++_static_ring_version;
+        }
     }
 
     friend class token_metadata;
 };
 
-thread_local long token_metadata_impl::_static_ring_version;
+thread_local long token_metadata_impl::_static_ring_version = 1;
 
 token_metadata::tokens_iterator::tokens_iterator(const token& start, const token_metadata_impl* token_metadata)
     : _token_metadata(token_metadata) {
@@ -315,7 +331,7 @@ future<token_metadata_impl> token_metadata_impl::clone_async() const noexcept {
 }
 
 future<token_metadata_impl> token_metadata_impl::clone_only_token_map(bool clone_sorted_tokens) const noexcept {
-    return do_with(token_metadata_impl(), [this, clone_sorted_tokens] (token_metadata_impl& ret) {
+    return do_with(token_metadata_impl(_single_token), [this, clone_sorted_tokens] (token_metadata_impl& ret) {
         ret._token_to_endpoint_map.reserve(_token_to_endpoint_map.size());
         return do_for_each(_token_to_endpoint_map, [&ret] (const auto& p) {
             ret._token_to_endpoint_map.emplace(p);
@@ -375,11 +391,14 @@ std::vector<token> token_metadata_impl::get_tokens(const inet_address& addr) con
  */
 future<> token_metadata_impl::update_normal_token(token t, inet_address endpoint)
 {
+    if (_single_token) {
+        return make_ready_future<>();
+    }
     return update_normal_tokens(std::unordered_set<token>({t}), endpoint);
 }
 
 future<> token_metadata_impl::update_normal_tokens(std::unordered_set<token> tokens, inet_address endpoint) {
-    if (tokens.empty()) {
+    if (tokens.empty() || _single_token) {
         co_return;
     }
     std::unordered_map<inet_address, std::unordered_set<token>> endpoint_tokens ({{endpoint, std::move(tokens)}});
@@ -387,7 +406,7 @@ future<> token_metadata_impl::update_normal_tokens(std::unordered_set<token> tok
 }
 
 future<> token_metadata_impl::update_normal_tokens(const std::unordered_map<inet_address, std::unordered_set<token>>& endpoint_tokens) {
-    if (endpoint_tokens.empty()) {
+    if (endpoint_tokens.empty() || _single_token) {
         co_return;
     }
 
@@ -434,6 +453,9 @@ future<> token_metadata_impl::update_normal_tokens(const std::unordered_map<inet
 }
 
 size_t token_metadata_impl::first_token_index(const token& start) const {
+    if (_single_token) {
+        return 0;
+    }
     if (_sorted_tokens.empty()) {
         auto msg = format("sorted_tokens is empty in first_token_index!");
         tlogger.error("{}", msg);
@@ -452,6 +474,9 @@ const token& token_metadata_impl::first_token(const token& start) const {
 }
 
 std::optional<inet_address> token_metadata_impl::get_endpoint(const token& token) const {
+    if (_single_token) {
+        return utils::fb_utilities::get_broadcast_address();
+    }
     auto it = _token_to_endpoint_map.find(token);
     if (it == _token_to_endpoint_map.end()) {
         return std::nullopt;
@@ -735,8 +760,8 @@ token_metadata::token_metadata(std::unique_ptr<token_metadata_impl> impl)
     : _impl(std::move(impl)) {
 }
 
-token_metadata::token_metadata()
-        : _impl(std::make_unique<token_metadata_impl>()) {
+token_metadata::token_metadata(bool single_token)
+        : _impl(std::make_unique<token_metadata_impl>(single_token)) {
 }
 
 token_metadata::~token_metadata() = default;
@@ -745,6 +770,10 @@ token_metadata::~token_metadata() = default;
 token_metadata::token_metadata(token_metadata&&) noexcept = default;
 
 token_metadata& token_metadata::token_metadata::operator=(token_metadata&&) noexcept = default;
+
+bool token_metadata::is_single_token() const noexcept {
+    return _impl->is_single_token();
+}
 
 const std::vector<token>&
 token_metadata::sorted_tokens() const {

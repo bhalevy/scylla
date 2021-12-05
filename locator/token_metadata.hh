@@ -169,11 +169,12 @@ private:
         friend class token_metadata_impl;
     };
 public:
-    token_metadata();
+    token_metadata(bool single_token = false);
     explicit token_metadata(std::unique_ptr<token_metadata_impl> impl);
     token_metadata(token_metadata&&) noexcept; // Can't use "= default;" - hits some static_assert in unique_ptr
     token_metadata& operator=(token_metadata&&) noexcept;
     ~token_metadata();
+    bool is_single_token() const noexcept;
     const std::vector<token>& sorted_tokens() const;
     future<> update_normal_token(token token, inet_address endpoint);
     future<> update_normal_tokens(std::unordered_set<token> tokens, inet_address endpoint);
