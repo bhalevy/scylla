@@ -61,10 +61,6 @@ public:
         return true;
     }
 
-    virtual bool is_single_token() const noexcept override {
-        return true;
-    }
-
     /**
      * We need to override this because the default implementation depends
      * on token calculations but everywhere_replication_strategy may be used before tokens are set up.

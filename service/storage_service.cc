@@ -1373,7 +1373,7 @@ future<> storage_service::replicate_to_all_cores(mutable_token_metadata_ptr tmpt
         auto base_shard = this_shard_id();
         pending_token_metadata_ptr[base_shard] = tmptr;
         // clone a local copy of updated token_metadata on all other shards
-        co_await smp::invoke_on_others(base_shard, [&, base_shard, tmptr = std::move(tmptr)] () -> future<> {
+        co_await smp::invoke_on_others(base_shard, [&, base_shard, tmptr] () -> future<> {
             pending_token_metadata_ptr[this_shard_id()] = make_token_metadata_ptr(co_await tmptr->clone_async());
         });
 
@@ -1387,20 +1387,15 @@ future<> storage_service::replicate_to_all_cores(mutable_token_metadata_ptr tmpt
         auto keyspaces = db.get_all_keyspaces();
         for (auto& ks_name : keyspaces) {
             auto rs = db.find_keyspace(ks_name).get_replication_strategy_ptr();
-            auto tp = rs->is_single_token()
-                    ? db.get_shared_token_metadata().get_single()
-                    : pending_token_metadata_ptr[this_shard_id()];
-            auto erm = co_await get_erm_factory().create_effective_replication_map(rs, std::move(tp));
+            auto erm = co_await get_erm_factory().create_effective_replication_map(rs, tmptr);
             pending_effective_replication_maps[base_shard].emplace(ks_name, std::move(erm));
         }
         co_await container().invoke_on_others([&, base_shard] (storage_service& ss) -> future<> {
             auto& db = ss._db.local();
             for (auto& ks_name : keyspaces) {
                 auto rs = db.find_keyspace(ks_name).get_replication_strategy_ptr();
-                auto tp = rs->is_single_token()
-                        ? db.get_shared_token_metadata().get_single()
-                        : pending_token_metadata_ptr[this_shard_id()];
-                auto erm = co_await ss.get_erm_factory().create_effective_replication_map(rs, std::move(tp));
+                auto tmptr = pending_token_metadata_ptr[this_shard_id()];
+                auto erm = co_await ss.get_erm_factory().create_effective_replication_map(rs, std::move(tmptr));
                 pending_effective_replication_maps[this_shard_id()].emplace(ks_name, std::move(erm));
 
             }
