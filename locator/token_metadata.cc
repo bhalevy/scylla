@@ -89,7 +89,7 @@ public:
         , _ring_version(single_token ? 0 : 1)
     {
         if (_single_token) {
-            auto t = dht::maximum_token();
+            auto t = token(dht::token_kind::key, 0);
             _token_to_endpoint_map.emplace(t, utils::fb_utilities::get_broadcast_address());
             _sorted_tokens.push_back(t);
         }
@@ -658,6 +658,11 @@ dht::token_range_vector token_metadata_impl::get_primary_ranges_for(std::unorder
 }
 
 dht::token_range_vector token_metadata_impl::get_primary_ranges_for(token right) const {
+    if (is_single_token()) {
+        dht::token_range_vector ranges;
+        ranges.push_back(nonwrapping_range<token>(std::nullopt, std::nullopt));
+        return ranges;
+    }
     return get_primary_ranges_for(std::unordered_set<token>{right});
 }
 
@@ -1102,6 +1107,7 @@ const endpoint_dc_rack& topology::get_location(const inet_address& ep) const {
 
 shared_token_metadata::shared_token_metadata(token_metadata_lock_func lock_func)
     : _shared(make_token_metadata_ptr())
+    , _single_token(make_token_metadata_ptr(true))
     , _lock_func(std::move(lock_func))
 { }
 
