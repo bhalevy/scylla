@@ -326,7 +326,6 @@ mutable_token_metadata_ptr make_token_metadata_ptr(Args... args) {
 
 class shared_token_metadata {
     mutable_token_metadata_ptr _shared;
-    token_metadata_ptr _single_token;
     token_metadata_lock_func _lock_func;
 
 public:
@@ -342,10 +341,6 @@ public:
     }
 
     void set(mutable_token_metadata_ptr tmptr) noexcept;
-
-    token_metadata_ptr get_single() const noexcept {
-        return _single_token;
-    }
 
     // Token metadata changes are serialized
     // using the schema_tables merge_lock.
