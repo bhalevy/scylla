@@ -171,6 +171,10 @@ range_streamer::get_all_ranges_with_strict_sources_for(const sstring& keyspace_n
 
     logger.debug("keyspace={}, desired_ranges.size={}, range_addresses.size={}", keyspace_name, desired_ranges.size(), range_addresses.size());
 
+    auto find_desired_range = [is_symmetric = strat.is_symmetric(), &pending_range_addresses] (const dht::token_range& desired_range) {
+        return is_symmetric ? pending_range_addresses.begin() : pending_range_addresses.find(desired_range);
+    };
+
     for (auto& desired_range : desired_ranges) {
         for (auto& x : range_addresses) {
             const range<token>& src_range = x.first;
@@ -179,7 +183,7 @@ range_streamer::get_all_ranges_with_strict_sources_for(const sstring& keyspace_n
             }
             if (src_range.contains(desired_range, dht::tri_compare)) {
                 std::vector<inet_address> old_endpoints(x.second.begin(), x.second.end());
-                auto it = pending_range_addresses.find(desired_range);
+                auto it = find_desired_range(desired_range);
                 if (it == pending_range_addresses.end()) {
                     throw std::runtime_error(format("Can not find desired_range = {} in pending_range_addresses", desired_range));
                 }
