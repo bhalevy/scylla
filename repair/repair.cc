@@ -1346,6 +1346,10 @@ future<> repair_service::bootstrap_with_repair(locator::token_metadata_ptr tmptr
             //Collects the source that will have its range moved to the new node
             std::unordered_map<dht::token_range, repair_neighbors> range_sources;
 
+            auto find_desired_range = [is_symmetric = strat.is_symmetric(), &pending_range_addresses] (const dht::token_range& desired_range) {
+                return is_symmetric ? pending_range_addresses.begin() : pending_range_addresses.find(desired_range);
+            };
+
             rlogger.info("bootstrap_with_repair: started with keyspace={}, nr_ranges={}", keyspace_name, desired_ranges.size());
             for (auto& desired_range : desired_ranges) {
                 for (auto& x : range_addresses) {
@@ -1353,7 +1357,7 @@ future<> repair_service::bootstrap_with_repair(locator::token_metadata_ptr tmptr
                     seastar::thread::maybe_yield();
                     if (src_range.contains(desired_range, dht::tri_compare)) {
                         std::vector<inet_address> old_endpoints(x.second.begin(), x.second.end());
-                        auto it = pending_range_addresses.find(desired_range);
+                        auto it = find_desired_range(desired_range);
                         if (it == pending_range_addresses.end()) {
                             throw std::runtime_error(format("Can not find desired_range = {} in pending_range_addresses", desired_range));
                         }
