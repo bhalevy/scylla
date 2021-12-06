@@ -24,11 +24,16 @@
 
 import pytest
 import ssl
+import sys
 
 from requests import Session, Request, Response
 from cassandra.auth import PlainTextAuthProvider
 from cassandra.cluster import Cluster, ConsistencyLevel, ExecutionProfile, EXEC_PROFILE_DEFAULT
 from cassandra.policies import RoundRobinPolicy
+
+# Use the util.py library from ../cql-pytest:
+sys.path.insert(1, sys.path[0] + '/../cql-pytest')
+from util import unique_name
 
 # By default, tests run against the CQL server listening
 # on localhost:9042. Add the --host and --port options to allow overiding
@@ -102,3 +107,25 @@ class ApiSession:
 @pytest.fixture(scope="session")
 def api(request):
     return ApiSession(host=request.config.getoption('host'), port=request.config.getoption('api_port'))
+
+# Until Cassandra 4, NetworkTopologyStrategy did not support the option
+# replication_factor (https://issues.apache.org/jira/browse/CASSANDRA-14303).
+# We want to allow these tests to run on Cassandra 3.* (for the convenience
+# of developers who happen to have it installed), so we'll use the older
+# syntax that needs to specify a DC name explicitly. For this, will have
+# a "this_dc" fixture to figure out the name of the current DC, so it can be
+# used in NetworkTopologyStrategy.
+@pytest.fixture(scope="session")
+def this_dc(cql):
+    yield cql.execute("SELECT data_center FROM system.local").one()[0]
+
+# "test_keyspace" fixture: Creates and returns a temporary keyspace to be
+# used in tests that need a keyspace. The keyspace is created with RF=1,
+# and automatically deleted at the end. We use scope="session" so that all
+# tests will reuse the same keyspace.
+@pytest.fixture(scope="session")
+def test_keyspace(cql, this_dc):
+    name = unique_name()
+    cql.execute(f"CREATE KEYSPACE {name} WITH REPLICATION = {{ 'class' : 'NetworkTopologyStrategy', '{this_dc}' : 1 }}")
+    yield name
+    cql.execute(f"DROP KEYSPACE {name}")
