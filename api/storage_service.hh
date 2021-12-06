@@ -46,6 +46,9 @@ class gossiper;
 
 namespace api {
 
+sstring validate_keyspace(http_context& ctx, const parameters& param, sstring param_name = "keyspace");
+std::vector<sstring> validate_tables(const sstring& ks_name, http_context& ctx, const std::unordered_map<sstring, sstring>& query_params, sstring param_name);
+
 void set_storage_service(http_context& ctx, routes& r, sharded<service::storage_service>& ss, gms::gossiper& g, sharded<cdc::generation_service>& cdc_gs);
 void set_sstables_loader(http_context& ctx, routes& r, sharded<sstables_loader>& sst_loader);
 void unset_sstables_loader(http_context& ctx, routes& r);
