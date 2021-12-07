@@ -966,8 +966,8 @@ future<> database::drop_column_family(const sstring& ks_name, const sstring& cf_
 const utils::UUID& database::find_uuid(std::string_view ks, std::string_view cf) const {
     try {
         return _ks_cf_to_uuid.at(std::make_pair(ks, cf));
-    } catch (...) {
-        throw std::out_of_range("");
+    } catch (std::out_of_range&) {
+        throw no_such_column_family(ks, cf);
     }
 }
 
@@ -978,16 +978,16 @@ const utils::UUID& database::find_uuid(const schema_ptr& schema) const {
 keyspace& database::find_keyspace(std::string_view name) {
     try {
         return _keyspaces.at(name);
-    } catch (...) {
-        std::throw_with_nested(no_such_keyspace(name));
+    } catch (std::out_of_range&) {
+        throw no_such_keyspace(name);
     }
 }
 
 const keyspace& database::find_keyspace(std::string_view name) const {
     try {
         return _keyspaces.at(name);
-    } catch (...) {
-        std::throw_with_nested(no_such_keyspace(name));
+    } catch (std::out_of_range&) {
+        throw no_such_keyspace(name);
     }
 }
 
@@ -1024,26 +1024,18 @@ std::vector<lw_shared_ptr<column_family>> database::get_non_system_column_famili
 }
 
 column_family& database::find_column_family(std::string_view ks_name, std::string_view cf_name) {
-    try {
-        return find_column_family(find_uuid(ks_name, cf_name));
-    } catch (...) {
-        std::throw_with_nested(no_such_column_family(ks_name, cf_name));
-    }
+    return find_column_family(find_uuid(ks_name, cf_name));
 }
 
 const column_family& database::find_column_family(std::string_view ks_name, std::string_view cf_name) const {
-    try {
-        return find_column_family(find_uuid(ks_name, cf_name));
-    } catch (...) {
-        std::throw_with_nested(no_such_column_family(ks_name, cf_name));
-    }
+    return find_column_family(find_uuid(ks_name, cf_name));
 }
 
 column_family& database::find_column_family(const utils::UUID& uuid) {
     try {
         return *_column_families.at(uuid);
     } catch (...) {
-        std::throw_with_nested(no_such_column_family(uuid));
+        throw no_such_column_family(uuid);
     }
 }
 
@@ -1051,7 +1043,7 @@ const column_family& database::find_column_family(const utils::UUID& uuid) const
     try {
         return *_column_families.at(uuid);
     } catch (...) {
-        std::throw_with_nested(no_such_column_family(uuid));
+        throw no_such_column_family(uuid);
     }
 }
 
@@ -1268,11 +1260,7 @@ std::vector<view_ptr> keyspace_metadata::views() const {
 }
 
 schema_ptr database::find_schema(const sstring& ks_name, const sstring& cf_name) const {
-    try {
-        return find_schema(find_uuid(ks_name, cf_name));
-    } catch (std::out_of_range&) {
-        std::throw_with_nested(no_such_column_family(ks_name, cf_name));
-    }
+    return find_schema(find_uuid(ks_name, cf_name));
 }
 
 schema_ptr database::find_schema(const utils::UUID& uuid) const {
