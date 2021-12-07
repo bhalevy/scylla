@@ -46,8 +46,7 @@ def test_storage_service_auto_compaction_table(cql, rest_api, test_keyspace):
 
         # non-existing table
         resp = rest_api.send("POST", f"storage_service/auto_compaction/{test_keyspace}", { "cf": "XXX" })
-        # FIXME: requests.codes.bad_request
-        assert resp.status_code == requests.codes.internal_server_error
+        assert resp.status_code == requests.codes.bad_request
 
 def test_storage_service_auto_compaction_tables(cql, rest_api, test_keyspace):
     with new_test_table(cql, test_keyspace, "a int, PRIMARY KEY (a)") as t0:
@@ -62,5 +61,4 @@ def test_storage_service_auto_compaction_tables(cql, rest_api, test_keyspace):
 
             # non-existing table
             resp = rest_api.send("POST", f"storage_service/auto_compaction/{test_keyspace}", { "cf": f"{test_tables[0]},XXX" })
-            # FIXME: requests.codes.bad_request
-            assert resp.status_code == requests.codes.internal_server_error
+            assert resp.status_code == requests.codes.bad_request
