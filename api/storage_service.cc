@@ -74,7 +74,7 @@ sstring validate_keyspace(http_context& ctx, const parameters& param, sstring pa
     if (ctx.db.local().has_keyspace(ks_name)) {
         return ks_name;
     }
-    throw bad_param_exception("Keyspace " + ks_name + " Does not exist");
+    throw bad_param_exception(fmt::format("Keyspace '{}' does not exist", ks_name));
 }
 
 static ss::token_range token_range_endpoints_to_json(const dht::token_range_endpoints& d) {
