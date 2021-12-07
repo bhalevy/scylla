@@ -54,8 +54,7 @@ def test_storage_service_auto_compaction_table(cql, rest_api, test_keyspace):
             resp.raise_for_status()
             pytest.fail("Failed to raise exception")
         except requests.HTTPError as e:
-            # FIXME: expected_status_code = requests.codes.bad_request
-            expected_status_code = requests.codes.internal_server_error
+            expected_status_code = requests.codes.bad_request
             assert resp.status_code == expected_status_code, e
 
 def test_storage_service_auto_compaction_tables(cql, rest_api, test_keyspace):
@@ -75,6 +74,5 @@ def test_storage_service_auto_compaction_tables(cql, rest_api, test_keyspace):
                 resp.raise_for_status()
                 pytest.fail("Failed to raise exception")
             except requests.HTTPError as e:
-                # FIXME: expected_status_code = requests.codes.bad_request
-                expected_status_code = requests.codes.internal_server_error
+                expected_status_code = requests.codes.bad_request
                 assert resp.status_code == expected_status_code, e
