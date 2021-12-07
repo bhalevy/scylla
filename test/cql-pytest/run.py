@@ -261,12 +261,12 @@ def check_ssl_cql(ip):
     ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLSv1_2)
     check_cql(ip, ssl_context)
 
-## Test that the Scylla REST API is serving, for wait_for_services() below.
+# Test that the Scylla REST API is serving.
+# Can be used as a checker function with wait_for_services() below.
 def check_rest_api(ip, port=10000):
     resp = requests.get(f"http://{ip}:{port}/ui/")
     if resp.status_code != requests.codes.ok:
         raise NotYetUp
-    # Any other exception may indicate a problem, and is passed to the caller.
 
 # wait_for_services() waits for scylla to finish booting successfully and
 # listen to services checked by the given "checkers". Raises an exception
