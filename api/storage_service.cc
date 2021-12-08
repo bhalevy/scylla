@@ -57,6 +57,7 @@
 #include "locator/abstract_replication_strategy.hh"
 #include "sstables_loader.hh"
 #include "db/view/view_builder.hh"
+#include "api/api_job.hh"
 
 extern logging::logger apilog;
 
@@ -599,13 +600,18 @@ void set_storage_service(http_context& ctx, routes& r, sharded<service::storage_
         });
     });
 
-    ss::force_keyspace_compaction.set(r, [&ctx](std::unique_ptr<request> req) {
+    ss::force_keyspace_compaction.set(r, [&ctx](std::unique_ptr<request> req) -> future<json::json_return_type> {
         auto keyspace = validate_keyspace(ctx, req->param);
         auto column_families = parse_tables(keyspace, ctx, req->query_parameters, "cf");
         if (column_families.empty()) {
             column_families = map_keys(ctx.db.local().find_keyspace(keyspace).metadata().get()->cf_meta_data());
         }
-        return ctx.db.invoke_on_all([keyspace, column_families] (database& db) -> future<> {
+        auto api_job_params = std::unordered_map<sstring, sstring>({
+            std::make_pair("keyspace", keyspace),
+            std::make_pair("tables", req->get_query_param("cf"))
+        });
+        auto api_job = api::api_job(ctx, "compaction", "force_keyspace_compaction", keyspace, "", std::move(api_job_params));
+        auto fut = ctx.db.invoke_on_all([keyspace, column_families] (database& db) -> future<> {
             auto table_ids = boost::copy_range<std::vector<utils::UUID>>(column_families | boost::adaptors::transformed([&] (auto& cf_name) {
                 return db.find_uuid(keyspace, cf_name);
             }));
@@ -618,9 +624,11 @@ void set_storage_service(http_context& ctx, routes& r, sharded<service::storage_
                 co_await db.find_column_family(id).compact_all_sstables();
             }
             co_return;
-        }).then([]{
-                return make_ready_future<json::json_return_type>(json_void());
+        }).then([] {
+            return make_ready_future<json::json_return_type>(json_void());
         });
+        api_job.set_action(std::move(fut));
+        return api_job.wait();
     });
 
     ss::force_keyspace_cleanup.set(r, [&ctx, &ss](std::unique_ptr<request> req) {

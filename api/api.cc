@@ -41,6 +41,9 @@
 #include "stream_manager.hh"
 #include "system.hh"
 #include "api/config.hh"
+#include "api/api_job.hh"
+#include "utils/UUID_gen.hh"
+#include <seastar/core/sleep.hh>
 
 logging::logger apilog("api");
 
@@ -246,5 +249,58 @@ future<> set_server_done(http_context& ctx) {
     });
 }
 
+api_job::api_job(http_context& ctx, sstring category, sstring name, sstring keyspace, sstring table, std::unordered_map<sstring, sstring> params, utils::UUID parent_uuid, utils::UUID uuid, clock::duration ttl)
+    : _ctx(ctx)
+    , _category(category)
+    , _name(std::move(name))
+    , _keyspace(std::move(keyspace))
+    , _table(std::move(table))
+    , _uuid(uuid != utils::UUID() ? uuid : utils::UUID_gen::get_time_UUID())
+    , _parent_uuid(parent_uuid)
+    , _params(std::move(params))
+    , _ttl(ttl)
+{
 }
 
+void api_job::set_action(future<json::json_return_type> fut) {
+    auto me = shared_from_this();
+    auto [it, inserted] = _ctx.api_jobs.emplace(std::make_pair(_uuid, me));
+    if (!inserted) {
+        on_internal_error(apilog, fmt::format("api_job: job UUID {} already exists", _uuid));
+    }
+    // Run the action in the background
+    // and pass its status to the shared promise when done.
+    // Then, set the timer to remove it from the tracker.
+    _start_time = clock::now();
+    (void)std::move(fut).then_wrapped([this] (future<json::json_return_type> fut) {
+        if (!fut.failed()) {
+            succeeded(std::move(fut).get0());
+        } else {
+            auto ex = fut.get_exception();
+            if (_as.abort_requested()) {
+                ex = std::make_exception_ptr(abort_requested_exception());
+            }
+            failed(std::move(ex));
+        }
+        _completion_time = clock::now();
+        if (_killed) {
+            return make_ready_future<>();
+        }
+        _as = abort_source();
+        return sleep_abortable(_ttl, _as);
+    }).finally([this, me = std::move(me)] {
+        _ctx.api_jobs.erase(_uuid);
+    });
+}
+
+future<> http_context::stop() noexcept {
+    return parallel_for_each(api_jobs, [] (std::pair<const utils::UUID, lw_shared_ptr<api_job>>& p) {
+        auto& job = p.second;
+        job->kill();
+        return job->wait().discard_result();
+    }).finally([this] {
+        assert(api_jobs.empty());
+    });
+}
+
+} // namespace api

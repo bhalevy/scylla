@@ -25,6 +25,7 @@
 
 #include "database_fwd.hh"
 #include "seastarx.hh"
+#include "api/api_job.hh"
 
 namespace service {
 
@@ -76,6 +77,7 @@ struct http_context {
     distributed<service::storage_proxy>& sp;
     service::load_meter& lmeter;
     const sharded<locator::shared_token_metadata>& shared_token_metadata;
+    std::unordered_map<utils::UUID, lw_shared_ptr<api_job>> api_jobs;
 
     http_context(distributed<database>& _db,
             distributed<service::storage_proxy>& _sp,
@@ -84,6 +86,8 @@ struct http_context {
     }
 
     const locator::token_metadata& get_token_metadata();
+
+    future<> stop() noexcept;
 };
 
 future<> set_server_init(http_context& ctx);
