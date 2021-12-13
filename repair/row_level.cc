@@ -2991,3 +2991,7 @@ future<> repair_service::stop() {
 repair_service::~repair_service() {
     assert(_stopped);
 }
+
+tracker& repair_service::repair_tracker() {
+    return _tracker;
+}
