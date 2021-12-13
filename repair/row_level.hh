@@ -108,6 +108,10 @@ public:
     sharded<db::system_distributed_keyspace>& get_sys_dist_ks() noexcept { return _sys_dist_ks; }
     sharded<db::view::view_update_generator>& get_view_update_generator() noexcept { return _view_update_generator; }
     gms::gossiper& get_gossiper() noexcept { return _gossiper.local(); }
+    tracker& repair_tracker();
+    const tracker& repair_tracker() const {
+        return const_cast<repair_service*>(this)->repair_tracker();
+    }
 };
 
 class repair_info;
