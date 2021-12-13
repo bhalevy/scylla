@@ -2968,6 +2968,7 @@ repair_service::repair_service(distributed<gms::gossiper>& gossiper,
     , _view_update_generator(vug)
     , _mm(mm)
     , _tracker(max_repair_memory)
+    , _node_ops_metrics(_tracker)
 {
     if (this_shard_id() == 0) {
         _gossip_helper = make_shared<row_level_repair_gossip_helper>();
@@ -2976,7 +2977,6 @@ repair_service::repair_service(distributed<gms::gossiper>& gossiper,
 }
 
 future<> repair_service::start() {
-    co_await init_metrics();
     co_await init_ms_handlers();
 }
 

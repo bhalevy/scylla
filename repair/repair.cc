@@ -65,7 +65,9 @@ void node_ops_info::check_abort() {
     }
 }
 
-node_ops_metrics::node_ops_metrics() {
+node_ops_metrics::node_ops_metrics(tracker& tracker)
+    : _tracker(tracker)
+{
     namespace sm = seastar::metrics;
     auto ops_label_type = sm::label("ops");
     _metrics.add_group("node_ops", {
@@ -99,13 +101,6 @@ float node_ops_metrics::decommission_finished_percentage() {
 float node_ops_metrics::removenode_finished_percentage() {
     return removenode_total_ranges == 0 ? 1 : float(removenode_finished_ranges) / float(removenode_total_ranges);
 }
-
-void node_ops_metrics::init() {
-    // Dummy function to call during startup to initialize the thread local
-    // variable node_ops_metrics _node_ops_metrics below.
-}
-
-static thread_local node_ops_metrics _node_ops_metrics;
 
 template <typename T1, typename T2>
 inline
@@ -330,10 +325,7 @@ static tracker& the_repair_tracker() {
 }
 
 float node_ops_metrics::repair_finished_percentage() {
-    if (_the_tracker) {
-        return the_repair_tracker().report_progress(streaming::stream_reason::repair);
-    }
-    return 1;
+    return _tracker.report_progress(streaming::stream_reason::repair);
 }
 
 tracker::tracker(size_t max_repair_memory)
@@ -950,17 +942,17 @@ static future<> do_repair_ranges(lw_shared_ptr<repair_info> ri) {
         return with_semaphore(ri->rs.repair_tracker().range_parallelism_semaphore(), 1, [ri, &range] {
             return ri->repair_range(range).then([ri] {
                 if (ri->reason == streaming::stream_reason::bootstrap) {
-                    _node_ops_metrics.bootstrap_finished_ranges++;
+                    ri->rs.get_metrics().bootstrap_finished_ranges++;
                 } else if (ri->reason == streaming::stream_reason::replace) {
-                    _node_ops_metrics.replace_finished_ranges++;
+                    ri->rs.get_metrics().replace_finished_ranges++;
                 } else if (ri->reason == streaming::stream_reason::rebuild) {
-                    _node_ops_metrics.rebuild_finished_ranges++;
+                    ri->rs.get_metrics().rebuild_finished_ranges++;
                 } else if (ri->reason == streaming::stream_reason::decommission) {
-                    _node_ops_metrics.decommission_finished_ranges++;
+                    ri->rs.get_metrics().decommission_finished_ranges++;
                 } else if (ri->reason == streaming::stream_reason::removenode) {
-                    _node_ops_metrics.removenode_finished_ranges++;
+                    ri->rs.get_metrics().removenode_finished_ranges++;
                 } else if (ri->reason == streaming::stream_reason::repair) {
-                    _node_ops_metrics.repair_finished_ranges_sum++;
+                    ri->rs.get_metrics().repair_finished_ranges_sum++;
                     ri->nr_ranges_finished++;
                 }
             });
@@ -1127,7 +1119,7 @@ int repair_service::do_repair_start(sstring keyspace, std::unordered_map<sstring
         for (auto shard : boost::irange(unsigned(0), smp::count)) {
             auto f = container().invoke_on(shard, [keyspace, table_ids, id, ranges,
                     data_centers = options.data_centers, hosts = options.hosts, ignore_nodes] (repair_service& local_repair) mutable {
-                _node_ops_metrics.repair_total_ranges_sum += ranges.size();
+                local_repair.get_metrics().repair_total_ranges_sum += ranges.size();
                 auto ri = make_lw_shared<repair_info>(local_repair,
                         std::move(keyspace), std::move(ranges), std::move(table_ids),
                         id, std::move(data_centers), std::move(hosts), std::move(ignore_nodes), streaming::stream_reason::repair, id.uuid);
@@ -1285,9 +1277,9 @@ future<> repair_service::bootstrap_with_repair(locator::token_metadata_ptr tmptr
             seastar::thread::maybe_yield();
             nr_ranges_total += desired_ranges.size();
         }
-        db.invoke_on_all([nr_ranges_total] (database&) {
-            _node_ops_metrics.bootstrap_finished_ranges = 0;
-            _node_ops_metrics.bootstrap_total_ranges = nr_ranges_total;
+        container().invoke_on_all([nr_ranges_total] (repair_service& rs) {
+            rs.get_metrics().bootstrap_finished_ranges = 0;
+            rs.get_metrics().bootstrap_total_ranges = nr_ranges_total;
         }).get();
         rlogger.info("bootstrap_with_repair: started with keyspaces={}, nr_ranges_total={}", keyspaces, nr_ranges_total);
         for (auto& keyspace_name : keyspaces) {
@@ -1459,14 +1451,14 @@ future<> repair_service::do_decommission_removenode_with_repair(locator::token_m
             nr_ranges_total += ranges.size();
         }
         if (reason == streaming::stream_reason::decommission) {
-            db.invoke_on_all([nr_ranges_total] (database&) {
-                _node_ops_metrics.decommission_finished_ranges = 0;
-                _node_ops_metrics.decommission_total_ranges = nr_ranges_total;
+            container().invoke_on_all([nr_ranges_total] (repair_service& rs) {
+                rs.get_metrics().decommission_finished_ranges = 0;
+                rs.get_metrics().decommission_total_ranges = nr_ranges_total;
             }).get();
         } else if (reason == streaming::stream_reason::removenode) {
-            db.invoke_on_all([nr_ranges_total] (database&) {
-                _node_ops_metrics.removenode_finished_ranges = 0;
-                _node_ops_metrics.removenode_total_ranges = nr_ranges_total;
+            container().invoke_on_all([nr_ranges_total] (repair_service& rs) {
+                rs.get_metrics().removenode_finished_ranges = 0;
+                rs.get_metrics().removenode_total_ranges = nr_ranges_total;
             }).get();
         }
         rlogger.info("{}: started with keyspaces={}, leaving_node={}", op, keyspaces, leaving_node);
@@ -1615,12 +1607,12 @@ future<> repair_service::do_decommission_removenode_with_repair(locator::token_m
             }
             temp.clear_gently().get();
             if (reason == streaming::stream_reason::decommission) {
-                db.invoke_on_all([nr_ranges_skipped] (database&) {
-                    _node_ops_metrics.decommission_finished_ranges += nr_ranges_skipped;
+                container().invoke_on_all([nr_ranges_skipped] (repair_service& rs) {
+                    rs.get_metrics().decommission_finished_ranges += nr_ranges_skipped;
                 }).get();
             } else if (reason == streaming::stream_reason::removenode) {
-                db.invoke_on_all([nr_ranges_skipped] (database&) {
-                    _node_ops_metrics.removenode_finished_ranges += nr_ranges_skipped;
+                container().invoke_on_all([nr_ranges_skipped] (repair_service& rs) {
+                    rs.get_metrics().removenode_finished_ranges += nr_ranges_skipped;
                 }).get();
             }
             if (is_removenode) {
@@ -1676,14 +1668,14 @@ future<> repair_service::do_rebuild_replace_with_repair(locator::token_metadata_
 
         }
         if (reason == streaming::stream_reason::rebuild) {
-            db.invoke_on_all([nr_ranges_total] (database&) {
-                _node_ops_metrics.rebuild_finished_ranges = 0;
-                _node_ops_metrics.rebuild_total_ranges = nr_ranges_total;
+            container().invoke_on_all([nr_ranges_total] (repair_service& rs) {
+                rs.get_metrics().rebuild_finished_ranges = 0;
+                rs.get_metrics().rebuild_total_ranges = nr_ranges_total;
             }).get();
         } else if (reason == streaming::stream_reason::replace) {
-            db.invoke_on_all([nr_ranges_total] (database&) {
-                _node_ops_metrics.replace_finished_ranges = 0;
-                _node_ops_metrics.replace_total_ranges = nr_ranges_total;
+            container().invoke_on_all([nr_ranges_total] (repair_service& rs) {
+                rs.get_metrics().replace_finished_ranges = 0;
+                rs.get_metrics().replace_total_ranges = nr_ranges_total;
             }).get();
         }
         rlogger.info("{}: started with keyspaces={}, source_dc={}, nr_ranges_total={}", op, keyspaces, source_dc, nr_ranges_total);
@@ -1722,12 +1714,12 @@ future<> repair_service::do_rebuild_replace_with_repair(locator::token_metadata_
                 }
             }
             if (reason == streaming::stream_reason::rebuild) {
-                db.invoke_on_all([nr_ranges_skipped] (database&) {
-                    _node_ops_metrics.rebuild_finished_ranges += nr_ranges_skipped;
+                container().invoke_on_all([nr_ranges_skipped] (repair_service& rs) {
+                    rs.get_metrics().rebuild_finished_ranges += nr_ranges_skipped;
                 }).get();
             } else if (reason == streaming::stream_reason::replace) {
-                db.invoke_on_all([nr_ranges_skipped] (database&) {
-                    _node_ops_metrics.replace_finished_ranges += nr_ranges_skipped;
+                container().invoke_on_all([nr_ranges_skipped] (repair_service& rs) {
+                    rs.get_metrics().replace_finished_ranges += nr_ranges_skipped;
                 }).get();
             }
             auto nr_ranges = ranges.size();
@@ -1762,11 +1754,6 @@ future<> repair_service::replace_with_repair(locator::token_metadata_ptr tmptr, 
     auto cloned_tmptr = make_token_metadata_ptr(std::move(cloned_tm));
     co_await cloned_tmptr->update_normal_tokens(replacing_tokens, utils::fb_utilities::get_broadcast_address());
     co_return co_await do_rebuild_replace_with_repair(std::move(cloned_tmptr), std::move(op), std::move(source_dc), reason);
-}
-
-future<> repair_service::init_metrics() {
-    _node_ops_metrics.init();
-    return make_ready_future<>();
 }
 
 std::ostream& operator<<(std::ostream& out, node_ops_cmd cmd) {
