@@ -577,7 +577,8 @@ repair_info::repair_info(repair_service& repair,
     const std::unordered_set<gms::inet_address>& ignore_nodes_,
     streaming::stream_reason reason_,
     std::optional<utils::UUID> ops_uuid)
-    : db(repair.get_db())
+    : rs(repair)
+    , db(repair.get_db())
     , messaging(repair.get_messaging().container())
     , sys_dist_ks(repair.get_sys_dist_ks())
     , view_update_generator(repair.get_view_update_generator())

@@ -168,6 +168,7 @@ public:
 
 class repair_info {
 public:
+    repair_service& rs;
     seastar::sharded<database>& db;
     seastar::sharded<netw::messaging_service>& messaging;
     sharded<db::system_distributed_keyspace>& sys_dist_ks;
