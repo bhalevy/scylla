@@ -2991,3 +2991,11 @@ future<> repair_service::stop() {
 repair_service::~repair_service() {
     assert(_stopped);
 }
+
+tracker& repair_service::repair_tracker() {
+    if (_tracker) {
+        return *_tracker;
+    } else {
+        throw std::runtime_error("The repair tracker is not initialized yet");
+    }
+}
