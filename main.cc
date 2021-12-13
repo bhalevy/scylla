@@ -96,7 +96,7 @@
 #include "service/storage_proxy.hh"
 #include "alternator/controller.hh"
 #include "alternator/ttl.hh"
-
+#include "utils/job.hh"
 #include "service/raft/raft_group_registry.hh"
 
 #include <boost/algorithm/string/join.hpp>
@@ -467,6 +467,7 @@ int main(int ac, char** av) {
 
     print_starting_message(ac, av, parsed_opts);
 
+    sharded<utils::job_registry> job_registry;
     sharded<locator::shared_token_metadata> token_metadata;
     sharded<locator::effective_replication_map_factory> erm_factory;
     sharded<service::migration_notifier> mm_notifier;
@@ -477,7 +478,7 @@ int main(int ac, char** av) {
     auto& proxy = service::get_storage_proxy();
     sharded<service::storage_service> ss;
     sharded<service::migration_manager> mm;
-    api::http_context ctx(db, proxy, load_meter, token_metadata);
+    api::http_context ctx(db, proxy, load_meter, token_metadata, job_registry);
     httpd::http_server_control prometheus_server;
     std::optional<utils::directories> dirs = {};
     sharded<gms::feature_service> feature_service;
@@ -520,7 +521,7 @@ int main(int ac, char** av) {
         return seastar::async([&app, cfg, ext, &db, &qp, &bm, &proxy, &mm, &mm_notifier, &ctx, &opts, &dirs,
                 &prometheus_server, &cf_cache_hitrate_calculator, &load_meter, &feature_service,
                 &token_metadata, &erm_factory, &snapshot_ctl, &messaging, &sst_dir_semaphore, &raft_gr, &service_memory_limiter,
-                &repair, &sst_loader, &ss, &lifecycle_notifier, &stream_manager] {
+                &repair, &sst_loader, &ss, &lifecycle_notifier, &stream_manager, &job_registry] {
           try {
             // disable reactor stall detection during startup
             auto blocked_reactor_notify_ms = engine().get_blocked_reactor_notify_ms();
@@ -559,6 +560,11 @@ int main(int ac, char** av) {
                 auto default_sg = default_scheduling_group();
                 default_sg.set_shares(200);
             }).get();
+
+            job_registry.start().get();
+            auto stop_job_registry = defer_verbose_shutdown("job registry", [&job_registry] {
+                job_registry.stop().get();
+            });
 
             adjust_and_verify_rlimit(cfg->developer_mode());
             verify_adequate_memory_per_shard(cfg->developer_mode());

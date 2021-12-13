@@ -66,6 +66,10 @@ class gossiper;
 
 }
 
+namespace utils {
+class job_registry;
+}
+
 namespace api {
 
 struct http_context {
@@ -76,12 +80,14 @@ struct http_context {
     distributed<service::storage_proxy>& sp;
     service::load_meter& lmeter;
     const sharded<locator::shared_token_metadata>& shared_token_metadata;
+    sharded<utils::job_registry>& job_registry;
 
     http_context(distributed<database>& _db,
             distributed<service::storage_proxy>& _sp,
-            service::load_meter& _lm, const sharded<locator::shared_token_metadata>& _stm)
-            : db(_db), sp(_sp), lmeter(_lm), shared_token_metadata(_stm) {
-    }
+            service::load_meter& _lm, const sharded<locator::shared_token_metadata>& _stm,
+            sharded<utils::job_registry>& _job_registry)
+            : db(_db), sp(_sp), lmeter(_lm), shared_token_metadata(_stm), job_registry(_job_registry)
+    { }
 
     const locator::token_metadata& get_token_metadata();
 };
