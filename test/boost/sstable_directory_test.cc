@@ -23,6 +23,7 @@
 #include <seastar/testing/thread_test_case.hh>
 #include <seastar/testing/test_case.hh>
 #include <seastar/core/sstring.hh>
+#include "sstables/shared_sstable.hh"
 #include "sstables/sstable_directory.hh"
 #include "distributed_loader.hh"
 #include "test/lib/sstable_utils.hh"
@@ -431,8 +432,16 @@ SEASTAR_TEST_CASE(sstable_directory_test_table_lock_works) {
         e.execute_cql("create table cf (p text PRIMARY KEY, c int)").get();
         auto ks_name = "ks";
         auto cf_name = "cf";
-        auto& cf = e.local_db().find_column_family(ks_name, cf_name);
-        auto path = fs::path(cf.dir());
+        auto cf = e.local_db().find_column_family(ks_name, cf_name).shared_from_this();
+        auto path = fs::path(cf->dir());
+        std::unordered_map<unsigned, std::vector<sstring>> sstables;
+
+        testlog.debug("Inserting into cf");
+
+        e.execute_cql("insert into cf (p, c) values ('one', 1)").get();
+
+        testlog.debug("Flushing cf");
+        BOOST_REQUIRE_NO_THROW(cf->flush().get());
 
         sharded<semaphore> sstdir_sem;
         sstdir_sem.start(1).get();
@@ -453,19 +462,40 @@ SEASTAR_TEST_CASE(sstable_directory_test_table_lock_works) {
             sstdir.stop().get();
         });
 
+        // Collect all sstable file names
+        sstdir.invoke_on_all([&] (sstable_directory& d) {
+            return d.do_for_each_sstable([&] (sstables::shared_sstable sst) {
+                sstables[this_shard_id()].push_back(sst->get_filename());
+                return make_ready_future<>();
+            });
+        }).get();
+
+        BOOST_REQUIRE(sstables.size() != 0);
+
         distributed_loader_for_tests::lock_table(sstdir, e.db(), ks_name, cf_name).get();
 
         auto drop = e.execute_cql("drop table cf");
-        later().get();
 
-        auto table_ok = e.db().invoke_on_all([ks_name, cf_name] (database& db) {
-            db.find_column_family(ks_name, cf_name);
-        });
-        std::exception_ptr table_ok_ex;
-        try {
-            table_ok.get();
-        } catch (...) {
-            table_ok_ex = std::current_exception();
+        auto cf_exists = [&e] (const char* ks_name, const char* cf_name) {
+            try {
+                e.db().invoke_on_all([ks_name, cf_name] (database& db) {
+                    db.find_column_family(ks_name, cf_name);
+                }).get();
+                return true;
+            } catch (no_such_column_family&) {
+                return false;
+            }
+        };
+
+        testlog.debug("Waiting until {}.{} is unlisted from the database", ks_name, cf_name);
+        while (cf_exists(ks_name, cf_name)) {
+            later().get();
+        }
+
+        for (const auto& [shard, files] : sstables) {
+            for (const auto& f : files) {
+                BOOST_REQUIRE(file_exists(f).get0());
+            }
         }
 
         // Stop manually now, to allow for the object to be destroyed and take the
@@ -474,15 +504,9 @@ SEASTAR_TEST_CASE(sstable_directory_test_table_lock_works) {
         sstdir.stop().get();
         drop.get();
 
-        if (table_ok_ex) {
-            BOOST_FAIL(fmt::format("table_ok failed unexpectedly: {}", table_ok_ex));
-        }
+        BOOST_REQUIRE(!cf_exists(ks_name, cf_name));
 
-        auto no_such_table = e.db().invoke_on_all([ks_name, cf_name] (database& db) {
-            db.find_column_family(ks_name, cf_name);
-            return make_ready_future<>();
-        });
-        BOOST_REQUIRE_THROW(no_such_table.get(), no_such_column_family);
+        BOOST_REQUIRE(!file_exists(path.native()).get0());
     });
 }
 
