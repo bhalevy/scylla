@@ -461,13 +461,22 @@ SEASTAR_TEST_CASE(sstable_directory_test_table_lock_works) {
         auto table_ok = e.db().invoke_on_all([ks_name, cf_name] (database& db) {
             db.find_column_family(ks_name, cf_name);
         });
-        BOOST_REQUIRE_NO_THROW(table_ok.get());
+        std::exception_ptr table_ok_ex;
+        try {
+            table_ok.get();
+        } catch (...) {
+            table_ok_ex = std::current_exception();
+        }
 
         // Stop manually now, to allow for the object to be destroyed and take the
         // phaser with it.
         stop.cancel();
         sstdir.stop().get();
         drop.get();
+
+        if (table_ok_ex) {
+            BOOST_FAIL(fmt::format("table_ok failed unexpectedly: {}", table_ok_ex));
+        }
 
         auto no_such_table = e.db().invoke_on_all([ks_name, cf_name] (database& db) {
             db.find_column_family(ks_name, cf_name);
