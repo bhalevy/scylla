@@ -328,11 +328,6 @@ tracker::tracker(size_t max_repair_memory)
     auto nr = _range_parallelism_semaphore.available_units();
     rlogger.info("Setting max_repair_memory={}, max_repair_memory_per_range={}, max_repair_ranges_in_parallel={}",
         max_repair_memory, max_repair_memory_per_range(), nr);
-    _the_tracker = this;
-}
-
-tracker::~tracker() {
-    _the_tracker = nullptr;
 }
 
 void tracker::start(repair_uniq_id id) {
