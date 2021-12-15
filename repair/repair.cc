@@ -1195,22 +1195,19 @@ future<int> repair_start(seastar::sharded<repair_service>& repair,
     });
 }
 
-future<std::vector<int>> get_active_repairs(seastar::sharded<database>& db) {
-    return db.invoke_on(0, [] (database& localdb) {
-        return the_repair_tracker().get_active();
-    });
+std::vector<int> repair_service::get_active_repairs() const {
+    assert(this_shard_id() == 0);
+    return repair_tracker().get_active();
 }
 
-future<repair_status> repair_get_status(seastar::sharded<database>& db, int id) {
-    return db.invoke_on(0, [id] (database& localdb) {
-        return the_repair_tracker().get(id);
-    });
+repair_status repair_service::repair_get_status(int id) const {
+    assert(this_shard_id() == 0);
+    return repair_tracker().get(id);
 }
 
-future<repair_status> repair_await_completion(seastar::sharded<database>& db, int id, std::chrono::steady_clock::time_point timeout) {
-    return db.invoke_on(0, [id, timeout] (database& localdb) {
-        return the_repair_tracker().repair_await_completion(id, timeout);
-    });
+future<repair_status> repair_service::repair_await_completion(int id, std::chrono::steady_clock::time_point timeout) {
+    assert(this_shard_id() == 0);
+    return repair_tracker().repair_await_completion(id, timeout);
 }
 
 future<> repair_service::shutdown() {
@@ -1220,10 +1217,9 @@ future<> repair_service::shutdown() {
     }
 }
 
-future<> repair_abort_all(seastar::sharded<database>& db) {
-    return db.invoke_on_all([] (database& localdb) {
-        the_repair_tracker().abort_all_repairs();
-    });
+void repair_service::repair_abort_all() {
+    assert(this_shard_id() == 0);
+    repair_tracker().abort_all_repairs();
 }
 
 future<> repair_service::sync_data_using_repair(

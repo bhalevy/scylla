@@ -112,6 +112,23 @@ public:
     const tracker& repair_tracker() const {
         return const_cast<repair_service*>(this)->repair_tracker();
     }
+
+    // returns a vector with the ids of the active repairs
+    // Must run on shard 0.
+    std::vector<int> get_active_repairs() const;
+
+    // returns the status of repair task `id`
+    // Must run on shard 0.
+    repair_status repair_get_status(int id) const;
+
+    // If the repair job is finished (SUCCESSFUL or FAILED), it returns immediately.
+    // It blocks if the repair job is still RUNNING until timeout.
+    // Must run on shard 0.
+    future<repair_status> repair_await_completion(int id, std::chrono::steady_clock::time_point timeout);
+
+    // Abort all the repairs
+    // Must run on shard 0.
+    void repair_abort_all();
 };
 
 class repair_info;
