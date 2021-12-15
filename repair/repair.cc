@@ -314,8 +314,6 @@ static future<std::vector<gms::inet_address>> get_hosts_participating_in_repair(
     co_return std::vector<gms::inet_address>(participating_hosts.begin(), participating_hosts.end());
 }
 
-static thread_local tracker* _the_tracker = nullptr;
-
 float node_ops_metrics::repair_finished_percentage() {
     return _tracker.report_progress(streaming::stream_reason::repair);
 }
@@ -328,11 +326,6 @@ tracker::tracker(size_t max_repair_memory)
     auto nr = _range_parallelism_semaphore.available_units();
     rlogger.info("Setting max_repair_memory={}, max_repair_memory_per_range={}, max_repair_ranges_in_parallel={}",
         max_repair_memory, max_repair_memory_per_range(), nr);
-    _the_tracker = this;
-}
-
-tracker::~tracker() {
-    _the_tracker = nullptr;
 }
 
 void tracker::start(repair_uniq_id id) {
