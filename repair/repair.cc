@@ -1195,21 +1195,21 @@ future<int> repair_start(seastar::sharded<repair_service>& repair,
     });
 }
 
-future<std::vector<int>> get_active_repairs(seastar::sharded<database>& db) {
-    return db.invoke_on(0, [] (database& localdb) {
-        return the_repair_tracker().get_active();
+future<std::vector<int>> repair_service::get_active_repairs() {
+    return container().invoke_on(0, [] (repair_service& rs) {
+        return rs.repair_tracker().get_active();
     });
 }
 
-future<repair_status> repair_get_status(seastar::sharded<database>& db, int id) {
-    return db.invoke_on(0, [id] (database& localdb) {
-        return the_repair_tracker().get(id);
+future<repair_status> repair_service::get_status(int id) {
+    return container().invoke_on(0, [id] (repair_service& rs) {
+        return rs.repair_tracker().get(id);
     });
 }
 
-future<repair_status> repair_await_completion(seastar::sharded<database>& db, int id, std::chrono::steady_clock::time_point timeout) {
-    return db.invoke_on(0, [id, timeout] (database& localdb) {
-        return the_repair_tracker().repair_await_completion(id, timeout);
+future<repair_status> repair_service::await_completion(int id, std::chrono::steady_clock::time_point timeout) {
+    return container().invoke_on(0, [id, timeout] (repair_service& rs) {
+        return rs.repair_tracker().repair_await_completion(id, timeout);
     });
 }
 
@@ -1220,9 +1220,20 @@ future<> repair_service::shutdown() {
     }
 }
 
-future<> repair_abort_all(seastar::sharded<database>& db) {
-    return db.invoke_on_all([] (database& localdb) {
-        the_repair_tracker().abort_all_repairs();
+future<> repair_service::abort_all() {
+    // FIXME: use a sharded<tracker>
+    // Currently all shards register their repair_info
+    // on the global repair_tracker::_repairs[this_shard_id()] on shard 0
+    // via a global (cross shard) pointer.
+    // Instead, the tracker better be sharded, keeping track of the
+    // shard's repair jobs in the tracker's shard instance.
+    // (some node-global attributes might still be maintained only on shard 0,
+    // consider extracting them to the repair_service)
+    return container().invoke_on(0, [] (repair_service& rs) {
+        auto& tracker = rs.repair_tracker();
+        return rs.container().invoke_on_all([&tracker] (repair_service& rs) {
+            return tracker.abort_all_repairs();
+        });
     });
 }
 
