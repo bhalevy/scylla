@@ -3666,7 +3666,9 @@ void storage_service::node_ops_abort(utils::UUID ops_uuid) {
         if (as && !as->abort_requested()) {
             as->request_abort();
         }
-        abort_repair_node_ops(ops_uuid).get();
+        _repair.invoke_on(0, [ops_uuid] (repair_service& r) {
+            r.abort_repair_node_ops(ops_uuid);
+        }).get();
         _node_ops.erase(it);
     }
 }

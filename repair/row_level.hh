@@ -162,6 +162,9 @@ public:
     // Abort all the repairs
     // Must run on shard 0.
     void repair_abort_all();
+
+    // Must run on shard 0.
+    void abort_repair_node_ops(utils::UUID ops_uuid);
 };
 
 class repair_info;
