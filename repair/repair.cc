@@ -314,8 +314,6 @@ static future<std::vector<gms::inet_address>> get_hosts_participating_in_repair(
     co_return std::vector<gms::inet_address>(participating_hosts.begin(), participating_hosts.end());
 }
 
-static tracker* _the_tracker = nullptr;
-
 float node_ops_metrics::repair_finished_percentage() {
     if (_tracker) {
         return _tracker->report_progress(streaming::stream_reason::repair);
@@ -333,11 +331,6 @@ tracker::tracker(size_t nr_shards, size_t max_repair_memory)
     while (nr_shards--) {
         _range_parallelism_semaphores.emplace_back(named_semaphore(nr, named_semaphore_exception_factory{"repair range parallelism"}));
     }
-    _the_tracker = this;
-}
-
-tracker::~tracker() {
-    _the_tracker = nullptr;
 }
 
 void tracker::start(repair_uniq_id id) {
