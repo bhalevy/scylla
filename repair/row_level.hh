@@ -49,9 +49,9 @@ class repair_service : public seastar::peering_sharded_service<repair_service> {
     sharded<db::system_distributed_keyspace>& _sys_dist_ks;
     sharded<db::view::view_update_generator>& _view_update_generator;
     service::migration_manager& _mm;
+    tracker _tracker;
 
     shared_ptr<row_level_repair_gossip_helper> _gossip_helper;
-    std::unique_ptr<tracker> _tracker;
     bool _stopped = false;
 
     future<> init_ms_handlers();
