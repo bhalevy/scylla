@@ -1,8 +1,10 @@
+#include <seastar/core/coroutine.hh>
 #include <seastar/core/print.hh>
 #include <seastar/core/seastar.hh>
 #include <seastar/util/log.hh>
 #include "lister.hh"
 #include "checked-file-impl.hh"
+#include "seastar/core/pipe.hh"
 
 static seastar::logger llogger("lister");
 
@@ -74,4 +76,45 @@ future<> lister::rmdir(fs::path dir) {
         // ...then kill the directory itself
         return remove_file(dir.native());
     });
+}
+
+future<std::optional<directory_entry>> queue_lister::get() {
+    if (!_done) {
+        auto f = co_await open_checked_directory(general_disk_error_handler, _dir.native());
+        auto walker = [this] (fs::path dir, directory_entry de) {
+            return _q.push_eventually(std::make_optional<directory_entry>(std::move(de))).handle_exception([] (std::exception_ptr) {
+                // ignore exception, queue was aborted
+            });
+        };
+        assert(!_lister);
+        _lister = std::make_unique<lister>(std::move(f), _type, std::move(walker), _filter, _dir, _do_show_hidden);
+        auto done_fut = _lister->done().then_wrapped([this] (future<> f) {
+            if (!f.failed()) {
+                return _q.push_eventually(std::nullopt).handle_exception([] (std::exception_ptr) {
+                    // ignore exception, queue was aborted
+                });
+            }
+            _q.abort(f.get_exception());
+            return make_ready_future<>();
+        }).finally([this] {
+            _lister.reset();
+        });
+        _done = std::make_optional<future<>>(std::move(done_fut));
+    }
+    co_return co_await _q.pop_eventually();
+}
+
+void queue_lister::abort(std::exception_ptr ex) {
+    _q.abort(std::move(ex));
+    if (!_done) {
+        _done = std::make_optional<future<>>(make_ready_future<>());
+    }
+}
+
+future<> queue_lister::close() noexcept {
+    if (!_done) {
+        return make_ready_future<>();
+    }
+    _q.abort(std::make_exception_ptr(broken_pipe_exception()));
+    return *std::exchange(_done, std::make_optional<future<>>(make_ready_future<>()));
 }

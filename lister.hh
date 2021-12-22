@@ -26,6 +26,7 @@
 #include <seastar/core/shared_ptr.hh>
 #include <seastar/core/file.hh>
 #include <seastar/core/enum.hh>
+#include <seastar/core/queue.hh>
 #include <seastar/util/bool_class.hh>
 
 #include "seastarx.hh"
@@ -166,10 +167,54 @@ private:
     future<directory_entry> guarantee_type(directory_entry de);
 };
 
+class queue_lister {
+    fs::path _dir;
+    lister::dir_entry_types _type;
+    lister::filter_type _filter;
+    lister::show_hidden _do_show_hidden;
+    std::unique_ptr<lister> _lister;
+    std::optional<future<>> _done;
+
+    using queue_entry_type = std::optional<directory_entry>;
+
+    seastar::queue<queue_entry_type> _q;
+public:
+    queue_lister(fs::path dir,
+            lister::dir_entry_types type = {directory_entry_type::regular, directory_entry_type::directory},
+            lister::filter_type filter = [] (const fs::path& parent_dir, const directory_entry& entry) { return true; },
+            lister::show_hidden do_show_hidden = lister::show_hidden::yes) noexcept
+        : _dir(std::move(dir))
+        , _type(type)
+        , _filter(std::move(filter))
+        , _do_show_hidden(do_show_hidden)
+        , _q(4096 / sizeof(queue_entry_type))
+    { }
+
+    // Caller should drain all entries using get()
+    // until it gets a disengaged result or an error.
+    future<std::optional<directory_entry>> get();
+
+    // Abort the queue with a given exception
+    // Further calls to get() will fail with this exception.
+    void abort(std::exception_ptr ex);
+
+    // Close the queue, ignoring any errors.
+    // Must be called if get() did not drain the queue.
+    future<> close() noexcept;
+};
+
 static inline fs::path operator/(const fs::path& lhs, const char* rhs) {
     return lhs / fs::path(rhs);
 }
 
 static inline fs::path operator/(const fs::path& lhs, const sstring& rhs) {
+    return lhs / fs::path(rhs);
+}
+
+static inline fs::path operator/(const fs::path& lhs, std::string_view rhs) {
+    return lhs / fs::path(rhs);
+}
+
+static inline fs::path operator/(const fs::path& lhs, const std::string& rhs) {
     return lhs / fs::path(rhs);
 }
