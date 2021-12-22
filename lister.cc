@@ -1,5 +1,7 @@
+#include <seastar/core/coroutine.hh>
 #include <seastar/core/print.hh>
 #include <seastar/core/seastar.hh>
+#include <seastar/core/pipe.hh>
 #include <seastar/util/log.hh>
 #include "lister.hh"
 #include "checked-file-impl.hh"
@@ -73,5 +75,53 @@ future<> lister::rmdir(fs::path dir) {
     }).then([dir] {
         // ...then kill the directory itself
         return remove_file(dir.native());
+    });
+}
+
+directory_lister::~directory_lister() {
+    if (_lister) {
+        on_internal_error(llogger, "directory_lister not closed when destroyed");
+    }
+}
+
+future<std::optional<directory_entry>> directory_lister::get() {
+    if (!_done) {
+        auto f = co_await open_checked_directory(general_disk_error_handler, _dir.native());
+        auto walker = [this] (fs::path dir, directory_entry de) {
+            return _queue.push_eventually(std::make_optional<directory_entry>(std::move(de)));
+        };
+        assert(!_lister);
+        _lister = std::make_unique<lister>(std::move(f), _type, std::move(walker), _filter, _dir, _do_show_hidden);
+        auto done_fut = _lister->done().then_wrapped([this] (future<> f) {
+            if (f.failed()) [[unlikely]] {
+                _queue.abort(f.get_exception());
+                return make_ready_future<>();
+            }
+            return _queue.push_eventually(std::nullopt);
+        }).finally([this] {
+            _lister.reset();
+        });
+        _done = std::make_optional<future<>>(std::move(done_fut));
+    }
+    auto ret = co_await _queue.pop_eventually();
+    if (!ret) {
+        // In case the caller tries to get() again
+        // after returning end of list.
+        _queue.abort(std::make_exception_ptr(broken_pipe_exception()));
+    }
+    co_return ret;
+}
+
+void directory_lister::abort(std::exception_ptr ex) {
+    _queue.abort(std::move(ex));
+}
+
+future<> directory_lister::close() noexcept {
+    if (!_done) {
+        return make_ready_future<>();
+    }
+    _queue.abort(std::make_exception_ptr(broken_pipe_exception()));
+    return std::exchange(_done, std::make_optional<future<>>(make_ready_future<>()))->handle_exception([] (std::exception_ptr) {
+        // ignore all errors
     });
 }

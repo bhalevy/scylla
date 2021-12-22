@@ -13,6 +13,7 @@
 #include <seastar/core/shared_ptr.hh>
 #include <seastar/core/file.hh>
 #include <seastar/core/enum.hh>
+#include <seastar/core/queue.hh>
 #include <seastar/util/bool_class.hh>
 
 #include "seastarx.hh"
@@ -151,6 +152,41 @@ private:
      * exceptional future with std::system_error exception if type of the file represented by @param de may not be retrieved.
      */
     future<directory_entry> guarantee_type(directory_entry de);
+};
+
+class directory_lister {
+    fs::path _dir;
+    lister::dir_entry_types _type;
+    lister::filter_type _filter;
+    lister::show_hidden _do_show_hidden;
+    seastar::queue<std::optional<directory_entry>> _queue;
+    std::unique_ptr<lister> _lister;
+    std::optional<future<>> _done;
+public:
+    directory_lister(fs::path dir,
+            lister::dir_entry_types type = {directory_entry_type::regular, directory_entry_type::directory},
+            lister::filter_type filter = [] (const fs::path& parent_dir, const directory_entry& entry) { return true; },
+            lister::show_hidden do_show_hidden = lister::show_hidden::yes) noexcept
+        : _dir(std::move(dir))
+        , _type(type)
+        , _filter(std::move(filter))
+        , _do_show_hidden(do_show_hidden)
+        , _queue(512 / sizeof(std::optional<directory_entry>))
+    { }
+
+    ~directory_lister();
+
+    // Caller should drain all entries using get()
+    // until it gets a disengaged result or an error.
+    future<std::optional<directory_entry>> get();
+
+    // Abort the directory_lister with a given exception
+    // Further calls to get() will fail with this exception.
+    void abort(std::exception_ptr ex);
+
+    // Close the directory_lister, ignoring any errors.
+    // Must be called if get() did not drain the queue.
+    future<> close() noexcept;
 };
 
 static inline fs::path operator/(const fs::path& lhs, const char* rhs) {
