@@ -1,3 +1,4 @@
+#include <seastar/core/coroutine.hh>
 #include <seastar/core/print.hh>
 #include <seastar/core/seastar.hh>
 #include <seastar/util/log.hh>
@@ -74,4 +75,53 @@ future<> lister::rmdir(fs::path dir) {
         // ...then kill the directory itself
         return remove_file(dir.native());
     });
+}
+
+future<std::optional<directory_entry>> directory_lister::get() {
+    if (!_done) {
+        _pipe = std::make_unique<seastar::pipe<directory_entry>>(4096 / sizeof(std::optional<directory_entry>));
+        auto f = co_await open_checked_directory(general_disk_error_handler, _dir.native());
+        auto walker = [this] (fs::path dir, directory_entry de) {
+            if (_pipe) {
+                return _pipe->writer.write(std::move(de));
+            } else {
+                return make_exception_future<>(broken_pipe_exception());
+            }
+        };
+        assert(!_lister);
+        _lister = std::make_unique<lister>(std::move(f), _type, std::move(walker), _filter, _dir, _do_show_hidden);
+        auto done_fut = _lister->done().then_wrapped([this] (future<> f) {
+            if (_pipe) {
+                _pipe->writer.~pipe_writer();
+            }
+            if (f.failed()) {
+                auto ex = f.get_exception();
+                if (!_ex) {
+                    _ex = std::move(ex);
+                }
+            }
+        }).finally([this] {
+            _lister.reset();
+        });
+        _done = std::make_optional<future<>>(std::move(done_fut));
+    }
+    if (_ex) {
+        co_return coroutine::exception(_ex);
+    }
+    co_return co_await _pipe->reader.read();
+}
+
+void directory_lister::abort(std::exception_ptr ex) {
+    if (ex) {
+        _ex = std::move(ex);
+    }
+    _pipe.reset();
+}
+
+future<> directory_lister::close() noexcept {
+    if (!_done) {
+        return make_ready_future<>();
+    }
+    _pipe.reset();
+    return *std::exchange(_done, std::make_optional<future<>>(make_ready_future<>()));
 }
