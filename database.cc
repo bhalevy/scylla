@@ -1764,13 +1764,10 @@ static future<> maybe_handle_reorder(std::exception_ptr exp) {
 }
 
 future<> database::apply_with_commitlog_slow(column_family& cf, const mutation& m, db::timeout_clock::time_point timeout) {
-        // FIXME: indentation
-        return do_with(freeze(m), [this, &m, &cf, timeout] (frozen_mutation& fm) {
-            commitlog_entry_writer cew(m.schema(), fm, db::commitlog::force_sync::no);
-            return cf.commitlog()->add_entry(m.schema()->id(), cew, timeout);
-        }).then([this, &m, &cf, timeout] (db::rp_handle h) {
-            return apply_in_memory(m, cf, std::move(h), timeout).handle_exception(maybe_handle_reorder);
-        });
+    frozen_mutation fm = freeze(m);
+    commitlog_entry_writer cew(m.schema(), fm, db::commitlog::force_sync::no);
+    db::rp_handle h = co_await cf.commitlog()->add_entry(m.schema()->id(), cew, timeout);
+    co_await apply_in_memory(m, cf, std::move(h), timeout).handle_exception(maybe_handle_reorder);
 }
 
 future<> database::apply_with_commitlog(schema_ptr s, column_family& cf, utils::UUID uuid, const frozen_mutation& m, db::timeout_clock::time_point timeout,
