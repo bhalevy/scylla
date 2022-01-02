@@ -1764,7 +1764,7 @@ static future<> maybe_handle_reorder(std::exception_ptr exp) {
 }
 
 future<> database::apply_with_commitlog_slow(column_family& cf, const mutation& m, db::timeout_clock::time_point timeout) {
-    frozen_mutation fm = freeze(m);
+    frozen_mutation fm = co_await freeze_gently(m);
     commitlog_entry_writer cew(m.schema(), fm, db::commitlog::force_sync::no);
     db::rp_handle h = co_await cf.commitlog()->add_entry(m.schema()->id(), cew, timeout);
     co_await apply_in_memory(m, cf, std::move(h), timeout).handle_exception(maybe_handle_reorder);
