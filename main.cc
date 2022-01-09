@@ -113,6 +113,8 @@ namespace bpo = boost::program_options;
 
 // Must live in a seastar::thread
 class stop_signal {
+    bool _ready = false;
+    bool _caught_early = false;
     bool _caught = false;
     condition_variable _cond;
     sharded<abort_source> _abort_sources;
@@ -122,6 +124,12 @@ private:
         if (_caught) {
             return;
         }
+        if (!_ready) {
+            _caught_early = true;
+            startlog.info("Stop signal caught during initialization. Deferred until ready to be handled");
+            return;
+        }
+        startlog.info(_caught_early ? "Handling deferred stop signal" : "Stop signal received");
         _caught = true;
         _cond.broadcast();
         _broadcasts_to_abort_sources_done = _broadcasts_to_abort_sources_done.then([this] {
@@ -142,10 +150,14 @@ public:
         _abort_sources.stop().get();
     }
     future<> wait() {
+        _ready = true;
+        if (_caught_early) {
+            signaled();
+        }
         return _cond.wait([this] { return _caught; });
     }
     bool stopping() const {
-        return _caught;
+        return _caught || _caught_early;
     }
     abort_source& as_local_abort_source() { return _abort_sources.local(); }
     sharded<abort_source>& as_sharded_abort_source() { return _abort_sources; }
