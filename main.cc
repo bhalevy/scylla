@@ -1317,6 +1317,11 @@ To start the scylla server proper, simply invoke as: scylla server (or just scyl
             gms::get_local_gossiper().wait_for_gossip_to_settle().get();
             api::set_server_gossip_settle(ctx, gossiper).get();
 
+            if (stop_signal.stopping()) {
+                stop_signal.wait().get();
+                throw abort_requested_exception();
+            }
+
             supervisor::notify("allow replaying hints");
             proxy.invoke_on_all([] (service::storage_proxy& local_proxy) {
                 local_proxy.allow_replaying_hints();
@@ -1469,6 +1474,7 @@ To start the scylla server proper, simply invoke as: scylla server (or just scyl
             stop_signal.wait().get();
             startlog.info("Signal received; shutting down");
 	    // At this point, all objects destructors and all shutdown hooks registered with defer() are executed
+          } catch (abort_requested_exception&) {
           } catch (...) {
             startlog.error("Startup failed: {}", std::current_exception());
             // We should be returning 1 here, but the system is not yet prepared for orderly rollback of main() objects
