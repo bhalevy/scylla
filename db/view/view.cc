@@ -1466,9 +1466,7 @@ future<> view_builder::start(service::migration_manager& mm) {
         }).then([this] {
             _mnotifier.register_listener(this);
             _current_step = _base_to_build_step.begin();
-            // Waited on indirectly in stop().
-            (void)_build_step.trigger();
-            return make_ready_future<>();
+            return _build_step.trigger();
         });
     }).handle_exception([] (std::exception_ptr eptr) {
         vlogger.error("start failed: {}", eptr);
