@@ -1743,14 +1743,16 @@ public:
 };
 
 // see above (#9919)
-template<typename T = std::runtime_error>
 static void throw_commitlog_add_error(schema_ptr s, const frozen_mutation& m) {
     // it is tempting to do a full pretty print here, but the mutation is likely
     // humungous if we got an error, so just tell us where and pk...
-    std::throw_with_nested(T(format("Could not write mutation {}:{} ({}) to commitlog"
-        , s->ks_name(), s->cf_name()
-        , m.key()
-    )));
+    auto msg = format("Could not write mutation {}:{} ({}) to commitlog", s->ks_name(), s->cf_name(), m.key());
+    auto ex = std::current_exception();
+    if (is_timeout_exception(ex)) {
+        std::throw_with_nested(wrapped_timed_out_error(std::move(msg)));
+    } else {
+        std::throw_with_nested(std::runtime_error(std::move(msg)));
+    }
 }
 
 future<> database::apply_with_commitlog(column_family& cf, const mutation& m, db::timeout_clock::time_point timeout) {
@@ -1760,11 +1762,8 @@ future<> database::apply_with_commitlog(column_family& cf, const mutation& m, db
         try {
             commitlog_entry_writer cew(m.schema(), fm, db::commitlog::force_sync::no);
             h = co_await cf.commitlog()->add_entry(m.schema()->id(), cew, timeout);
-        } catch (timed_out_error&) {
-            // see above (#9919)
-            throw_commitlog_add_error<wrapped_timed_out_error>(cf.schema(), fm);
         } catch (...) {
-            throw_commitlog_add_error<>(cf.schema(), fm);
+            throw_commitlog_add_error(cf.schema(), fm);
         }
     }
     try {
@@ -1804,11 +1803,8 @@ future<> database::do_apply(schema_ptr s, const frozen_mutation& m, tracing::tra
         try {
             commitlog_entry_writer cew(s, m, sync);
             h = co_await cf.commitlog()->add_entry(uuid, cew, timeout);
-        } catch (timed_out_error&) {
-            // see above (#9919)
-            throw_commitlog_add_error<wrapped_timed_out_error>(cf.schema(), m);
         } catch (...) {
-            throw_commitlog_add_error<>(s, m);
+            throw_commitlog_add_error(cf.schema(), m);
         }
     }
     try {
