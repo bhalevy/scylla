@@ -1748,11 +1748,13 @@ static void throw_commitlog_add_error(schema_ptr s, const frozen_mutation& m) {
     // humungous if we got an error, so just tell us where and pk...
     auto msg = format("Could not write mutation {}:{} ({}) to commitlog", s->ks_name(), s->cf_name(), m.key());
     auto ex = std::current_exception();
+    std::exception_ptr ret_ex;
     if (is_timeout_exception(ex)) {
-        std::throw_with_nested(wrapped_timed_out_error(std::move(msg)));
+        ret_ex = std::make_exception_ptr(wrapped_timed_out_error(std::move(msg)));
     } else {
-        std::throw_with_nested(std::runtime_error(std::move(msg)));
+        ret_ex = std::make_exception_ptr(std::runtime_error(std::move(msg)));
     }
+    throw seastar::nested_exception(std::move(ex), std::move(ret_ex));
 }
 
 future<> database::apply_with_commitlog(column_family& cf, const mutation& m, db::timeout_clock::time_point timeout) {
