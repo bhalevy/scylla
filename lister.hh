@@ -174,6 +174,8 @@ public:
         , _do_show_hidden(do_show_hidden)
     { }
 
+    ~directory_lister();
+
     // Caller should drain all entries using get()
     // until it gets a disengaged result or an error.
     future<std::optional<directory_entry>> get();

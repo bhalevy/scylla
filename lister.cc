@@ -77,6 +77,12 @@ future<> lister::rmdir(fs::path dir) {
     });
 }
 
+directory_lister::~directory_lister() {
+    if (_lister) {
+        on_internal_error(llogger, "directory_lister not closed when destroyed");
+    }
+}
+
 future<std::optional<directory_entry>> directory_lister::get() {
     if (!_done) {
         _pipe = std::make_unique<seastar::pipe<directory_entry>>(4096 / sizeof(std::optional<directory_entry>));
@@ -92,7 +98,7 @@ future<std::optional<directory_entry>> directory_lister::get() {
         _lister = std::make_unique<lister>(std::move(f), _type, std::move(walker), _filter, _dir, _do_show_hidden);
         auto done_fut = _lister->done().then_wrapped([this] (future<> f) {
             if (_pipe) {
-                _pipe->writer.~pipe_writer();
+                _pipe->writer.close();
             }
             if (f.failed()) {
                 auto ex = f.get_exception();
@@ -108,20 +114,27 @@ future<std::optional<directory_entry>> directory_lister::get() {
     if (_ex) {
         co_return coroutine::exception(_ex);
     }
-    co_return co_await _pipe->reader.read();
+    std::optional<directory_entry> ret;
+    if (_pipe) {
+        ret = co_await _pipe->reader.read();
+        if (!ret) {
+            _pipe.reset();
+        }
+    }
+    co_return ret;
 }
 
 void directory_lister::abort(std::exception_ptr ex) {
     if (ex) {
         _ex = std::move(ex);
     }
-    _pipe.reset();
+    _pipe->reader.close();
 }
 
 future<> directory_lister::close() noexcept {
     if (!_done) {
         return make_ready_future<>();
     }
-    _pipe.reset();
+    _pipe->reader.close();
     return *std::exchange(_done, std::make_optional<future<>>(make_ready_future<>()));
 }
