@@ -101,11 +101,19 @@ future<std::optional<directory_entry>> directory_lister::get() {
             _lister.reset();
         });
     }
-    auto ret = co_await _queue.pop_eventually();
-    if (!ret) {
-        // In case the caller tries to get() again
-        // after returning end of list.
-        _queue.abort(std::make_exception_ptr(broken_pipe_exception()));
+    std::optional<directory_entry> ret;
+    std::exception_ptr ex;
+    try {
+        ret = co_await _queue.pop_eventually();
+        if (ret) {
+            co_return ret;
+        }
+    } catch (...) {
+        ex = std::current_exception();
+    }
+    co_await close();
+    if (ex) {
+        std::rethrow_exception(std::move(ex));
     }
     co_return ret;
 }
