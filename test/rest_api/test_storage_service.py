@@ -132,3 +132,8 @@ def test_storage_service_keyspace_scrub_mode(cql, this_dc, rest_api):
 
             resp = rest_api.send("GET", f"storage_service/keyspace_scrub/{keyspace}", { "cf": f"{test_tables[0]}", "quarantine_mode": "YYY" })
             assert resp.status_code == requests.codes.bad_request
+
+def test_storage_service_keyspace_unknown_param(cql, this_dc, rest_api):
+    keyspace = new_keyspace(cql, this_dc)
+    resp = rest_api.send("GET", f"storage_service/keyspace_scrub/{keyspace}", { "foo": "bar" })
+    assert resp.status_code == requests.codes.bad_request
