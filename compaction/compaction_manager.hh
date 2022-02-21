@@ -105,6 +105,8 @@ private:
         }
 
         void stop(sstring reason) noexcept;
+
+        [[noreturn]] void throw_compaction_stopped_exception() const;
     };
 
     // compaction manager may have N fibers to allow parallel compaction per shard.
