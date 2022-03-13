@@ -622,10 +622,11 @@ sstables::compaction_stopped_exception compaction_manager::task::make_compaction
     return sstables::compaction_stopped_exception(s->ks_name(), s->cf_name(), _compaction_data.stop_requested);
 }
 
-compaction_manager::compaction_manager(config cfg, abort_source& as)
-    : _compaction_sg(cfg.compaction_sched_group)
-    , _maintenance_sg(cfg.maintenance_sched_group)
-    , _compaction_controller(make_compaction_controller(_compaction_sg, cfg.static_shares, [this, available_memory = cfg.available_memory] () -> float {
+compaction_manager::compaction_manager(std::function<config()> get_cfg, abort_source& as)
+    : _cfg(get_cfg())
+    , _compaction_sg(_cfg.compaction_sched_group)
+    , _maintenance_sg(_cfg.maintenance_sched_group)
+    , _compaction_controller(make_compaction_controller(_compaction_sg, _cfg.static_shares, [this, available_memory = _cfg.available_memory] () -> float {
         _last_backlog = backlog();
         auto b = _last_backlog / available_memory;
         // This means we are using an unimplemented strategy
@@ -638,12 +639,12 @@ compaction_manager::compaction_manager(config cfg, abort_source& as)
         return b;
     }))
     , _backlog_manager(_compaction_controller)
-    , _available_memory(cfg.available_memory)
+    , _available_memory(_cfg.available_memory)
     , _early_abort_subscription(as.subscribe([this] () noexcept {
         do_stop();
     }))
-    , _throughput_mbs(std::move(cfg.throughput_mb_per_sec))
-    , _static_shares(std::move(cfg.static_shares))
+    , _throughput_mbs(_cfg.throughput_mb_per_sec)
+    , _static_shares(_cfg.static_shares)
     , _update_compaction_static_shares_action([this] { return update_static_shares(_static_shares); })
     , _compaction_static_shares_observer(_static_shares.observe(_update_compaction_static_shares_action.make_observer()))
     , _strategy_control(std::make_unique<strategy_control>(*this))

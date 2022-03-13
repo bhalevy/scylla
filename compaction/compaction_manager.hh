@@ -50,7 +50,7 @@ public:
     struct config {
         scheduling_group compaction_sched_group;
         scheduling_group maintenance_sched_group;
-        size_t available_memory;
+        size_t available_memory = 0;
         utils::updateable_value<float> static_shares = utils::updateable_value<float>(0);
         utils::updateable_value<uint32_t> throughput_mb_per_sec = utils::updateable_value<uint32_t>(0);
     };
@@ -275,6 +275,7 @@ private:
     timer<lowres_clock> _compaction_submission_timer = timer<lowres_clock>(compaction_submission_callback());
     static constexpr std::chrono::seconds periodic_compaction_submission_interval() { return std::chrono::seconds(3600); }
 
+    config _cfg;
     scheduling_group _compaction_sg;
     scheduling_group _maintenance_sg;
     compaction_controller _compaction_controller;
@@ -356,7 +357,9 @@ private:
     // about invoking it. Ref #10146
     compaction_manager();
 public:
-    compaction_manager(config cfg, abort_source& as);
+    // get_cfg is called on each shard when starting a sharded<compaction_manager>
+    // we need the getter since updateable_value is not shard-safe (#7316)
+    compaction_manager(std::function<config()> get_cfg, abort_source& as);
     ~compaction_manager();
     class for_testing_tag{};
     // An inline constructor for testing
