@@ -57,7 +57,6 @@ protected:
 
     seastar::scheduling_group _scheduling_group;
     const ::io_priority_class& _io_priority;
-    std::chrono::milliseconds _interval;
     timer<> _update_timer;
 
     std::vector<control_point> _control_points;
