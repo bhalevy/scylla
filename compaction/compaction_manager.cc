@@ -622,8 +622,8 @@ sstables::compaction_stopped_exception compaction_manager::task::make_compaction
     return sstables::compaction_stopped_exception(s->ks_name(), s->cf_name(), _compaction_data.stop_requested);
 }
 
-compaction_manager::compaction_manager(config cfg, abort_source& as)
-    : _cfg(std::move(cfg))
+compaction_manager::compaction_manager(std::function<config()> get_cfg, abort_source& as)
+    : _cfg(get_cfg())
     , _compaction_controller(make_compaction_controller(compaction_sg(), static_shares(), [this] () -> float {
         _last_backlog = backlog();
         auto b = _last_backlog / available_memory();

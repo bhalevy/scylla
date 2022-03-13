@@ -4861,12 +4861,14 @@ SEASTAR_TEST_CASE(simple_backlog_controller_test) {
         const uint64_t all_tables_disk_usage = double(available_disk_size_per_shard) * target_disk_usage;
 
         auto as = abort_source();
-        compaction_manager::config cfg = {
+        auto get_cfg = [available_memory] {
+          return compaction_manager::config {
             .compaction_sched_group = { default_scheduling_group(), default_priority_class() },
             .maintenance_sched_group = { default_scheduling_group(), default_priority_class() },
             .available_memory = available_memory,
+          };
         };
-        auto manager = compaction_manager(std::move(cfg), as);
+        auto manager = compaction_manager(get_cfg, as);
 
         auto add_sstable = [&env, &manager, gen = make_lw_shared<unsigned>(1)] (replica::table& t, uint64_t data_size, int level) {
             auto sst = env.make_sstable(t.schema(), "", (*gen)++, la, big);
