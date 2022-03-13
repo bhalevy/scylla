@@ -509,8 +509,9 @@ std::ostream& operator<<(std::ostream& os, const compaction_manager::task& task)
     return os << task.describe();
 }
 
-inline compaction_controller make_compaction_controller(compaction_manager::scheduling_group& csg, uint64_t static_shares, std::function<double()> fn) {
-    return compaction_controller(csg, static_shares, 250ms, std::move(fn));
+inline compaction_controller make_compaction_controller(compaction_manager::scheduling_group& csg, float static_shares, std::function<double()> fn) {
+    auto static_shares_opt = static_shares ? std::make_optional(static_shares) : std::nullopt;
+    return compaction_controller(csg, std::move(static_shares_opt), 250ms, std::move(fn));
 }
 
 std::string compaction_manager::task::describe() const {

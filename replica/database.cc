@@ -96,7 +96,9 @@ namespace replica {
 inline
 flush_controller
 make_flush_controller(const db::config& cfg, backlog_controller::scheduling_group& sg, std::function<double()> fn) {
-    return flush_controller(sg, cfg.memtable_flush_static_shares(), 50ms, cfg.virtual_dirty_soft_limit(), std::move(fn));
+    auto static_shares = cfg.memtable_flush_static_shares();
+    auto static_shares_opt = static_shares ? std::make_optional(static_shares) : std::nullopt;
+    return flush_controller(sg, std::move(static_shares_opt), 50ms, cfg.virtual_dirty_soft_limit(), std::move(fn));
 }
 
 keyspace::keyspace(lw_shared_ptr<keyspace_metadata> metadata, config cfg, locator::effective_replication_map_factory& erm_factory)
@@ -405,7 +407,7 @@ const data_dictionary::user_types_storage& database::user_types() const noexcept
 
 void backlog_controller::adjust() {
     if (controller_disabled()) {
-        update_controller(_static_shares);
+        update_controller(get_static_shares());
         return;
     }
 
