@@ -77,7 +77,7 @@ make_flush_controller(const db::config& cfg, seastar::scheduling_group sg, const
     if (cfg.memtable_flush_static_shares() > 0) {
         return flush_controller(sg, iop, cfg.memtable_flush_static_shares());
     }
-    return flush_controller(sg, iop, 50ms, cfg.virtual_dirty_soft_limit(), std::move(fn));
+    return flush_controller(sg, iop, flush_controller::control_config{50ms, cfg.virtual_dirty_soft_limit(), std::move(fn)});
 }
 
 inline

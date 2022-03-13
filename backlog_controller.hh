@@ -112,13 +112,26 @@ public:
 class flush_controller : public backlog_controller {
     static constexpr float hard_dirty_limit = 1.0f;
 public:
-    flush_controller(seastar::scheduling_group sg, const ::io_priority_class& iop, float static_shares) : backlog_controller(sg, iop, static_shares) {}
-    flush_controller(seastar::scheduling_group sg, const ::io_priority_class& iop, std::chrono::milliseconds interval, float soft_limit, std::function<float()> current_dirty)
-        : backlog_controller(sg, iop, backlog_controller::control_config {
-            .interval = std::move(interval),
-            .control_points = std::vector<backlog_controller::control_point>({{0.0, 0.0}, {soft_limit, 10}, {soft_limit + (hard_dirty_limit - soft_limit) / 2, 200} , {hard_dirty_limit, 1000}}),
-            .current_backlog = std::move(current_dirty),
-        })
+    struct control_config {
+        std::chrono::milliseconds interval;
+        float soft_limit;
+        std::function<float()> current_dirty;
+    };
+
+    using config = std::variant<float /* static_shares */, control_config>;
+
+    flush_controller(seastar::scheduling_group sg, const ::io_priority_class& iop, config cfg)
+        : backlog_controller(sg, iop, std::holds_alternative<float>(cfg)
+            ? backlog_controller::config(std::get<float>(cfg))
+            : backlog_controller::control_config{
+                .interval = std::get<control_config>(cfg).interval,
+                .control_points = {
+                    {0.0, 0.0},
+                    {std::get<control_config>(cfg).soft_limit, 10},
+                    {std::get<control_config>(cfg).soft_limit + (hard_dirty_limit - std::get<control_config>(cfg).soft_limit) / 2, 200},
+                    {hard_dirty_limit, 1000}},
+                .current_backlog = std::move(std::get<control_config>(cfg).current_dirty),
+            })
     {}
 };
 
