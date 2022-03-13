@@ -140,12 +140,21 @@ public:
     static constexpr unsigned normalization_factor = 30;
     static constexpr float disable_backlog = std::numeric_limits<double>::infinity();
     static constexpr float backlog_disabled(float backlog) { return std::isinf(backlog); }
-    compaction_controller(seastar::scheduling_group sg, const ::io_priority_class& iop, float static_shares) : backlog_controller(sg, iop, static_shares) {}
-    compaction_controller(seastar::scheduling_group sg, const ::io_priority_class& iop, std::chrono::milliseconds interval, std::function<float()> current_backlog)
-        : backlog_controller(sg, iop, backlog_controller::control_config{
-            .interval = std::move(interval),
-            .control_points = std::vector<backlog_controller::control_point>({{0.0, 50}, {1.5, 100} , {normalization_factor, 1000}}),
-            .current_backlog = std::move(current_backlog),
-        })
+
+    struct control_config {
+        std::chrono::milliseconds interval;
+        std::function<float()> current_backlog;
+    };
+
+    using config = std::variant<float /* static_shares */, control_config>;
+
+    compaction_controller(seastar::scheduling_group sg, const ::io_priority_class& iop, config cfg)
+        : backlog_controller(sg, iop, std::holds_alternative<float>(cfg)
+            ? backlog_controller::config(std::get<float>(cfg))
+            : backlog_controller::config(backlog_controller::control_config{
+                .interval = std::get<control_config>(cfg).interval,
+                .control_points = std::vector<backlog_controller::control_point>({{0.0, 50}, {1.5, 100} , {normalization_factor, 1000}}),
+                .current_backlog = std::move(std::get<control_config>(cfg).current_backlog),
+            }))
     {}
 };

@@ -519,7 +519,7 @@ sstables::compaction_stopped_exception compaction_manager::task::make_compaction
 }
 
 compaction_manager::compaction_manager(compaction_scheduling_group csg, maintenance_scheduling_group msg, size_t available_memory, abort_source& as)
-    : _compaction_controller(csg.cpu, csg.io, 250ms, [this, available_memory] () -> float {
+    : _compaction_controller(csg.cpu, csg.io, compaction_controller::control_config{250ms, [this, available_memory] () -> float {
         _last_backlog = backlog();
         auto b = _last_backlog / available_memory;
         // This means we are using an unimplemented strategy
@@ -530,7 +530,7 @@ compaction_manager::compaction_manager(compaction_scheduling_group csg, maintena
             return compaction_controller::normalization_factor;
         }
         return b;
-    })
+    }})
     , _backlog_manager(_compaction_controller)
     , _maintenance_sg(msg)
     , _available_memory(available_memory)
@@ -543,7 +543,7 @@ compaction_manager::compaction_manager(compaction_scheduling_group csg, maintena
 }
 
 compaction_manager::compaction_manager(compaction_scheduling_group csg, maintenance_scheduling_group msg, size_t available_memory, uint64_t shares, abort_source& as)
-    : _compaction_controller(csg.cpu, csg.io, shares)
+    : _compaction_controller(csg.cpu, csg.io, compaction_controller::config(float(shares)))
     , _backlog_manager(_compaction_controller)
     , _maintenance_sg(msg)
     , _available_memory(available_memory)
@@ -556,7 +556,7 @@ compaction_manager::compaction_manager(compaction_scheduling_group csg, maintena
 }
 
 compaction_manager::compaction_manager()
-    : _compaction_controller(seastar::default_scheduling_group(), default_priority_class(), 1)
+    : _compaction_controller(seastar::default_scheduling_group(), default_priority_class(), float(1))
     , _backlog_manager(_compaction_controller)
     , _maintenance_sg(maintenance_scheduling_group{default_scheduling_group(), default_priority_class()})
     , _available_memory(1)
