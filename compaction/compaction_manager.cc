@@ -518,32 +518,21 @@ sstables::compaction_stopped_exception compaction_manager::task::make_compaction
     return sstables::compaction_stopped_exception(s->ks_name(), s->cf_name(), _compaction_data.stop_requested);
 }
 
-compaction_manager::compaction_manager(compaction_scheduling_group csg, maintenance_scheduling_group msg, size_t available_memory, abort_source& as)
-    : _compaction_controller(csg.cpu, csg.io, compaction_controller::control_config{250ms, [this, available_memory] () -> float {
-        _last_backlog = backlog();
-        auto b = _last_backlog / available_memory;
-        // This means we are using an unimplemented strategy
-        if (compaction_controller::backlog_disabled(b)) {
-            // returning the normalization factor means that we'll return the maximum
-            // output in the _control_points. We can get rid of this when we implement
-            // all strategies.
-            return compaction_controller::normalization_factor;
-        }
-        return b;
-    }})
-    , _backlog_manager(_compaction_controller)
-    , _maintenance_sg(msg)
-    , _available_memory(available_memory)
-    , _early_abort_subscription(as.subscribe([this] () noexcept {
-        do_stop();
-    }))
-    , _strategy_control(std::make_unique<strategy_control>(*this))
-{
-    register_metrics();
-}
-
-compaction_manager::compaction_manager(compaction_scheduling_group csg, maintenance_scheduling_group msg, size_t available_memory, uint64_t shares, abort_source& as)
-    : _compaction_controller(csg.cpu, csg.io, compaction_controller::config(float(shares)))
+compaction_manager::compaction_manager(compaction_scheduling_group csg, maintenance_scheduling_group msg, size_t available_memory, abort_source& as, float shares)
+    : _compaction_controller(csg.cpu, csg.io, shares > 0
+        ? compaction_controller::config(shares)
+        : compaction_controller::control_config{250ms, [this, available_memory] () -> float {
+            _last_backlog = backlog();
+            auto b = _last_backlog / available_memory;
+            // This means we are using an unimplemented strategy
+            if (compaction_controller::backlog_disabled(b)) {
+                // returning the normalization factor means that we'll return the maximum
+                // output in the _control_points. We can get rid of this when we implement
+                // all strategies.
+                return compaction_controller::normalization_factor;
+            }
+            return b;
+        }})
     , _backlog_manager(_compaction_controller)
     , _maintenance_sg(msg)
     , _available_memory(available_memory)
