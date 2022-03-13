@@ -47,6 +47,14 @@ protected:
         float output;
     };
 
+    struct control_config {
+        std::chrono::milliseconds interval;
+        std::vector<control_point> control_points;
+        std::function<float()> current_backlog;
+    };
+
+    using config = std::variant<float /* static_shares */, control_config>;
+
     seastar::scheduling_group _scheduling_group;
     const ::io_priority_class& _io_priority;
     std::chrono::milliseconds _interval;
@@ -62,28 +70,20 @@ protected:
 
     void adjust();
 
-    backlog_controller(seastar::scheduling_group sg, const ::io_priority_class& iop, std::chrono::milliseconds interval,
-                       std::vector<control_point> control_points, std::function<float()> backlog)
-        : _scheduling_group(sg)
-        , _io_priority(iop)
-        , _interval(interval)
-        , _update_timer([this] { adjust(); })
-        , _control_points()
-        , _current_backlog(std::move(backlog))
-        , _inflight_update(make_ready_future<>())
-    {
-        _control_points.insert(_control_points.end(), control_points.begin(), control_points.end());
-         _update_timer.arm_periodic(_interval);
-    }
-
-    // Used when the controllers are disabled and a static share is used
-    // When that option is deprecated we should remove this.
-    backlog_controller(seastar::scheduling_group sg, const ::io_priority_class& iop, float static_shares) 
+    backlog_controller(seastar::scheduling_group sg, const ::io_priority_class& iop, config cfg)
         : _scheduling_group(sg)
         , _io_priority(iop)
         , _inflight_update(make_ready_future<>())
     {
-        update_controller(static_shares);
+        if (std::holds_alternative<float>(cfg)) {
+            update_controller(std::get<float>(cfg));
+        } else {
+            auto& ccfg = std::get<control_config>(cfg);
+            _control_points = std::move(ccfg.control_points);
+            _current_backlog = std::move(ccfg.current_backlog);
+            _update_timer.set_callback([this] { adjust(); });
+            _update_timer.arm_periodic(ccfg.interval);
+        }
     }
 
     virtual ~backlog_controller() {}
@@ -115,10 +115,11 @@ class flush_controller : public backlog_controller {
 public:
     flush_controller(seastar::scheduling_group sg, const ::io_priority_class& iop, float static_shares) : backlog_controller(sg, iop, static_shares) {}
     flush_controller(seastar::scheduling_group sg, const ::io_priority_class& iop, std::chrono::milliseconds interval, float soft_limit, std::function<float()> current_dirty)
-        : backlog_controller(sg, iop, std::move(interval),
-          std::vector<backlog_controller::control_point>({{0.0, 0.0}, {soft_limit, 10}, {soft_limit + (hard_dirty_limit - soft_limit) / 2, 200} , {hard_dirty_limit, 1000}}),
-          std::move(current_dirty)
-        )
+        : backlog_controller(sg, iop, backlog_controller::control_config {
+            .interval = std::move(interval),
+            .control_points = std::vector<backlog_controller::control_point>({{0.0, 0.0}, {soft_limit, 10}, {soft_limit + (hard_dirty_limit - soft_limit) / 2, 200} , {hard_dirty_limit, 1000}}),
+            .current_backlog = std::move(current_dirty),
+        })
     {}
 };
 
@@ -129,9 +130,10 @@ public:
     static constexpr float backlog_disabled(float backlog) { return std::isinf(backlog); }
     compaction_controller(seastar::scheduling_group sg, const ::io_priority_class& iop, float static_shares) : backlog_controller(sg, iop, static_shares) {}
     compaction_controller(seastar::scheduling_group sg, const ::io_priority_class& iop, std::chrono::milliseconds interval, std::function<float()> current_backlog)
-        : backlog_controller(sg, iop, std::move(interval),
-          std::vector<backlog_controller::control_point>({{0.0, 50}, {1.5, 100} , {normalization_factor, 1000}}),
-          std::move(current_backlog)
-        )
+        : backlog_controller(sg, iop, backlog_controller::control_config{
+            .interval = std::move(interval),
+            .control_points = std::vector<backlog_controller::control_point>({{0.0, 50}, {1.5, 100} , {normalization_factor, 1000}}),
+            .current_backlog = std::move(current_backlog),
+        })
     {}
 };
