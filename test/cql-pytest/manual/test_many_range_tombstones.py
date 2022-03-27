@@ -3,7 +3,7 @@ from nodetool import flush
 import pytest
 
 def test_populate_cache_with_many_range_tombstones(cql, test_keyspace):
-    count = 400000
+    count = 100000
     with new_test_table(cql, test_keyspace,
             "p int, c int, attribute text, another text, PRIMARY KEY (p, c)",
             extra="WITH compaction = { 'class' : 'NullCompactionStrategy' }") as table:
@@ -11,7 +11,7 @@ def test_populate_cache_with_many_range_tombstones(cql, test_keyspace):
         stmt = cql.prepare(f"INSERT INTO {table} (p, c, attribute, another) VALUES (?, ?, ?, '{content}')")
         for i in range(count):
             cql.execute(stmt, [1, i, str(i)])
-        # Flush to reconcile with following row deletions
+        # Flush to reconcile with following range deletions
         # Otherwise, the memtable will be compacted on flush, post
         # bcadd8229b0345c50494e33ed4b3b7e3bd21cd85
         flush(cql, table)

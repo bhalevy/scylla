@@ -226,6 +226,8 @@ def run_scylla_cmd(pid, dir):
         # and other modules dependent on it: e.g. service levels
         '--authenticator', 'PasswordAuthenticator',
         '--strict-allow-filtering', 'true',
+        # reduce reactor stall notification threshold
+        '--blocked-reactor-notify-ms', '5'
         ], {})
 
 # Same as run_scylla_cmd, just use SSL encryption for the CQL port (same
