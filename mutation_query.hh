@@ -159,8 +159,8 @@ public:
     reconcilable_result consume_end_of_stream();
 };
 
-query::result to_data_query_result(
-        const reconcilable_result&,
+future<query::result> to_data_query_result(
+        reconcilable_result&&,
         schema_ptr,
         const query::partition_slice&,
         uint64_t row_limit,

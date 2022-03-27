@@ -29,6 +29,8 @@
 #include "clustering_key_filter.hh"
 #include "mutation_partition_view.hh"
 #include "tombstone_gc.hh"
+#include <seastar/core/coroutine.hh>
+#include <seastar/coroutine/maybe_yield.hh>
 
 logging::logger mplog("mutation_partition");
 
@@ -2064,25 +2066,29 @@ reconcilable_result reconcilable_result_builder::consume_end_of_stream() {
                                std::move(_memory_accounter).done());
 }
 
-query::result
-to_data_query_result(const reconcilable_result& r, schema_ptr s, const query::partition_slice& slice, uint64_t max_rows, uint32_t max_partitions,
+future<query::result>
+to_data_query_result(reconcilable_result&& rr, schema_ptr s, const query::partition_slice& slice, uint64_t max_rows, uint32_t max_partitions,
         query::result_options opts) {
+    reconcilable_result r = std::move(rr);
     // This result was already built with a limit, don't apply another one.
     query::result::builder builder(slice, opts, query::result_memory_accounter{ query::result_memory_limiter::unlimited_result_size });
     auto consumer = compact_for_query_v2<emit_only_live_rows::yes, query_result_builder>(*s, gc_clock::time_point::min(), slice, max_rows,
             max_partitions, query_result_builder(*s, builder));
     const auto reverse = slice.options.contains(query::partition_slice::option::reversed) ? consume_in_reverse::legacy_half_reverse : consume_in_reverse::no;
 
+    mplog.info("to_data_query_result {}.{}: {} partitions: reverse={} short_read={}", s->ks_name(), s->cf_name(), r.partitions().size(), reverse, r.is_short_read());
+
     for (const partition& p : r.partitions()) {
         const auto res = p.mut().unfreeze(s).consume(consumer, reverse);
         if (res.stop == stop_iteration::yes) {
             break;
         }
+        co_await coroutine::maybe_yield();
     }
     if (r.is_short_read()) {
         builder.mark_as_short_read();
     }
-    return builder.build();
+    co_return builder.build();
 }
 
 query::result
