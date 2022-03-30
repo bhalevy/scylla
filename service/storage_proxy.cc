@@ -2894,6 +2894,15 @@ public:
         } catch (timed_out_error&) {
             // do not report timeouts, the whole operation will timeout and be reported
             return; // also do not report timeout as replica failure for the same reason
+        } catch (abort_requested_exception& e) {
+            // do not report aborts, they are trigerred by shutdown or timeouts
+            return;
+        } catch (std::runtime_error& e) {
+            if (strstr(e.what(), "abort requested")) {
+                // do not report aborts, they are trigerred by shutdown or timeouts
+                return;
+            }
+            slogger.error("Exception when communicating with {}, to read from {}.{}: std::runtime_error: {}", ep, _schema->ks_name(), _schema->cf_name(), e.what());
         } catch(...) {
             slogger.error("Exception when communicating with {}, to read from {}.{}: {}", ep, _schema->ks_name(), _schema->cf_name(), eptr);
         }
