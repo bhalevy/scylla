@@ -3696,16 +3696,16 @@ protected:
                 if (rr_opt && (can_send_short_read || data_resolver->all_reached_end() || rr_opt->row_count() >= original_row_limit()
                                || data_resolver->live_partition_count() >= original_partition_limit())
                         && !data_resolver->any_partition_short_read()) {
+                    auto result = ::make_foreign(::make_lw_shared<query::result>(
+                            to_data_query_result(std::move(*rr_opt), _schema, _cmd->slice, _cmd->get_row_limit(), cmd->partition_limit)));
                     // wait for write to complete before returning result to prevent multiple concurrent read requests to
                     // trigger repair multiple times and to prevent quorum read to return an old value, even after a quorum
                     // another read had returned a newer value (but the newer value had not yet been sent to the other replicas)
                     // Waited on indirectly.
-                    (void)to_data_query_result(std::move(*rr_opt), _schema, _cmd->slice, _cmd->get_row_limit(), cmd->partition_limit).then([this, exec, data_resolver] (query::result query_result) {
-                      auto&& result = ::make_foreign(::make_lw_shared<query::result>(std::move(query_result)));
-                      return _proxy->schedule_repair(data_resolver->get_diffs_for_repair(), _cl, _trace_state, _permit).then(utils::result_wrap([this, result = std::move(result)] () mutable {
+                    (void)_proxy->schedule_repair(data_resolver->get_diffs_for_repair(), _cl, _trace_state, _permit).then(utils::result_wrap([this, result = std::move(result)] () mutable {
                         _result_promise.set_value(std::move(result));
                         return make_ready_future<::result<>>(bo::success());
-                      })).then_wrapped([this, exec] (future<::result<>>&& f) {
+                    })).then_wrapped([this, exec] (future<::result<>>&& f) {
                         // All errors are handled, it's OK to discard the result.
                         (void)utils::result_try([&] {
                             return f.get();
@@ -3717,10 +3717,6 @@ protected:
                             handle.forward_to_promise(_result_promise);
                             return bo::success();
                         }));
-                        on_read_resolved();
-                      });
-                    }).handle_exception([this] (std::exception_ptr ex) {
-                        _result_promise.set_exception(std::current_exception());
                         on_read_resolved();
                     });
                 } else {
@@ -5338,9 +5334,8 @@ storage_proxy::query_nonsingular_data_locally(schema_ptr s, lw_shared_ptr<query:
         ret = co_await query_data_on_all_shards(_db, std::move(s), *local_cmd, ranges, opts, std::move(trace_state), timeout);
     } else {
         auto res = co_await query_mutations_on_all_shards(_db, s, *local_cmd, ranges, std::move(trace_state), timeout);
-        auto&& query_result = co_await to_data_query_result(std::move(*std::get<0>(res)), std::move(s), local_cmd->slice,
-                local_cmd->get_row_limit(), local_cmd->partition_limit, opts);
-        ret = rpc::tuple(make_foreign(make_lw_shared<query::result>(std::move(query_result))), std::get<1>(res));
+        ret = rpc::tuple(make_foreign(make_lw_shared<query::result>(to_data_query_result(std::move(*std::get<0>(res)), std::move(s), local_cmd->slice,
+                local_cmd->get_row_limit(), local_cmd->partition_limit, opts))), std::get<1>(res));
     }
     co_return ret;
 }

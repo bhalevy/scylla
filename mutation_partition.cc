@@ -2064,40 +2064,36 @@ reconcilable_result reconcilable_result_builder::consume_end_of_stream() {
                                std::move(_memory_accounter).done());
 }
 
-future<query::result>
+query::result
 to_data_query_result(const reconcilable_result& r, schema_ptr s, const query::partition_slice& slice, uint64_t max_rows, uint32_t max_partitions,
         query::result_options opts) {
     // This result was already built with a limit, don't apply another one.
-    auto builder = make_lw_shared<query::result::builder>(slice, opts, query::result_memory_accounter{ query::result_memory_limiter::unlimited_result_size });
+    query::result::builder builder(slice, opts, query::result_memory_accounter{ query::result_memory_limiter::unlimited_result_size });
     auto consumer = compact_for_query_v2<emit_only_live_rows::yes, query_result_builder>(*s, gc_clock::time_point::min(), slice, max_rows,
-            max_partitions, query_result_builder(*s, *builder));
+            max_partitions, query_result_builder(*s, builder));
     const auto reverse = slice.options.contains(query::partition_slice::option::reversed) ? consume_in_reverse::legacy_half_reverse : consume_in_reverse::no;
 
-    noncopyable_function<stop_iteration(const frozen_mutation& mut)> consume_partition;
     // FIXME: frozen_mutation::consume supports only forward consumers
     if (reverse == consume_in_reverse::no) {
-        consume_partition = [s, adaptor = frozen_mutation_consumer_adaptor(s, consumer)] (const frozen_mutation& mut) mutable {
-            const auto res = mut.consume(s, adaptor);
-            return res.stop;
-        };
+        frozen_mutation_consumer_adaptor adaptor(s, consumer);
+        for (const partition& p : r.partitions()) {
+            const auto res = p.mut().consume(s, adaptor);
+            if (res.stop == stop_iteration::yes) {
+                break;
+            }
+        }
     } else {
-        consume_partition = [s, &consumer, reverse] (const frozen_mutation& mut) mutable {
-            const auto res = mut.unfreeze(s).consume(consumer, reverse);
-            return res.stop;
-        };
+        for (const partition& p : r.partitions()) {
+            const auto res = p.mut().unfreeze(s).consume(consumer, reverse);
+            if (res.stop == stop_iteration::yes) {
+                break;
+            }
+        }
     }
-    return repeat([s, consume_partition = std::move(consume_partition), begin = r.partitions().begin(), end = r.partitions().end()] () mutable {
-        if (begin == end) {
-            return stop_iteration::yes;
-        }
-        const auto& p = *begin++;
-        return consume_partition(p.mut());
-    }).then([&r, builder = std::move(builder)] () mutable {
-        if (r.is_short_read()) {
-            builder->mark_as_short_read();
-        }
-        return builder->build();
-    });
+    if (r.is_short_read()) {
+        builder.mark_as_short_read();
+    }
+    return builder.build();
 }
 
 query::result
