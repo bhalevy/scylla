@@ -3673,39 +3673,42 @@ protected:
     void reconcile(db::consistency_level cl, storage_proxy::clock_type::time_point timeout, lw_shared_ptr<query::read_command> cmd) {
         adjust_targets_for_reconciliation();
         data_resolver_ptr data_resolver = ::make_shared<data_read_resolver>(_schema, cl, _targets.size(), timeout);
-        auto exec = shared_from_this();
 
         // Waited on indirectly.
         make_mutation_data_requests(cmd, data_resolver, _targets.begin(), _targets.end(), timeout);
 
         // Waited on indirectly.
-        (void)data_resolver->done().then_wrapped([this, exec, data_resolver, cmd = std::move(cmd), cl, timeout] (future<result<>> f) {
-            try {
-                result<> res = f.get();
-                if (!res) {
-                    _result_promise.set_value(std::move(res).as_failure());
-                    on_read_resolved();
-                    return;
-                }
-                auto rr_opt = data_resolver->resolve(_schema, *cmd, original_row_limit(), original_per_partition_row_limit(), original_partition_limit()); // reconciliation happens here
+        (void)reconcile_results(std::move(data_resolver), cl, timeout, std::move(cmd));
+    }
+    future<> reconcile_results(data_resolver_ptr data_resolver, db::consistency_level cl, storage_proxy::clock_type::time_point timeout, lw_shared_ptr<query::read_command> cmd) {
+        auto exec = shared_from_this();
 
-                // We generate a retry if at least one node reply with count live columns but after merge we have less
-                // than the total number of column we are interested in (which may be < count on a retry).
-                // So in particular, if no host returned count live columns, we know it's not a short read.
-                bool can_send_short_read = rr_opt && rr_opt->is_short_read() && rr_opt->row_count() > 0;
-                if (rr_opt && (can_send_short_read || data_resolver->all_reached_end() || rr_opt->row_count() >= original_row_limit()
-                               || data_resolver->live_partition_count() >= original_partition_limit())
-                        && !data_resolver->any_partition_short_read()) {
-                    // wait for write to complete before returning result to prevent multiple concurrent read requests to
-                    // trigger repair multiple times and to prevent quorum read to return an old value, even after a quorum
-                    // another read had returned a newer value (but the newer value had not yet been sent to the other replicas)
-                    // Waited on indirectly.
-                    (void)to_data_query_result(std::move(*rr_opt), _schema, _cmd->slice, _cmd->get_row_limit(), cmd->partition_limit).then([this, exec, data_resolver] (query::result query_result) {
-                      auto&& result = ::make_foreign(::make_lw_shared<query::result>(std::move(query_result)));
-                      return _proxy->schedule_repair(data_resolver->get_diffs_for_repair(), _cl, _trace_state, _permit).then(utils::result_wrap([this, result = std::move(result)] () mutable {
-                        _result_promise.set_value(std::move(result));
-                        return make_ready_future<::result<>>(bo::success());
-                      })).then_wrapped([this, exec] (future<::result<>>&& f) {
+        try {
+            auto res = co_await data_resolver->done();
+            if (!res) {
+                _result_promise.set_value(std::move(res).as_failure());
+                on_read_resolved();
+                co_return;
+            }
+            auto rr_opt = data_resolver->resolve(_schema, *cmd, original_row_limit(), original_per_partition_row_limit(), original_partition_limit()); // reconciliation happens here
+
+            // We generate a retry if at least one node reply with count live columns but after merge we have less
+            // than the total number of column we are interested in (which may be < count on a retry).
+            // So in particular, if no host returned count live columns, we know it's not a short read.
+            bool can_send_short_read = rr_opt && rr_opt->is_short_read() && rr_opt->row_count() > 0;
+            if (rr_opt && (can_send_short_read || data_resolver->all_reached_end() || rr_opt->row_count() >= original_row_limit()
+                            || data_resolver->live_partition_count() >= original_partition_limit())
+                    && !data_resolver->any_partition_short_read()) {
+                // wait for write to complete before returning result to prevent multiple concurrent read requests to
+                // trigger repair multiple times and to prevent quorum read to return an old value, even after a quorum
+                // another read had returned a newer value (but the newer value had not yet been sent to the other replicas)
+                // Waited on indirectly.
+                (void)to_data_query_result(std::move(*rr_opt), _schema, _cmd->slice, _cmd->get_row_limit(), cmd->partition_limit).then([this, exec, data_resolver] (query::result query_result) {
+                    auto&& result = ::make_foreign(::make_lw_shared<query::result>(std::move(query_result)));
+                    return _proxy->schedule_repair(data_resolver->get_diffs_for_repair(), _cl, _trace_state, _permit).then(utils::result_wrap([this, result = std::move(result)] () mutable {
+                    _result_promise.set_value(std::move(result));
+                    return make_ready_future<::result<>>(bo::success());
+                    })).then_wrapped([this, exec] (future<::result<>>&& f) {
                         // All errors are handled, it's OK to discard the result.
                         (void)utils::result_try([&] {
                             return f.get();
@@ -3718,59 +3721,58 @@ protected:
                             return bo::success();
                         }));
                         on_read_resolved();
-                      });
-                    }).handle_exception([this] (std::exception_ptr ex) {
-                        _result_promise.set_exception(std::current_exception());
-                        on_read_resolved();
                     });
+                }).handle_exception([this] (std::exception_ptr ex) {
+                    _result_promise.set_exception(std::current_exception());
+                    on_read_resolved();
+                });
+            } else {
+                _proxy->get_stats().read_retries++;
+                _retry_cmd = make_lw_shared<query::read_command>(*cmd);
+                // We asked t (= cmd->get_row_limit()) live columns and got l (=data_resolver->total_live_count) ones.
+                // From that, we can estimate that on this row, for x requested
+                // columns, only l/t end up live after reconciliation. So for next
+                // round we want to ask x column so that x * (l/t) == t, i.e. x = t^2/l.
+                auto x = [](uint64_t t, uint64_t l) -> uint64_t {
+                    using uint128_t = unsigned __int128;
+                    auto ret = std::min<uint128_t>(query::max_rows, l == 0 ? t + 1 : (uint128_t) t * t / l + 1);
+                    return static_cast<uint64_t>(ret);
+                };
+                auto all_partitions_x = [](uint64_t x, uint32_t partitions) -> uint64_t {
+                    using uint128_t = unsigned __int128;
+                    auto ret = std::min<uint128_t>(query::max_rows, (uint128_t) x * partitions);
+                    return static_cast<uint64_t>(ret);
+                };
+                if (data_resolver->any_partition_short_read() || data_resolver->increase_per_partition_limit()) {
+                    // The number of live rows was bounded by the per partition limit.
+                    auto new_partition_limit = x(cmd->slice.partition_row_limit(), data_resolver->max_per_partition_live_count());
+                    _retry_cmd->slice.set_partition_row_limit(new_partition_limit);
+                    auto new_limit = all_partitions_x(new_partition_limit, data_resolver->partition_count());
+                    _retry_cmd->set_row_limit(std::max(cmd->get_row_limit(), new_limit));
                 } else {
-                    _proxy->get_stats().read_retries++;
-                    _retry_cmd = make_lw_shared<query::read_command>(*cmd);
-                    // We asked t (= cmd->get_row_limit()) live columns and got l (=data_resolver->total_live_count) ones.
-                    // From that, we can estimate that on this row, for x requested
-                    // columns, only l/t end up live after reconciliation. So for next
-                    // round we want to ask x column so that x * (l/t) == t, i.e. x = t^2/l.
-                    auto x = [](uint64_t t, uint64_t l) -> uint64_t {
-                        using uint128_t = unsigned __int128;
-                        auto ret = std::min<uint128_t>(query::max_rows, l == 0 ? t + 1 : (uint128_t) t * t / l + 1);
-                        return static_cast<uint64_t>(ret);
-                    };
-                    auto all_partitions_x = [](uint64_t x, uint32_t partitions) -> uint64_t {
-                        using uint128_t = unsigned __int128;
-                        auto ret = std::min<uint128_t>(query::max_rows, (uint128_t) x * partitions);
-                        return static_cast<uint64_t>(ret);
-                    };
-                    if (data_resolver->any_partition_short_read() || data_resolver->increase_per_partition_limit()) {
-                        // The number of live rows was bounded by the per partition limit.
-                        auto new_partition_limit = x(cmd->slice.partition_row_limit(), data_resolver->max_per_partition_live_count());
-                        _retry_cmd->slice.set_partition_row_limit(new_partition_limit);
-                        auto new_limit = all_partitions_x(new_partition_limit, data_resolver->partition_count());
-                        _retry_cmd->set_row_limit(std::max(cmd->get_row_limit(), new_limit));
-                    } else {
-                        // The number of live rows was bounded by the total row limit or partition limit.
-                        if (cmd->partition_limit != query::max_partitions) {
-                            _retry_cmd->partition_limit = std::min<uint64_t>(query::max_partitions, x(cmd->partition_limit, data_resolver->live_partition_count()));
-                        }
-                        if (cmd->get_row_limit() != query::max_rows) {
-                            _retry_cmd->set_row_limit(x(cmd->get_row_limit(), data_resolver->total_live_count()));
-                        }
+                    // The number of live rows was bounded by the total row limit or partition limit.
+                    if (cmd->partition_limit != query::max_partitions) {
+                        _retry_cmd->partition_limit = std::min<uint64_t>(query::max_partitions, x(cmd->partition_limit, data_resolver->live_partition_count()));
                     }
-
-                    // We may be unable to send a single live row because of replicas bailing out too early.
-                    // If that is the case disallow short reads so that we can make progress.
-                    if (!data_resolver->total_live_count()) {
-                        _retry_cmd->slice.options.remove<query::partition_slice::option::allow_short_read>();
+                    if (cmd->get_row_limit() != query::max_rows) {
+                        _retry_cmd->set_row_limit(x(cmd->get_row_limit(), data_resolver->total_live_count()));
                     }
-
-                    slogger.trace("Retrying query with command {} (previous is {})", *_retry_cmd, *cmd);
-                    reconcile(cl, timeout, _retry_cmd);
                 }
 
-            } catch (...) {
-                _result_promise.set_exception(std::current_exception());
-                on_read_resolved();
+                // We may be unable to send a single live row because of replicas bailing out too early.
+                // If that is the case disallow short reads so that we can make progress.
+                if (!data_resolver->total_live_count()) {
+                    _retry_cmd->slice.options.remove<query::partition_slice::option::allow_short_read>();
+                }
+
+                slogger.trace("Retrying query with command {} (previous is {})", *_retry_cmd, *cmd);
+                reconcile(cl, timeout, _retry_cmd);
             }
-        });
+
+        } catch (...) {
+            _result_promise.set_exception(std::current_exception());
+            on_read_resolved();
+        }
     }
     void reconcile(db::consistency_level cl, storage_proxy::clock_type::time_point timeout) {
         reconcile(cl, timeout, _cmd);
