@@ -244,11 +244,9 @@ future<> size_estimates_mutation_reader::get_next_partition() {
         return get_local_ranges(_db);
     }).then([this] (auto&& ranges) {
         auto estimates = this->estimates_for_current_keyspace(std::move(ranges));
-        auto mutations = db::system_keyspace::make_size_estimates_mutation(*_current_partition, std::move(estimates));
+        auto m = db::system_keyspace::make_size_estimates_mutation(*_current_partition, std::move(estimates));
         ++_current_partition;
-        std::vector<mutation> ms;
-        ms.emplace_back(std::move(mutations));
-        auto reader = make_flat_mutation_reader_from_mutations_v2(_schema, _permit, std::move(ms), _fwd);
+        auto reader = make_flat_mutation_reader_from_mutation_v2(_schema, _permit, std::move(m), _fwd);
         auto close_partition_reader = _partition_reader ? _partition_reader->close() : make_ready_future<>();
         return close_partition_reader.then([this, reader = std::move(reader)] () mutable {
             _partition_reader = std::move(reader);

@@ -99,7 +99,7 @@ struct mock_consumer {
 
 static size_t count_fragments(mutation m) {
     tests::reader_concurrency_semaphore_wrapper semaphore;
-    auto r = make_flat_mutation_reader_from_mutations_v2(m.schema(), semaphore.make_permit(), {m});
+    auto r = make_flat_mutation_reader_from_mutation_v2(m.schema(), semaphore.make_permit(), std::move(m));
     auto close_reader = deferred_close(r);
     size_t res = 0;
     auto mfopt = r().get0();
@@ -116,14 +116,14 @@ SEASTAR_TEST_CASE(test_flat_mutation_reader_consume_single_partition) {
         for_each_mutation([&] (const mutation& m) {
             size_t fragments_in_m = count_fragments(m);
             for (size_t depth = 1; depth <= fragments_in_m + 1; ++depth) {
-                auto r = make_flat_mutation_reader_from_mutations_v2(m.schema(), semaphore.make_permit(), {m});
+                auto r = make_flat_mutation_reader_from_mutation_v2(m.schema(), semaphore.make_permit(), mutation(m));
                 auto close_reader = deferred_close(r);
                 auto result = r.consume(mock_consumer(*m.schema(), semaphore.make_permit(), depth)).get0();
                 BOOST_REQUIRE(result._consume_end_of_stream_called);
                 BOOST_REQUIRE_EQUAL(1, result._consume_new_partition_call_count);
                 BOOST_REQUIRE_EQUAL(1, result._consume_end_of_partition_call_count);
                 BOOST_REQUIRE_EQUAL(m.partition().partition_tombstone() ? 1 : 0, result._consume_tombstone_call_count);
-                auto r2 = assert_that(make_flat_mutation_reader_from_mutations_v2(m.schema(), semaphore.make_permit(), {m}));
+                auto r2 = assert_that(make_flat_mutation_reader_from_mutation_v2(m.schema(), semaphore.make_permit(), mutation(m)));
                 r2.produces_partition_start(m.decorated_key(), m.partition().partition_tombstone());
                 if (result._fragments.empty()) {
                     continue;
@@ -208,7 +208,7 @@ SEASTAR_TEST_CASE(test_fragmenting_and_freezing) {
         for_each_mutation([&] (const mutation& m) {
             std::vector<frozen_mutation> fms;
 
-            fragment_and_freeze(make_flat_mutation_reader_from_mutations_v2(m.schema(), semaphore.make_permit(), { mutation(m) }), [&] (auto fm, bool frag) {
+            fragment_and_freeze(make_flat_mutation_reader_from_mutation_v2(m.schema(), semaphore.make_permit(), mutation(m)), [&] (auto fm, bool frag) {
                 BOOST_REQUIRE(!frag);
                 fms.emplace_back(std::move(fm));
                 return make_ready_future<stop_iteration>(stop_iteration::no);
@@ -222,7 +222,7 @@ SEASTAR_TEST_CASE(test_fragmenting_and_freezing) {
             fms.clear();
 
             std::optional<bool> fragmented;
-            fragment_and_freeze(make_flat_mutation_reader_from_mutations_v2(m.schema(), semaphore.make_permit(), { mutation(m) }), [&] (auto fm, bool frag) {
+            fragment_and_freeze(make_flat_mutation_reader_from_mutation_v2(m.schema(), semaphore.make_permit(), mutation(m)), [&] (auto fm, bool frag) {
                 BOOST_REQUIRE(!fragmented || *fragmented == frag);
                 *fragmented = frag;
                 fms.emplace_back(std::move(fm));
@@ -731,7 +731,7 @@ SEASTAR_TEST_CASE(test_abandoned_flat_mutation_reader_from_mutation) {
     return seastar::async([] {
         tests::reader_concurrency_semaphore_wrapper semaphore;
         for_each_mutation([&] (const mutation& m) {
-            auto rd = make_flat_mutation_reader_from_mutations_v2(m.schema(), semaphore.make_permit(), {mutation(m)});
+            auto rd = make_flat_mutation_reader_from_mutation_v2(m.schema(), semaphore.make_permit(), mutation(m));
             auto close_rd = deferred_close(rd);
             rd().get();
             rd().get();
@@ -836,7 +836,7 @@ SEASTAR_THREAD_TEST_CASE(test_reverse_reader_memory_limit) {
         }
 
         const uint64_t hard_limit = size_t(1) << 18;
-        auto reverse_reader = make_reversing_reader(make_flat_mutation_reader_from_mutations_v2(schema.schema(), semaphore.make_permit(), {mut}),
+        auto reverse_reader = make_reversing_reader(make_flat_mutation_reader_from_mutation_v2(schema.schema(), semaphore.make_permit(), std::move(mut)),
                 query::max_result_size(size_t(1) << 10, hard_limit));
         auto close_reverse_reader = deferred_close(reverse_reader);
 

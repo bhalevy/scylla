@@ -64,6 +64,19 @@ mutation_source make_source(std::vector<mutation> mutations) {
     });
 }
 
+static mutation_source make_source(const mutation& m) {
+    return mutation_source([&m] (schema_ptr s, reader_permit permit, const dht::partition_range& range, const query::partition_slice& slice,
+            const io_priority_class& pc, tracing::trace_state_ptr, streamed_mutation::forwarding fwd, mutation_reader::forwarding fwd_mr) {
+        assert(range.is_full()); // slicing not implemented yet
+        if (slice.options.contains(query::partition_slice::option::reversed)) {
+            assert(m.schema()->make_reversed()->version() == s->version());
+        } else {
+            assert(m.schema() == s);
+        }
+        return make_flat_mutation_reader_from_mutation_v2(s, std::move(permit), mutation(m), slice, fwd);
+    });
+}
+
 static query::partition_slice make_full_slice(const schema& s) {
     return partition_slice_builder(s).build();
 }
@@ -100,7 +113,7 @@ SEASTAR_TEST_CASE(test_reading_from_single_partition) {
         m1.set_clustered_cell(clustering_key::from_single_value(*s, bytes("C")), "v1", data_value(bytes("C:v")), 1);
         m1.set_clustered_cell(clustering_key::from_single_value(*s, bytes("D")), "v1", data_value(bytes("D:v")), 1);
 
-        auto src = make_source({m1});
+        auto src = make_source(m1);
 
         // Test full slice, but with row limit
         {
@@ -157,7 +170,7 @@ SEASTAR_TEST_CASE(test_cells_are_expired_according_to_query_timestamp) {
             atomic_cell::make_live(*s->get_column_definition("v1")->type, 
                                    api::timestamp_type(1), bytes("B:v1")));
 
-        auto src = make_source({m1});
+        auto src = make_source(m1);
 
         // Not expired yet
         {
@@ -202,7 +215,7 @@ SEASTAR_TEST_CASE(test_reverse_ordering_is_respected) {
         m1.set_clustered_cell(clustering_key::from_single_value(*table_schema, bytes("D")), "v1", data_value(bytes("D_v1")), 1);
         m1.set_clustered_cell(clustering_key::from_single_value(*table_schema, bytes("E")), "v1", data_value(bytes("E_v1")), 1);
 
-        auto src = make_source({m1});
+        auto src = make_source(m1);
 
         {
             auto slice = partition_slice_builder(*query_schema)
@@ -387,7 +400,7 @@ SEASTAR_TEST_CASE(test_query_when_partition_tombstone_covers_live_cells) {
         m1.partition().apply(tombstone(api::timestamp_type(1), now));
         m1.set_clustered_cell(clustering_key::from_single_value(*s, bytes("A")), "v1", data_value(bytes("A:v")), 1);
 
-        auto src = make_source({m1});
+        auto src = make_source(m1);
         auto slice = make_full_slice(*s);
 
         reconcilable_result result = mutation_query(s, semaphore.make_permit(), src, query::full_partition_range, slice, query::max_rows, query::max_partitions, now);
@@ -457,24 +470,24 @@ SEASTAR_TEST_CASE(test_result_row_count) {
 
             mutation m1(s, partition_key::from_single_value(*s, "key1"));
 
-            auto src = make_source({m1});
+            auto src = make_source(m1);
 
-            auto r = to_data_query_result(mutation_query(s, semaphore.make_permit(), make_source({m1}), query::full_partition_range, slice, 10000, query::max_partitions, now),
+            auto r = to_data_query_result(mutation_query(s, semaphore.make_permit(), make_source(m1), query::full_partition_range, slice, 10000, query::max_partitions, now),
                     s, slice, inf32, inf32);
             BOOST_REQUIRE_EQUAL(r.row_count().value(), 0);
 
             m1.set_static_cell("s1", data_value(bytes("S_v1")), 1);
-            r = to_data_query_result(mutation_query(s, semaphore.make_permit(), make_source({m1}), query::full_partition_range, slice, 10000, query::max_partitions, now),
+            r = to_data_query_result(mutation_query(s, semaphore.make_permit(), make_source(m1), query::full_partition_range, slice, 10000, query::max_partitions, now),
                     s, slice, inf32, inf32);
             BOOST_REQUIRE_EQUAL(r.row_count().value(), 1);
 
             m1.set_clustered_cell(clustering_key::from_single_value(*s, bytes("A")), "v1", data_value(bytes("A_v1")), 1);
-            r = to_data_query_result(mutation_query(s, semaphore.make_permit(), make_source({m1}), query::full_partition_range, slice, 10000, query::max_partitions, now),
+            r = to_data_query_result(mutation_query(s, semaphore.make_permit(), make_source(m1), query::full_partition_range, slice, 10000, query::max_partitions, now),
                     s, slice, inf32, inf32);
             BOOST_REQUIRE_EQUAL(r.row_count().value(), 1);
 
             m1.set_clustered_cell(clustering_key::from_single_value(*s, bytes("B")), "v1", data_value(bytes("B_v1")), 1);
-            r = to_data_query_result(mutation_query(s, semaphore.make_permit(), make_source({m1}), query::full_partition_range, slice, 10000, query::max_partitions, now),
+            r = to_data_query_result(mutation_query(s, semaphore.make_permit(), make_source(m1), query::full_partition_range, slice, 10000, query::max_partitions, now),
                     s, slice, inf32, inf32);
             BOOST_REQUIRE_EQUAL(r.row_count().value(), 2);
 

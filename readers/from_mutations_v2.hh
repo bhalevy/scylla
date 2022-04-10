@@ -56,3 +56,20 @@ make_flat_mutation_reader_from_mutations_v2(
     const query::partition_slice& slice,
     streamed_mutation::forwarding fwd = streamed_mutation::forwarding::no);
 
+// Reader optimized for a single mutation.
+flat_mutation_reader_v2
+make_flat_mutation_reader_from_mutation_v2(
+    schema_ptr schema,
+    reader_permit permit,
+    mutation&& ms,
+    streamed_mutation::forwarding fwd = streamed_mutation::forwarding::no,
+    bool reversed = false);
+
+// Reader optimized for a single mutation.
+flat_mutation_reader_v2
+make_flat_mutation_reader_from_mutation_v2(
+    schema_ptr schema,
+    reader_permit permit,
+    mutation&& m,
+    const query::partition_slice& slice,
+    streamed_mutation::forwarding fwd = streamed_mutation::forwarding::no);

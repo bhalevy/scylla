@@ -94,7 +94,7 @@ SEASTAR_THREAD_TEST_CASE(test_frozen_mutation_fragment) {
     for_each_mutation([&] (const mutation& m) {
         auto& s = *m.schema();
         std::vector<mutation_fragment> mfs;
-        auto rd = downgrade_to_v1(make_flat_mutation_reader_from_mutations_v2(m.schema(), semaphore.make_permit(), { m }));
+        auto rd = downgrade_to_v1(make_flat_mutation_reader_from_mutation_v2(m.schema(), semaphore.make_permit(), mutation(m)));
         auto close_rd = deferred_close(rd);
         rd.consume_pausable([&] (mutation_fragment mf) {
             mfs.emplace_back(std::move(mf));
