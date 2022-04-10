@@ -22,6 +22,24 @@ namespace query {
     extern const dht::partition_range full_partition_range;
 }
 
+// Reader optimized for a single mutation.
+flat_mutation_reader_v2
+make_flat_mutation_reader_from_mutations_v2(
+    schema_ptr schema,
+    reader_permit permit,
+    mutation m,
+    streamed_mutation::forwarding fwd = streamed_mutation::forwarding::no,
+    bool reversed = false);
+
+// Reader optimized for a single mutation.
+flat_mutation_reader_v2
+make_flat_mutation_reader_from_mutations_v2(
+    schema_ptr schema,
+    reader_permit permit,
+    mutation m,
+    const query::partition_slice& slice,
+    streamed_mutation::forwarding fwd = streamed_mutation::forwarding::no);
+
 // All mutations should have the same schema.
 flat_mutation_reader_v2 make_flat_mutation_reader_from_mutations_v2(
     schema_ptr schema,
