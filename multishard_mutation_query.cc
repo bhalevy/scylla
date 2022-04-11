@@ -745,20 +745,29 @@ future<typename ResultBuilder::result_type> do_query(
 
     std::exception_ptr ex;
 
-    try {
-        co_await ctx->lookup_readers(timeout);
+    auto f = co_await coroutine::as_future(ctx->lookup_readers(timeout));
+    if (f.failed()) {
+        ex = f.get_exception();
+    } else {
+        auto result_fut = co_await coroutine::as_future(read_page<ResultBuilder>(ctx, s, cmd, ranges, trace_state,
+                std::move(result_builder)));
+        if (result_fut.failed()) {
+            ex = result_fut.get_exception();
+        } else {
+            auto [last_ckey, result, unconsumed_buffer, compaction_state] = std::move(result_fut).get0();
 
-        auto [last_ckey, result, unconsumed_buffer, compaction_state] = co_await read_page<ResultBuilder>(ctx, s, cmd, ranges, trace_state,
-                std::move(result_builder));
+            if (compaction_state->are_limits_reached() || result.is_short_read()) {
+                f = co_await coroutine::as_future(ctx->save_readers(std::move(unconsumed_buffer), std::move(*compaction_state).detach_state(), std::move(last_ckey)));
+                if (f.failed()) {
+                    ex = f.get_exception();
+                }
+            }
 
-        if (compaction_state->are_limits_reached() || result.is_short_read()) {
-            co_await ctx->save_readers(std::move(unconsumed_buffer), std::move(*compaction_state).detach_state(), std::move(last_ckey));
+            if (!ex) {
+                co_await ctx->stop();
+                co_return std::move(result);
+            }
         }
-
-        co_await ctx->stop();
-        co_return std::move(result);
-    } catch (...) {
-        ex = std::current_exception();
     }
 
     co_await ctx->stop();
