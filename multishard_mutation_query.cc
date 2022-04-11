@@ -595,13 +595,12 @@ future<> read_context::save_readers(flat_mutation_reader_v2::tracked_buffer unco
 
     co_await smp::invoke_on_all([this, &last_pkey, &last_ckey] {
         auto shard = this_shard_id();
-        // FIXME: indentation
-            auto& rm = _readers[shard];
-            if (rm.state == reader_state::successful_lookup || rm.state == reader_state::saving) {
-                return save_reader(shard, last_pkey, last_ckey);
-            }
+        auto& rm = _readers[shard];
+        if (rm.state == reader_state::successful_lookup || rm.state == reader_state::saving) {
+            return save_reader(shard, last_pkey, last_ckey);
+        }
 
-            return make_ready_future<>();
+        return make_ready_future<>();
     });
 }
 
