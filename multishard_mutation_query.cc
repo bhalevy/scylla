@@ -549,34 +549,33 @@ future<> read_context::lookup_readers(db::timeout_clock::time_point timeout) noe
 
     return _db.invoke_on_all([this, cmd = &_cmd, ranges = &_ranges, gs = global_schema_ptr(_schema),
                 gts = tracing::global_trace_state_ptr(_trace_state), timeout] (replica::database& db) mutable {
-            // FIXME: indentation
-            auto schema = gs.get();
-            auto querier_opt = db.get_querier_cache().lookup_shard_mutation_querier(cmd->query_uuid, *schema, *ranges, cmd->slice, gts.get(), timeout);
-            auto& table = db.find_column_family(schema);
-            auto& semaphore = this->semaphore();
-            auto shard = this_shard_id();
+        auto schema = gs.get();
+        auto querier_opt = db.get_querier_cache().lookup_shard_mutation_querier(cmd->query_uuid, *schema, *ranges, cmd->slice, gts.get(), timeout);
+        auto& table = db.find_column_family(schema);
+        auto& semaphore = this->semaphore();
+        auto shard = this_shard_id();
 
-            if (!querier_opt) {
-                _readers[shard] = reader_meta(reader_state::inexistent);
-                return;
-            }
+        if (!querier_opt) {
+            _readers[shard] = reader_meta(reader_state::inexistent);
+            return;
+        }
 
-            auto& q = *querier_opt;
+        auto& q = *querier_opt;
 
-            if (&q.permit().semaphore() != &semaphore) {
-                on_internal_error(mmq_log, format("looked-up reader belongs to different semaphore than the one appropriate for this query class: "
-                        "looked-up reader belongs to {} (0x{:x}) the query class appropriate is {} (0x{:x})",
-                        q.permit().semaphore().name(),
-                        reinterpret_cast<uintptr_t>(&q.permit().semaphore()),
-                        semaphore.name(),
-                        reinterpret_cast<uintptr_t>(&semaphore)));
-            }
+        if (&q.permit().semaphore() != &semaphore) {
+            on_internal_error(mmq_log, format("looked-up reader belongs to different semaphore than the one appropriate for this query class: "
+                    "looked-up reader belongs to {} (0x{:x}) the query class appropriate is {} (0x{:x})",
+                    q.permit().semaphore().name(),
+                    reinterpret_cast<uintptr_t>(&q.permit().semaphore()),
+                    semaphore.name(),
+                    reinterpret_cast<uintptr_t>(&semaphore)));
+        }
 
-            auto handle = semaphore.register_inactive_read(std::move(q).reader());
-            _readers[shard] = reader_meta(
-                    reader_state::successful_lookup,
-                    reader_meta::remote_parts(q.permit(), std::move(q).reader_range(), std::move(q).reader_slice(), table.read_in_progress(),
-                            std::move(handle)));
+        auto handle = semaphore.register_inactive_read(std::move(q).reader());
+        _readers[shard] = reader_meta(
+                reader_state::successful_lookup,
+                reader_meta::remote_parts(q.permit(), std::move(q).reader_range(), std::move(q).reader_slice(), table.read_in_progress(),
+                        std::move(handle)));
     });
 }
 
