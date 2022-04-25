@@ -1574,6 +1574,32 @@ lw_shared_ptr<memtable> memtable_list::new_memtable() {
     return make_lw_shared<memtable>(_current_schema(), *_dirty_memory_manager, _table_stats, this, _compaction_scheduling_group);
 }
 
+future<> memtable_list::clear_and_add() {
+    auto mt = new_memtable();
+    std::vector<replica::shared_memtable> new_memtables;
+    try {
+        // try preparing the cleared memtables vector ahead of time
+        // so we can clear the old memtables gently later
+        new_memtables.reserve(_memtables.size());
+        new_memtables.emplace_back(std::move(mt));
+    } catch (...) {
+        // if preparing the replacement vector failed
+        // just fall back to the synchronous clear method
+        // that might stall (see https://github.com/scylladb/scylla/issues/10281)
+        _memtables.clear();
+        // emplace_back might throw only if _memtables was empty
+        // on entry. Otherwise, we rely on clear() not to release
+        // the vector capacity (See https://en.cppreference.com/w/cpp/container/vector/clear)
+        // and lw_shared_ptr being nothrow move constructible.
+        _memtables.emplace_back(std::move(mt));
+        co_return;
+    }
+    auto old_memtables = std::exchange(_memtables, std::move(new_memtables));
+    for (auto& smt : old_memtables) {
+        co_await smt->clear_gently();
+    }
+}
+
 } // namespace replica
 
 future<flush_permit> flush_permit::reacquire_sstable_write_permit() && {
