@@ -134,6 +134,54 @@ SEASTAR_TEST_CASE(test_truncate_without_snapshot_during_writes) {
     }, cfg);
 }
 
+// Reproducer for https://github.com/scylladb/scylla/issues/10423
+SEASTAR_TEST_CASE(test_truncate_without_snapshot_during_flushes) {
+    auto cfg = make_shared<db::config>();
+    cfg->auto_snapshot.set(false);
+    return do_with_cql_env_thread([] (cql_test_env& e) {
+        e.execute_cql("create table ks.cf (k text, v int, primary key (k));").get();
+        auto& db = e.local_db();
+        auto& ks = db.find_keyspace("ks");
+        auto& cf = db.find_column_family("ks", "cf");
+        auto s = cf.schema();
+        dht::partition_range_vector pranges;
+
+        uint32_t num_keys = 10;
+        std::vector<future<>> futures;
+        futures.reserve(num_keys);
+
+        for (uint32_t i = 1; i <= num_keys; ++i) {
+            auto pkey = partition_key::from_single_value(*s, to_bytes(fmt::format("key{}", i)));
+            mutation m(s, pkey);
+            m.set_clustered_cell(clustering_key_prefix::make_empty(), "v", int32_t(42), {});
+            pranges.emplace_back(dht::partition_range::make_singular(dht::decorate_key(*s, std::move(pkey))));
+            db.apply(s, freeze(m), tracing::trace_state_ptr(), db::commitlog::force_sync::no, db::no_timeout).get();
+            futures.emplace_back(cf.flush());
+        }
+
+        auto assert_query_result = [&] (size_t expected_size) {
+            auto max_size = std::numeric_limits<size_t>::max();
+            auto cmd = query::read_command(s->id(), s->version(), partition_slice_builder(*s).build(), query::max_result_size(max_size), query::row_limit(1000));
+            auto&& [result, cache_tempature] = db.query(s, cmd, query::result_options::only_result(), pranges, nullptr, db::no_timeout).get0();
+            assert_that(query::result_set::from_raw_result(s, cmd.slice, *result)).has_size(expected_size);
+        };
+
+        db.truncate(ks, cf, [] { return make_ready_future<db_clock::time_point>(db_clock::now()); }, false /* with_snapshot */).get();
+
+        for (auto& f : futures) {
+            f.get();
+        }
+
+        auto cl = db.commitlog();
+        auto rp = db::commitlog_replayer::create_replayer(e.db()).get0();
+        auto paths = cl->list_existing_segments().get0();
+        rp.recover(paths, db::commitlog::descriptor::FILENAME_PREFIX).get();
+
+        assert_query_result(0);
+        return make_ready_future<>();
+    }, cfg);
+}
+
 SEASTAR_TEST_CASE(test_querying_with_limits) {
     return do_with_cql_env([](cql_test_env& e) {
         return seastar::async([&] {
