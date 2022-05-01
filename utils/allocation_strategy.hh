@@ -37,9 +37,9 @@ protected:
 public:
     virtual ~migrate_fn_type() { unregister_migrator(_index); }
     virtual void migrate(void* src, void* dsts, size_t size) const noexcept = 0;
-    virtual size_t size(const void* obj) const = 0;
-    size_t align() const { return _align; }
-    uint32_t index() const { return _index; }
+    virtual size_t size(const void* obj) const noexcept = 0;
+    size_t align() const noexcept { return _align; }
+    uint32_t index() const noexcept { return _index; }
 };
 
 // Non-constant-size classes (ending with `char data[0]`) must provide
@@ -72,7 +72,7 @@ public:
         new (static_cast<T*>(dst)) T(std::move(*src_t));
         src_t->~T();
     }
-    virtual size_t size(const void* obj) const override {
+    virtual size_t size(const void* obj) const noexcept override {
         return size_for_allocation_strategy(*static_cast<const T*>(obj));
     }
 };
