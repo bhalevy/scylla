@@ -372,21 +372,21 @@ class background_reclaimer {
     bool _stopping = false;
     static constexpr size_t free_memory_threshold = 60'000'000;
 private:
-    bool have_work() const {
+    bool have_work() const noexcept {
 #ifndef SEASTAR_DEFAULT_ALLOCATOR
         return memory::stats().free_memory() < free_memory_threshold;
 #else
         return false;
 #endif
     }
-    void main_loop_wake() {
+    void main_loop_wake() noexcept {
         llogger.debug("background_reclaimer::main_loop_wake: waking {}", bool(_main_loop_wait));
         if (_main_loop_wait) {
             _main_loop_wait->set_value();
             _main_loop_wait = nullptr;
         }
     }
-    future<> main_loop() {
+    future<> main_loop() noexcept {
         llogger.debug("background_reclaimer::main_loop: entry");
         while (true) {
             while (!_stopping && !have_work()) {
@@ -405,7 +405,7 @@ private:
         }
         llogger.debug("background_reclaimer::main_loop: exit");
     }
-    void adjust_shares() {
+    void adjust_shares() noexcept {
         if (have_work()) {
             auto shares = 1 + (1000 * (free_memory_threshold - memory::stats().free_memory())) / free_memory_threshold;
             _sg.set_shares(shares);
@@ -416,7 +416,7 @@ private:
         }
     }
 public:
-    explicit background_reclaimer(scheduling_group sg, noncopyable_function<void (size_t target)> reclaim)
+    explicit background_reclaimer(scheduling_group sg, noncopyable_function<void (size_t target)> reclaim) noexcept
             : _sg(sg)
             , _reclaim(std::move(reclaim))
             , _adjust_shares_timer(default_scheduling_group(), [this] { adjust_shares(); })
@@ -425,7 +425,7 @@ public:
             _adjust_shares_timer.arm_periodic(50ms);
         }
     }
-    future<> stop() {
+    future<> stop() noexcept {
         _stopping = true;
         main_loop_wake();
         return std::move(_done);
