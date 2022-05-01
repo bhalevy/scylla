@@ -1318,7 +1318,7 @@ private:
 
     template<typename Func>
     requires std::is_invocable_r_v<void, Func, const object_descriptor*, void*, size_t>
-    void for_each_live(segment* seg, Func&& func) {
+    void for_each_live(segment* seg, Func&& func) noexcept {
         // scylla-gdb.py:scylla_lsa_segment is coupled with this implementation.
         auto pos = align_up_for_asan(seg->at<const char>(0));
         while (pos < seg->at<const char>(segment::size)) {
@@ -1511,14 +1511,14 @@ private:
         _buf_active_offset = 0;
     }
 
-    static uint64_t next_id() {
+    static uint64_t next_id() noexcept {
         static std::atomic<uint64_t> id{0};
         return id.fetch_add(1);
     }
     struct degroup_temporarily {
         region_impl* impl;
         region_group* group;
-        explicit degroup_temporarily(region_impl* impl)
+        explicit degroup_temporarily(region_impl* impl) noexcept
                 : impl(impl), group(impl->_group) {
             if (group) {
                 group->del(impl);
@@ -1582,7 +1582,7 @@ public:
         return occupancy().used_space() == 0;
     }
 
-    occupancy_stats occupancy() const {
+    occupancy_stats occupancy() const noexcept {
         occupancy_stats total = _non_lsa_occupancy;
         total += _closed_occupancy;
         if (_active) {
@@ -1594,15 +1594,15 @@ public:
         return total;
     }
 
-    region_group* group() {
+    region_group* group() noexcept {
         return _group;
     }
 
-    occupancy_stats compactible_occupancy() const {
+    occupancy_stats compactible_occupancy() const noexcept {
         return _closed_occupancy;
     }
 
-    occupancy_stats evictable_occupancy() const {
+    occupancy_stats evictable_occupancy() const noexcept {
         return occupancy_stats(0, _evictable_space & _evictable_space_mask);
     }
 
@@ -1619,7 +1619,7 @@ public:
     //
     //    while (is_compactible()) { compact(); }
     //
-    bool is_compactible() const {
+    bool is_compactible() const noexcept {
         return _reclaiming_enabled
             // We require 2 segments per allocation segregation group to ensure forward progress during compaction.
             // There are currently two fixed groups, one for the allocation_strategy implementation and one for lsa_buffer:s.
@@ -1627,7 +1627,7 @@ public:
             && _segment_descs.contains_above_min();
     }
 
-    bool is_idle_compactible() {
+    bool is_idle_compactible() noexcept {
         return is_compactible();
     }
 
@@ -1785,7 +1785,7 @@ public:
     }
 
     // Returns occupancy of the sparsest compactible segment.
-    occupancy_stats min_occupancy() const {
+    occupancy_stats min_occupancy() const noexcept {
         if (_segment_descs.empty()) {
             return {};
         }
@@ -1793,7 +1793,7 @@ public:
     }
 
     // Compacts a single segment, most appropriate for it
-    void compact() {
+    void compact() noexcept {
         compaction_lock _(*this);
         auto& desc = _segment_descs.one_of_largest();
         _segment_descs.pop_one_of_largest();
@@ -1832,20 +1832,20 @@ public:
         compact_segment_locked(seg, desc);
     }
 
-    allocation_strategy& allocator() {
+    allocation_strategy& allocator() noexcept {
         return *this;
     }
 
-    uint64_t id() const {
+    uint64_t id() const noexcept {
         return _id;
     }
 
     // Returns true if this pool is evictable, so that evict_some() can be called.
-    bool is_evictable() const {
+    bool is_evictable() const noexcept {
         return _evictable && _reclaiming_enabled;
     }
 
-    memory::reclaiming_result evict_some() {
+    memory::reclaiming_result evict_some() noexcept {
         ++_invalidate_counter;
         auto freed = shard_segment_pool.statistics().memory_freed;
         auto ret = _eviction_fn();
@@ -1853,17 +1853,17 @@ public:
         return ret;
     }
 
-    void make_not_evictable() {
+    void make_not_evictable() noexcept {
         _evictable = false;
         _eviction_fn = {};
     }
 
-    void make_evictable(eviction_fn fn) {
+    void make_evictable(eviction_fn fn) noexcept {
         _evictable = true;
         _eviction_fn = std::move(fn);
     }
 
-    const eviction_fn& evictor() const {
+    const eviction_fn& evictor() const noexcept {
         return _eviction_fn;
     }
 
