@@ -308,7 +308,7 @@ public:
 
 template<typename Func>
 inline
-decltype(auto) with_allocator(allocation_strategy& alloc, Func&& func) {
+decltype(auto) with_allocator(allocation_strategy& alloc, Func&& func) noexcept(noexcept(func())) {
     allocator_lock l(alloc);
     return func();
 }
