@@ -296,7 +296,7 @@ using alloc_strategy_unique_ptr = std::unique_ptr<T, alloc_strategy_deleter<T>>;
 class allocator_lock {
     allocation_strategy* _prev;
 public:
-    allocator_lock(allocation_strategy& alloc) {
+    allocator_lock(allocation_strategy& alloc) noexcept {
         _prev = current_allocation_strategy_ptr();
         current_allocation_strategy_ptr() = &alloc;
     }
