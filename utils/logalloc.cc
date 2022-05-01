@@ -58,11 +58,11 @@ namespace debug {
 constexpr size_t logalloc_alignment = 8;
 }
 template<typename T>
-[[nodiscard]] static T align_up_for_asan(T val) {
+[[nodiscard]] static T align_up_for_asan(T val) noexcept {
     return align_up(val, size_t(8));
 }
 template<typename T>
-void poison(const T* addr, size_t size) {
+void poison(const T* addr, size_t size) noexcept {
     // Both values and descriptors must be aligned.
     assert(uintptr_t(addr) % 8 == 0);
     // This can be followed by
@@ -74,7 +74,7 @@ void poison(const T* addr, size_t size) {
     // is able to poison this.
     ASAN_POISON_MEMORY_REGION(addr, align_up_for_asan(size));
 }
-void unpoison(const char *addr, size_t size) {
+void unpoison(const char *addr, size_t size) noexcept {
     ASAN_UNPOISON_MEMORY_REGION(addr, size);
 }
 #else
@@ -82,10 +82,10 @@ namespace debug {
 constexpr size_t logalloc_alignment = 1;
 }
 template<typename T>
-[[nodiscard]] static T align_up_for_asan(T val) { return val; }
+[[nodiscard]] static T align_up_for_asan(T val) noexcept { return val; }
 template<typename T>
-void poison(const T* addr, size_t size) { }
-void unpoison(const char *addr, size_t size) { }
+void poison(const T* addr, size_t size) noexcept { }
+void unpoison(const char *addr, size_t size) noexcept { }
 #endif
 
 namespace bi = boost::intrusive;
