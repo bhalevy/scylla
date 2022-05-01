@@ -15,6 +15,7 @@
 #include <seastar/core/shared_ptr.hh>
 #include <seastar/core/shared_future.hh>
 #include <seastar/core/expiring_fifo.hh>
+#include <seastar/core/coroutine.hh>
 #include "allocation_strategy.hh"
 #include <boost/heap/binomial_heap.hpp>
 #include "seastarx.hh"
@@ -775,6 +776,24 @@ public:
         }
     }
 
+    template<typename Func>
+    futurize_t<std::invoke_result_t<Func>> gently_with_reserve(Func&& fn) noexcept {
+        auto prev_lsa_reserve = _lsa_reserve;
+        auto prev_std_reserve = _std_reserve;
+        try {
+            guard g;
+            _minimum_lsa_emergency_reserve = g._prev;
+            reserve();
+            co_return co_await futurize_invoke(std::forward<Func>(fn));
+        } catch (const std::bad_alloc&) {
+            // roll-back limits to protect against pathological requests
+            // preventing future requests from succeeding.
+            _lsa_reserve = prev_lsa_reserve;
+            _std_reserve = prev_std_reserve;
+            throw;
+        }
+    }
+
     //
     // Invokes func with reclaim_lock on region r. If LSA allocation fails
     // inside func it is retried after increasing LSA segment reserve. The
@@ -801,6 +820,21 @@ public:
         }
     }
 
+    template<typename Func>
+    futurize_t<std::invoke_result_t<Func>> gently_with_reclaiming_disabled(logalloc::region& r, Func&& fn) noexcept {
+        assert(r.reclaiming_enabled());
+        maybe_decay_reserve();
+        while (true) {
+            try {
+                logalloc::reclaim_lock _(r);
+                memory::disable_abort_on_alloc_failure_temporarily dfg;
+                co_return co_await futurize_invoke(std::forward<Func>(fn));
+            } catch (const std::bad_alloc&) {
+                on_alloc_failure(r);
+            }
+        }
+    }
+
     //
     // Reserves standard allocator and LSA memory and
     // invokes func with reclaim_lock on region r. If LSA allocation fails
@@ -817,6 +851,13 @@ public:
     decltype(auto) operator()(logalloc::region& r, Func&& func) {
         return with_reserve([this, &r, &func] {
             return with_reclaiming_disabled(r, func);
+        });
+    }
+
+    template<typename Func>
+    auto invoke_gently(logalloc::region& r, Func&& func) {
+        return gently_with_reserve([this, &r, func = std::move(func)] {
+            return gently_with_reclaiming_disabled(r, std::move(func));
         });
     }
 };
