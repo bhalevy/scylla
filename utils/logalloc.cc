@@ -1278,7 +1278,7 @@ private:
     struct compaction_lock {
         region_impl& _region;
         bool _prev;
-        compaction_lock(region_impl& r)
+        compaction_lock(region_impl& r) noexcept
             : _region(r)
             , _prev(r._reclaiming_enabled)
         {
