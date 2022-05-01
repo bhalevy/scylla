@@ -446,7 +446,7 @@ private:
     struct reclaiming_lock {
         impl& _ref;
         bool _prev;
-        reclaiming_lock(impl& ref)
+        reclaiming_lock(impl& ref) noexcept
             : _ref(ref)
             , _prev(ref._reclaiming_enabled)
         {
@@ -460,7 +460,7 @@ private:
 public:
     impl();
     ~impl();
-    future<> stop() {
+    future<> stop() noexcept {
         if (_background_reclaimer) {
             return _background_reclaimer->stop();
         } else {
@@ -484,12 +484,12 @@ public:
     occupancy_stats occupancy();
     size_t non_lsa_used_space();
     // Set the minimum number of segments reclaimed during single reclamation cycle.
-    void set_reclamation_step(size_t step_in_segments) { _reclamation_step = step_in_segments; }
-    size_t reclamation_step() const { return _reclamation_step; }
+    void set_reclamation_step(size_t step_in_segments) noexcept { _reclamation_step = step_in_segments; }
+    size_t reclamation_step() const noexcept { return _reclamation_step; }
     // Abort on allocation failure from LSA
-    void enable_abort_on_bad_alloc() { _abort_on_bad_alloc = true; }
-    bool should_abort_on_bad_alloc() const { return _abort_on_bad_alloc; }
-    void setup_background_reclaim(scheduling_group sg) {
+    void enable_abort_on_bad_alloc() noexcept { _abort_on_bad_alloc = true; }
+    bool should_abort_on_bad_alloc() const noexcept { return _abort_on_bad_alloc; }
+    void setup_background_reclaim(scheduling_group sg) noexcept {
         assert(!_background_reclaimer);
         _background_reclaimer.emplace(sg, [this] (size_t target) {
             reclaim(target, is_preemptible::yes);
