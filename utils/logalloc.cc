@@ -668,24 +668,24 @@ class segment_store {
 
 public:
     size_t non_lsa_reserve = 0;
-    segment_store()
+    segment_store() noexcept
         : _layout(memory::get_memory_layout())
         , _segments_base(align_down(_layout.start, (uintptr_t)segment::size)) {
     }
-    segment* segment_from_idx(size_t idx) const {
+    segment* segment_from_idx(size_t idx) const noexcept {
         return reinterpret_cast<segment*>(_segments_base) + idx;
     }
-    size_t idx_from_segment(segment* seg) const {
+    size_t idx_from_segment(segment* seg) const noexcept {
         return seg - reinterpret_cast<segment*>(_segments_base);
     }
-    size_t new_idx_for_segment(segment* seg) {
+    size_t new_idx_for_segment(segment* seg) noexcept {
         return idx_from_segment(seg);
     }
-    void free_segment(segment *seg) { }
-    size_t max_segments() const {
+    void free_segment(segment *seg) noexcept { }
+    size_t max_segments() const noexcept {
         return (_layout.end - _segments_base) / segment::size;
     }
-    bool can_allocate_more_segments() {
+    bool can_allocate_more_segments() noexcept {
         return memory::stats().free_memory() >= non_lsa_reserve + segment::size;
     }
 };
