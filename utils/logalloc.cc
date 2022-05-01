@@ -769,7 +769,7 @@ class segment_pool {
     struct allocation_lock {
         segment_pool& _pool;
         bool _prev;
-        allocation_lock(segment_pool& p)
+        allocation_lock(segment_pool& p) noexcept
             : _pool(p)
             , _prev(p._allocation_enabled)
         {
