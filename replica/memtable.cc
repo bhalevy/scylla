@@ -376,6 +376,37 @@ protected:
     }
 };
 
+class opt_key_and_snp {
+    using value_type = std::pair<dht::decorated_key, partition_snapshot_ptr>;
+
+    std::optional<value_type> _key_and_snap;
+public:
+    opt_key_and_snp() = default;
+
+    explicit opt_key_and_snp(dht::decorated_key&& key, partition_snapshot_ptr snp) noexcept
+        : _key_and_snap(std::make_optional<value_type>(std::move(key), std::move(snp)))
+    {}
+
+    explicit opt_key_and_snp(const dht::decorated_key& key, partition_snapshot_ptr snp)
+        : _key_and_snap(std::make_optional<value_type>(key, std::move(snp)))
+    {}
+
+    opt_key_and_snp(opt_key_and_snp&&) = default;
+    opt_key_and_snp& operator=(opt_key_and_snp&&) = default;
+
+    operator bool() const noexcept {
+        return _key_and_snap.has_value();
+    }
+
+    dht::decorated_key& key() noexcept {
+        return _key_and_snap->first;
+    }
+
+    partition_snapshot_ptr& snp() noexcept {
+        return _key_and_snap->second;
+    }
+};
+
 class partition_snapshot_read_accounter {
     memtable& _mt;
 public:
@@ -449,31 +480,30 @@ public:
                 if (_delegate_range) {
                     _delegate = delegate_reader(_permit, *_delegate_range, _slice, _pc, streamed_mutation::forwarding::no, _fwd_mr);
                 } else {
-                    auto key_and_snp = read_section()(region(), [&] () -> std::optional<std::pair<dht::decorated_key, partition_snapshot_ptr>> {
+                    auto key_and_snp = read_section()(region(), [&] () -> opt_key_and_snp {
                         memtable_entry *e = fetch_entry();
                         if (!e) {
-                            return { };
+                            return opt_key_and_snp();
                         } else {
                             // FIXME: Introduce a memtable specific reader that will be returned from
                             // memtable_entry::read and will allow filling the buffer without the overhead of
                             // virtual calls, intermediate buffers and futures.
-                            auto key = e->key();
-                            auto snp = e->snapshot(*mtbl());
+                            auto ret = opt_key_and_snp(e->key(), e->snapshot(*mtbl()));
                             advance_iterator();
-                            return std::pair(std::move(key), std::move(snp));
+                            return ret;
                         }
                     });
                     if (key_and_snp) {
-                        update_last(key_and_snp->first);
+                        update_last(key_and_snp.key());
 
-                        const query::clustering_row_ranges& ranges = _slice.row_ranges(*schema(), key_and_snp->first.key());
+                        const query::clustering_row_ranges& ranges = _slice.row_ranges(*schema(), key_and_snp.key().key());
                         // TODO: when the slice passed from query finally changes format from half-reversed into native reversed, this line needs to change.
                         auto cr = query::clustering_key_filter_ranges(ranges);
 
-                        auto snp_schema = key_and_snp->second->schema();
+                        auto snp_schema = key_and_snp.snp()->schema();
                         bool digest_requested = _slice.options.contains<query::partition_slice::option::with_digest>();
                         bool is_reversed = _slice.is_reversed();
-                        _delegate = make_partition_snapshot_flat_reader_from_snp_schema(is_reversed, _permit, std::move(key_and_snp->first), std::move(cr), std::move(key_and_snp->second), digest_requested, region(), read_section(), mtbl(), streamed_mutation::forwarding::no, *mtbl());
+                        _delegate = make_partition_snapshot_flat_reader_from_snp_schema(is_reversed, _permit, std::move(key_and_snp.key()), std::move(cr), std::move(key_and_snp.snp()), digest_requested, region(), read_section(), mtbl(), streamed_mutation::forwarding::no, *mtbl());
                         _delegate->upgrade_schema(schema());
                     } else {
                         _end_of_stream = true;
@@ -628,24 +658,23 @@ public:
 private:
     void get_next_partition() {
         uint64_t component_size = 0;
-        auto key_and_snp = read_section()(region(), [&] () -> std::optional<std::pair<dht::decorated_key, partition_snapshot_ptr>> {
+        auto key_and_snp = read_section()(region(), [&] () -> opt_key_and_snp {
             memtable_entry* e = fetch_entry();
             if (e) {
-                auto dk = e->key();
-                auto snp = e->snapshot(*mtbl());
-                component_size = _flushed_memory.compute_size(*e, *snp);
+                auto ret = opt_key_and_snp(e->key(), e->snapshot(*mtbl()));
+                component_size = _flushed_memory.compute_size(*e, *ret.snp());
                 advance_iterator();
-                return std::pair(std::move(dk), std::move(snp));
+                return ret;
             }
-            return { };
+            return opt_key_and_snp();
         });
         if (key_and_snp) {
             _flushed_memory.update_bytes_read(component_size);
-            update_last(key_and_snp->first);
-            auto cr = query::clustering_key_filter_ranges::get_ranges(*schema(), schema()->full_slice(), key_and_snp->first.key());
-            auto snp_schema = key_and_snp->second->schema();
-            _partition_reader = make_partition_snapshot_flat_reader<false, partition_snapshot_flush_accounter>(snp_schema, _permit, std::move(key_and_snp->first), std::move(cr),
-                            std::move(key_and_snp->second), false, region(), read_section(), mtbl(), streamed_mutation::forwarding::no, *snp_schema, _flushed_memory);
+            update_last(key_and_snp.key());
+            auto cr = query::clustering_key_filter_ranges::get_ranges(*schema(), schema()->full_slice(), key_and_snp.key().key());
+            auto snp_schema = key_and_snp.snp()->schema();
+            _partition_reader = make_partition_snapshot_flat_reader<false, partition_snapshot_flush_accounter>(snp_schema, _permit, std::move(key_and_snp.key()), std::move(cr),
+                            std::move(key_and_snp.snp()), false, region(), read_section(), mtbl(), streamed_mutation::forwarding::no, *snp_schema, _flushed_memory);
             _partition_reader->upgrade_schema(schema());
         }
     }
