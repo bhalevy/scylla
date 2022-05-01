@@ -172,24 +172,25 @@ class region_group {
 
     struct allocating_function {
         virtual ~allocating_function() = default;
-        virtual void allocate() = 0;
-        virtual void fail(std::exception_ptr) = 0;
+        virtual void allocate() noexcept = 0;
+        virtual void fail(std::exception_ptr) noexcept = 0;
     };
 
     template <typename Func>
+    requires std::is_nothrow_move_constructible_v<Func>
     struct concrete_allocating_function : public allocating_function {
         using futurator = futurize<std::result_of_t<Func()>>;
         typename futurator::promise_type pr;
         Func func;
     public:
-        void allocate() override {
+        void allocate() noexcept override {
             futurator::invoke(func).forward_to(std::move(pr));
         }
-        void fail(std::exception_ptr e) override {
+        void fail(std::exception_ptr e) noexcept override {
             pr.set_exception(e);
         }
-        concrete_allocating_function(Func&& func) : func(std::forward<Func>(func)) {}
-        typename futurator::type get_future() {
+        concrete_allocating_function(Func&& func) noexcept : func(std::forward<Func>(func)) {}
+        typename futurator::type get_future() noexcept {
             return pr.get_future();
         }
     };
