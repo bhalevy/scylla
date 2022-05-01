@@ -6,6 +6,7 @@
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
+#include <seastar/core/coroutine.hh>
 #include "memtable.hh"
 #include "replica/database.hh"
 #include "frozen_mutation.hh"
@@ -475,12 +476,13 @@ public:
 
     virtual future<> fill_buffer() override {
         return do_until([this] { return is_end_of_stream() || is_buffer_full(); }, [this] {
+            auto f = make_ready_future<>();
             if (!_delegate) {
                 _delegate_range = get_delegate_range();
                 if (_delegate_range) {
                     _delegate = delegate_reader(_permit, *_delegate_range, _slice, _pc, streamed_mutation::forwarding::no, _fwd_mr);
                 } else {
-                    auto key_and_snp = read_section()(region(), [&] () -> opt_key_and_snp {
+                    f = read_section().invoke_gently(region(), [&] {
                         memtable_entry *e = fetch_entry();
                         if (!e) {
                             return opt_key_and_snp();
@@ -492,7 +494,8 @@ public:
                             advance_iterator();
                             return ret;
                         }
-                    });
+                    }).then([this] (opt_key_and_snp key_and_snp) {
+                    // FIXME: indentation
                     if (key_and_snp) {
                         update_last(key_and_snp.key());
 
@@ -508,10 +511,13 @@ public:
                     } else {
                         _end_of_stream = true;
                     }
+                    });
                 }
             }
 
-            return is_end_of_stream() ? make_ready_future<>() : fill_buffer_from_delegate();
+            return f.then([this] {
+                return is_end_of_stream() ? make_ready_future<>() : fill_buffer_from_delegate();
+            });
         });
     }
     virtual future<> next_partition() override {
@@ -656,9 +662,11 @@ public:
     flush_reader& operator=(flush_reader&&) = delete;
     flush_reader& operator=(const flush_reader&) = delete;
 private:
-    void get_next_partition() {
+    using opt_key_and_snap = std::optional<std::pair<dht::decorated_key, partition_snapshot_ptr>>;
+
+    future<> get_next_partition() {
         uint64_t component_size = 0;
-        auto key_and_snp = read_section()(region(), [&] () -> opt_key_and_snp {
+        auto key_and_snp = co_await read_section().invoke_gently(region(), [&] {
             memtable_entry* e = fetch_entry();
             if (e) {
                 auto ret = opt_key_and_snp(e->key(), e->snapshot(*mtbl()));
@@ -684,21 +692,22 @@ private:
 public:
     virtual future<> fill_buffer() override {
         return do_until([this] { return is_end_of_stream() || is_buffer_full(); }, [this] {
-            if (!_partition_reader) {
-                get_next_partition();
+            auto maybe_get_next_partition = _partition_reader ? make_ready_future<>() : get_next_partition();
+            return maybe_get_next_partition.then([this] {
                 if (!_partition_reader) {
                     _end_of_stream = true;
                     return make_ready_future<>();
                 }
-            }
-            return _partition_reader->consume_pausable([this] (mutation_fragment_v2 mf) {
+              // FIXME: indentation
+              return _partition_reader->consume_pausable([this] (mutation_fragment_v2 mf) {
                 push_mutation_fragment(std::move(mf));
                 return stop_iteration(is_buffer_full());
-            }).then([this] {
+              }).then([this] {
                 if (_partition_reader->is_end_of_stream() && _partition_reader->is_buffer_empty()) {
                     return _partition_reader->close();
                 }
                 return make_ready_future<>();
+              });
             });
         });
     }
