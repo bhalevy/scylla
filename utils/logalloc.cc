@@ -2735,6 +2735,6 @@ occupancy_stats lsa_global_occupancy_stats() {
 // Orders segments by free space, assuming all segments have the same size.
 // This avoids using the occupancy, which entails extra division operations.
 template<>
-size_t hist_key<logalloc::segment_descriptor>(const logalloc::segment_descriptor& desc) {
+size_t hist_key<logalloc::segment_descriptor>(const logalloc::segment_descriptor& desc) noexcept {
     return desc.free_space();
 }

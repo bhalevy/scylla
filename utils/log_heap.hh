@@ -18,14 +18,14 @@ namespace bi = boost::intrusive;
 
 // Returns largest N such that 2^N <= v.
 // Undefined for v == 0.
-inline size_t pow2_rank(size_t v) {
+inline size_t pow2_rank(size_t v) noexcept {
     return std::numeric_limits<size_t>::digits - 1 - count_leading_zeros(v);
 }
  
 
 // Returns largest N such that 2^N <= v.
 // Undefined for v == 0.
-inline constexpr size_t pow2_rank_constexpr(size_t v) {
+inline constexpr size_t pow2_rank_constexpr(size_t v) noexcept {
     return v <= 1 ? 1 : 1 + pow2_rank_constexpr(v >> 1);
 }
 
@@ -37,13 +37,13 @@ struct log_heap_options {
     const size_t sub_bucket_shift;
     const size_t max_size;
 
-    constexpr log_heap_options(const size_t min_size, size_t sub_bucket_shift, size_t max_size)
+    constexpr log_heap_options(const size_t min_size, size_t sub_bucket_shift, size_t max_size) noexcept
             : min_size(min_size)
             , sub_bucket_shift(sub_bucket_shift)
             , max_size(max_size) {
     }
 
-    size_t bucket_of(size_t value) const {
+    size_t bucket_of(size_t value) const noexcept {
 #ifdef SANITIZE
         // ubsan will otherwise complain about pow2_rank(0)
         if (value < min_size) {
@@ -60,7 +60,7 @@ struct log_heap_options {
         return (bucket << sub_bucket_shift) - mask + sub_bucket_index;
     }
 
-    constexpr size_t number_of_buckets() const {
+    constexpr size_t number_of_buckets() const noexcept {
         const auto min_mask = -size_t(max_size >= min_size); // 0 when below min_size, all bits on otherwise
         const auto value = max_size - min_size + 1;
         const auto pow2_index = pow2_rank_constexpr(value);
@@ -85,18 +85,18 @@ struct log_heap_hook : public bi::list_base_hook<> {
 };
 
 template<typename T>
-size_t hist_key(const T&);
+size_t hist_key(const T&) noexcept;
 
 template<typename T, const log_heap_options& opts, bool = std::is_base_of<log_heap_hook<opts>, T>::value>
 struct log_heap_element_traits {
     using bucket_type = bi::list<T, bi::constant_time_size<false>>;
-    static void cache_bucket(T& v, typename log_heap_bucket_index<opts>::type b) {
+    static void cache_bucket(T& v, typename log_heap_bucket_index<opts>::type b) noexcept {
         v.cached_bucket = b;
     }
-    static size_t cached_bucket(const T& v) {
+    static size_t cached_bucket(const T& v) noexcept {
         return v.cached_bucket;
     }
-    static size_t hist_key(const T& v) {
+    static size_t hist_key(const T& v) noexcept {
         return ::hist_key<T>(v);
     }
 };
@@ -104,9 +104,9 @@ struct log_heap_element_traits {
 template<typename T, const log_heap_options& opts>
 struct log_heap_element_traits<T, opts, false> {
     using bucket_type = typename T::bucket_type;
-    static void cache_bucket(T&, typename log_heap_bucket_index<opts>::type);
-    static size_t cached_bucket(const T&);
-    static size_t hist_key(const T&);
+    static void cache_bucket(T&, typename log_heap_bucket_index<opts>::type) noexcept;
+    static size_t cached_bucket(const T&) noexcept;
+    static size_t hist_key(const T&) noexcept;
 };
 
 /*
@@ -129,7 +129,7 @@ private:
     using bucket = typename traits::bucket_type;
 
     struct hist_size_less_compare {
-        inline bool operator()(const T& v1, const T& v2) const {
+        inline bool operator()(const T& v1, const T& v2) const noexcept {
             return traits::hist_key(v1) < traits::hist_key(v2);
         }
     };
@@ -154,20 +154,20 @@ public:
         iterator_type _it;
     public:
         struct end_tag {};
-        hist_iterator(hist_type& h)
+        hist_iterator(hist_type& h) noexcept
             : _h(h)
             , _b(h._watermark)
             , _it(_b >= 0 ? h._buckets[_b].begin() : h._buckets[0].end()) {
         }
-        hist_iterator(hist_type& h, end_tag)
+        hist_iterator(hist_type& h, end_tag) noexcept
             : _h(h)
             , _b(-1)
             , _it(h._buckets[0].end()) {
         }
-        std::conditional_t<IsConst, const T, T>& operator*() {
+        std::conditional_t<IsConst, const T, T>& operator*() noexcept {
             return *_it;
         }
-        hist_iterator& operator++() {
+        hist_iterator& operator++() noexcept {
             if (++_it == _h._buckets[_b].end()) {
                 do {
                     --_b;
@@ -175,51 +175,51 @@ public:
             }
             return *this;
         }
-        bool operator==(const hist_iterator& other) const {
+        bool operator==(const hist_iterator& other) const noexcept {
             return _b == other._b && _it == other._it;
         }
-        bool operator!=(const hist_iterator& other) const {
+        bool operator!=(const hist_iterator& other) const noexcept {
             return !(*this == other);
         }
     };
     using iterator = hist_iterator<false>;
     using const_iterator = hist_iterator<true>;
 public:
-    bool empty() const {
+    bool empty() const noexcept {
         return _watermark == -1;
     }
     // Returns true if and only if contains any value >= opts.min_size.
-    bool contains_above_min() const {
+    bool contains_above_min() const noexcept {
         return _watermark > 0;
     }
-    const_iterator begin() const {
+    const_iterator begin() const noexcept {
         return const_iterator(*this);
     }
-    const_iterator end() const {
+    const_iterator end() const noexcept {
         return const_iterator(*this, typename const_iterator::end_tag());
     }
-    iterator begin() {
+    iterator begin() noexcept {
         return iterator(*this);
     }
-    iterator end() {
+    iterator end() noexcept {
         return iterator(*this, typename iterator::end_tag());
     }
     // Returns a range of buckets starting from that with the smaller values.
     // Each bucket is a range of const T&.
-    const auto& buckets() const {
+    const auto& buckets() const noexcept {
         return _buckets;
     }
     // Pops one of the largest elements in the histogram.
-    void pop_one_of_largest() {
+    void pop_one_of_largest() noexcept {
         _buckets[_watermark].pop_front();
         maybe_adjust_watermark();
     }
     // Returns one of the largest elements in the histogram.
-    const T& one_of_largest() const {
+    const T& one_of_largest() const noexcept {
         return _buckets[_watermark].front();
     }
     // Returns one of the largest elements in the histogram.
-    T& one_of_largest() {
+    T& one_of_largest() noexcept {
         return _buckets[_watermark].front();
     }
     // Pushes a new element onto the histogram.
@@ -254,7 +254,7 @@ public:
         other._watermark = -1;
     }
 private:
-    void maybe_adjust_watermark() {
+    void maybe_adjust_watermark() noexcept {
         while (_buckets[_watermark].empty() && --_watermark >= 0) ;
     }
 };

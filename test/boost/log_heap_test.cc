@@ -71,16 +71,16 @@ extern constexpr log_heap_options opts3{(1 << 4) + 1, 0, (1 << 17) + 2};
 extern constexpr log_heap_options opts4{(1 << 4) + 0, 3, (1 << 17)};
 
 template<>
-size_t hist_key<node<opts1>>(const node<opts1>& n) { return n.v; }
+size_t hist_key<node<opts1>>(const node<opts1>& n) noexcept { return n.v; }
 
 template<>
-size_t hist_key<node<opts2>>(const node<opts2>& n) { return n.v; }
+size_t hist_key<node<opts2>>(const node<opts2>& n) noexcept { return n.v; }
 
 template<>
-size_t hist_key<node<opts3>>(const node<opts3>& n) { return n.v; }
+size_t hist_key<node<opts3>>(const node<opts3>& n) noexcept { return n.v; }
 
 template<>
-size_t hist_key<node<opts4>>(const node<opts4>& n) { return n.v; }
+size_t hist_key<node<opts4>>(const node<opts4>& n) noexcept { return n.v; }
 
 BOOST_AUTO_TEST_CASE(test_log_heap) {
     test_with_options<opts1>();
