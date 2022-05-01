@@ -545,7 +545,7 @@ void tracker::reclaim_all_free_segments() {
     return _impl->reclaim_all_free_segments();
 }
 
-tracker& shard_tracker() {
+tracker& shard_tracker() noexcept {
     return tracker_instance;
 }
 

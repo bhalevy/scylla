@@ -472,7 +472,7 @@ public:
     bool should_abort_on_bad_alloc();
 };
 
-tracker& shard_tracker();
+tracker& shard_tracker() noexcept;
 
 class segment_descriptor;
 
