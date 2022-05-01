@@ -480,9 +480,9 @@ public:
     size_t compact_and_evict(size_t reserve_segments, size_t bytes, is_preemptible p);
     void full_compaction();
     void reclaim_all_free_segments();
-    occupancy_stats region_occupancy();
-    occupancy_stats occupancy();
-    size_t non_lsa_used_space();
+    occupancy_stats region_occupancy() noexcept;
+    occupancy_stats occupancy() noexcept;
+    size_t non_lsa_used_space() noexcept;
     // Set the minimum number of segments reclaimed during single reclamation cycle.
     void set_reclamation_step(size_t step_in_segments) noexcept { _reclamation_step = step_in_segments; }
     size_t reclamation_step() const noexcept { return _reclamation_step; }
@@ -517,7 +517,7 @@ tracker::~tracker() {
 }
 
 future<>
-tracker::stop() {
+tracker::stop() noexcept {
     return _impl->stop();
 }
 
@@ -525,15 +525,15 @@ size_t tracker::reclaim(size_t bytes) {
     return _impl->reclaim(bytes, is_preemptible::no);
 }
 
-occupancy_stats tracker::region_occupancy() {
+occupancy_stats tracker::region_occupancy() noexcept {
     return _impl->region_occupancy();
 }
 
-occupancy_stats tracker::occupancy() {
+occupancy_stats tracker::occupancy() noexcept {
     return _impl->occupancy();
 }
 
-size_t tracker::non_lsa_used_space() const {
+size_t tracker::non_lsa_used_space() noexcept {
     return _impl->non_lsa_used_space();
 }
 
@@ -1906,11 +1906,11 @@ region_group_binomial_group_sanity_check(const region_group::region_heap& bh) no
 #endif
 }
 
-size_t tracker::reclamation_step() const {
+size_t tracker::reclamation_step() const noexcept {
     return _impl->reclamation_step();
 }
 
-bool tracker::should_abort_on_bad_alloc() {
+bool tracker::should_abort_on_bad_alloc() const noexcept {
     return _impl->should_abort_on_bad_alloc();
 }
 
@@ -2020,7 +2020,7 @@ std::ostream& operator<<(std::ostream& out, const occupancy_stats& stats) {
         stats.used_fraction() * 100, stats.used_space(), stats.total_space());
 }
 
-occupancy_stats tracker::impl::region_occupancy() {
+occupancy_stats tracker::impl::region_occupancy() noexcept {
     reclaiming_lock _(*this);
     occupancy_stats total{};
     for (auto&& r: _regions) {
@@ -2029,7 +2029,7 @@ occupancy_stats tracker::impl::region_occupancy() {
     return total;
 }
 
-occupancy_stats tracker::impl::occupancy() {
+occupancy_stats tracker::impl::occupancy() noexcept {
     reclaiming_lock _(*this);
     auto occ = region_occupancy();
     {
@@ -2039,7 +2039,7 @@ occupancy_stats tracker::impl::occupancy() {
     return occ;
 }
 
-size_t tracker::impl::non_lsa_used_space() {
+size_t tracker::impl::non_lsa_used_space() noexcept {
 #ifdef SEASTAR_DEFAULT_ALLOCATOR
     return 0;
 #else
