@@ -221,24 +221,24 @@ public:
 extern standard_allocation_strategy standard_allocation_strategy_instance;
 
 inline
-standard_allocation_strategy& standard_allocator() {
+standard_allocation_strategy& standard_allocator() noexcept {
     return standard_allocation_strategy_instance;
 }
 
 inline
-allocation_strategy*& current_allocation_strategy_ptr() {
+allocation_strategy*& current_allocation_strategy_ptr() noexcept {
     static thread_local allocation_strategy* current = &standard_allocation_strategy_instance;
     return current;
 }
 
 inline
-allocation_strategy& current_allocator() {
+allocation_strategy& current_allocator() noexcept {
     return *current_allocation_strategy_ptr();
 }
 
 template<typename T>
 inline
-auto current_deleter() {
+auto current_deleter() noexcept {
     auto& alloc = current_allocator();
     return [&alloc] (T* obj) noexcept {
         alloc.destroy(obj);
