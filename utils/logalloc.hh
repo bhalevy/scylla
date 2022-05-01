@@ -122,7 +122,7 @@ class region_group {
     static region_group_reclaimer no_reclaimer;
 
     struct region_evictable_occupancy_ascending_less_comparator {
-        bool operator()(region_impl* r1, region_impl* r2) const;
+        bool operator()(region_impl* r1, region_impl* r2) const noexcept;
     };
 
     // We want to sort the subgroups so that we can easily find the one that holds the biggest
@@ -140,7 +140,7 @@ class region_group {
     //
     //      max(our_biggest_region, our_subtree_biggest_region)
     struct subgroup_maximal_region_ascending_less_comparator {
-        bool operator()(region_group* rg1, region_group* rg2) const {
+        bool operator()(region_group* rg1, region_group* rg2) const noexcept {
             return rg1->maximal_score() < rg2->maximal_score();
         }
     };
@@ -208,7 +208,7 @@ class region_group {
 
         sstring _name;
     public:
-        explicit on_request_expiry(sstring name) : _name(std::move(name)) {}
+        explicit on_request_expiry(sstring name) noexcept : _name(std::move(name)) {}
         void operator()(std::unique_ptr<allocating_function>&) noexcept;
     };
 
@@ -230,10 +230,10 @@ class region_group {
     future<> _releaser;
     bool _shutdown_requested = false;
 
-    bool reclaimer_can_block() const;
-    future<> start_releaser(scheduling_group deferered_work_sg);
-    void notify_relief();
-    friend void region_group_binomial_group_sanity_check(const region_group::region_heap& bh);
+    bool reclaimer_can_block() const noexcept;
+    future<> start_releaser(scheduling_group deferered_work_sg) noexcept;
+    void notify_relief() noexcept;
+    friend void region_group_binomial_group_sanity_check(const region_group::region_heap& bh) noexcept;
 public:
     // When creating a region_group, one can specify an optional throttle_threshold parameter. This
     // parameter won't affect normal allocations, but an API is provided, through the region_group's
@@ -264,10 +264,10 @@ public:
     }
     region_group& operator=(const region_group&) = delete;
     region_group& operator=(region_group&&) = delete;
-    size_t memory_used() const {
+    size_t memory_used() const noexcept {
         return _total_memory;
     }
-    void update(ssize_t delta);
+    void update(ssize_t delta) noexcept;
 
     // It would be easier to call update, but it is unfortunately broken in boost versions up to at
     // least 1.59.
@@ -333,21 +333,21 @@ public:
     // returns a pointer to the largest region (in terms of memory usage) that sits below this
     // region group. This includes the regions owned by this region group as well as all of its
     // children.
-    region* get_largest_region();
+    region* get_largest_region() noexcept;
 
     // Shutdown is mandatory for every user who has set a threshold
     // Can be called at most once.
-    future<> shutdown() {
+    future<> shutdown() noexcept {
         _shutdown_requested = true;
         _relief.signal();
         return std::move(_releaser);
     }
 
-    size_t blocked_requests() {
+    size_t blocked_requests() noexcept {
         return _blocked_requests.size();
     }
 
-    uint64_t blocked_requests_counter() const {
+    uint64_t blocked_requests_counter() const noexcept {
         return _blocked_requests_counter;
     }
 private:
@@ -363,7 +363,7 @@ private:
     // This method returns a pointer to the region_group that was processed last, or nullptr if the
     // root was reached.
     template <typename Func>
-    static region_group* do_for_each_parent(region_group *node, Func&& func) {
+    static region_group* do_for_each_parent(region_group *node, Func&& func) noexcept {
         auto rg = node;
         while (rg) {
             if (func(rg) == stop_iteration::yes) {
@@ -374,13 +374,13 @@ private:
         return nullptr;
     }
 
-    inline bool under_pressure() const {
+    inline bool under_pressure() const noexcept {
         return _reclaimer.under_pressure();
     }
 
-    uint64_t top_region_evictable_space() const;
+    uint64_t top_region_evictable_space() const noexcept;
 
-    uint64_t maximal_score() const {
+    uint64_t maximal_score() const noexcept {
         return _maximal_score;
     }
 
