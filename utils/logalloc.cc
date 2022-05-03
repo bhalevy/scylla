@@ -939,6 +939,7 @@ private:
 size_t segment_pool::reclaim_segments(size_t target, is_preemptible preempt) {
     // Reclaimer tries to release segments occupying lower parts of the address
     // space.
+    reclaim_timer timing_guard("reclaim_segments", preempt, target * segment::size, target);
 
     llogger.debug("Trying to reclaim {} segments", target);
 
@@ -985,6 +986,7 @@ size_t segment_pool::reclaim_segments(size_t target, is_preemptible preempt) {
     }
 
     llogger.debug("Reclaimed {} segments (requested {})", reclaimed_segments, target);
+    timing_guard.set_memory_released(reclaimed_segments * segment::size);
     return reclaimed_segments;
 }
 
@@ -1554,6 +1556,8 @@ private:
 
     void compact_segment_locked(segment* seg, segment_descriptor& desc) noexcept {
         auto seg_occupancy = desc.occupancy();
+        reclaim_timer timing_guard("compact_segment_locked", is_preemptible::no, seg_occupancy.used_space(), 1);
+
         llogger.debug("Compacting segment {} from region {}, {}", fmt::ptr(seg), id(), seg_occupancy);
 
         ++_invalidate_counter;
@@ -1579,12 +1583,15 @@ private:
             for_each_live(seg, [this](const object_descriptor *desc, void *obj, size_t size) {
                 auto dst = alloc_small(*desc, size, desc->alignment());
                 _sanitizer.on_migrate(obj, size, dst);
+                reclaim_timer timing_guard("migrate", is_preemptible::no, size, 0);
                 desc->migrator()->migrate(obj, dst, size);
+                timing_guard.set_memory_released(size);
             });
         }
 
         free_segment(seg, desc);
         shard_segment_pool.on_segment_compaction(seg_occupancy.used_space());
+        timing_guard.set_memory_released(seg_occupancy.used_space());
     }
 
     void close_and_open() {
