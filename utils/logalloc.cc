@@ -27,6 +27,7 @@
 #include <seastar/util/alloc_failure_injector.hh>
 #include <seastar/util/backtrace.hh>
 #include <seastar/util/later.hh>
+#include <seastar/util/defer.hh>
 
 #include "utils/logalloc.hh"
 #include "log.hh"
@@ -2184,6 +2185,10 @@ static void reclaim_from_evictable(region::impl& r, size_t target_mem_in_use, is
     auto deficit = shard_segment_pool.total_memory_in_use() - target_mem_in_use;
     auto used = r.occupancy().used_space();
     auto used_target = used - std::min(used, deficit + segment::size);
+    reclaim_timer timing_guard("reclaim_from_evictable", preempt, used - used_target, 0);
+    auto update_timing_guard = defer([&] {
+        timing_guard.set_memory_released(used - r.occupancy().used_space());
+    });
 
     while (shard_segment_pool.total_memory_in_use() > target_mem_in_use) {
         used = r.occupancy().used_space();
