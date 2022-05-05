@@ -149,6 +149,11 @@ places. You can always load it by hand if GDB refuses or fails to load it:
 
     (gdb) source /path/to/your/.gdbinit
 
+Scylla provides the following [gdbinit](../../gdbinit) file helpful for debugging scylla
+at the root of the source tree.
+Note that it registers pretty-printer helpers for printing common
+std-c++ stl containers.
+
 #### TUI
 
 GDB has a terminal based GUI called
