@@ -149,6 +149,27 @@ places. You can always load it by hand if GDB refuses or fails to load it:
 
     (gdb) source /path/to/your/.gdbinit
 
+Here's an example of a `.gdbinit` file helpful for debugging scylla.
+Note that it registers pretty-printer helpers for printing common
+std-c++ stl containers:
+```
+handle SIG34 pass noprint
+handle SIGUSR1 pass noprint
+set print pretty
+set python print-stack full
+set auto-load safe-path /opt/scylladb/libreloc
+add-auto-load-safe-path /lib64
+add-auto-load-safe-path /usr/lib64
+set debug libthread-db 1
+
+python
+import glob
+sys.path.insert(0, glob.glob('/usr/share/gcc-*/python')[0])
+from libstdcxx.v6.printers import register_libstdcxx_printers
+register_libstdcxx_printers (None)
+end
+```
+
 #### TUI
 
 GDB has a terminal based GUI called
