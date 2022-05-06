@@ -780,12 +780,16 @@ void set_storage_service(http_context& ctx, routes& r, sharded<service::storage_
             return make_ready_future<json::json_return_type>(json_void());
         });
     });
-    ss::truncate.set(r, [&ctx](std::unique_ptr<request> req) {
-        //TBD
-        unimplemented();
+    ss::truncate.set(r, [&ctx](std::unique_ptr<request> req) -> future<json::json_return_type> {
         auto keyspace = validate_keyspace(ctx, req->param);
         auto column_family = req->get_query_param("cf");
-        return make_ready_future<json::json_return_type>(json_void());
+        auto ts = db_clock::now();
+        co_await ctx.db.invoke_on_all([&] (replica::database& db) {
+            auto& ks = db.find_keyspace(keyspace);
+            auto& cf = db.find_column_family(keyspace, column_family);
+            return db.truncate(ks, cf, [&] { return make_ready_future<db_clock::time_point>(ts); });
+        });
+        co_return json_void();
     });
 
     ss::get_keyspaces.set(r, [&ctx](const_req req) {
