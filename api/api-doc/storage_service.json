@@ -617,7 +617,7 @@
                   {
                      "name":"tag",
                      "description":"the tag given to the snapshot",
-                     "required":false,
+                     "required":true,
                      "allowMultiple":false,
                      "type":"string",
                      "paramType":"query"
