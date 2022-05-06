@@ -1211,7 +1211,7 @@ struct string_pair_eq {
 //   local metadata reads
 //   use shard_of() for data
 
-class database {
+class database : public peering_sharded_service<database> {
     friend class ::database_test;
 public:
     enum class table_kind {
@@ -1558,6 +1558,10 @@ public:
 
     future<> flush_all_memtables();
     future<> flush(const sstring& ks, const sstring& cf);
+    future<> flush_on_all(utils::UUID id);
+    future<> flush_on_all(std::string_view ks_name, std::string_view table_name);
+    future<> flush_on_all(std::string_view ks_name, std::vector<sstring> table_names);
+    future<> flush_on_all(std::string_view ks_name);
 
     // See #937. Truncation now requires a callback to get a time stamp
     // that must be guaranteed to be the same for all shards.
