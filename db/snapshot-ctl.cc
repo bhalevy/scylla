@@ -71,14 +71,8 @@ future<> snapshot_ctl::do_take_snapshot(sstring tag, std::vector<sstring> keyspa
     co_await coroutine::parallel_for_each(keyspace_names, [tag, this] (const auto& ks_name) {
         return check_snapshot_not_exist(ks_name, tag);
     });
-    co_await _db.invoke_on_all([&] (replica::database& db) {
-        return parallel_for_each(keyspace_names, [&db, tag = std::move(tag), sf] (auto& ks_name) {
-            auto& ks = db.find_keyspace(ks_name);
-            return parallel_for_each(ks.metadata()->cf_meta_data(), [&db, tag = std::move(tag), sf] (auto& pair) {
-                auto& cf = db.find_column_family(pair.second);
-                return cf.snapshot(db, tag, bool(sf));
-            });
-        });
+    co_await coroutine::parallel_for_each(keyspace_names, [this, tag = std::move(tag), sf] (const auto& ks_name) {
+        return _db.local().snapshot_on_all(ks_name, tag, bool(sf));
     });
 }
 
@@ -100,17 +94,7 @@ future<> snapshot_ctl::take_column_family_snapshot(sstring ks_name, std::vector<
 
 future<> snapshot_ctl::do_take_column_family_snapshot(sstring ks_name, std::vector<sstring> tables, sstring tag, skip_flush sf) {
     co_await check_snapshot_not_exist(ks_name, tag, tables);
-
-    // FIXME: indentation
-    for (const auto& table_name : tables) {
-        if (table_name.find(".") != sstring::npos) {
-            throw std::invalid_argument("Cannot take a snapshot of a secondary index by itself. Run snapshot on the table that owns the index.");
-        }
-        co_await _db.invoke_on_all([&] (replica::database &db) {
-            auto& cf = db.find_column_family(ks_name, table_name);
-            return cf.snapshot(db, tag, bool(sf));
-        });
-    }
+    co_await _db.local().snapshot_on_all(ks_name, std::move(tables), std::move(tag), bool(sf));
 }
 
 future<> snapshot_ctl::take_column_family_snapshot(sstring ks_name, sstring cf_name, sstring tag, skip_flush sf) {
