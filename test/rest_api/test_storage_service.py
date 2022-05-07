@@ -209,3 +209,23 @@ def test_toppartitions_pk_needs_escaping(cql, this_dc, rest_api):
             t2.start()
             t1.join()
             t2.join()
+
+def test_storage_service_flush(cql, this_dc, rest_api):
+    with new_test_keyspace(cql, f"WITH REPLICATION = {{ 'class' : 'NetworkTopologyStrategy', '{this_dc}' : 1 }}") as keyspace:
+        with new_test_table(cql, keyspace, "p text PRIMARY KEY") as table0:
+            ks, t0 = table0.split('.')
+            stmt = cql.prepare(f"INSERT INTO {table0} (p) VALUES (?)")
+            cql.execute(stmt, ["pk0"])
+            with new_test_table(cql, keyspace, "p text PRIMARY KEY") as table1:
+                _, t1 = table1.split('.')
+                stmt = cql.prepare(f"INSERT INTO {table1} (p) VALUES (?)")
+                cql.execute(stmt, ["pk1"])
+
+                resp = rest_api.send("POST", f"storage_service/keyspace_flush/{ks}")
+                resp.raise_for_status()
+
+                resp = rest_api.send("POST", f"storage_service/keyspace_flush/{ks}", { "cf": f"{t0}"})
+                resp.raise_for_status()
+
+                resp = rest_api.send("POST", f"storage_service/keyspace_flush/{ks}", { "cf": f"{t0},{t1}"})
+                resp.raise_for_status()
