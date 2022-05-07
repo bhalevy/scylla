@@ -1349,21 +1349,20 @@ future<> table::snapshot(database& db, sstring name) {
     auto jsondir = _config.datadir + "/snapshots/" + name;
     tlogger.debug("snapshot {}", jsondir);
 
-    // FIXME: indentation
-       return with_semaphore(_sstable_deletion_sem, 1, [this, &db, jsondir = std::move(jsondir)]() {
+    auto sstable_deletion_guard = co_await get_units(_sstable_deletion_sem, 1);
+
+        // FIXME: indentation
         auto tables = boost::copy_range<std::vector<sstables::shared_sstable>>(*_sstables->all());
-        return do_with(std::move(tables), std::move(jsondir), [this, &db] (std::vector<sstables::shared_sstable>& tables, const sstring& jsondir) {
-            return io_check([&jsondir] { return recursive_touch_directory(jsondir); }).then([this, &db, &jsondir, &tables] {
-                return max_concurrent_for_each(tables, db.get_config().initial_sstable_loading_concurrency(), [&db, &jsondir] (sstables::shared_sstable sstable) {
+        co_await io_check([&jsondir] { return recursive_touch_directory(jsondir); });
+        co_await max_concurrent_for_each(tables, db.get_config().initial_sstable_loading_concurrency(), [&db, &jsondir] (sstables::shared_sstable sstable) {
                   return with_semaphore(db.get_sharded_sst_dir_semaphore().local(), 1, [&jsondir, sstable] {
                     return io_check([sstable, &dir = jsondir] {
                         return sstable->create_links(dir);
                     });
                   });
                 });
-            }).then([&jsondir, &tables] {
-                return io_check(sync_directory, jsondir);
-            }).finally([this, &tables, &db, &jsondir] {
+        co_await io_check(sync_directory, jsondir);
+
                 auto shard = std::hash<sstring>()(jsondir) % smp::count;
                 std::unordered_set<sstring> table_names;
                 for (auto& sst : tables) {
@@ -1371,8 +1370,9 @@ future<> table::snapshot(database& db, sstring name) {
                     auto rf = f.substr(sst->get_dir().size() + 1);
                     table_names.insert(std::move(rf));
                 }
-                return smp::submit_to(shard, [requester = this_shard_id(), &jsondir, this, &db,
-                                              tables = std::move(table_names), datadir = _config.datadir] {
+
+        co_await smp::submit_to(shard, [requester = this_shard_id(), &jsondir, this, &db,
+                                              tables = std::move(table_names), datadir = _config.datadir] () mutable -> future<>{
 
                     if (!pending_snapshots.contains(jsondir)) {
                         pending_snapshots.emplace(jsondir, make_lw_shared<snapshot_manager>());
@@ -1384,37 +1384,25 @@ future<> table::snapshot(database& db, sstring name) {
 
                     tlogger.debug("snapshot {}: signal requests", jsondir);
                     snapshot->requests.signal(1);
-                    auto my_work = make_ready_future<>();
                     if (requester == this_shard_id()) {
                         tlogger.debug("snapshot {}: waiting for all shards", jsondir);
-                        my_work = snapshot->requests.wait(smp::count).then([&jsondir,
-                                                                            &db, snapshot, this] {
+                        co_await snapshot->requests.wait(smp::count);
                             // this_shard_id() here == requester == this_shard_id() before submit_to() above,
                             // so the db reference is still local
                             tlogger.debug("snapshot {}: writing schema.cql", jsondir);
-                            return write_schema_as_cql(db, jsondir).handle_exception([&jsondir](std::exception_ptr ptr) {
+                            co_await write_schema_as_cql(db, jsondir).handle_exception([&jsondir](std::exception_ptr ptr) {
                                 tlogger.error("Failed writing schema file in snapshot in {} with exception {}", jsondir, ptr);
-                                return make_ready_future<>();
-                            }).finally([&jsondir, snapshot] () mutable {
+                            });
                                 tlogger.debug("snapshot {}: seal_snapshot", jsondir);
-                                return seal_snapshot(jsondir).handle_exception([&jsondir] (std::exception_ptr ex) {
+                                co_await seal_snapshot(jsondir).handle_exception([&jsondir] (std::exception_ptr ex) {
                                     tlogger.error("Failed to seal snapshot in {}: {}. Ignored.", jsondir, ex);
-                                }).then([snapshot, &jsondir] {
+                                });
                                     tlogger.debug("snapshot {}: done", jsondir);
                                     snapshot->manifest_write.signal(smp::count);
-                                    return make_ready_future<>();
-                                });
-                            });
-                        });
                     }
-                    return my_work.finally([snapshot, &jsondir, requester] {
                         tlogger.debug("snapshot {}: waiting for manifest on behalf of shard {}", jsondir, requester);
-                        return snapshot->manifest_write.wait(1);
-                    }).then([snapshot] {});
-                });
-            });
+            co_await snapshot->manifest_write.wait(1);
         });
-       });
 }
 
 future<bool> table::snapshot_exists(sstring tag) {
