@@ -32,7 +32,7 @@
 #include "compaction/compaction_manager.hh"
 #include "transport/messages/result_message.hh"
 #include "sstables/partition_index_cache.hh"
-#include "linux-perf-event.hh"
+#include <seastar/testing/linux_perf_event.hh>
 #include <fstream>
 
 using namespace std::chrono_literals;
