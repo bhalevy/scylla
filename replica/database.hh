@@ -134,27 +134,27 @@ class database_test;
 
 namespace replica {
 
-// global_column_family_ptr provides a way to easily
+// global_table_ptr provides a way to easily
 // operate on local instance of a given column family.
-class global_column_family_ptr {
-    distributed<replica::database>& _db;
+class global_table_ptr {
+    distributed<database>& _db;
     utils::UUID _id;
 
 private:
-    replica::column_family& get() const;
+    table& get() const;
 
 public:
-    global_column_family_ptr(distributed<replica::database>& db, const utils::UUID& id) noexcept
+    global_table_ptr(distributed<database>& db, const utils::UUID& id) noexcept
         : _db(db)
         , _id(id)
     { }
 
-    global_column_family_ptr(distributed<replica::database>& db, sstring ks_name, sstring cf_name);
+    global_table_ptr(distributed<database>& db, std::string_view ks_name, std::string_view cf_name);
 
-    replica::column_family* operator->() const {
+    table* operator->() const {
         return &get();
     }
-    replica::column_family& operator*() const {
+    table& operator*() const {
         return get();
     }
 };

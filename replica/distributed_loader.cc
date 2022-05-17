@@ -293,7 +293,7 @@ distributed_loader::process_upload_dir(distributed<replica::database>& db, distr
     attr.sched_group = db.local().get_streaming_scheduling_group();
 
     return seastar::async(std::move(attr), [&db, &view_update_generator, &sys_dist_ks, ks = std::move(ks), cf = std::move(cf)] {
-        global_column_family_ptr global_table(db, ks, cf);
+        global_table_ptr global_table(db, ks, cf);
 
         sharded<sstables::sstable_directory> directory;
         auto upload = fs::path(global_table->dir()) / sstables::upload_dir;
@@ -358,7 +358,7 @@ distributed_loader::process_upload_dir(distributed<replica::database>& db, distr
 future<std::tuple<utils::UUID, std::vector<std::vector<sstables::shared_sstable>>>>
 distributed_loader::get_sstables_from_upload_dir(distributed<replica::database>& db, sstring ks, sstring cf) {
     return seastar::async([&db, ks = std::move(ks), cf = std::move(cf)] {
-        global_column_family_ptr global_table(db, ks, cf);
+        global_table_ptr global_table(db, ks, cf);
         sharded<sstables::sstable_directory> directory;
         auto table_id = global_table->schema()->id();
         auto upload = fs::path(global_table->dir()) / sstables::upload_dir;
@@ -452,7 +452,7 @@ future<> distributed_loader::populate_column_family(distributed<replica::databas
             handle_sstables_pending_delete(pending_delete_dir).get();
         }
 
-        global_column_family_ptr global_table(db, ks, cf);
+        global_table_ptr global_table(db, ks, cf);
 
         sharded<sstables::sstable_directory> directory;
         directory.start(fs::path(sstdir), db.local().get_config().initial_sstable_loading_concurrency(), std::ref(db.local().get_sharded_sst_dir_semaphore()),
