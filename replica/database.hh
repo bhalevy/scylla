@@ -134,6 +134,31 @@ class database_test;
 
 namespace replica {
 
+// global_column_family_ptr provides a way to easily
+// operate on local instance of a given column family.
+class global_column_family_ptr {
+    distributed<replica::database>& _db;
+    utils::UUID _id;
+
+private:
+    replica::column_family& get() const;
+
+public:
+    global_column_family_ptr(distributed<replica::database>& db, const utils::UUID& id) noexcept
+        : _db(db)
+        , _id(id)
+    { }
+
+    global_column_family_ptr(distributed<replica::database>& db, sstring ks_name, sstring cf_name);
+
+    replica::column_family* operator->() const {
+        return &get();
+    }
+    replica::column_family& operator*() const {
+        return get();
+    }
+};
+
 using shared_memtable = lw_shared_ptr<memtable>;
 
 // We could just add all memtables, regardless of types, to a single list, and

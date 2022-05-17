@@ -2409,6 +2409,14 @@ database::as_data_dictionary() const {
     return _impl.wrap(*this);
 }
 
+table& global_column_family_ptr::get() const {
+    return _db.local().find_column_family(_id);
+}
+
+global_column_family_ptr::global_column_family_ptr(distributed<database>& db, sstring ks_name, sstring cf_name)
+    : global_column_family_ptr(db, db.local().find_uuid(ks_name, cf_name))
+{ }
+
 } // namespace replica
 
 template <typename T>
