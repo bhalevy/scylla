@@ -2099,10 +2099,7 @@ future<> database::snapshot_on_all(std::string_view ks_name, std::vector<sstring
         if (!skip_flush) {
             co_await flush_on_all(ks_name, table_name);
         }
-        auto global_table = global_table_ptr(container(), ks_name, table_name);
-        co_await global_table.invoke_on_all([&global_table, tag] (replica::table& t) {
-            return t.snapshot(global_table.db().local(), tag);
-        });
+        co_await table::snapshot_on_all(global_table_ptr(container(), ks_name, table_name), tag);
     });
 }
 
@@ -2113,10 +2110,7 @@ future<> database::snapshot_on_all(std::string_view ks_name, sstring tag, bool s
         if (!skip_flush) {
             co_await flush_on_all(id);
         }
-        auto global_table = global_table_ptr(container(), id);
-        co_await global_table.invoke_on_all([&global_table, tag] (replica::table& t) {
-            return t.snapshot(global_table.db().local(), tag);
-        });
+        co_await table::snapshot_on_all(global_table_ptr(container(), id), tag);
     });
 }
 
@@ -2426,6 +2420,12 @@ global_table_ptr::global_table_ptr(distributed<database>& db, std::string_view k
 
 future<> global_table_ptr::invoke_on_all(std::function<future<>(table&)> func) const noexcept {
     return _db.invoke_on_all([id = _id, func = std::move(func)] (database& db) {
+        return func(db.find_column_family(id));
+    });
+}
+
+future<> global_table_ptr::invoke_on(shard_id shard, std::function<future<>(table&)> func) const noexcept {
+    return _db.invoke_on(shard, [id = _id, func = std::move(func)] (database& db) {
         return func(db.find_column_family(id));
     });
 }

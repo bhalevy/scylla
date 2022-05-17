@@ -163,6 +163,7 @@ public:
     }
 
     future<> invoke_on_all(std::function<future<>(table&)> func) const noexcept;
+    future<> invoke_on(shard_id shard, std::function<future<>(table&)> func) const noexcept;
 };
 
 using shared_memtable = lw_shared_ptr<memtable>;
@@ -863,7 +864,7 @@ public:
     db::replay_position set_low_replay_position_mark();
 
 private:
-    future<> snapshot(database& db, sstring name);
+    static future<> snapshot_on_all(global_table_ptr glabal_table, sstring name);
 
     friend class database;
 public:

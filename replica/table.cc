@@ -10,6 +10,7 @@
 #include <seastar/core/coroutine.hh>
 #include <seastar/coroutine/maybe_yield.hh>
 #include <seastar/coroutine/exception.hh>
+#include <seastar/coroutine/as_future.hh>
 #include <seastar/util/closeable.hh>
 
 #include "replica/database.hh"
@@ -1346,9 +1347,28 @@ future<> table::write_schema_as_cql(database& db, sstring dir) const {
 
 }
 
-future<> table::snapshot(database& db, sstring name) {
-    auto jsondir = _config.datadir + "/snapshots/" + name;
+future<> table::snapshot_on_all(global_table_ptr global_table, sstring name) {
+    auto jsondir = global_table->dir() + "/snapshots/" + name;
+    auto shard = std::hash<sstring>()(jsondir) % smp::count;
     tlogger.debug("snapshot {}", jsondir);
+
+    // First thing, create the snapshot_manager object
+    // other we cannot sync with the other shards.
+    // If this fails, simply return the error
+    // since the snapshot hasn't started yet.
+    auto f = co_await coroutine::as_future(smp::submit_to(shard, [&jsondir] {
+        if (!pending_snapshots.contains(jsondir)) {
+            pending_snapshots.emplace(jsondir, make_lw_shared<snapshot_manager>());
+        }
+        return make_ready_future<>();
+    }));
+
+    if (f.failed()) {
+        auto ex = f.get_exception();
+        auto s = global_table->schema();
+        tlogger.error("Failed allocating snapshot_manager for {}.{} tag={}: {}", s->ks_name(), s->cf_name(), name, ex);
+        co_await coroutine::return_exception(std::move(ex));
+    }
 
     auto sstable_deletion_guard = co_await get_units(_sstable_deletion_sem, 1);
     std::exception_ptr ex;
@@ -1369,7 +1389,6 @@ future<> table::snapshot(database& db, sstring name) {
         ex = std::current_exception();
     }
 
-    auto shard = std::hash<sstring>()(jsondir) % smp::count;
     std::unordered_set<sstring> table_names;
     try {
         for (auto& sst : tables) {
