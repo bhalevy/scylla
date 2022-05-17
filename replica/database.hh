@@ -157,6 +157,12 @@ public:
     table& operator*() const {
         return get();
     }
+
+    distributed<database>& db() const noexcept {
+        return _db;
+    }
+
+    future<> invoke_on_all(std::function<future<>(table&)> func) const noexcept;
 };
 
 using shared_memtable = lw_shared_ptr<memtable>;
@@ -1603,9 +1609,13 @@ public:
     typedef std::function<future<db_clock::time_point>()> timestamp_func;
 
     /** Truncates the given column family */
+    future<> truncate_on_all(sstring ksname, sstring cfname, timestamp_func, seastar::scheduling_group sg = {});
+    future<> truncate_on_all(const keyspace& ks, column_family& cf, timestamp_func, bool with_snapshot = true);
+private:
     future<> truncate(sstring ksname, sstring cfname, timestamp_func);
     future<> truncate(const keyspace& ks, column_family& cf, timestamp_func, bool with_snapshot = true);
 
+public:
     bool update_column_family(schema_ptr s);
     future<> drop_column_family(const sstring& ks_name, const sstring& cf_name, timestamp_func, bool with_snapshot = true);
 

@@ -5201,9 +5201,8 @@ future<>
 storage_proxy::handle_truncate(rpc::opt_time_point timeout, sstring ksname, sstring cfname) {
         return do_with(utils::make_joinpoint([] { return db_clock::now();}),
                         [this, ksname, cfname](auto& tsf) {
-            return container().invoke_on_all(_write_smp_service_group, [ksname, cfname, &tsf](storage_proxy& sp) {
-                return sp._db.local().truncate(ksname, cfname, [&tsf] { return tsf.value(); });
-            });
+            auto sg = seastar::internal::scheduling_group_from_index(seastar::internal::smp_service_group_id(_write_smp_service_group));
+            return _db.local().truncate_on_all(ksname, cfname, [&tsf] { return tsf.value(); }, sg);
         });
 }
 

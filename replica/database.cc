@@ -20,6 +20,7 @@
 #include <seastar/core/seastar.hh>
 #include <seastar/core/coroutine.hh>
 #include <seastar/coroutine/parallel_for_each.hh>
+#include <seastar/coroutine/switch_to.hh>
 #include <seastar/core/reactor.hh>
 #include <seastar/core/metrics.hh>
 #include <boost/algorithm/string/erase.hpp>
@@ -2070,13 +2071,15 @@ future<> database::flush(const sstring& ksname, const sstring& cfname) {
 }
 
 future<> database::flush_on_all(utils::UUID id) {
-    return container().invoke_on_all([id] (replica::database& db) {
-        return db.find_column_family(id).flush();
+    return global_table_ptr(container(), id).invoke_on_all([] (replica::table& t) {
+        return t.flush();
     });
 }
 
 future<> database::flush_on_all(std::string_view ks_name, std::string_view table_name) {
-    return flush_on_all(find_uuid(ks_name, table_name));
+    return global_table_ptr(container(), ks_name, table_name).invoke_on_all([] (replica::table& t) {
+        return t.flush();
+    });
 }
 
 future<> database::flush_on_all(std::string_view ks_name, std::vector<sstring> table_names) {
@@ -2096,9 +2099,9 @@ future<> database::snapshot_on_all(std::string_view ks_name, std::vector<sstring
         if (!skip_flush) {
             co_await flush_on_all(ks_name, table_name);
         }
-        co_await container().invoke_on_all([ks_name, &table_name, tag, skip_flush] (replica::database& db) {
-            auto& t = db.find_column_family(ks_name, table_name);
-            return t.snapshot(db, tag);
+        auto global_table = global_table_ptr(container(), ks_name, table_name);
+        co_await global_table.invoke_on_all([&global_table, tag] (replica::table& t) {
+            return t.snapshot(global_table.db().local(), tag);
         });
     });
 }
@@ -2106,20 +2109,24 @@ future<> database::snapshot_on_all(std::string_view ks_name, std::vector<sstring
 future<> database::snapshot_on_all(std::string_view ks_name, sstring tag, bool skip_flush) {
     auto& ks = find_keyspace(ks_name);
     co_await coroutine::parallel_for_each(ks.metadata()->cf_meta_data(), [this, tag = std::move(tag), skip_flush] (const auto& pair) -> future<> {
+        auto id = pair.second->id();
         if (!skip_flush) {
-            co_await flush_on_all(pair.second->id());
+            co_await flush_on_all(id);
         }
-        co_await container().invoke_on_all([id = pair.second, tag, skip_flush] (replica::database& db) {
-            auto& t = db.find_column_family(id);
-            return t.snapshot(db, tag);
+        auto global_table = global_table_ptr(container(), id);
+        co_await global_table.invoke_on_all([&global_table, tag] (replica::table& t) {
+            return t.snapshot(global_table.db().local(), tag);
         });
     });
 }
 
-future<> database::truncate(sstring ksname, sstring cfname, timestamp_func tsf) {
-    auto& ks = find_keyspace(ksname);
-    auto& cf = find_column_family(ksname, cfname);
-    return truncate(ks, cf, std::move(tsf));
+future<> database::truncate_on_all(sstring ksname, sstring cfname, timestamp_func tsf, scheduling_group sg) {
+    co_await coroutine::switch_to(sg);
+    co_await container().invoke_on_all([&] (database& db) {
+        auto& ks = db.find_keyspace(ksname);
+        auto& cf = db.find_column_family(ksname, cfname);
+        return db.truncate(ks, cf, tsf);
+    });
 }
 
 future<> database::truncate(const keyspace& ks, column_family& cf, timestamp_func tsf, bool with_snapshot) {
@@ -2416,6 +2423,12 @@ table& global_table_ptr::get() const {
 global_table_ptr::global_table_ptr(distributed<database>& db, std::string_view ks_name, std::string_view cf_name)
     : global_table_ptr(db, db.local().find_uuid(ks_name, cf_name))
 { }
+
+future<> global_table_ptr::invoke_on_all(std::function<future<>(table&)> func) const noexcept {
+    return _db.invoke_on_all([id = _id, func = std::move(func)] (database& db) {
+        return func(db.find_column_family(id));
+    });
+}
 
 } // namespace replica
 
