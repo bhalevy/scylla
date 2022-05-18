@@ -830,9 +830,7 @@ public:
         iterator(input_stream in, size_t idx) noexcept
             : _in(in)
             , _idx(idx)
-        {
-            seastar_logger.info("iterator {}[{}/{}]", fmt::ptr(this), _idx, _in.size());
-        }
+        { }
 
         friend class vector_deserializer;
    public:
@@ -844,45 +842,12 @@ public:
 
         iterator() noexcept : _in(simple_input_stream()) {}
 
-        iterator(const iterator& o) noexcept
-            : _in(o._in)
-            , _idx(o._idx)
-            , _consumed(o._consumed)
-        {
-            seastar_logger.info("iterator {}[{}/{},{}] copied from {}[{}/{},{}]", fmt::ptr(this), _idx, _in.size(), _consumed, fmt::ptr(&o), o._idx, o._in.size(), o._consumed);
-        }
-
-        iterator& operator=(const iterator& o) noexcept {
-                _in = o._in;
-                _idx = o._idx;
-                _consumed = o._consumed;
-                seastar_logger.info("iterator {}[{}/{},{}] copy-assigned from {}[{}/{},{}]", fmt::ptr(this), _idx, _in.size(), _consumed, fmt::ptr(&o), o._idx, o._in.size(), o._consumed);
-        }
-
-        iterator(iterator&& o) noexcept
-            : _in(o._in)
-            , _idx(o._idx)
-            , _consumed(o._consumed)
-        {
-            seastar_logger.info("iterator {}[{}/{},{}] moved from {}[{}/{},{}]", fmt::ptr(this), _idx, _in.size(), _consumed, fmt::ptr(&o), o._idx, o._in.size(), o._consumed);
-        }
-        iterator& operator=(iterator&& o) noexcept {
-            if (this != &o) {
-                _in = std::move(o._in);
-                _idx = o._idx;
-                _consumed = o._consumed;
-                seastar_logger.info("iterator {}[{}/{},{}] move-assigned from {}[{}/{},{}]", fmt::ptr(this), _idx, _in.size(), _consumed, fmt::ptr(&o), o._idx, o._in.size(), o._consumed);
-            }
-            return *this;
-        }
-
         bool operator==(const iterator& it) const noexcept {
             return _idx == it._idx;
         }
 
         // Deserializes and returns the item, effectively incrementing the iterator..
         value_type operator*() const {
-            seastar_logger.info("* {}[{}/{},{}]", fmt::ptr(this), _idx, _in.size(), _consumed);
             auto zis = const_cast<iterator*>(this);
             auto item = deserialize(zis->_in, boost::type<T>());
             zis->_idx++;
@@ -891,7 +856,6 @@ public:
         }
 
         iterator& operator++() {
-            seastar_logger.info("++ {}[{}/{},{}]", fmt::ptr(this), _idx, _in.size(), _consumed);
             if (!_consumed) {
                 serializer<T>::skip(_in);
                 // auto len = read_frame_size();
