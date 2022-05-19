@@ -359,33 +359,31 @@ distributed_loader::process_upload_dir(distributed<replica::database>& db, distr
 
 future<std::tuple<utils::UUID, std::vector<std::vector<sstables::shared_sstable>>>>
 distributed_loader::get_sstables_from_upload_dir(distributed<replica::database>& db, sstring ks, sstring cf) {
-    // FIXME: indentation
-        global_column_family_ptr global_table(db, ks, cf);
-        sharded<sstables::sstable_directory> directory;
-        auto table_id = global_table->schema()->id();
-        auto upload = fs::path(global_table->dir()) / sstables::upload_dir;
+    global_column_family_ptr global_table(db, ks, cf);
+    sharded<sstables::sstable_directory> directory;
+    auto table_id = global_table->schema()->id();
+    auto upload = fs::path(global_table->dir()) / sstables::upload_dir;
 
-        co_await directory.start(upload, db.local().get_config().initial_sstable_loading_concurrency(), std::ref(db.local().get_sharded_sst_dir_semaphore()),
-            sstables::sstable_directory::need_mutate_level::yes,
-            sstables::sstable_directory::lack_of_toc_fatal::no,
-            sstables::sstable_directory::enable_dangerous_direct_import_of_cassandra_counters(db.local().get_config().enable_dangerous_direct_import_of_cassandra_counters()),
-            sstables::sstable_directory::allow_loading_materialized_view::no,
-            [&global_table] (fs::path dir, sstables::generation_type gen, sstables::sstable_version_types v, sstables::sstable_format_types f) {
-                return global_table->make_sstable(dir.native(), gen, v, f, &error_handler_gen_for_upload_dir);
+    co_await directory.start(upload, db.local().get_config().initial_sstable_loading_concurrency(), std::ref(db.local().get_sharded_sst_dir_semaphore()),
+        sstables::sstable_directory::need_mutate_level::yes,
+        sstables::sstable_directory::lack_of_toc_fatal::no,
+        sstables::sstable_directory::enable_dangerous_direct_import_of_cassandra_counters(db.local().get_config().enable_dangerous_direct_import_of_cassandra_counters()),
+        sstables::sstable_directory::allow_loading_materialized_view::no,
+        [&global_table] (fs::path dir, sstables::generation_type gen, sstables::sstable_version_types v, sstables::sstable_format_types f) {
+            return global_table->make_sstable(dir.native(), gen, v, f, &error_handler_gen_for_upload_dir);
+    });
 
-        });
+    auto stop = deferred_stop(directory);
 
-        auto stop = deferred_stop(directory);
+    std::vector<std::vector<sstables::shared_sstable>> sstables_on_shards(smp::count);
+    co_await lock_table(directory, db, ks, cf);
+    bool sort_sstables_according_to_owner = false;
+    co_await process_sstable_dir(directory, sort_sstables_according_to_owner);
+    co_await directory.invoke_on_all([&sstables_on_shards] (sstables::sstable_directory& d) mutable {
+        sstables_on_shards[this_shard_id()] = d.get_unsorted_sstables();
+    });
 
-        std::vector<std::vector<sstables::shared_sstable>> sstables_on_shards(smp::count);
-        co_await lock_table(directory, db, ks, cf);
-        bool sort_sstables_according_to_owner = false;
-        co_await process_sstable_dir(directory, sort_sstables_according_to_owner);
-        co_await directory.invoke_on_all([&sstables_on_shards] (sstables::sstable_directory& d) mutable {
-            sstables_on_shards[this_shard_id()] = d.get_unsorted_sstables();
-        });
-
-        co_return std::make_tuple(table_id, std::move(sstables_on_shards));
+    co_return std::make_tuple(table_id, std::move(sstables_on_shards));
 }
 
 future<> distributed_loader::cleanup_column_family_temp_sst_dirs(sstring sstdir) {
