@@ -9,6 +9,7 @@
 #include <seastar/core/coroutine.hh>
 #include <seastar/coroutine/maybe_yield.hh>
 #include <seastar/coroutine/parallel_for_each.hh>
+#include <seastar/coroutine/switch_to.hh>
 #include <seastar/util/closeable.hh>
 #include "distributed_loader.hh"
 #include "replica/database.hh"
@@ -294,15 +295,14 @@ distributed_loader::make_sstables_available(sstables::sstable_directory& dir, sh
 future<>
 distributed_loader::process_upload_dir(distributed<replica::database>& db, distributed<db::system_distributed_keyspace>& sys_dist_ks,
         distributed<db::view::view_update_generator>& view_update_generator, sstring ks, sstring cf) {
-    seastar::thread_attributes attr;
-    attr.sched_group = db.local().get_streaming_scheduling_group();
+    co_await coroutine::switch_to(db.local().get_streaming_scheduling_group());
 
-    return seastar::async(std::move(attr), [&db, &view_update_generator, &sys_dist_ks, ks = std::move(ks), cf = std::move(cf)] {
+    // FIXME: indentation
         global_column_family_ptr global_table(db, ks, cf);
 
         sharded<sstables::sstable_directory> directory;
         auto upload = fs::path(global_table->dir()) / sstables::upload_dir;
-        directory.start(upload, db.local().get_config().initial_sstable_loading_concurrency(), std::ref(db.local().get_sharded_sst_dir_semaphore()),
+        co_await directory.start(upload, db.local().get_config().initial_sstable_loading_concurrency(), std::ref(db.local().get_sharded_sst_dir_semaphore()),
             sstables::sstable_directory::need_mutate_level::yes,
             sstables::sstable_directory::lack_of_toc_fatal::no,
             sstables::sstable_directory::enable_dangerous_direct_import_of_cassandra_counters(db.local().get_config().enable_dangerous_direct_import_of_cassandra_counters()),
@@ -310,14 +310,14 @@ distributed_loader::process_upload_dir(distributed<replica::database>& db, distr
             [&global_table] (fs::path dir, sstables::generation_type gen, sstables::sstable_version_types v, sstables::sstable_format_types f) {
                 return global_table->make_sstable(dir.native(), gen, v, f, &error_handler_gen_for_upload_dir);
 
-        }).get();
+        });
 
         auto stop = deferred_stop(directory);
 
-        lock_table(directory, db, ks, cf).get();
-        process_sstable_dir(directory).get();
+        co_await lock_table(directory, db, ks, cf);
+        co_await process_sstable_dir(directory);
 
-        auto generation = highest_generation_seen(directory).get0();
+        auto generation = co_await highest_generation_seen(directory);
         auto shard_generation_base = generation / smp::count + 1;
 
         // We still want to do our best to keep the generation numbers shard-friendly.
@@ -327,24 +327,24 @@ distributed_loader::process_upload_dir(distributed<replica::database>& db, distr
             shard_gen[s].store(shard_generation_base * smp::count + s, std::memory_order_relaxed);
         }
 
-        reshard(directory, db, ks, cf, [&global_table, upload, &shard_gen] (shard_id shard) mutable {
+        co_await reshard(directory, db, ks, cf, [&global_table, upload, &shard_gen] (shard_id shard) mutable {
             // we need generation calculated by instance of cf at requested shard
             auto gen = shard_gen[shard].fetch_add(smp::count, std::memory_order_relaxed);
 
             return global_table->make_sstable(upload.native(), gen,
                     global_table->get_sstables_manager().get_highest_supported_format(),
                     sstables::sstable::format_types::big, &error_handler_gen_for_upload_dir);
-        }).get();
+        });
 
-        reshape(directory, db, sstables::reshape_mode::strict, ks, cf, [global_table, upload, &shard_gen] (shard_id shard) {
+        co_await reshape(directory, db, sstables::reshape_mode::strict, ks, cf, [global_table, upload, &shard_gen] (shard_id shard) {
             auto gen = shard_gen[shard].fetch_add(smp::count, std::memory_order_relaxed);
             return global_table->make_sstable(upload.native(), gen,
                   global_table->get_sstables_manager().get_highest_supported_format(),
                   sstables::sstable::format_types::big,
                   &error_handler_gen_for_upload_dir);
-        }, sstables::sstable_directory::default_sstable_filter()).get();
+        }, sstables::sstable_directory::default_sstable_filter());
 
-        const bool use_view_update_path = db::view::check_needs_view_update_path(sys_dist_ks.local(), *global_table, streaming::stream_reason::repair).get0();
+        const bool use_view_update_path = co_await db::view::check_needs_view_update_path(sys_dist_ks.local(), *global_table, streaming::stream_reason::repair);
 
         auto datadir = upload.parent_path();
         if (use_view_update_path) {
@@ -352,12 +352,11 @@ distributed_loader::process_upload_dir(distributed<replica::database>& db, distr
            datadir /= sstables::staging_dir;
         }
 
-        size_t loaded = directory.map_reduce0([&db, ks, cf, datadir, &view_update_generator] (sstables::sstable_directory& dir) {
+        size_t loaded = co_await directory.map_reduce0([&db, ks, cf, datadir, &view_update_generator] (sstables::sstable_directory& dir) {
             return make_sstables_available(dir, db, view_update_generator, datadir, ks, cf);
-        }, size_t(0), std::plus<size_t>()).get0();
+        }, size_t(0), std::plus<size_t>());
 
         dblog.info("Loaded {} SSTables into {}", loaded, datadir.native());
-    });
 }
 
 future<std::tuple<utils::UUID, std::vector<std::vector<sstables::shared_sstable>>>>
