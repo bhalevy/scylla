@@ -529,39 +529,38 @@ future<> distributed_loader::populate_keyspace(distributed<replica::database>& d
         co_return;
     }
 
-    // FIXME: reindent
-        dblog.info("Populating Keyspace {}", ks_name);
-        auto& ks = i->second;
-        auto& column_families = db.local().get_column_families();
+    dblog.info("Populating Keyspace {}", ks_name);
+    auto& ks = i->second;
+    auto& column_families = db.local().get_column_families();
 
-        for (schema_ptr s : ks.metadata()->cf_meta_data() | boost::adaptors::map_values) {
-                utils::UUID uuid = s->id();
-                lw_shared_ptr<replica::column_family> cf = column_families[uuid];
-                sstring cfname = cf->schema()->cf_name();
-                auto sstdir = ks.column_family_directory(ksdir, cfname, uuid);
-                dblog.info("Keyspace {}: Reading CF {} id={} version={}", ks_name, cfname, uuid, s->version());
+    for (schema_ptr s : ks.metadata()->cf_meta_data() | boost::adaptors::map_values) {
+        utils::UUID uuid = s->id();
+        lw_shared_ptr<replica::column_family> cf = column_families[uuid];
+        sstring cfname = cf->schema()->cf_name();
+        auto sstdir = ks.column_family_directory(ksdir, cfname, uuid);
+        dblog.info("Keyspace {}: Reading CF {} id={} version={}", ks_name, cfname, uuid, s->version());
 
+        try {
+            co_await ks.make_directory_for_column_family(cfname, uuid);
+            co_await distributed_loader::populate_column_family(db, sstdir + "/" + sstables::staging_dir, ks_name, cfname, allow_offstrategy_compaction::no);
+            co_await distributed_loader::populate_column_family(db, sstdir + "/" + sstables::quarantine_dir, ks_name, cfname, allow_offstrategy_compaction::no, must_exist::no);
+            co_await distributed_loader::populate_column_family(db, sstdir, ks_name, cfname, allow_offstrategy_compaction::yes);
+        } catch (...) {
+            std::exception_ptr eptr = std::current_exception();
+            std::string msg =
+                format("Exception while populating keyspace '{}' with column family '{}' from file '{}': {}",
+                        ks_name, cfname, sstdir, eptr);
+            dblog.error("Exception while populating keyspace '{}' with column family '{}' from file '{}': {}",
+                        ks_name, cfname, sstdir, eptr);
             try {
-                co_await ks.make_directory_for_column_family(cfname, uuid);
-                    co_await distributed_loader::populate_column_family(db, sstdir + "/" + sstables::staging_dir, ks_name, cfname, allow_offstrategy_compaction::no);
-                    co_await distributed_loader::populate_column_family(db, sstdir + "/" + sstables::quarantine_dir, ks_name, cfname, allow_offstrategy_compaction::no, must_exist::no);
-                    co_await distributed_loader::populate_column_family(db, sstdir, ks_name, cfname, allow_offstrategy_compaction::yes);
+                std::rethrow_exception(eptr);
+            } catch (sstables::compaction_stopped_exception& e) {
+                // swallow compaction stopped exception, to allow clean shutdown.
             } catch (...) {
-                    std::exception_ptr eptr = std::current_exception();
-                    std::string msg =
-                        format("Exception while populating keyspace '{}' with column family '{}' from file '{}': {}",
-                               ks_name, cfname, sstdir, eptr);
-                    dblog.error("Exception while populating keyspace '{}' with column family '{}' from file '{}': {}",
-                                ks_name, cfname, sstdir, eptr);
-                    try {
-                        std::rethrow_exception(eptr);
-                    } catch (sstables::compaction_stopped_exception& e) {
-                        // swallow compaction stopped exception, to allow clean shutdown.
-                    } catch (...) {
-                        throw std::runtime_error(msg.c_str());
-                    }
+                throw std::runtime_error(msg.c_str());
             }
         }
+    }
 }
 
 future<> distributed_loader::init_system_keyspace(distributed<replica::database>& db, distributed<service::storage_service>& ss, sharded<gms::gossiper>& g, db::config& cfg) {
