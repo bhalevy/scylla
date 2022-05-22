@@ -249,6 +249,10 @@ public:
         return _memtables.end();
     }
 
+    memtable& active_memtable() const noexcept {
+        return *_memtables.back();
+    }
+
     memtable& active_memtable() {
         return *_memtables.back();
     }
@@ -732,6 +736,7 @@ public:
     // FIXME: in case a query is satisfied from a single memtable, avoid a copy
     using const_mutation_partition_ptr = std::unique_ptr<const mutation_partition>;
     using const_row_ptr = std::unique_ptr<const row>;
+    const memtable& active_memtable() const noexcept { return _memtables->active_memtable(); }
     memtable& active_memtable() { return _memtables->active_memtable(); }
     api::timestamp_type min_memtable_timestamp() const;
     const row_cache& get_row_cache() const {
