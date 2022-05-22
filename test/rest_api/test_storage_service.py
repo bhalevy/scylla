@@ -349,3 +349,24 @@ def test_storage_service_snapshot_mv_si(cql, this_dc, rest_api):
                         pytest.fail(f"Snapshot of secondary index {si} should have failed")
                 except requests.HTTPError:
                     pass
+
+# Verify that snapshots of materialized views and secondary indexes are disallowed.
+def test_storage_service_sstable_info(cql, this_dc, rest_api):
+    # unrestricted
+    resp = rest_api.send("GET", "storage_service/sstable_info")
+    resp.raise_for_status()
+
+    with new_test_keyspace(cql, f"WITH REPLICATION = {{ 'class' : 'NetworkTopologyStrategy', '{this_dc}' : 1 }}") as keyspace:
+        # restricted by keyspace (while empty)
+        resp = rest_api.send("GET", f"storage_service/sstable_info?keyspace={keyspace}")
+        resp.raise_for_status()
+
+        schema = 'p int, v text, primary key (p)'
+        with new_test_table(cql, keyspace, schema) as table:
+            # restricted by keyspace (with table)
+            resp = rest_api.send("GET", f"storage_service/sstable_info?keyspace={keyspace}")
+            resp.raise_for_status()
+
+            # restricted by both keyspace and table
+            resp = rest_api.send("GET", f"storage_service/sstable_info?keyspace={keyspace}&cf={table}")
+            resp.raise_for_status()
