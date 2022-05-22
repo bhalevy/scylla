@@ -27,6 +27,7 @@
 #include <seastar/http/exception.hh>
 #include <seastar/core/coroutine.hh>
 #include <seastar/coroutine/parallel_for_each.hh>
+#include <seastar/coroutine/maybe_yield.hh>
 #include "repair/row_level.hh"
 #include "locator/snitch_base.hh"
 #include "column_family.hh"
@@ -1133,7 +1134,7 @@ void set_storage_service(http_context& ctx, routes& r, sharded<service::storage_
         });
     });
 
-    ss::sstable_info.set(r, [&ctx] (std::unique_ptr<request> req) {
+    ss::sstable_info.set(r, [&ctx] (std::unique_ptr<request> req) -> future<json::json_return_type> {
         auto ks = api::req_param<sstring>(*req, "keyspace", {}).value;
         auto cf = api::req_param<sstring>(*req, "cf", {}).value;
 
@@ -1141,8 +1142,9 @@ void set_storage_service(http_context& ctx, routes& r, sharded<service::storage_
         // which is not small, but not huge either. 
         using table_sstables_list = std::vector<ss::table_sstables>;
 
-        return do_with(table_sstables_list{}, [ks, cf, &ctx](table_sstables_list& dst) {
-            return ctx.db.map_reduce([&dst](table_sstables_list&& res) {
+        table_sstables_list dst;
+        // FIXME: indent
+            co_await ctx.db.map_reduce([&dst](table_sstables_list&& res) {
                 for (auto&& t : res) {
                     auto i = std::find_if(dst.begin(), dst.end(), [&t](const ss::table_sstables& t2) {
                         return t.keyspace() == t2.keyspace() && t.table() == t2.table();
@@ -1161,7 +1163,7 @@ void set_storage_service(http_context& ctx, routes& r, sharded<service::storage_
                         }
                     }
                 }
-            }, [ks, cf](const replica::database& db) {
+            }, [&](const replica::database& db) -> future<table_sstables_list> {
                 // see above
                 table_sstables_list res;
 
@@ -1245,6 +1247,7 @@ void set_storage_service(http_context& ctx, routes& r, sharded<service::storage_
                             }
 
                             tst.sstables.push(std::move(info));
+                            co_await coroutine::maybe_yield();
                         }
                         res.emplace_back(std::move(tst));
                     }
@@ -1252,11 +1255,9 @@ void set_storage_service(http_context& ctx, routes& r, sharded<service::storage_
                 std::sort(res.begin(), res.end(), [](const ss::table_sstables& t1, const ss::table_sstables& t2) {
                     return t1.keyspace() < t2.keyspace() || (t1.keyspace() == t2.keyspace() && t1.table() < t2.table());
                 });
-                return res;
-            }).then([&dst] {
-                return make_ready_future<json::json_return_type>(stream_object(dst));
+                co_return res;
             });
-        });
+                co_return json::json_return_type(stream_object(std::move(dst)));
     });
 }
 
