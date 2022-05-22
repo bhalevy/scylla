@@ -93,15 +93,15 @@ struct send_info {
         });
     }
     future<size_t> estimate_partitions() {
-        return do_with(cf.get_sstables(), size_t(0), [this] (auto& sstables, size_t& partition_count) {
-            return do_for_each(*sstables, [this, &partition_count] (auto& sst) {
-                return do_for_each(ranges, [this, &sst, &partition_count] (auto& range) {
-                    partition_count += sst->estimated_keys_for_range(range);
-                });
-            }).then([&partition_count] {
-                return partition_count;
-            });
-        });
+        size_t partition_count = 0;
+        auto sstables = cf.get_sstables();
+        for (const auto& sst : *sstables) {
+            for (const auto& range : ranges) {
+                partition_count += sst->estimated_keys_for_range(range);
+                co_await coroutine::maybe_yield();
+            }
+        }
+        co_return partition_count;
     }
 };
 
