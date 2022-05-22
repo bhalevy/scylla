@@ -1176,7 +1176,7 @@ void set_storage_service(http_context& ctx, routes& r, sharded<service::storage_
                     tst.keyspace = schema->ks_name();
                     tst.table = schema->cf_name();
 
-                    for (auto sstables = t->get_sstables_including_compacted_undeleted(); auto sstable : *sstables) {
+                    co_await t->get_sstables_including_compacted_undeleted()->for_each_sstable_gently([&] (const sstables::shared_sstable& sstable) {
                         auto ts = db_clock::to_time_t(sstable->data_file_write_time());
                         ::tm t;
                         ::gmtime_r(&ts, &t);
@@ -1246,8 +1246,7 @@ void set_storage_service(http_context& ctx, routes& r, sharded<service::storage_
                         }
 
                         tst.sstables.push(std::move(info));
-                        co_await coroutine::maybe_yield();
-                    }
+                    });
                     res.emplace_back(std::move(tst));
                 }
             }

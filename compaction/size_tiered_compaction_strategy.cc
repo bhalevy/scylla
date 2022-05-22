@@ -199,13 +199,7 @@ int64_t size_tiered_compaction_strategy::estimated_pending_compactions(const std
 int64_t size_tiered_compaction_strategy::estimated_pending_compactions(table_state& table_s) const {
     int min_threshold = table_s.min_compaction_threshold();
     int max_threshold = table_s.schema()->max_compaction_threshold();
-    std::vector<sstables::shared_sstable> sstables;
-
-    auto all_sstables = table_s.get_sstable_set().all();
-    sstables.reserve(all_sstables->size());
-    for (auto& entry : *all_sstables) {
-        sstables.push_back(entry);
-    }
+    auto sstables = table_s.get_sstable_set().all()->sstables();
 
     return estimated_pending_compactions(sstables, min_threshold, max_threshold, _options);
 }

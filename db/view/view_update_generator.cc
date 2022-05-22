@@ -58,7 +58,7 @@ future<> view_update_generator::start() {
                     // Exploit the fact that sstables in the staging directory
                     // are usually non-overlapping and use a partitioned set for
                     // the read.
-                    auto ssts = make_lw_shared<sstables::sstable_set>(sstables::make_partitioned_sstable_set(s, make_lw_shared<sstable_list>(sstable_list{}), false));
+                    auto ssts = make_lw_shared<sstables::sstable_set>(sstables::make_partitioned_sstable_set(s, make_lw_shared<sstable_map>(), false));
                     for (auto& sst : sstables) {
                         ssts->insert(sst);
                     }
@@ -173,14 +173,14 @@ void view_update_generator::setup_metrics() {
 void view_update_generator::discover_staging_sstables() {
     for (auto& x : _db.get_column_families()) {
         replica::table& t = *(x.second);
-        for (auto sstables = t.get_sstables(); sstables::shared_sstable sst : *sstables) {
+        t.get_sstables()->for_each_sstable([this, &t] (const sstables::shared_sstable& sst) {
             if (sst->requires_view_building()) {
-                _sstables_with_tables[t.shared_from_this()].push_back(std::move(sst));
+                _sstables_with_tables[t.shared_from_this()].push_back(sst);
                 // we're at early stage here, no need to kick _pending_sstables (the
                 // bulding fiber is not running), neither we can wait on the semaphore
                 _registration_sem.consume(1);
             }
-        }
+        });
     }
 }
 

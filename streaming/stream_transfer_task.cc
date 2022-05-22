@@ -96,10 +96,10 @@ struct send_info {
         size_t partition_count = 0;
         auto sstables = cf.get_sstables();
         for (const auto& range : ranges) {
-            for (const auto& sst : *sstables) {
+            co_await sstables->for_each_sstable_gently([&] (const sstables::shared_sstable& sst) {
                 partition_count += sst->estimated_keys_for_range(range);
-                co_await coroutine::maybe_yield();
-            }
+                return make_ready_future<>();
+            });
         }
         co_return partition_count;
     }

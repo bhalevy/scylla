@@ -934,12 +934,8 @@ private:
     }
 
     future<uint64_t> do_estimate_partitions_on_local_shard() {
-        return do_with(_cf.get_sstables(), uint64_t(0), [this] (lw_shared_ptr<const sstable_list>& sstables, uint64_t& partition_count) {
-            return do_for_each(*sstables, [this, &partition_count] (const sstables::shared_sstable& sst) mutable {
-                partition_count += sst->estimated_keys_for_range(_range);
-            }).then([&partition_count] {
-                return partition_count;
-            });
+        return _cf.get_sstables()->accumulate(uint64_t(0), [this] (uint64_t x, const sstables::shared_sstable& sst) {
+            return x + sst->estimated_keys_for_range(_range);
         });
     }
 

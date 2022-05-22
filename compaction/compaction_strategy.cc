@@ -479,16 +479,11 @@ date_tiered_manifest::get_next_sstables(table_state& table_s, std::vector<sstabl
 
 int64_t date_tiered_manifest::get_estimated_tasks(table_state& table_s) const {
     int base = table_s.schema()->min_compaction_threshold();
-    int64_t now = get_now(table_s.get_sstable_set().all());
-    std::vector<sstables::shared_sstable> sstables;
+    auto all_sstables = table_s.get_sstable_set().all();
+    int64_t now = get_now(all_sstables);
     int64_t n = 0;
 
-    auto all_sstables = table_s.get_sstable_set().all();
-    sstables.reserve(all_sstables->size());
-    for (auto& entry : *all_sstables) {
-        sstables.push_back(entry);
-    }
-    auto candidates = filter_old_sstables(sstables, _options.max_sstable_age, now);
+    auto candidates = filter_old_sstables(all_sstables->sstables(), _options.max_sstable_age, now);
     auto buckets = get_buckets(create_sst_and_min_timestamp_pairs(candidates), _options.base_time, base, now);
 
     for (auto& bucket : buckets) {
@@ -537,12 +532,12 @@ date_tiered_manifest::get_compaction_candidates(table_state& table_s, std::vecto
     return newest_bucket(buckets, min_threshold, max_threshold, now, _options.base_time);
 }
 
-int64_t date_tiered_manifest::get_now(lw_shared_ptr<const sstables::sstable_list> shared_set) {
+int64_t date_tiered_manifest::get_now(lw_shared_ptr<const sstables::sstable_map> shared_set) {
     int64_t max_timestamp = 0;
-    for (auto& sst : *shared_set) {
+    shared_set->for_each_sstable([&max_timestamp] (const sstables::shared_sstable& sst) {
         int64_t candidate = sst->get_stats_metadata().max_timestamp;
         max_timestamp = candidate > max_timestamp ? candidate : max_timestamp;
-    }
+    });
     return max_timestamp;
 }
 

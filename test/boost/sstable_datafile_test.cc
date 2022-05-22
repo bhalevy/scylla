@@ -10,6 +10,7 @@
 #include <seastar/core/future-util.hh>
 #include <seastar/core/align.hh>
 #include <seastar/core/aligned_buffer.hh>
+#include <seastar/core/coroutine.hh>
 #include <seastar/util/closeable.hh>
 
 #include "sstables/sstables.hh"
@@ -2199,17 +2200,29 @@ SEASTAR_TEST_CASE(sstable_set_erase) {
         sstable_set set = cs.make_sstable_set(s);
 
         // triggers use-after-free, described in #4572, by operating on interval that relies on info of a destroyed sstable object.
+        sstable* p;
         {
             auto sst = sstable_for_overlapping_test(env, s, 0, key_and_token_pair[0].first, key_and_token_pair[0].first, 1);
+            p = sst.get();
             set.insert(sst);
             BOOST_REQUIRE(set.all()->size() == 1);
+            BOOST_REQUIRE(set.all()->contains(sst->generation()));
+            BOOST_REQUIRE(set.all()->contains(sst));
         }
 
         auto sst2 = sstable_for_overlapping_test(env, s, 0, key_and_token_pair[0].first, key_and_token_pair[0].first, 1);
-        set.insert(sst2);
-        BOOST_REQUIRE(set.all()->size() == 2);
+        BOOST_REQUIRE_THROW(set.insert(sst2), std::runtime_error);
+        BOOST_REQUIRE(set.all()->size() == 1);
+        BOOST_REQUIRE(set.all()->contains(sst2->generation()));
+        BOOST_REQUIRE_THROW(set.all()->contains(sst2), std::runtime_error);
 
-        set.erase(sst2);
+        BOOST_REQUIRE_THROW(set.erase(sst2), std::runtime_error);
+        BOOST_REQUIRE(set.all()->size() == 1);
+
+        auto sst1 = *set.all()->sstables().begin();
+        BOOST_REQUIRE_EQUAL(sst1.get(), p);
+        set.erase(sst1);
+        BOOST_REQUIRE(set.all()->size() == 0);
     }
 
     {
@@ -2924,7 +2937,7 @@ SEASTAR_TEST_CASE(test_sstable_origin) {
 }
 
 SEASTAR_TEST_CASE(compound_sstable_set_basic_test) {
-    return test_env::do_with([] (test_env& env) {
+    return test_env::do_with([] (test_env& env) -> future<> {
         auto s = make_shared_schema({}, some_keyspace, some_column_family,
             {{"p1", utf8_type}}, {}, {}, {}, utf8_type);
         auto cs = sstables::make_compaction_strategy(sstables::compaction_strategy_type::size_tiered, s->compaction_strategy_options());
@@ -2938,7 +2951,7 @@ SEASTAR_TEST_CASE(compound_sstable_set_basic_test) {
         set2->insert(sstable_for_overlapping_test(env, s, 2, key_and_token_pair[0].first, key_and_token_pair[1].first, 0));
         set2->insert(sstable_for_overlapping_test(env, s, 3, key_and_token_pair[0].first, key_and_token_pair[1].first, 0));
 
-        BOOST_REQUIRE(boost::accumulate(*compound->all() | boost::adaptors::transformed([] (const sstables::shared_sstable& sst) { return sst->generation(); }), unsigned(0)) == 6);
+        BOOST_REQUIRE_EQUAL(co_await compound->all()->accumulate(uint64_t(0), [] (uint64_t s, const sstables::shared_sstable& sst) { return s + sst->generation(); }), uint64_t(6));
         {
             unsigned found = 0;
             for (auto sstables = compound->all(); auto& sst : *sstables) {
@@ -2960,8 +2973,6 @@ SEASTAR_TEST_CASE(compound_sstable_set_basic_test) {
             BOOST_REQUIRE(compound_size == 1);
             BOOST_REQUIRE(compound_size == found);
         }
-
-        return make_ready_future<>();
     });
 }
 

@@ -124,12 +124,7 @@ void leveled_compaction_strategy::generate_last_compacted_keys(leveled_manifest&
 }
 
 int64_t leveled_compaction_strategy::estimated_pending_compactions(table_state& table_s) const {
-    std::vector<sstables::shared_sstable> sstables;
-    auto all_sstables = table_s.get_sstable_set().all();
-    sstables.reserve(all_sstables->size());
-    for (auto& entry : *all_sstables) {
-        sstables.push_back(entry);
-    }
+    auto sstables = table_s.get_sstable_set().all()->sstables();
     return leveled_manifest::get_estimated_tasks(leveled_manifest::get_levels(sstables), _max_sstable_size_in_mb * 1024 * 1024);
 }
 
