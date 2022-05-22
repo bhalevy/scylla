@@ -1270,7 +1270,7 @@ database::drop_caches() const {
         co_await t.get_row_cache().invalidate(row_cache::external_updater([] {}));
 
         auto sstables = t.get_sstables();
-        for (sstables::shared_sstable sst : *sstables) {
+        for (auto& sst : *sstables | boost::adaptors::map_values) {
             co_await sst->drop_caches();
         }
     }

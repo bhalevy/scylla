@@ -181,7 +181,7 @@ static api::timestamp_type get_max_purgeable_timestamp(const table_state& table_
 }
 
 static std::vector<shared_sstable> get_uncompacting_sstables(const table_state& table_s, std::vector<shared_sstable> sstables) {
-    auto all_sstables = boost::copy_range<std::vector<shared_sstable>>(*table_s.get_sstable_set().all());
+    auto all_sstables = table_s.get_sstable_set().all()->sstables();
     auto& compacted_undeleted = table_s.compacted_undeleted_sstables();
     all_sstables.insert(all_sstables.end(), compacted_undeleted.begin(), compacted_undeleted.end());
     boost::sort(all_sstables, [] (const shared_sstable& x, const shared_sstable& y) {
@@ -894,7 +894,7 @@ public:
     }
 
     virtual sstables::sstable_set make_sstable_set_for_input() const override {
-        return sstables::make_partitioned_sstable_set(_schema, make_lw_shared<sstable_list>(sstable_list{}), false);
+        return sstables::make_partitioned_sstable_set(_schema, make_lw_shared<sstable_map>(), false);
     }
 
     flat_mutation_reader_v2 make_sstable_reader() const override {
@@ -1689,7 +1689,7 @@ static future<compaction_result> scrub_sstables_validate_mode(sstables::compacti
     auto schema = table_s.schema();
 
     formatted_sstables_list sstables_list_msg;
-    auto sstables = make_lw_shared<sstables::sstable_set>(sstables::make_partitioned_sstable_set(schema, make_lw_shared<sstable_list>(sstable_list{}), false));
+    auto sstables = make_lw_shared<sstables::sstable_set>(sstables::make_partitioned_sstable_set(schema, make_lw_shared<sstable_map>(), false));
     for (const auto& sst : descriptor.sstables) {
         sstables_list_msg += sst;
         sstables->insert(sst);
@@ -1705,7 +1705,7 @@ static future<compaction_result> scrub_sstables_validate_mode(sstables::compacti
     clogger.info("Finished scrubbing in validate mode {} - sstable(s) are {}", sstables_list_msg, valid ? "valid" : "invalid");
 
     if (!valid) {
-        for (auto& sst : *sstables->all()) {
+        for (auto& sst : *sstables->all() | boost::adaptors::map_values) {
             co_await sst->move_to_quarantine();
         }
     }

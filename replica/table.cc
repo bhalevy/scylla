@@ -97,7 +97,7 @@ lw_shared_ptr<sstables::sstable_set> table::make_maintenance_sstable_set() const
     // Level metadata is not used because (level 0) maintenance sstables are disjoint and must be stored for efficient retrieval in the partitioned set
     bool use_level_metadata = false;
     return make_lw_shared<sstables::sstable_set>(
-            sstables::make_partitioned_sstable_set(_schema, make_lw_shared<sstable_list>(sstable_list{}), use_level_metadata));
+            sstables::make_partitioned_sstable_set(_schema, make_lw_shared<sstable_map>(), use_level_metadata));
 }
 
 void table::refresh_compound_sstable_set() {
@@ -844,7 +844,7 @@ table::sstable_list_builder::build_new_list(const sstables::sstable_set& current
     // this might seem dangerous, but "move" here just avoids constness,
     // making the two ranges compatible when compiling with boost 1.55.
     // Noone is actually moving anything...
-    for (auto all = current_sstables.all(); auto&& tab : boost::range::join(new_sstables, std::move(*all))) {
+    for (auto all = current_sstables.all(); auto&& tab : boost::range::join(new_sstables, std::move(*all) | boost::adaptors::map_values)) {
         if (!s.contains(tab)) {
             new_sstable_list.insert(tab);
         }
@@ -939,13 +939,13 @@ table::on_compaction_completion(sstables::compaction_completion_desc& desc) {
         rebuild_statistics();
     });
 
-    class sstable_list_updater : public row_cache::external_updater_impl {
+    class sstables_map_updater : public row_cache::external_updater_impl {
         table& _t;
         sstable_list_builder _builder;
         const sstables::compaction_completion_desc& _desc;
         lw_shared_ptr<sstables::sstable_set> _new_sstables;
     public:
-        explicit sstable_list_updater(table& t, sstable_list_builder::permit_t permit, sstables::compaction_completion_desc& d) : _t(t), _builder(std::move(permit)), _desc(d) {}
+        explicit sstables_map_updater(table& t, sstable_list_builder::permit_t permit, sstables::compaction_completion_desc& d) : _t(t), _builder(std::move(permit)), _desc(d) {}
         virtual future<> prepare() override {
             _new_sstables = co_await _builder.build_new_list(*_t._main_sstables, _t._compaction_strategy.make_sstable_set(_t._schema), _desc.new_sstables, _desc.old_sstables);
         }
@@ -955,11 +955,11 @@ table::on_compaction_completion(sstables::compaction_completion_desc& desc) {
             _t.backlog_tracker_adjust_charges(_desc.old_sstables, _desc.new_sstables);
         }
         static std::unique_ptr<row_cache::external_updater_impl> make(table& t, sstable_list_builder::permit_t permit, sstables::compaction_completion_desc& d) {
-            return std::make_unique<sstable_list_updater>(t, std::move(permit), d);
+            return std::make_unique<sstables_map_updater>(t, std::move(permit), d);
         }
     };
     auto permit = seastar::get_units(_sstable_set_mutation_sem, 1).get0();
-    auto updater = row_cache::external_updater(sstable_list_updater::make(*this, std::move(permit), desc));
+    auto updater = row_cache::external_updater(sstables_map_updater::make(*this, std::move(permit), desc));
 
     _cache.invalidate(std::move(updater), std::move(desc.ranges_for_cache_invalidation)).get();
 
@@ -1113,7 +1113,7 @@ const sstables::sstable_set& table::maintenance_sstable_set() const {
     return *_maintenance_sstables;
 }
 
-lw_shared_ptr<const sstable_list> table::get_sstables() const {
+lw_shared_ptr<const sstable_map> table::get_sstables() const {
     return _sstables->all();
 }
 
@@ -1122,11 +1122,17 @@ std::vector<sstables::shared_sstable> table::select_sstables(const dht::partitio
 }
 
 std::vector<sstables::shared_sstable> table::in_strategy_sstables() const {
-    auto sstables = _main_sstables->all();
-    return boost::copy_range<std::vector<sstables::shared_sstable>>(*sstables
-            | boost::adaptors::filtered([this] (auto& sst) {
-        return sstables::is_eligible_for_compaction(sst);
-    }));
+    const auto& sstables = _main_sstables->all();
+    std::vector<sstables::shared_sstable> ret;
+
+    ret.reserve(sstables->size() - _sstables_staging.size());
+    for (const auto& [gen, sst] : *sstables) {
+        if (sstables::is_eligible_for_compaction(sst)) {
+            ret.emplace_back(sst);
+        }
+    }
+
+    return ret;
 }
 
 // Gets the list of all sstables in the column family, including ones that are
@@ -1136,11 +1142,11 @@ std::vector<sstables::shared_sstable> table::in_strategy_sstables() const {
 // As long as we haven't deleted them, compaction needs to ensure it doesn't
 // garbage-collect a tombstone that covers data in an sstable that may not be
 // successfully deleted.
-lw_shared_ptr<const sstable_list> table::get_sstables_including_compacted_undeleted() const {
+lw_shared_ptr<const sstable_map> table::get_sstables_including_compacted_undeleted() const {
     if (_sstables_compacted_but_not_deleted.empty()) {
         return get_sstables();
     }
-    auto ret = make_lw_shared<sstable_list>(*_sstables->all());
+    auto ret = make_lw_shared<sstable_map>(*_sstables->all());
     for (auto&& s : _sstables_compacted_but_not_deleted) {
         ret->insert(s);
     }
@@ -1356,7 +1362,7 @@ future<> table::snapshot(database& db, sstring name) {
 
     std::vector<sstables::shared_sstable> tables;
     try {
-        tables = boost::copy_range<std::vector<sstables::shared_sstable>>(*_sstables->all());
+        tables = _sstables->all()->sstables();
         co_await io_check([&jsondir] { return recursive_touch_directory(jsondir); });
         co_await max_concurrent_for_each(tables, db.get_config().initial_sstable_loading_concurrency(), [&db, &jsondir] (sstables::shared_sstable sstable) {
             return with_semaphore(db.get_sharded_sst_dir_semaphore().local(), 1, [&jsondir, sstable] {

@@ -8,6 +8,8 @@
 
 #pragma once
 
+#include <seastar/core/coroutine.hh>
+
 #include "readers/flat_mutation_reader_fwd.hh"
 #include "readers/flat_mutation_reader_v2.hh"
 #include "sstables/progress_monitor.hh"
@@ -26,16 +28,75 @@ namespace sstables {
 class sstable_set_impl;
 class incremental_selector_impl;
 
+class sstable_map : public std::unordered_map<generation_type, shared_sstable>, public enable_lw_shared_from_this<sstable_map> {
+    using map_type = std::unordered_map<generation_type, shared_sstable>;
+public:
+    sstable_map() = default;
+
+    explicit sstable_map(shared_sstable);
+    sstable_map(const std::vector<shared_sstable>&);
+    sstable_map(std::vector<shared_sstable>&&);
+
+    std::vector<shared_sstable> sstables() const;
+
+    bool contains(generation_type gen) const noexcept {
+        return map_type::contains(gen);
+    }
+
+    // Throws std::runtime_error is generation exists in map
+    // but belongs to a different shared_sstable
+    bool contains(const shared_sstable&) const;
+
+    std::pair<iterator, bool> emplace(shared_sstable);
+
+    // Throws std::runtime_error is generation exists in map
+    // but belongs to a different shared_sstable
+    std::pair<iterator, bool> insert(shared_sstable);
+
+    size_type erase(generation_type gen) {
+        return map_type::erase(gen);
+    }
+
+    // Throws std::runtime_error is generation exists in map
+    // but belongs to a different shared_sstable
+    size_type erase(shared_sstable);
+
+    void for_each_sstable(std::function<void(const shared_sstable&)> func) const {
+        for (const auto& [gen, sst] : *this) {
+            func(sst);
+        }
+    }
+
+    template <typename Func>
+    requires std::same_as<futurize_t<std::invoke_result_t<Func, const shared_sstable&>>, future<>>
+    future<> for_each_sstable_gently(Func func) const {
+        auto zis = shared_from_this();
+        for (auto& [gen, sst] : *this) {
+            co_await futurize_invoke(func, sst);
+        }
+    }
+
+    template <typename T, typename Func>
+    requires std::same_as<futurize_t<std::invoke_result_t<Func, T, const shared_sstable&>>, future<T>>
+    future<T> accumulate(T value, Func func) const {
+        auto zis = shared_from_this();
+        for (auto& [gen, sst] : *this) {
+            value = co_await futurize_invoke(func, std::move(value), sst);
+        }
+        co_return value;
+    }
+};
+
 // Structure holds all sstables (a.k.a. fragments) that belong to same run identifier, which is an UUID.
 // SStables in that same run will not overlap with one another.
 class sstable_run {
-    sstable_list _all;
+    std::unordered_set<shared_sstable> _all;
 public:
     void insert(shared_sstable sst);
     void erase(shared_sstable sst);
     // Data size of the whole run, meaning it's a sum of the data size of all its fragments.
     uint64_t data_size() const;
-    const sstable_list& all() const { return _all; }
+    const std::unordered_set<shared_sstable>& all() const { return _all; }
     double estimate_droppable_tombstone_ratio(gc_clock::time_point gc_before) const;
 };
 
@@ -53,7 +114,7 @@ public:
     // Return all runs which contain any of the input sstables.
     std::vector<sstable_run> select_sstable_runs(const std::vector<shared_sstable>& sstables) const;
     // Return all sstables. It's not guaranteed that sstable_set will keep a reference to the returned list, so user should keep it.
-    lw_shared_ptr<sstable_list> all() const;
+    lw_shared_ptr<sstable_map> all() const;
     // Prefer for_each_sstable() over all() for iteration purposes, as the latter may have to copy all sstables into a temporary
     void for_each_sstable(std::function<void(const shared_sstable&)> func) const;
     void insert(shared_sstable sst);
@@ -144,7 +205,7 @@ public:
     friend class compound_sstable_set;
 };
 
-sstable_set make_partitioned_sstable_set(schema_ptr schema, lw_shared_ptr<sstable_list> all, bool use_level_metadata = true);
+sstable_set make_partitioned_sstable_set(schema_ptr schema, lw_shared_ptr<sstable_map> all, bool use_level_metadata = true);
 
 sstable_set make_compound_sstable_set(schema_ptr schema, std::vector<lw_shared_ptr<sstable_set>> sets);
 

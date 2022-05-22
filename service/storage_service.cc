@@ -3356,7 +3356,7 @@ calculate_splits(std::vector<dht::token> tokens, uint64_t split_count, replica::
         dht::token_range range({{ std::move(tokens[prev_token_idx]), false }}, {{ tokens[index], true }});
         // always return an estimate > 0 (see CASSANDRA-7322)
         uint64_t estimated_keys_for_range = 0;
-        for (auto&& sst : *sstables) {
+        for (auto&& sst : *sstables | boost::adaptors::map_values) {
             estimated_keys_for_range += sst->estimated_keys_for_range(range);
         }
         splits.emplace_back(std::move(range), std::max(static_cast<uint64_t>(cf.schema()->min_index_interval()), estimated_keys_for_range));
@@ -3384,7 +3384,7 @@ storage_service::get_splits(const sstring& ks_name, const sstring& cf_name, rang
     tokens.push_back(std::move(unwrapped[0].start().value_or(range_type::bound(dht::minimum_token()))).value());
     for (auto&& r : unwrapped) {
         std::vector<dht::token> range_tokens;
-        for (auto &&sst : *sstables) {
+        for (auto &&sst : *sstables | boost::adaptors::map_values) {
             total_row_count_estimate += sst->estimated_keys_for_range(r);
             auto keys = sst->get_key_samples(*cf.schema(), r);
             std::transform(keys.begin(), keys.end(), std::back_inserter(range_tokens), [](auto&& k) { return std::move(k.token()); });

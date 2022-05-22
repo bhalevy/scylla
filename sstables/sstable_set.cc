@@ -27,6 +27,74 @@
 
 namespace sstables {
 
+sstable_map::sstable_map(shared_sstable sst) {
+    insert(std::move(sst));
+}
+
+sstable_map::sstable_map(const std::vector<shared_sstable>& ssts) {
+    reserve(ssts.size());
+    for (const auto& sst : ssts) {
+        emplace(sst);
+    }
+}
+
+sstable_map::sstable_map(std::vector<shared_sstable>&& ssts) {
+    reserve(ssts.size());
+    for (auto&& sst : ssts) {
+        emplace(std::move(sst));
+    }
+}
+
+std::vector<shared_sstable> sstable_map::sstables() const {
+    std::vector<shared_sstable> ret;
+    ret.reserve(size());
+    for (const auto& [gen, sst] : *this) {
+        ret.emplace_back(sst);
+    }
+    return ret;
+}
+
+bool sstable_map::contains(const shared_sstable& sst) const {
+    auto it = find(sst->generation());
+    if (it == end()) {
+        return false;
+    }
+    if (it->second != sst) {
+        throw std::runtime_error(fmt::format("sstable_map: contains: found mismatching sstable with generation {}", sst->generation()));
+    }
+    return true;
+}
+
+std::pair<sstable_map::iterator, bool> sstable_map::emplace(shared_sstable sst) {
+    return map_type::emplace(std::make_pair(sst->generation(), std::move(sst)));
+}
+
+std::pair<sstable_map::iterator, bool> sstable_map::insert(shared_sstable sst) {
+    auto* sst_ptr = sst.get();
+    auto ret = emplace(std::move(sst));
+    const auto& [it, inserted] = ret;
+    if (inserted) {
+        return ret;
+    }
+    const auto& [gen, found_sst] = *it;
+    if (found_sst.get() != sst_ptr) {
+        throw std::runtime_error(fmt::format("sstable_map: insert: found mismatching sstable with generation {}", found_sst->generation()));
+    }
+    return ret;
+}
+
+sstable_map::size_type sstable_map::erase(shared_sstable sst) {
+    auto it = find(sst->generation());
+    if (it == end()) {
+        return 0;
+    }
+    if (it->second != sst) {
+        throw std::runtime_error(fmt::format("sstable_map: erase: found mismatching sstable with generation {}", sst->generation()));
+    }
+    map_type::erase(it);
+    return 1;
+}
+
 void sstable_run::insert(shared_sstable sst) {
     _all.insert(std::move(sst));
 }
@@ -107,7 +175,7 @@ partitioned_sstable_set::select_sstable_runs(const std::vector<shared_sstable>& 
     }));
 }
 
-lw_shared_ptr<sstable_list>
+lw_shared_ptr<sstable_map>
 sstable_set::all() const {
     return _impl->all();
 }
@@ -224,18 +292,18 @@ dht::partition_range partitioned_sstable_set::to_partition_range(const dht::ring
     return dht::partition_range::make(std::move(lower_bound), std::move(upper_bound));
 }
 
-partitioned_sstable_set::partitioned_sstable_set(schema_ptr schema, lw_shared_ptr<sstable_list> all, bool use_level_metadata)
+partitioned_sstable_set::partitioned_sstable_set(schema_ptr schema, lw_shared_ptr<sstable_map> all, bool use_level_metadata)
         : _schema(std::move(schema))
         , _all(std::move(all))
         , _use_level_metadata(use_level_metadata) {
 }
 
 partitioned_sstable_set::partitioned_sstable_set(schema_ptr schema, const std::vector<shared_sstable>& unleveled_sstables, const interval_map_type& leveled_sstables,
-        const lw_shared_ptr<sstable_list>& all, const std::unordered_map<utils::UUID, sstable_run>& all_runs, bool use_level_metadata)
+        const lw_shared_ptr<sstable_map>& all, const std::unordered_map<utils::UUID, sstable_run>& all_runs, bool use_level_metadata)
         : _schema(schema)
         , _unleveled_sstables(unleveled_sstables)
         , _leveled_sstables(leveled_sstables)
-        , _all(make_lw_shared<sstable_list>(*all))
+        , _all(make_lw_shared<sstable_map>(*all))
         , _all_runs(all_runs)
         , _use_level_metadata(use_level_metadata) {
 }
@@ -257,14 +325,12 @@ std::vector<shared_sstable> partitioned_sstable_set::select(const dht::partition
     return r;
 }
 
-lw_shared_ptr<sstable_list> partitioned_sstable_set::all() const {
+lw_shared_ptr<sstable_map> partitioned_sstable_set::all() const {
     return _all;
 }
 
 void partitioned_sstable_set::for_each_sstable(std::function<void(const shared_sstable&)> func) const {
-    for (auto& sst : *_all) {
-        func(sst);
-    }
+    return _all->for_each_sstable(std::move(func));
 }
 
 void partitioned_sstable_set::insert(shared_sstable sst) {
@@ -378,8 +444,13 @@ std::vector<shared_sstable> time_series_sstable_set::select(const dht::partition
     return boost::copy_range<std::vector<shared_sstable>>(*_sstables | boost::adaptors::map_values);
 }
 
-lw_shared_ptr<sstable_list> time_series_sstable_set::all() const {
-    return make_lw_shared<sstable_list>(boost::copy_range<sstable_list>(*_sstables | boost::adaptors::map_values));
+lw_shared_ptr<sstable_map> time_series_sstable_set::all() const {
+    auto ret = make_lw_shared<sstable_map>();
+    ret->reserve(_sstables->size());
+    for (const auto& sst : *_sstables | boost::adaptors::map_values) {
+        ret->insert(sst);
+    }
+    return ret;
 }
 
 void time_series_sstable_set::for_each_sstable(std::function<void(const shared_sstable&)> func) const {
@@ -589,18 +660,18 @@ std::unique_ptr<incremental_selector_impl> partitioned_sstable_set::make_increme
 
 std::unique_ptr<sstable_set_impl> compaction_strategy_impl::make_sstable_set(schema_ptr schema) const {
     // with use_level_metadata enabled, L0 sstables will not go to interval map, which suits well STCS.
-    return std::make_unique<partitioned_sstable_set>(schema, make_lw_shared<sstable_list>(), true);
+    return std::make_unique<partitioned_sstable_set>(schema, make_lw_shared<sstable_map>(), true);
 }
 
 std::unique_ptr<sstable_set_impl> leveled_compaction_strategy::make_sstable_set(schema_ptr schema) const {
-    return std::make_unique<partitioned_sstable_set>(std::move(schema), make_lw_shared<sstable_list>());
+    return std::make_unique<partitioned_sstable_set>(std::move(schema), make_lw_shared<sstable_map>());
 }
 
 std::unique_ptr<sstable_set_impl> time_window_compaction_strategy::make_sstable_set(schema_ptr schema) const {
     return std::make_unique<time_series_sstable_set>(std::move(schema));
 }
 
-sstable_set make_partitioned_sstable_set(schema_ptr schema, lw_shared_ptr<sstable_list> all, bool use_level_metadata) {
+sstable_set make_partitioned_sstable_set(schema_ptr schema, lw_shared_ptr<sstable_map> all, bool use_level_metadata) {
     return sstable_set(std::make_unique<partitioned_sstable_set>(schema, std::move(all), use_level_metadata), schema);
 }
 
@@ -924,13 +995,13 @@ std::vector<sstable_run> compound_sstable_set::select_sstable_runs(const std::ve
     return ret;
 }
 
-lw_shared_ptr<sstable_list> compound_sstable_set::all() const {
+lw_shared_ptr<sstable_map> compound_sstable_set::all() const {
     auto sets = _sets;
     auto it = std::partition(sets.begin(), sets.end(), [] (const auto& set) { return !set->all()->empty(); });
     auto non_empty_set_count = std::distance(sets.begin(), it);
 
     if (!non_empty_set_count) {
-        return make_lw_shared<sstable_list>();
+        return make_lw_shared<sstable_map>();
     }
     // optimize for common case where primary set contains sstables, but secondary one is empty for most of the time.
     if (non_empty_set_count == 1) {
@@ -938,11 +1009,13 @@ lw_shared_ptr<sstable_list> compound_sstable_set::all() const {
         return non_empty_set->all();
     }
 
-    auto ret = make_lw_shared<sstable_list>();
+    auto ret = make_lw_shared<sstable_map>();
     for (auto& set : boost::make_iterator_range(sets.begin(), it)) {
         auto ssts = set->all();
         ret->reserve(ret->size() + ssts->size());
-        ret->insert(ssts->begin(), ssts->end());
+        ssts->for_each_sstable([&ret] (const shared_sstable& sst) {
+            ret->insert(sst);
+        });
     }
     return ret;
 }
@@ -1119,7 +1192,7 @@ sstable_set::make_local_shard_sstable_reader(
         return sst->make_reader(s, permit, pr, slice, pc, trace_state, fwd, fwd_mr, monitor_generator(sst));
     };
     if (auto sstables = _impl->all(); sstables->size() == 1) [[unlikely]] {
-        auto sst = *sstables->begin();
+        auto& [gen, sst] = *sstables->begin();
         return reader_factory_fn(sst, pr);
     }
     return make_combined_reader(s, std::move(permit), std::make_unique<incremental_reader_selector>(s,

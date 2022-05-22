@@ -23,6 +23,7 @@
 #include <cmath>
 #include <boost/algorithm/cxx11/any_of.hpp>
 #include <boost/range/algorithm/remove_if.hpp>
+#include <boost/range/adaptor/map.hpp>
 
 static logging::logger cmlog("compaction_manager");
 using namespace std::chrono_literals;
@@ -928,7 +929,7 @@ public:
         cmlog.info("Starting off-strategy compaction for {}.{}, {} candidates were found",
                      t.schema()->ks_name(), t.schema()->cf_name(), maintenance_sstables.all()->size());
 
-        const auto old_sstables = boost::copy_range<std::vector<sstables::shared_sstable>>(*maintenance_sstables.all());
+        const auto old_sstables = maintenance_sstables.all()->sstables();
         std::vector<sstables::shared_sstable> reshape_candidates = old_sstables;
         std::vector<sstables::shared_sstable> sstables_to_remove;
         std::unordered_set<sstables::shared_sstable> new_unused_sstables;
@@ -1178,7 +1179,7 @@ future<> compaction_manager::perform_sstable_scrub_validate_mode(replica::table*
         return make_ready_future<>();
     }
     // All sstables must be included, even the ones being compacted, such that everything in table is validated.
-    auto all_sstables = boost::copy_range<std::vector<sstables::shared_sstable>>(*t->get_sstables());
+    auto all_sstables = t->get_sstables()->sstables();
     return perform_task(seastar::make_shared<validate_sstables_compaction_task>(*this, t, std::move(all_sstables)));
 }
 
@@ -1340,6 +1341,7 @@ future<> compaction_manager::perform_sstable_scrub(replica::table* t, sstables::
     return rewrite_sstables(t, sstables::compaction_type_options::make_scrub(scrub_mode), [this, t, opts] {
         auto all_sstables = t->get_sstable_set().all();
         std::vector<sstables::shared_sstable> sstables = boost::copy_range<std::vector<sstables::shared_sstable>>(*all_sstables
+                | boost::adaptors::map_values
                 | boost::adaptors::filtered([&opts] (const sstables::shared_sstable& sst) {
             if (sst->requires_view_building()) {
                 return false;
