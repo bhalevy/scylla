@@ -19,10 +19,11 @@ namespace api {
 void set_column_family(http_context& ctx, routes& r);
 
 const utils::UUID& get_uuid(const sstring& name, const replica::database& db);
-future<> foreach_column_family(http_context& ctx, const sstring& name, std::function<void(replica::column_family&)> f);
+future<> foreach_column_family(http_context& ctx, const sstring& name, std::function<void(const replica::column_family&)> f);
 
 
 template<class Mapper, class I, class Reducer>
+requires std::same_as<std::invoke_result_t<Mapper, const replica::table&>, I> && std::invocable<Reducer, I, I>
 future<I> map_reduce_cf_raw(http_context& ctx, const sstring& name, I init,
         Mapper mapper, Reducer reducer) {
     auto uuid = get_uuid(name, ctx.db.local());
@@ -39,6 +40,7 @@ future<I> map_reduce_cf_raw(http_context& ctx, const sstring& name, I init,
 
 
 template<class Mapper, class I, class Reducer>
+requires std::same_as<std::invoke_result_t<Mapper, const replica::table&>, I> && std::invocable<Reducer, I, I>
 future<json::json_return_type> map_reduce_cf(http_context& ctx, const sstring& name, I init,
         Mapper mapper, Reducer reducer) {
     return map_reduce_cf_raw(ctx, name, init, mapper, reducer).then([](const I& res) {
@@ -47,6 +49,7 @@ future<json::json_return_type> map_reduce_cf(http_context& ctx, const sstring& n
 }
 
 template<class Mapper, class I, class Reducer, class Result>
+requires std::same_as<std::invoke_result_t<Mapper, const replica::table&>, I> && std::invocable<Reducer, I, I> && std::is_assignable_v<Result, I>
 future<json::json_return_type> map_reduce_cf(http_context& ctx, const sstring& name, I init,
         Mapper mapper, Reducer reducer, Result result) {
     return map_reduce_cf_raw(ctx, name, init, mapper, reducer).then([result](const I& res) mutable {
@@ -59,7 +62,7 @@ future<json::json_return_type> map_reduce_cf_time_histogram(http_context& ctx, c
 
 struct map_reduce_column_families_locally {
     std::any init;
-    std::function<std::unique_ptr<std::any>(replica::column_family&)> mapper;
+    std::function<std::unique_ptr<std::any>(const replica::column_family&)> mapper;
     std::function<std::unique_ptr<std::any>(std::unique_ptr<std::any>, std::unique_ptr<std::any>)> reducer;
     future<std::unique_ptr<std::any>> operator()(replica::database& db) const {
         auto res = seastar::make_lw_shared<std::unique_ptr<std::any>>(std::make_unique<std::any>(init));
@@ -72,11 +75,12 @@ struct map_reduce_column_families_locally {
 };
 
 template<class Mapper, class I, class Reducer>
+requires std::same_as<std::invoke_result_t<Mapper, const replica::table&>, I> && std::invocable<Reducer, I, I>
 future<I> map_reduce_cf_raw(http_context& ctx, I init,
         Mapper mapper, Reducer reducer) {
-    using mapper_type = std::function<std::unique_ptr<std::any>(replica::column_family&)>;
+    using mapper_type = std::function<std::unique_ptr<std::any>(const replica::column_family&)>;
     using reducer_type = std::function<std::unique_ptr<std::any>(std::unique_ptr<std::any>, std::unique_ptr<std::any>)>;
-    auto wrapped_mapper = mapper_type([mapper = std::move(mapper)] (replica::column_family& cf) mutable {
+    auto wrapped_mapper = mapper_type([mapper = std::move(mapper)] (const replica::column_family& cf) mutable {
         return std::make_unique<std::any>(I(mapper(cf)));
     });
     auto wrapped_reducer = reducer_type([reducer = std::move(reducer)] (std::unique_ptr<std::any> a, std::unique_ptr<std::any> b) mutable {
@@ -90,6 +94,7 @@ future<I> map_reduce_cf_raw(http_context& ctx, I init,
 
 
 template<class Mapper, class I, class Reducer>
+requires std::same_as<std::invoke_result_t<Mapper, const replica::table&>, I> && std::invocable<Reducer, I, I>
 future<json::json_return_type> map_reduce_cf(http_context& ctx, I init,
         Mapper mapper, Reducer reducer) {
     return map_reduce_cf_raw(ctx, init, mapper, reducer).then([](const I& res) {

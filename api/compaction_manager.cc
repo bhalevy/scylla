@@ -126,7 +126,7 @@ void set_compaction_manager(http_context& ctx, routes& r) {
     });
 
     cm::get_pending_tasks.set(r, [&ctx] (std::unique_ptr<request> req) {
-        return map_reduce_cf(ctx, int64_t(0), [](replica::column_family& cf) {
+        return map_reduce_cf(ctx, int64_t(0), [](const replica::column_family& cf) {
             return cf.get_compaction_strategy().estimated_pending_compactions(cf.as_table_state());
         }, std::plus<int64_t>());
     });
