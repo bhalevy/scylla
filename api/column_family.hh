@@ -24,12 +24,12 @@ future<> foreach_column_family(http_context& ctx, const sstring& name, std::func
 
 template<class Mapper, class I, class Reducer>
 requires std::same_as<std::invoke_result_t<Mapper, const replica::table&>, I> && std::invocable<Reducer, I, I>
-future<I> map_reduce_cf_raw(http_context& ctx, const sstring& name, I init,
-        Mapper mapper, Reducer reducer) {
+future<I> map_reduce_cf_raw(http_context& ctx, const sstring& name, I&& init,
+        Mapper&& mapper, Reducer&& reducer) {
     auto uuid = get_uuid(name, ctx.db.local());
     using mapper_type = std::function<std::unique_ptr<std::any>(replica::database&)>;
     using reducer_type = std::function<std::unique_ptr<std::any>(std::unique_ptr<std::any>, std::unique_ptr<std::any>)>;
-    return ctx.db.map_reduce0(mapper_type([mapper, uuid](replica::database& db) {
+    return ctx.db.map_reduce0(mapper_type([mapper = std::move(mapper), uuid](replica::database& db) {
         return std::make_unique<std::any>(I(mapper(db.find_column_family(uuid))));
     }), std::make_unique<std::any>(std::move(init)), reducer_type([reducer = std::move(reducer)] (std::unique_ptr<std::any> a, std::unique_ptr<std::any> b) mutable {
         return std::make_unique<std::any>(I(reducer(std::any_cast<I>(std::move(*a)), std::any_cast<I>(std::move(*b)))));
@@ -41,18 +41,18 @@ future<I> map_reduce_cf_raw(http_context& ctx, const sstring& name, I init,
 
 template<class Mapper, class I, class Reducer>
 requires std::same_as<std::invoke_result_t<Mapper, const replica::table&>, I> && std::invocable<Reducer, I, I>
-future<json::json_return_type> map_reduce_cf(http_context& ctx, const sstring& name, I init,
-        Mapper mapper, Reducer reducer) {
-    return map_reduce_cf_raw(ctx, name, init, mapper, reducer).then([](const I& res) {
+future<json::json_return_type> map_reduce_cf(http_context& ctx, const sstring& name, I&& init,
+        Mapper&& mapper, Reducer&& reducer) {
+    return map_reduce_cf_raw(ctx, name, std::forward<I>(init), std::forward<Mapper>(mapper), std::forward<Reducer>(reducer)).then([](const I& res) {
         return make_ready_future<json::json_return_type>(res);
     });
 }
 
 template<class Mapper, class I, class Reducer, class Result>
 requires std::same_as<std::invoke_result_t<Mapper, const replica::table&>, I> && std::invocable<Reducer, I, I> && std::is_assignable_v<Result, I>
-future<json::json_return_type> map_reduce_cf(http_context& ctx, const sstring& name, I init,
-        Mapper mapper, Reducer reducer, Result result) {
-    return map_reduce_cf_raw(ctx, name, init, mapper, reducer).then([result](const I& res) mutable {
+future<json::json_return_type> map_reduce_cf(http_context& ctx, const sstring& name, I&& init,
+        Mapper&& mapper, Reducer&& reducer, Result&& result) {
+    return map_reduce_cf_raw(ctx, name, std::forward<I>(init), std::forward<Mapper>(mapper), std::forward<Reducer>(reducer)).then([result = std::move(result)](const I& res) mutable {
         result = res;
         return make_ready_future<json::json_return_type>(result);
     });
@@ -76,8 +76,8 @@ struct map_reduce_column_families_locally {
 
 template<class Mapper, class I, class Reducer>
 requires std::same_as<std::invoke_result_t<Mapper, const replica::table&>, I> && std::invocable<Reducer, I, I>
-future<I> map_reduce_cf_raw(http_context& ctx, I init,
-        Mapper mapper, Reducer reducer) {
+future<I> map_reduce_cf_raw(http_context& ctx, I&& init,
+        Mapper&& mapper, Reducer&& reducer) {
     using mapper_type = std::function<std::unique_ptr<std::any>(const replica::column_family&)>;
     using reducer_type = std::function<std::unique_ptr<std::any>(std::unique_ptr<std::any>, std::unique_ptr<std::any>)>;
     auto wrapped_mapper = mapper_type([mapper = std::move(mapper)] (const replica::column_family& cf) mutable {
@@ -86,7 +86,7 @@ future<I> map_reduce_cf_raw(http_context& ctx, I init,
     auto wrapped_reducer = reducer_type([reducer = std::move(reducer)] (std::unique_ptr<std::any> a, std::unique_ptr<std::any> b) mutable {
         return std::make_unique<std::any>(I(reducer(std::any_cast<I>(std::move(*a)), std::any_cast<I>(std::move(*b)))));
     });
-    return ctx.db.map_reduce0(map_reduce_column_families_locally{init,
+    return ctx.db.map_reduce0(map_reduce_column_families_locally{std::move(init),
             std::move(wrapped_mapper), wrapped_reducer}, std::make_unique<std::any>(init), wrapped_reducer).then([] (std::unique_ptr<std::any> res) {
         return std::any_cast<I>(std::move(*res));
     });
@@ -95,9 +95,9 @@ future<I> map_reduce_cf_raw(http_context& ctx, I init,
 
 template<class Mapper, class I, class Reducer>
 requires std::same_as<std::invoke_result_t<Mapper, const replica::table&>, I> && std::invocable<Reducer, I, I>
-future<json::json_return_type> map_reduce_cf(http_context& ctx, I init,
-        Mapper mapper, Reducer reducer) {
-    return map_reduce_cf_raw(ctx, init, mapper, reducer).then([](const I& res) {
+future<json::json_return_type> map_reduce_cf(http_context& ctx, I&& init,
+        Mapper&& mapper, Reducer&& reducer) {
+    return map_reduce_cf_raw(ctx, std::forward<I>(init), std::forward<Mapper>(mapper), std::forward<Reducer>(reducer)).then([](const I& res) {
         return make_ready_future<json::json_return_type>(res);
     });
 }
