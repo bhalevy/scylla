@@ -95,8 +95,8 @@ struct send_info {
     future<size_t> estimate_partitions() {
         size_t partition_count = 0;
         auto sstables = cf.get_sstables();
-        for (const auto& sst : *sstables) {
-            for (const auto& range : ranges) {
+        for (const auto& range : ranges) {
+            for (const auto& sst : *sstables) {
                 partition_count += sst->estimated_keys_for_range(range);
                 co_await coroutine::maybe_yield();
             }
