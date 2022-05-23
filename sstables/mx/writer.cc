@@ -571,11 +571,10 @@ private:
     struct {
         // Unfortunately we cannot output the promoted index directly to the
         // index file because it needs to be prepended by its size.
-        // first_entry is used for deferring serialization into blocks for small partitions.
-        std::optional<pi_block> first_entry;
-        bytes_ostream blocks; // Serialized pi_blocks.
-        bytes_ostream offsets; // Serialized block offsets (uint32_t) relative to the start of "blocks".
-        uint64_t promoted_index_size = 0; // Number of pi_blocks inside blocks and first_entry;
+        // blocks is used for deferring serialization into blocks for small partitions.
+        utils::chunked_vector<pi_block> blocks;
+        size_t blocks_serialized_size;
+        size_t offsets_serialized_size;
         tombstone tomb;
         uint64_t block_start_offset;
         uint64_t block_next_start_offset;
@@ -616,7 +615,9 @@ private:
     void maybe_set_pi_first_clustering(const clustering_info& info);
     void maybe_add_pi_block();
     void add_pi_block();
-    void write_pi_block(const pi_block&);
+
+    template <typename BlocksWriter, typename OffsetsWriter>
+    void write_pi_block(BlocksWriter& blocks, OffsetsWriter& offsets, const pi_block& block, uint32_t offset);
 
     uint64_t get_data_offset() const {
         if (_sst.has_component(component_type::CompressionInfo)) {
@@ -832,18 +833,13 @@ void writer::add_pi_block() {
         _data_writer->offset() - _pi_write_m.block_start_offset,
         (_current_tombstone ? std::make_optional(_current_tombstone) : std::optional<tombstone>{})};
 
-    if (_pi_write_m.blocks.empty()) {
-        if (!_pi_write_m.first_entry) {
-            _pi_write_m.first_entry.emplace(std::move(block));
-            ++_pi_write_m.promoted_index_size;
-            return;
-        } else {
-            write_pi_block(*_pi_write_m.first_entry);
-        }
-    }
+    measuring_output_stream blocks;
+    measuring_output_stream offsets;
+    write_pi_block(blocks, offsets, block, _pi_write_m.blocks_serialized_size);
+    _pi_write_m.blocks_serialized_size += blocks.size();
+    _pi_write_m.offsets_serialized_size += offsets.size();
 
-    write_pi_block(block);
-    ++_pi_write_m.promoted_index_size;
+    _pi_write_m.blocks.emplace_back(std::move(block));
 }
 
 void writer::maybe_add_pi_block() {
@@ -913,10 +909,9 @@ void writer::consume_new_partition(const dht::decorated_key& dk) {
     write(_sst.get_version(), *_index_writer, p_key);
     write_vint(*_index_writer, _data_writer->offset());
 
-    _pi_write_m.first_entry.reset();
     _pi_write_m.blocks.clear();
-    _pi_write_m.offsets.clear();
-    _pi_write_m.promoted_index_size = 0;
+    _pi_write_m.blocks_serialized_size = 0;
+    _pi_write_m.offsets_serialized_size = 0;
     _pi_write_m.tomb = {};
     _pi_write_m.first_clustering.reset();
     _pi_write_m.last_clustering.reset();
@@ -1287,25 +1282,29 @@ static void write_clustering_prefix(sstable_version_types v, W& writer, bound_ki
 }
 
 void writer::write_promoted_index() {
-    if (_pi_write_m.promoted_index_size < 2) {
+    if (_pi_write_m.blocks.size() < 2) {
         write_vint(*_index_writer, uint64_t(0));
         return;
     }
     write_vint(_tmp_bufs, _partition_header_length);
     write(_sst.get_version(), _tmp_bufs, to_deletion_time(_pi_write_m.tomb));
-    write_vint(_tmp_bufs, _pi_write_m.promoted_index_size);
-    uint64_t pi_size = _tmp_bufs.size() + _pi_write_m.blocks.size() + _pi_write_m.offsets.size();
+    write_vint(_tmp_bufs, _pi_write_m.blocks.size());
+    uint64_t pi_size = _tmp_bufs.size() + _pi_write_m.blocks_serialized_size + _pi_write_m.offsets_serialized_size;
     write_vint(*_index_writer, pi_size);
     flush_tmp_bufs(*_index_writer);
-    write(_sst.get_version(), *_index_writer, _pi_write_m.blocks);
-    write(_sst.get_version(), *_index_writer, _pi_write_m.offsets);
+
+    bytes_ostream offsets;
+    size_t base_offset = _index_writer->offset();
+    for (const auto& b : _pi_write_m.blocks) {
+        write_pi_block(*_index_writer, offsets, b, _index_writer->offset() - base_offset);
+    }
+    write(_sst.get_version(), *_index_writer, offsets);
 }
 
-void writer::write_pi_block(const pi_block& block) {
+template <typename BlocksWriter, typename OffsetsWriter>
+void writer::write_pi_block(BlocksWriter& blocks, OffsetsWriter& offsets, const pi_block& block, uint32_t offset) {
     static constexpr size_t width_base = 65536;
-    bytes_ostream& blocks = _pi_write_m.blocks;
-    uint32_t offset = blocks.size();
-    write(_sst.get_version(), _pi_write_m.offsets, offset);
+    write(_sst.get_version(), offsets, offset);
     write_clustering_prefix(_sst.get_version(), blocks, block.first.kind, _schema, block.first.clustering);
     write_clustering_prefix(_sst.get_version(), blocks, block.last.kind, _schema, block.last.clustering);
     write_vint(blocks, block.offset);
@@ -1365,7 +1364,7 @@ stop_iteration writer::consume_end_of_partition() {
 
     write(_sst.get_version(), *_data_writer, row_flags::end_of_partition);
 
-    if (_pi_write_m.promoted_index_size && _pi_write_m.first_clustering) {
+    if (_pi_write_m.blocks.size() && _pi_write_m.first_clustering) {
         add_pi_block();
     }
 
