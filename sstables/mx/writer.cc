@@ -581,6 +581,8 @@ private:
         std::optional<clustering_info> first_clustering;
         std::optional<clustering_info> last_clustering;
         size_t desired_block_size;
+        size_t promoted_index_block_size;
+        size_t auto_scale_threshold;
     } _pi_write_m;
     utils::UUID _run_identifier;
     bool _write_regular_as_static; // See #4139
@@ -786,7 +788,8 @@ public:
 
         _cfg.monitor->on_write_started(_data_writer->offset_tracker());
         _sst._components->filter = utils::i_filter::get_filter(estimated_partitions, _schema.bloom_filter_fp_chance(), utils::filter_format::m_format);
-        _pi_write_m.desired_block_size = cfg.promoted_index_block_size;
+        _pi_write_m.promoted_index_block_size = cfg.promoted_index_block_size;
+        _pi_write_m.auto_scale_threshold = cfg.promoted_index_auto_scale_threshold;
         _index_sampling_state.summary_byte_cost = _cfg.summary_byte_cost;
         prepare_summary(_sst._components->summary, estimated_partitions, _schema.min_index_interval());
     }
@@ -840,6 +843,30 @@ void writer::add_pi_block() {
     _pi_write_m.offsets_serialized_size += offsets.size();
 
     _pi_write_m.blocks.emplace_back(std::move(block));
+
+    // auto-scale?
+    if (_pi_write_m.auto_scale_threshold // enabled
+            && _pi_write_m.blocks.size() >= _pi_write_m.auto_scale_threshold // crossed threshold
+            && !(_pi_write_m.blocks.size() % 2)) { // has even number of blocks
+        utils::chunked_vector<pi_block> new_blocks;
+        new_blocks.reserve(_pi_write_m.blocks.size() / 2);
+        blocks = measuring_output_stream();
+        offsets = measuring_output_stream();
+        auto it = _pi_write_m.blocks.cbegin();
+        while (it != _pi_write_m.blocks.cend()) {
+            block = *it++;
+            auto block2 = *it++;
+            block.last = std::move(block2.last);
+            block.width += block2.width;
+            block.open_marker = block2.open_marker;
+            write_pi_block(blocks, offsets, block, blocks.size());
+            new_blocks.emplace_back(std::move(block));
+        }
+        _pi_write_m.blocks = std::move(new_blocks);
+        _pi_write_m.blocks_serialized_size = blocks.size();
+        _pi_write_m.offsets_serialized_size = offsets.size();
+        _pi_write_m.desired_block_size *= 2;
+    }
 }
 
 void writer::maybe_add_pi_block() {
@@ -915,6 +942,7 @@ void writer::consume_new_partition(const dht::decorated_key& dk) {
     _pi_write_m.tomb = {};
     _pi_write_m.first_clustering.reset();
     _pi_write_m.last_clustering.reset();
+    _pi_write_m.desired_block_size = _pi_write_m.promoted_index_block_size;
 
     write(_sst.get_version(), *_data_writer, p_key);
     _partition_header_length = _data_writer->offset() - _c_stats.start_offset;
