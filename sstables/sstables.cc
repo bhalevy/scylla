@@ -2143,6 +2143,16 @@ future<> sstable::move_to_quarantine(bool do_sync_dirs) {
     co_await move_to_new_dir(std::move(new_dir), generation(), do_sync_dirs);
 }
 
+future<shared_sstable> sstable::clone_at(const sstring& new_dir) {
+    if (fs::canonical(fs::path(new_dir)) == fs::canonical(fs::path(_dir))) {
+        on_internal_error(sstlog, format("Cannot clone sstable {} into same dir", get_filename()));
+    }
+    co_await create_links(new_dir);
+    auto cloned_sst = _manager.make_sstable(_schema, new_dir, _generation, _version, _format);
+    co_await cloned_sst->load(co_await get_open_info());
+    co_return cloned_sst;
+}
+
 flat_mutation_reader_v2
 sstable::make_reader(
         schema_ptr schema,
