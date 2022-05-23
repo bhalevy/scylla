@@ -425,6 +425,7 @@ public:
 time_series_sstable_set::time_series_sstable_set(schema_ptr schema)
     : _schema(std::move(schema))
     , _reversed_schema(_schema->make_reversed())
+    , _all(make_lw_shared<sstable_map>())
     , _sstables(make_lw_shared<container_t>(position_in_partition::less_compare(*_schema)))
     , _sstables_reversed(make_lw_shared<container_t>(position_in_partition::less_compare(*_reversed_schema)))
 {}
@@ -432,6 +433,7 @@ time_series_sstable_set::time_series_sstable_set(schema_ptr schema)
 time_series_sstable_set::time_series_sstable_set(const time_series_sstable_set& s)
     : _schema(s._schema)
     , _reversed_schema(s._reversed_schema)
+    , _all(make_lw_shared(*s._all))
     , _sstables(make_lw_shared(*s._sstables))
     , _sstables_reversed(make_lw_shared(*s._sstables_reversed))
 {}
@@ -445,12 +447,7 @@ std::vector<shared_sstable> time_series_sstable_set::select(const dht::partition
 }
 
 lw_shared_ptr<sstable_map> time_series_sstable_set::all() const {
-    auto ret = make_lw_shared<sstable_map>();
-    ret->reserve(_sstables->size());
-    for (const auto& sst : *_sstables | boost::adaptors::map_values) {
-        ret->insert(sst);
-    }
-    return ret;
+    return _all;
 }
 
 void time_series_sstable_set::for_each_sstable(std::function<void(const shared_sstable&)> func) const {
@@ -461,6 +458,7 @@ void time_series_sstable_set::for_each_sstable(std::function<void(const shared_s
 
 // O(log n)
 void time_series_sstable_set::insert(shared_sstable sst) {
+    _all->insert(sst);
     auto min_pos = sst->min_position();
     auto max_pos_reversed = sst->max_position().reversed();
     _sstables->emplace(std::move(min_pos), sst);
@@ -469,6 +467,8 @@ void time_series_sstable_set::insert(shared_sstable sst) {
 
 // O(n) worst case, but should be close to O(log n) most of the time
 void time_series_sstable_set::erase(shared_sstable sst) {
+    _all->erase(sst);
+
     {
         auto [first, last] = _sstables->equal_range(sst->min_position());
         auto it = std::find_if(first, last,

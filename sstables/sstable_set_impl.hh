@@ -106,6 +106,7 @@ private:
 
     schema_ptr _schema;
     schema_ptr _reversed_schema; // == _schema->make_reversed();
+    lw_shared_ptr<sstable_map> _all;
     // s.min_position() -> s, ordered using _schema
     lw_shared_ptr<container_t> _sstables;
     // s.max_position().reversed() -> s, ordered using _reversed_schema; the set of values is the same as in _sstables
