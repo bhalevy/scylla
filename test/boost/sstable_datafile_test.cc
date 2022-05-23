@@ -2193,6 +2193,7 @@ SEASTAR_TEST_CASE(sstable_set_erase) {
         set.erase(leveled_sst);
         BOOST_REQUIRE(set.all()->size() == 1);
         BOOST_REQUIRE(set.all()->contains(sst));
+        BOOST_REQUIRE(set.contains(sst->generation()));
     }
 
     {
@@ -2208,6 +2209,7 @@ SEASTAR_TEST_CASE(sstable_set_erase) {
             BOOST_REQUIRE(set.all()->size() == 1);
             BOOST_REQUIRE(set.all()->contains(sst->generation()));
             BOOST_REQUIRE(set.all()->contains(sst));
+            BOOST_REQUIRE(set.contains(sst->generation()));
         }
 
         auto sst2 = sstable_for_overlapping_test(env, s, 0, key_and_token_pair[0].first, key_and_token_pair[0].first, 1);
@@ -2215,12 +2217,14 @@ SEASTAR_TEST_CASE(sstable_set_erase) {
         BOOST_REQUIRE(set.all()->size() == 1);
         BOOST_REQUIRE(set.all()->contains(sst2->generation()));
         BOOST_REQUIRE_THROW(set.all()->contains(sst2), std::runtime_error);
+        BOOST_REQUIRE(set.contains(sst2->generation()));
 
         BOOST_REQUIRE_THROW(set.erase(sst2), std::runtime_error);
         BOOST_REQUIRE(set.all()->size() == 1);
 
         auto sst1 = *set.all()->sstables().begin();
         BOOST_REQUIRE_EQUAL(sst1.get(), p);
+        BOOST_REQUIRE(set.contains(sst1->generation()));
         set.erase(sst1);
         BOOST_REQUIRE(set.all()->size() == 0);
     }
@@ -2237,6 +2241,7 @@ SEASTAR_TEST_CASE(sstable_set_erase) {
         set.erase(sst2);
         BOOST_REQUIRE(set.all()->size() == 1);
         BOOST_REQUIRE(set.all()->contains(sst));
+        BOOST_REQUIRE(set.contains(sst->generation()));
     }
 
     return make_ready_future<>();

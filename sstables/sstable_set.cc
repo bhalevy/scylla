@@ -184,6 +184,11 @@ void sstable_set::for_each_sstable(std::function<void(const shared_sstable&)> fu
     return _impl->for_each_sstable(std::move(func));
 }
 
+bool
+sstable_set::contains(generation_type gen) const noexcept {
+    return _impl->contains(gen);
+}
+
 void
 sstable_set::insert(shared_sstable sst) {
     _impl->insert(sst);
@@ -333,6 +338,10 @@ void partitioned_sstable_set::for_each_sstable(std::function<void(const shared_s
     return _all->for_each_sstable(std::move(func));
 }
 
+bool partitioned_sstable_set::contains(generation_type gen) const noexcept {
+    return _all->contains(gen);
+}
+
 void partitioned_sstable_set::insert(shared_sstable sst) {
     _all->insert(sst);
     auto undo_all_insert = defer([&] () { _all->erase(sst); });
@@ -454,6 +463,10 @@ void time_series_sstable_set::for_each_sstable(std::function<void(const shared_s
     for (auto& entry : *_sstables) {
         func(entry.second);
     }
+}
+
+bool time_series_sstable_set::contains(generation_type gen) const noexcept {
+    return _all->contains(gen);
 }
 
 // O(log n)
@@ -1026,6 +1039,15 @@ void compound_sstable_set::for_each_sstable(std::function<void(const shared_ssta
             func(sst);
         });
     }
+}
+
+bool compound_sstable_set::contains(generation_type gen) const noexcept {
+    for (const auto& set : _sets) {
+        if (set->contains(gen)) {
+            return true;
+        }
+    }
+    return false;
 }
 
 void compound_sstable_set::insert(shared_sstable sst) {
