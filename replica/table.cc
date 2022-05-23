@@ -395,7 +395,7 @@ table::do_add_sstable(lw_shared_ptr<sstables::sstable_set> sstables, sstables::s
     auto new_sstables = make_lw_shared<sstables::sstable_set>(*sstables);
     new_sstables->insert(sstable);
     if (sstable->requires_view_building()) {
-        _sstables_staging.emplace(sstable->generation(), sstable);
+        _sstables_staging.insert(sstable);
     } else if (backlog_tracker) {
         add_sstable_to_backlog_tracker(_compaction_strategy.get_backlog_tracker(), sstable);
     }

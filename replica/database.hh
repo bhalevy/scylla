@@ -430,7 +430,7 @@ private:
     std::vector<sstables::shared_sstable> _sstables_compacted_but_not_deleted;
     // sstables that should not be compacted (e.g. because they need to be used
     // to generate view updates later)
-    std::unordered_map<uint64_t, sstables::shared_sstable> _sstables_staging;
+    sstables::sstable_map _sstables_staging;
     // Control background fibers waiting for sstables to be deleted
     seastar::gate _sstable_deletion_gate;
     // This semaphore ensures that an operation like snapshot won't have its selected
