@@ -866,6 +866,7 @@ void writer::add_pi_block() {
         _pi_write_m.blocks_serialized_size = blocks.size();
         _pi_write_m.offsets_serialized_size = offsets.size();
         _pi_write_m.desired_block_size *= 2;
+        _sst.get_stats().on_promoted_index_auto_scale();
     }
 }
 
