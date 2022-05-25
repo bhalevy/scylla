@@ -234,5 +234,6 @@ public:
 namespace std {
 
 std::ostream& operator<<(std::ostream& os, const sstables::formatted_sstables_list& lst);
+std::ostream& operator<<(std::ostream& os, const std::vector<sstables::shared_sstable>& ssts);
 
 } // namespace std
