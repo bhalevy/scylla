@@ -12,7 +12,6 @@
 #include <boost/range/adaptor/map.hpp>
 #include <boost/range/algorithm/remove_if.hpp>
 #include <boost/range/algorithm/sort.hpp>
-#include <boost/algorithm/string/join.hpp>
 
 #include "compatible_ring_position.hh"
 #include "compaction/compaction_strategy_impl.hh"
@@ -1273,7 +1272,11 @@ namespace std {
 
 std::ostream& operator<<(std::ostream& os, const sstables::formatted_sstables_list& lst) {
     os << "[";
-    os << boost::algorithm::join(lst.ssts(), ",");
+    const char* sep = "";
+    for (const auto& s : lst.ssts()) {
+        os << sep << s;
+        sep = ",";
+    }
     os << "]";
     return os;
 }
