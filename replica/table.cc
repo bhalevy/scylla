@@ -2236,10 +2236,10 @@ table::make_reader_v2_excluding_sstables(schema_ptr s,
         }
     }
 
-    auto excluded_ssts = boost::copy_range<std::unordered_set<sstables::shared_sstable>>(excluded);
+    sstables::sstable_map excluded_ssts(excluded);
     auto effective_sstables = make_lw_shared(_compaction_strategy.make_sstable_set(_schema));
     _sstables->for_each_sstable([&excluded_ssts, &effective_sstables] (const sstables::shared_sstable& sst) mutable {
-        if (excluded_ssts.contains(sst)) {
+        if (excluded_ssts.contains(sst->generation())) {
             return;
         }
         effective_sstables->insert(sst);
