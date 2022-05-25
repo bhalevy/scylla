@@ -219,4 +219,20 @@ using offstrategy = bool_class<class offstrategy_tag>;
 /// The 'sstables' parameter must be a set of sstables sorted by first key.
 unsigned sstable_set_overlapping_count(const schema_ptr& schema, const std::vector<shared_sstable>& sstables);
 
-}
+class formatted_sstables_list {
+    bool _include_origin = true;
+    std::vector<sstring> _ssts;
+public:
+    formatted_sstables_list() = default;
+    explicit formatted_sstables_list(const std::vector<shared_sstable>& ssts, bool include_origin = true);
+    formatted_sstables_list& operator+=(const shared_sstable& sst);
+    const std::vector<sstring>& ssts() const noexcept { return _ssts; }
+};
+
+} // namspace sstables
+
+namespace std {
+
+std::ostream& operator<<(std::ostream& os, const sstables::formatted_sstables_list& lst);
+
+} // namespace std
