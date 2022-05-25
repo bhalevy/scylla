@@ -1281,4 +1281,9 @@ std::ostream& operator<<(std::ostream& os, const sstables::formatted_sstables_li
     return os;
 }
 
+std::ostream& operator<<(std::ostream& os, const std::vector<sstables::shared_sstable>& ssts) {
+    sstables::formatted_sstables_list lst(ssts);
+    return os << lst;
+}
+
 } // namespace std
