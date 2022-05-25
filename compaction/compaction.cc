@@ -20,7 +20,6 @@
 #include <boost/range/adaptors.hpp>
 #include <boost/range/join.hpp>
 #include <boost/algorithm/cxx11/any_of.hpp>
-#include <boost/algorithm/string/join.hpp>
 
 #include <seastar/core/future-util.hh>
 #include <seastar/core/scheduling.hh>
@@ -393,35 +392,6 @@ private:
     table_state& _table_s;
     std::unordered_map<generation_type, compaction_read_monitor> _generated_monitors;
 };
-
-class formatted_sstables_list {
-    bool _include_origin = true;
-    std::vector<sstring> _ssts;
-public:
-    formatted_sstables_list() = default;
-    explicit formatted_sstables_list(const std::vector<shared_sstable>& ssts, bool include_origin) : _include_origin(include_origin) {
-        _ssts.reserve(ssts.size());
-        for (const auto& sst : ssts) {
-            *this += sst;
-        }
-    }
-    formatted_sstables_list& operator+=(const shared_sstable& sst) {
-        if (_include_origin) {
-            _ssts.emplace_back(format("{}:level={:d}:origin={}", sst->get_filename(), sst->get_sstable_level(), sst->get_origin()));
-        } else {
-            _ssts.emplace_back(format("{}:level={:d}", sst->get_filename(), sst->get_sstable_level()));
-        }
-        return *this;
-    }
-    friend std::ostream& operator<<(std::ostream& os, const formatted_sstables_list& lst);
-};
-
-std::ostream& operator<<(std::ostream& os, const formatted_sstables_list& lst) {
-    os << "[";
-    os << boost::algorithm::join(lst._ssts, ",");
-    os << "]";
-    return os;
-}
 
 class compaction {
 protected:

@@ -12,6 +12,7 @@
 #include <boost/range/adaptor/map.hpp>
 #include <boost/range/algorithm/remove_if.hpp>
 #include <boost/range/algorithm/sort.hpp>
+#include <boost/algorithm/string/join.hpp>
 
 #include "compatible_ring_position.hh"
 #include "compaction/compaction_strategy_impl.hh"
@@ -1251,4 +1252,30 @@ unsigned sstable_set_overlapping_count(const schema_ptr& schema, const std::vect
     return overlapping_sstables;
 }
 
+formatted_sstables_list::formatted_sstables_list(const std::vector<shared_sstable>& ssts, bool include_origin) : _include_origin(include_origin) {
+    _ssts.reserve(ssts.size());
+    for (const auto& sst : ssts) {
+        *this += sst;
+    }
+}
+formatted_sstables_list& formatted_sstables_list::operator+=(const shared_sstable& sst) {
+    if (_include_origin) {
+        _ssts.emplace_back(format("{}:level={:d}:origin={}", sst->get_filename(), sst->get_sstable_level(), sst->get_origin()));
+    } else {
+        _ssts.emplace_back(format("{}:level={:d}", sst->get_filename(), sst->get_sstable_level()));
+    }
+    return *this;
+}
+
 } // namespace sstables
+
+namespace std {
+
+std::ostream& operator<<(std::ostream& os, const sstables::formatted_sstables_list& lst) {
+    os << "[";
+    os << boost::algorithm::join(lst.ssts(), ",");
+    os << "]";
+    return os;
+}
+
+} // namespace std
