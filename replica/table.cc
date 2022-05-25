@@ -220,7 +220,7 @@ sstables::shared_sstable table::make_streaming_sstable_for_write(std::optional<s
         dir += "/" + *subdir;
     }
     auto newtab = make_sstable(dir);
-    tlogger.debug("Created sstable for streaming: ks={}, cf={}, dir={}", schema()->ks_name(), schema()->cf_name(), dir);
+    tlogger.debug("Created sstable for streaming: ks={}, cf={}: {}", schema()->ks_name(), schema()->cf_name(), newtab->get_filename());
     return newtab;
 }
 
