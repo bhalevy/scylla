@@ -50,7 +50,7 @@ future<> view_update_generator::start() {
                 auto& [t, sstables] = *table_it;
                 schema_ptr s = t->schema();
 
-                vug_logger.trace("Processing {}.{}: {} sstables", s->ks_name(), s->cf_name(), sstables.size());
+                vug_logger.debug("Processing {}.{}: {} sstables", s->ks_name(), s->cf_name(), sstables.size());
 
                 const auto num_sstables = sstables.size();
 
@@ -86,6 +86,7 @@ future<> view_update_generator::start() {
                             ::mutation_reader::forwarding::no);
 
                     inject_failure("view_update_generator_consume_staging_sstable");
+                    vug_logger.trace("view_update_generator {}.{}: reading {}", s->ks_name(), s->cf_name(), sstables);
                     auto result = staging_sstable_reader.consume_in_thread(view_updating_consumer(s, std::move(permit), *t, sstables, _as, staging_sstable_reader_handle));
                     staging_sstable_reader.close().get();
                     if (result == stop_iteration::yes) {
@@ -142,6 +143,7 @@ future<> view_update_generator::register_staging_sstable(sstables::shared_sstabl
         return make_ready_future<>();
     }
     inject_failure("view_update_generator_registering_staging_sstable");
+    vug_logger.debug("Registering {} for view building", sst->get_filename());
     _sstables_with_tables[table].push_back(std::move(sst));
 
     _pending_sstables.signal();
@@ -175,6 +177,7 @@ void view_update_generator::discover_staging_sstables() {
         replica::table& t = *(x.second);
         t.get_sstables()->for_each_sstable([this, &t] (const sstables::shared_sstable& sst) {
             if (sst->requires_view_building()) {
+                vug_logger.debug("Discovered staging sstable: {}", sst->get_filename());
                 _sstables_with_tables[t.shared_from_this()].push_back(sst);
                 // we're at early stage here, no need to kick _pending_sstables (the
                 // bulding fiber is not running), neither we can wait on the semaphore
