@@ -775,6 +775,7 @@ public:
 private:
     void do_isolate_on_error(disk_error type);
     future<> isolate();
+    future<> do_isolate();
 
     future<> notify_down(inet_address endpoint);
     future<> notify_left(inet_address endpoint);

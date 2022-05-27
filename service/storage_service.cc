@@ -3272,8 +3272,12 @@ void storage_service::do_isolate_on_error(disk_error type)
 
 future<> storage_service::isolate() {
     return run_with_no_api_lock([] (storage_service& ss) {
-        return ss.stop_transport();
+        return ss.do_isolate();
     });
+}
+
+future<> storage_service::do_isolate() {
+    return stop_transport();
 }
 
 future<sstring> storage_service::get_removal_status() {
