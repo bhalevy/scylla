@@ -11,6 +11,7 @@
 #include <seastar/coroutine/maybe_yield.hh>
 #include <seastar/coroutine/exception.hh>
 #include <seastar/util/closeable.hh>
+#include <seastar/util/defer.hh>
 
 #include "replica/database.hh"
 #include "replica/data_dictionary_impl.hh"
@@ -570,13 +571,13 @@ public:
 };
 
 future<>
-table::seal_active_memtable(flush_permit&& permit) {
+table::seal_active_memtable(flush_permit&& flush_permit) {
     auto old = _memtables->back();
     tlogger.debug("Sealing active memtable of {}.{}, partitions: {}, occupancy: {}", _schema->ks_name(), _schema->cf_name(), old->partition_count(), old->occupancy());
 
     if (old->empty()) {
         tlogger.debug("Memtable is empty");
-        return _flush_barrier.advance_and_await();
+        co_return co_await _flush_barrier.advance_and_await();
     }
 
     utils::get_local_injector().inject("table_seal_active_memtable_pre_flush", []() {
@@ -598,36 +599,32 @@ table::seal_active_memtable(flush_permit&& permit) {
     _stats.pending_flushes++;
     _config.cf_stats->pending_memtables_flushes_count++;
     _config.cf_stats->pending_memtables_flushes_bytes += memtable_size;
-
-    return do_with(std::move(permit), [this, old] (auto& permit) {
-        return repeat([this, old, &permit] () mutable {
-            auto sstable_write_permit = permit.release_sstable_write_permit();
-            return this->try_flush_memtable_to_sstable(old, std::move(sstable_write_permit)).then([this, &permit] (auto should_stop) mutable {
-                if (should_stop) {
-                    return make_ready_future<stop_iteration>(should_stop);
-                }
-                return sleep(10s).then([this, &permit] () mutable {
-                    return std::move(permit).reacquire_sstable_write_permit().then([this, &permit] (auto new_permit) mutable {
-                        permit = std::move(new_permit);
-                        return make_ready_future<stop_iteration>(stop_iteration::no);
-                    });
-                });
-            });
-        });
-    }).then_wrapped([this, memtable_size, old, op = std::move(op), previous_flush = std::move(previous_flush)] (future<> f) mutable {
+    auto undo_stats = [&] () noexcept {
         _stats.pending_flushes--;
         _config.cf_stats->pending_memtables_flushes_count--;
         _config.cf_stats->pending_memtables_flushes_bytes -= memtable_size;
+    };
+    auto defer_undo_stats = defer(std::function(undo_stats));
 
-        if (f.failed()) {
-            return f;
+    auto permit = std::move(flush_permit);
+    for (;;) {
+        auto sstable_write_permit = permit.release_sstable_write_permit();
+        if (co_await this->try_flush_memtable_to_sstable(old, std::move(sstable_write_permit)) == stop_iteration::yes) {
+            break;
         }
+        co_await sleep(10s);
+        permit = co_await std::move(permit).reacquire_sstable_write_permit();
+    }
 
-        if (_commitlog) {
-            _commitlog->discard_completed_segments(_schema->id(), old->get_and_discard_rp_set());
-        }
-        return previous_flush.finally([op = std::move(op)] { });
-    });
+    defer_undo_stats.cancel();
+    undo_stats();
+
+    if (_commitlog) {
+        _commitlog->discard_completed_segments(_schema->id(), old->get_and_discard_rp_set());
+    }
+    co_await std::move(previous_flush);
+    // keep `op` alive until after previous_flush resolves
+
     // FIXME: release commit log
     // FIXME: provide back-pressure to upper layers
 }
