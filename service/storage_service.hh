@@ -507,6 +507,7 @@ private:
     sharded<db::system_keyspace>& _sys_ks;
     locator::snitch_signal_slot_t _snitch_reconfigure;
     std::unordered_set<gms::inet_address> _replacing_nodes_pending_ranges_updater;
+    system_controller::subscription _on_isolate_subscription;
 private:
     /**
      * Handle node bootstrap

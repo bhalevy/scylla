@@ -107,6 +107,7 @@ storage_service::storage_service(system_controller& sc,
         , _batchlog_manager(bm)
         , _sys_ks(sys_ks)
         , _snitch_reconfigure([this] { return snitch_reconfigured(); })
+        , _on_isolate_subscription(sc.on_isolate([this] { return do_isolate(); }))
 {
     register_metrics();
 
