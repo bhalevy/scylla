@@ -123,6 +123,14 @@ public:
             return func(env);
         });
     }
+
+    column_family_for_tests make_column_family() {
+        return column_family_for_tests(manager());
+    }
+
+    column_family_for_tests make_column_family(schema_ptr s, std::optional<sstring> datadir = {}) {
+        return column_family_for_tests(manager(), std::move(s), std::move(datadir));
+    }
 };
 
 }   // namespace sstables
