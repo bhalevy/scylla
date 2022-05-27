@@ -93,13 +93,14 @@ with_column_family(schema_ptr s, replica::column_family::config cfg, noncopyable
     auto tracker = make_lw_shared<cache_tracker>();
     auto dir = tmpdir();
     cfg.datadir = dir.path().string();
+    auto sc = make_lw_shared<service::system_controller>();
     auto cm = make_lw_shared<compaction_manager>(compaction_manager::for_testing_tag{});
     auto cl_stats = make_lw_shared<cell_locker_stats>();
-    auto cf = make_lw_shared<replica::column_family>(s, cfg, replica::column_family::no_commitlog(), *cm, *cl_stats, *tracker);
+    auto cf = make_lw_shared<replica::column_family>(s, cfg, replica::column_family::no_commitlog(), *sc, *cm, *cl_stats, *tracker);
     cf->mark_ready_for_writes();
     return func(*cf).then([cf, cm] {
         return cf->stop();
-    }).finally([cf, cm, dir = std::move(dir), cl_stats, tracker] () mutable { cf = { }; });
+    }).finally([cf, sc, cm, dir = std::move(dir), cl_stats, tracker] () mutable { cf = { }; });
 }
 
 SEASTAR_TEST_CASE(test_mutation_is_applied) {

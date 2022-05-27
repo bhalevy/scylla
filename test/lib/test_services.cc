@@ -46,8 +46,9 @@ column_family_for_tests::data::data()
     : semaphore(reader_concurrency_semaphore::no_limits{}, "column_family_for_tests")
 { }
 
-column_family_for_tests::column_family_for_tests(sstables::sstables_manager& sstables_manager)
+column_family_for_tests::column_family_for_tests(service::system_controller& system_controller, sstables::sstables_manager& sstables_manager)
     : column_family_for_tests(
+        system_controller,
         sstables_manager,
         schema_builder(some_keyspace, some_column_family)
             .with_column(utf8_type->decompose("p1"), utf8_type, column_kind::partition_key)
@@ -55,7 +56,7 @@ column_family_for_tests::column_family_for_tests(sstables::sstables_manager& sst
     )
 { }
 
-column_family_for_tests::column_family_for_tests(sstables::sstables_manager& sstables_manager, schema_ptr s, std::optional<sstring> datadir)
+column_family_for_tests::column_family_for_tests(service::system_controller& system_controller, sstables::sstables_manager& sstables_manager, schema_ptr s, std::optional<sstring> datadir)
     : _data(make_lw_shared<data>())
 {
     _data->s = s;
@@ -65,6 +66,6 @@ column_family_for_tests::column_family_for_tests(sstables::sstables_manager& sst
     _data->cfg.cf_stats = &_data->cf_stats;
     _data->cfg.enable_commitlog = false;
     _data->cm.enable();
-    _data->cf = make_lw_shared<replica::column_family>(_data->s, _data->cfg, replica::column_family::no_commitlog(), _data->cm, _data->cl_stats, _data->tracker);
+    _data->cf = make_lw_shared<replica::column_family>(_data->s, _data->cfg, replica::column_family::no_commitlog(), system_controller, _data->cm, _data->cl_stats, _data->tracker);
     _data->cf->mark_ready_for_writes();
 }

@@ -1166,7 +1166,7 @@ table::make_memtable_list() {
     return make_lw_shared<memtable_list>(std::move(seal), std::move(get_schema), _config.dirty_memory_manager, _stats, _config.memory_compaction_scheduling_group);
 }
 
-table::table(schema_ptr schema, config config, db::commitlog* cl, compaction_manager& compaction_manager,
+table::table(schema_ptr schema, config config, db::commitlog* cl, service::system_controller& sc, compaction_manager& compaction_manager,
              cell_locker_stats& cl_stats, cache_tracker& row_cache_tracker)
     : _schema(std::move(schema))
     , _config(std::move(config))
@@ -1182,6 +1182,7 @@ table::table(schema_ptr schema, config config, db::commitlog* cl, compaction_man
     , _cache(_schema, sstables_as_snapshot_source(), row_cache_tracker, is_continuous::yes)
     , _commitlog(cl)
     , _durable_writes(true)
+    , _system_controller(sc)
     , _compaction_manager(compaction_manager)
     , _index_manager(this->as_data_dictionary())
     , _counter_cell_locks(_schema->is_counter() ? std::make_unique<cell_locker>(_schema, cl_stats) : nullptr)

@@ -30,6 +30,7 @@ public:
 
 class test_env {
     std::unique_ptr<cache_tracker> _cache_tracker;
+    std::unique_ptr<service::system_controller> _system_controller;
     std::unique_ptr<test_env_sstables_manager> _mgr;
     std::unique_ptr<reader_concurrency_semaphore> _semaphore;
 public:
@@ -67,6 +68,7 @@ public:
     // looks up the sstable in the given dir
     future<shared_sstable> reusable_sst(schema_ptr schema, sstring dir, unsigned long generation);
 
+    service::system_controller& system_controller() { return *_system_controller; }
     test_env_sstables_manager& manager() { return *_mgr; }
     reader_concurrency_semaphore& semaphore() { return *_semaphore; }
     reader_permit make_reader_permit(const schema* const s, const char* n, db::timeout_clock::time_point timeout) {
@@ -125,11 +127,11 @@ public:
     }
 
     column_family_for_tests make_column_family() {
-        return column_family_for_tests(manager());
+        return column_family_for_tests(system_controller(), manager());
     }
 
     column_family_for_tests make_column_family(schema_ptr s, std::optional<sstring> datadir = {}) {
-        return column_family_for_tests(manager(), std::move(s), std::move(datadir));
+        return column_family_for_tests(system_controller(), manager(), std::move(s), std::move(datadir));
     }
 };
 
