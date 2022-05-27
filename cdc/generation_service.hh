@@ -12,6 +12,7 @@
 #include "cdc/metadata.hh"
 #include "cdc/generation_id.hh"
 #include "gms/i_endpoint_state_change_subscriber.hh"
+#include "service/system_controller.hh"
 
 namespace db {
 class system_distributed_keyspace;
@@ -81,7 +82,7 @@ public:
     generation_service(config cfg, gms::gossiper&,
             sharded<db::system_distributed_keyspace>&,
             sharded<db::system_keyspace>& sys_ks,
-            abort_source&, const locator::shared_token_metadata&,
+            service::system_controller&, const locator::shared_token_metadata&,
             gms::feature_service&, replica::database& db);
 
     future<> stop();

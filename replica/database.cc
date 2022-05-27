@@ -323,7 +323,7 @@ public:
 };
 
 database::database(const db::config& cfg, database_config dbcfg, service::migration_notifier& mn, gms::feature_service& feat, const locator::shared_token_metadata& stm,
-        abort_source& as, sharded<semaphore>& sst_dir_sem, utils::cross_shard_barrier barrier)
+        service::system_controller& sc, sharded<semaphore>& sst_dir_sem, utils::cross_shard_barrier barrier)
     : _stats(make_lw_shared<db_stats>())
     , _user_types(std::make_shared<db_user_types_storage>(*this))
     , _cl_stats(std::make_unique<cell_locker_stats>())
@@ -361,7 +361,7 @@ database::database(const db::config& cfg, database_config dbcfg, service::migrat
     , _row_cache_tracker(cache_tracker::register_metrics::yes)
     , _apply_stage("db_apply", &database::do_apply)
     , _version(empty_version)
-    , _compaction_manager(make_compaction_manager(_cfg, dbcfg, as))
+    , _compaction_manager(make_compaction_manager(_cfg, dbcfg, sc.get_abort_source()))
     , _enable_incremental_backups(cfg.incremental_backups())
     , _large_data_handler(std::make_unique<db::cql_table_large_data_handler>(_cfg.compaction_large_partition_warning_threshold_mb()*1024*1024,
               _cfg.compaction_large_row_warning_threshold_mb()*1024*1024,

@@ -86,6 +86,7 @@
 #include "alternator/controller.hh"
 #include "alternator/ttl.hh"
 #include "tools/entry_point.hh"
+#include "service/system_controller.hh"
 
 #include "service/raft/raft_group_registry.hh"
 #include "service/raft/raft_group0_client.hh"
@@ -505,6 +506,7 @@ To start the scylla server proper, simply invoke as: scylla server (or just scyl
 
     print_starting_message(ac, av, parsed_opts);
 
+    sharded<service::system_controller> system_controller;
     sharded<locator::shared_token_metadata> token_metadata;
     sharded<locator::effective_replication_map_factory> erm_factory;
     sharded<service::migration_notifier> mm_notifier;
@@ -557,7 +559,7 @@ To start the scylla server proper, simply invoke as: scylla server (or just scyl
 
         tcp_syncookies_sanity();
 
-        return seastar::async([&app, cfg, ext, &db, &qp, &bm, &proxy, &forward_service, &mm, &mm_notifier, &ctx, &opts, &dirs,
+        return seastar::async([&system_controller, &app, cfg, ext, &db, &qp, &bm, &proxy, &forward_service, &mm, &mm_notifier, &ctx, &opts, &dirs,
                 &prometheus_server, &cf_cache_hitrate_calculator, &load_meter, &feature_service, &gossiper,
                 &token_metadata, &erm_factory, &snapshot_ctl, &messaging, &sst_dir_semaphore, &raft_gr, &service_memory_limiter,
                 &repair, &sst_loader, &ss, &lifecycle_notifier, &stream_manager] {
@@ -569,6 +571,10 @@ To start the scylla server proper, simply invoke as: scylla server (or just scyl
             }).get();
 
             ::stop_signal stop_signal; // we can move this earlier to support SIGINT during initialization
+
+            system_controller.start(std::ref(stop_signal.as_sharded_abort_source())).get();
+            auto stop_system_controller = deferred_stop(system_controller);
+
             read_config(opts, *cfg).get();
             configurable::init_all(opts, *cfg, *ext).get();
             cfg->setup_directories();
@@ -861,7 +867,7 @@ To start the scylla server proper, simply invoke as: scylla server (or just scyl
             }
 
             debug::the_gossiper = &gossiper;
-            gossiper.start(std::ref(stop_signal.as_sharded_abort_source()), std::ref(feature_service), std::ref(token_metadata), std::ref(messaging), std::ref(sys_ks), std::ref(*cfg), std::ref(gcfg)).get();
+            gossiper.start(std::ref(system_controller), std::ref(feature_service), std::ref(token_metadata), std::ref(messaging), std::ref(sys_ks), std::ref(*cfg), std::ref(gcfg)).get();
             auto stop_gossiper = defer_verbose_shutdown("gossiper", [&gossiper] {
                 // call stop on each instance, but leave the sharded<> pointers alive
                 gossiper.invoke_on_all(&gms::gossiper::stop).get();
@@ -910,7 +916,7 @@ To start the scylla server proper, simply invoke as: scylla server (or just scyl
             service::storage_service_config sscfg;
             sscfg.available_memory = memory::stats().total_memory();
             debug::the_storage_service = &ss;
-            ss.start(std::ref(stop_signal.as_sharded_abort_source()),
+            ss.start(std::ref(system_controller),
                 std::ref(db), std::ref(gossiper), std::ref(sys_ks),
                 std::ref(feature_service), sscfg, std::ref(mm), std::ref(token_metadata), std::ref(erm_factory),
                 std::ref(messaging), std::ref(repair),
@@ -950,7 +956,7 @@ To start the scylla server proper, simply invoke as: scylla server (or just scyl
             supervisor::notify("starting database");
             debug::the_database = &db;
             db.start(std::ref(*cfg), dbcfg, std::ref(mm_notifier), std::ref(feature_service), std::ref(token_metadata),
-                    std::ref(stop_signal.as_sharded_abort_source()), std::ref(sst_dir_semaphore), utils::cross_shard_barrier()).get();
+                    std::ref(system_controller), std::ref(sst_dir_semaphore), utils::cross_shard_barrier()).get();
             auto stop_database_and_sstables = defer_verbose_shutdown("database", [&db] {
                 // #293 - do not stop anything - not even db (for real)
                 //return db.stop();
@@ -1197,7 +1203,7 @@ To start the scylla server proper, simply invoke as: scylla server (or just scyl
             cdc_config.ring_delay = std::chrono::milliseconds(cfg->ring_delay_ms());
             cdc_config.dont_rewrite_streams = cfg->cdc_dont_rewrite_streams();
             cdc_generation_service.start(std::move(cdc_config), std::ref(gossiper), std::ref(sys_dist_ks), std::ref(sys_ks),
-                    std::ref(stop_signal.as_sharded_abort_source()), std::ref(token_metadata), std::ref(feature_service), std::ref(db)).get();
+                    std::ref(system_controller), std::ref(token_metadata), std::ref(feature_service), std::ref(db)).get();
             auto stop_cdc_generation_service = defer_verbose_shutdown("CDC Generation Management service", [] {
                 cdc_generation_service.stop().get();
             });

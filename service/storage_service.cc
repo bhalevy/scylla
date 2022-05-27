@@ -77,7 +77,7 @@ namespace service {
 
 static logging::logger slogger("storage_service");
 
-storage_service::storage_service(abort_source& abort_source,
+storage_service::storage_service(system_controller& sc,
     distributed<replica::database>& db, gms::gossiper& gossiper,
     sharded<db::system_keyspace>& sys_ks,
     gms::feature_service& feature_service,
@@ -91,7 +91,7 @@ storage_service::storage_service(abort_source& abort_source,
     raft_group_registry& raft_gr,
     endpoint_lifecycle_notifier& elc_notif,
     sharded<db::batchlog_manager>& bm)
-        : _abort_source(abort_source)
+        : _abort_source(sc.get_abort_source())
         , _feature_service(feature_service)
         , _db(db)
         , _gossiper(gossiper)

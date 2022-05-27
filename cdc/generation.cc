@@ -671,13 +671,13 @@ constexpr char could_not_retrieve_msg_template[]
 generation_service::generation_service(
             config cfg, gms::gossiper& g, sharded<db::system_distributed_keyspace>& sys_dist_ks,
             sharded<db::system_keyspace>& sys_ks,
-            abort_source& abort_src, const locator::shared_token_metadata& stm, gms::feature_service& f,
+            service::system_controller& sc, const locator::shared_token_metadata& stm, gms::feature_service& f,
             replica::database& db)
         : _cfg(std::move(cfg))
         , _gossiper(g)
         , _sys_dist_ks(sys_dist_ks)
         , _sys_ks(sys_ks)
-        , _abort_src(abort_src)
+        , _abort_src(sc.get_abort_source())
         , _token_metadata(stm)
         , _feature_service(f)
         , _db(db)

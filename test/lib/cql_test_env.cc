@@ -62,6 +62,7 @@
 #include "debug.hh"
 #include "db/schema_tables.hh"
 #include "service/raft/raft_group0_client.hh"
+#include "service/system_controller.hh"
 
 #include <sys/time.h>
 #include <sys/resource.h>
@@ -465,9 +466,10 @@ public:
             utils::fb_utilities::set_broadcast_address(gms::inet_address("localhost"));
             utils::fb_utilities::set_broadcast_rpc_address(gms::inet_address("localhost"));
 
-            sharded<abort_source> abort_sources;
-            abort_sources.start().get();
-            auto stop_abort_sources = defer([&] { abort_sources.stop().get(); });
+            sharded<service::system_controller> system_controller;
+            system_controller.start().get();
+            auto stop_system_controller = deferred_stop(system_controller);
+
             sharded<replica::database> db;
             debug::the_database = &db;
             auto reset_db_ptr = defer([] {
@@ -579,7 +581,7 @@ public:
             gcfg.cluster_name = "Test Cluster";
             gcfg.seeds = std::move(seeds);
             gcfg.skip_wait_for_gossip_to_settle = 0;
-            gossiper.start(std::ref(abort_sources), std::ref(feature_service), std::ref(token_metadata), std::ref(ms), std::ref(sys_ks), std::ref(*cfg), std::move(gcfg)).get();
+            gossiper.start(std::ref(system_controller), std::ref(feature_service), std::ref(token_metadata), std::ref(ms), std::ref(sys_ks), std::ref(*cfg), std::move(gcfg)).get();
             auto stop_ms_fd_gossiper = defer([&gossiper] {
                 gossiper.stop().get();
             });
@@ -645,7 +647,7 @@ public:
             dbcfg.gossip_scheduling_group = scheduling_groups.gossip_scheduling_group;
             dbcfg.sstables_format = sstables::from_string(cfg->sstable_format());
 
-            db.start(std::ref(*cfg), dbcfg, std::ref(mm_notif), std::ref(feature_service), std::ref(token_metadata), std::ref(abort_sources), std::ref(sst_dir_semaphore), utils::cross_shard_barrier()).get();
+            db.start(std::ref(*cfg), dbcfg, std::ref(mm_notif), std::ref(feature_service), std::ref(token_metadata), std::ref(system_controller), std::ref(sst_dir_semaphore), utils::cross_shard_barrier()).get();
             auto stop_db = defer([&db] {
                 db.stop().get();
             });
@@ -705,7 +707,7 @@ public:
             sharded<service::storage_service> ss;
             service::storage_service_config sscfg;
             sscfg.available_memory = memory::stats().total_memory();
-            ss.start(std::ref(abort_sources), std::ref(db),
+            ss.start(std::ref(system_controller), std::ref(db),
                 std::ref(gossiper),
                 std::ref(sys_ks),
                 std::ref(feature_service), sscfg, std::ref(mm),
@@ -769,7 +771,7 @@ public:
              * and would only slow down tests (by having them wait).
              */
             cdc_config.ring_delay = std::chrono::milliseconds(0);
-            cdc_generation_service.start(std::ref(cdc_config), std::ref(gossiper), std::ref(sys_dist_ks), std::ref(sys_ks), std::ref(abort_sources), std::ref(token_metadata), std::ref(feature_service), std::ref(db)).get();
+            cdc_generation_service.start(std::ref(cdc_config), std::ref(gossiper), std::ref(sys_dist_ks), std::ref(sys_ks), std::ref(system_controller), std::ref(token_metadata), std::ref(feature_service), std::ref(db)).get();
             auto stop_cdc_generation_service = defer([&cdc_generation_service] {
                 cdc_generation_service.stop().get();
             });

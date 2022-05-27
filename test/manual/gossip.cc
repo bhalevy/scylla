@@ -24,6 +24,7 @@
 #include <chrono>
 #include "db/config.hh"
 #include "db/schema_tables.hh"
+#include "service/system_controller.hh"
 
 namespace bpo = boost::program_options;
 
@@ -65,13 +66,13 @@ int main(int ac, char ** av) {
             feature_service.start(gms::feature_config_from_db_config(*cfg)).get();
             auto stop_feature_service = deferred_stop(feature_service);
 
-            sharded<abort_source> abort_sources;
+            sharded<service::system_controller> system_controller;
             sharded<locator::shared_token_metadata> token_metadata;
             sharded<netw::messaging_service> messaging;
             sharded<db::system_keyspace> sys_ks;
 
-            abort_sources.start().get();
-            auto stop_abort_source = defer([&] { abort_sources.stop().get(); });
+            system_controller.start().get();
+            auto stop_system_controller = deferred_stop(system_controller);
             token_metadata.start([] () noexcept { return db::schema_tables::hold_merge_lock(); }).get();
             auto stop_token_mgr = defer([&] { token_metadata.stop().get(); });
 
@@ -84,7 +85,7 @@ int main(int ac, char ** av) {
                 gcfg.seeds.emplace(std::move(s));
             }
             sharded<gms::gossiper> gossiper;
-            gossiper.start(std::ref(abort_sources), std::ref(feature_service), std::ref(token_metadata), std::ref(messaging), std::ref(sys_ks), std::ref(*cfg), std::move(gcfg)).get();
+            gossiper.start(std::ref(system_controller), std::ref(feature_service), std::ref(token_metadata), std::ref(messaging), std::ref(sys_ks), std::ref(*cfg), std::move(gcfg)).get();
 
             auto& server = messaging.local();
             auto port = server.port();

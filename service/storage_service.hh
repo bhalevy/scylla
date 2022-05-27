@@ -41,6 +41,7 @@
 #include <seastar/core/lowres_clock.hh>
 #include "locator/snitch_base.hh"
 #include "cdc/generation_id.hh"
+#include "service/system_controller.hh"
 
 class node_ops_cmd_request;
 class node_ops_cmd_response;
@@ -171,7 +172,7 @@ private:
     void node_ops_singal_abort(std::optional<utils::UUID> ops_uuid);
     future<> node_ops_abort_thread();
 public:
-    storage_service(abort_source& as, distributed<replica::database>& db,
+    storage_service(system_controller& sc, distributed<replica::database>& db,
         gms::gossiper& gossiper,
         sharded<db::system_keyspace>&,
         gms::feature_service& feature_service,
