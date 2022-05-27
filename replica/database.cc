@@ -375,6 +375,7 @@ database::database(const db::config& cfg, database_config dbcfg, service::migrat
     , _mnotifier(mn)
     , _feat(feat)
     , _shared_token_metadata(stm)
+    , _system_controller(sc)
     , _sst_dir_semaphore(sst_dir_sem)
     , _wasm_engine(std::make_unique<wasm::engine>())
     , _stop_barrier(std::move(barrier))

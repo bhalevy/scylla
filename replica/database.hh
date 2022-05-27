@@ -1320,6 +1320,7 @@ private:
     service::migration_notifier& _mnotifier;
     gms::feature_service& _feat;
     const locator::shared_token_metadata& _shared_token_metadata;
+    service::system_controller& _system_controller;
 
     sharded<semaphore>& _sst_dir_semaphore;
 
@@ -1427,6 +1428,8 @@ public:
 
     const locator::shared_token_metadata& get_shared_token_metadata() const { return _shared_token_metadata; }
     const locator::token_metadata& get_token_metadata() const { return *_shared_token_metadata.get(); }
+
+    service::system_controller& get_system_controller() noexcept { return _system_controller; }
 
     service::migration_notifier& get_notifier() { return _mnotifier; }
     const service::migration_notifier& get_notifier() const { return _mnotifier; }
