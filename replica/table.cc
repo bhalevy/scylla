@@ -607,12 +607,16 @@ table::seal_active_memtable(flush_permit&& flush_permit) {
     auto defer_undo_stats = defer(std::function(undo_stats));
 
     auto permit = std::move(flush_permit);
-    for (;;) {
+    auto start_time = db_clock::now();
+    for (auto i = 0;; i++) {
         auto sstable_write_permit = permit.release_sstable_write_permit();
         if (co_await this->try_flush_memtable_to_sstable(old, std::move(sstable_write_permit)) == stop_iteration::yes) {
             break;
         }
-        co_await sleep(10s);
+        if (i >= 10 && db_clock::now() - start_time >= 30s) {
+            co_return co_await _system_controller.isolate("Could not flush memtable");
+        }
+        co_await sleep(1s);
         permit = co_await std::move(permit).reacquire_sstable_write_permit();
     }
 
