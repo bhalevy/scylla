@@ -34,6 +34,10 @@ public:
     static sstable_write_permit unconditional() {
         return sstable_write_permit();
     }
+
+    operator bool() const noexcept {
+        return bool(_permit);
+    }
 };
 
 class flush_permit {
@@ -53,6 +57,10 @@ public:
 
     sstable_write_permit release_sstable_write_permit() noexcept {
         return std::move(_sstable_write_permit);
+    }
+
+    bool has_sstable_write_permit() const noexcept {
+        return bool(_sstable_write_permit);
     }
 
     future<flush_permit> reacquire_sstable_write_permit() &&;
