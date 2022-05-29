@@ -1277,7 +1277,7 @@ private:
     struct compaction_lock {
         region_impl& _region;
         bool _prev;
-        compaction_lock(region_impl& r)
+        compaction_lock(region_impl& r) noexcept
             : _region(r)
             , _prev(r._reclaiming_enabled)
         {
@@ -1510,7 +1510,7 @@ private:
         _buf_active_offset = 0;
     }
 
-    static uint64_t next_id() {
+    static uint64_t next_id() noexcept {
         static std::atomic<uint64_t> id{0};
         return id.fetch_add(1);
     }
@@ -1577,7 +1577,7 @@ public:
     region_impl(region_impl&&) = delete;
     region_impl(const region_impl&) = delete;
 
-    bool empty() const {
+    bool empty() const noexcept {
         return occupancy().used_space() == 0;
     }
 
@@ -1618,7 +1618,7 @@ public:
     //
     //    while (is_compactible()) { compact(); }
     //
-    bool is_compactible() const {
+    bool is_compactible() const noexcept {
         return _reclaiming_enabled
             // We require 2 segments per allocation segregation group to ensure forward progress during compaction.
             // There are currently two fixed groups, one for the allocation_strategy implementation and one for lsa_buffer:s.
@@ -1626,7 +1626,7 @@ public:
             && _segment_descs.contains_above_min();
     }
 
-    bool is_idle_compactible() {
+    bool is_idle_compactible() const noexcept {
         return is_compactible();
     }
 
@@ -1784,7 +1784,7 @@ public:
     }
 
     // Returns occupancy of the sparsest compactible segment.
-    occupancy_stats min_occupancy() const {
+    occupancy_stats min_occupancy() const noexcept {
         if (_segment_descs.empty()) {
             return {};
         }
@@ -1792,7 +1792,7 @@ public:
     }
 
     // Compacts a single segment, most appropriate for it
-    void compact() {
+    void compact() noexcept {
         compaction_lock _(*this);
         auto& desc = _segment_descs.one_of_largest();
         _segment_descs.pop_one_of_largest();
@@ -1831,16 +1831,16 @@ public:
         compact_segment_locked(seg, desc);
     }
 
-    allocation_strategy& allocator() {
+    allocation_strategy& allocator() noexcept {
         return *this;
     }
 
-    uint64_t id() const {
+    uint64_t id() const noexcept {
         return _id;
     }
 
     // Returns true if this pool is evictable, so that evict_some() can be called.
-    bool is_evictable() const {
+    bool is_evictable() const noexcept {
         return _evictable && _reclaiming_enabled;
     }
 
@@ -1852,17 +1852,17 @@ public:
         return ret;
     }
 
-    void make_not_evictable() {
+    void make_not_evictable() noexcept {
         _evictable = false;
         _eviction_fn = {};
     }
 
-    void make_evictable(eviction_fn fn) {
+    void make_evictable(eviction_fn fn) noexcept {
         _evictable = true;
         _eviction_fn = std::move(fn);
     }
 
-    const eviction_fn& evictor() const {
+    const eviction_fn& evictor() const noexcept {
         return _eviction_fn;
     }
 
