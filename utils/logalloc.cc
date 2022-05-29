@@ -2500,7 +2500,7 @@ uint64_t region_group::top_region_evictable_space() const {
     return _regions.empty() ? 0 : _regions.top()->evictable_occupancy().total_space();
 }
 
-region* region_group::get_largest_region() {
+region* region_group::get_largest_region() noexcept {
     if (!_maximal_rg || _maximal_rg->_regions.empty()) {
         return nullptr;
     }
