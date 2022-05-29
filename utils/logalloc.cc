@@ -505,7 +505,7 @@ private:
 class tracker_reclaimer_lock {
     tracker::impl::reclaiming_lock _lock;
 public:
-    tracker_reclaimer_lock() : _lock(shard_tracker().get_impl()) { }
+    tracker_reclaimer_lock() noexcept : _lock(shard_tracker().get_impl()) { }
 };
 
 tracker::tracker()
