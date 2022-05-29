@@ -600,27 +600,21 @@ table::seal_active_memtable(flush_permit&& flush_permit) noexcept {
                     tlogger.warn("Memtable flush failed due to: {}. Dropped due to shutdown", ex);
                     co_return;
                 }
-                if (try_catch<std::bad_alloc>(ex)) {
-                    // There is a chance something else will free the memory, so we can try again
-                    // FIXME: limit the number of retries
-                } else {
-                    // FIXME: we should just abort on unexpected errors.
-                    // This is a temporary measure just to make this patch that
-                    // moved this error handling code from flush_when_needed
-                    // easier to review
+                auto abort_on_error = [ex] () {
+                    // At this point we don't know what has happened and it's better to potentially
+                    // take the node down and rely on commitlog to replay.
                     //
                     // FIXME: enter maintenance mode when available.
                     // since replaying the commitlog with a corrupt mutation
                     // may end up in an infinite crash loop.
-                    try {
-                        // At this point we don't know what has happened and it's better to potentially
-                        // take the node down and rely on commitlog to replay.
-                        on_internal_error(tlogger, ex);
-                    } catch (const std::exception& ex) {
-                        // If the node is configured to not abort on internal error,
-                        // but propagate it up the chain, we can't do anything reasonable
-                        // at this point. The error is logged and we can try again later
-                    }
+                    tlogger.error("Memtable flush failed due to: {}. Aborting, at {}", ex, current_backtrace());
+                    std::abort();
+                };
+                if (try_catch<std::bad_alloc>(ex)) {
+                    // There is a chance something else will free the memory, so we can try again
+                    // FIXME: limit the number of retries
+                } else {
+                    abort_on_error();
                 }
             }
             tlogger.warn("Memtable flush failed due to: {}. Will retry in {}ms", ex, r.sleep_time().count());
