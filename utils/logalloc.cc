@@ -1608,15 +1608,19 @@ public:
         return total;
     }
 
-    region_group* group() {
+    const region_group* group() const noexcept {
         return _group;
     }
 
-    occupancy_stats compactible_occupancy() const {
+    region_group* group() noexcept {
+        return _group;
+    }
+
+    occupancy_stats compactible_occupancy() const noexcept {
         return _closed_occupancy;
     }
 
-    occupancy_stats evictable_occupancy() const {
+    occupancy_stats evictable_occupancy() const noexcept {
         return occupancy_stats(0, _evictable_space & _evictable_space_mask);
     }
 
@@ -1894,7 +1898,7 @@ lsa_buffer::~lsa_buffer() {
 }
 
 inline void
-region_group_binomial_group_sanity_check(const region_group::region_heap& bh) {
+region_group_binomial_group_sanity_check(const region_group::region_heap& bh) noexcept {
 #ifdef SEASTAR_DEBUG
     bool failed = false;
     size_t last =  std::numeric_limits<size_t>::max();
@@ -1950,7 +1954,7 @@ memory::reclaiming_result tracker::reclaim(seastar::memory::reclaimer::request r
 }
 
 bool
-region_group::region_evictable_occupancy_ascending_less_comparator::operator()(region_impl* r1, region_impl* r2) const {
+region_group::region_evictable_occupancy_ascending_less_comparator::operator()(region_impl* r1, region_impl* r2) const noexcept {
     return r1->evictable_occupancy().total_space() < r2->evictable_occupancy().total_space();
 }
 
@@ -2510,7 +2514,7 @@ bool segment_pool::compact_segment(segment* seg) {
 
 region_group_reclaimer region_group::no_reclaimer;
 
-uint64_t region_group::top_region_evictable_space() const {
+uint64_t region_group::top_region_evictable_space() const noexcept {
     return _regions.empty() ? 0 : _regions.top()->evictable_occupancy().total_space();
 }
 
@@ -2555,7 +2559,7 @@ region_group::execution_permitted() noexcept {
 }
 
 future<>
-region_group::start_releaser(scheduling_group deferred_work_sg) {
+region_group::start_releaser(scheduling_group deferred_work_sg) noexcept {
     return with_scheduling_group(deferred_work_sg, [this] {
         return yield().then([this] {
             return repeat([this] () noexcept {
@@ -2582,7 +2586,7 @@ region_group::start_releaser(scheduling_group deferred_work_sg) {
 }
 
 region_group::region_group(sstring name, region_group *parent,
-        region_group_reclaimer& reclaimer, scheduling_group deferred_work_sg)
+        region_group_reclaimer& reclaimer, scheduling_group deferred_work_sg) noexcept
     : _parent(parent)
     , _reclaimer(reclaimer)
     , _blocked_requests(on_request_expiry{std::move(name)})
@@ -2593,11 +2597,11 @@ region_group::region_group(sstring name, region_group *parent,
     }
 }
 
-bool region_group::reclaimer_can_block() const {
+bool region_group::reclaimer_can_block() const noexcept {
     return _reclaimer.throttle_threshold() != std::numeric_limits<size_t>::max();
 }
 
-void region_group::notify_relief() {
+void region_group::notify_relief() noexcept {
     _relief.signal();
     for (region_group* child : _subgroups) {
         child->notify_relief();
