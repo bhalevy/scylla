@@ -2618,7 +2618,7 @@ void region_group::update(ssize_t delta) {
     }
 }
 
-allocating_section::guard::guard()
+allocating_section::guard::guard() noexcept
     : _prev(shard_segment_pool.emergency_reserve_max())
 { }
 
