@@ -51,7 +51,7 @@ public:
     flush_permit(flush_permit&&) noexcept = default;
     flush_permit& operator=(flush_permit&&) noexcept = default;
 
-    sstable_write_permit release_sstable_write_permit() {
+    sstable_write_permit release_sstable_write_permit() noexcept {
         return std::move(_sstable_write_permit);
     }
 
