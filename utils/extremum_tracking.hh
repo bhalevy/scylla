@@ -15,12 +15,11 @@ namespace detail {
 
 template<typename T, typename Comparator>
 class extremum_tracker {
-    T _default_value;
     bool _is_set = false;
     T _value;
 public:
     explicit extremum_tracker(T default_value) {
-        _default_value = default_value;
+        _value = default_value;
     }
 
     void update(T value) {
@@ -41,10 +40,7 @@ public:
     }
 
     T get() const {
-        if (_is_set) {
-            return _value;
-        }
-        return _default_value;
+        return _value;
     }
 };
 
