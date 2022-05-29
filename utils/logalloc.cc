@@ -1947,19 +1947,19 @@ region::region(region_group& group)
         : _impl(make_shared<impl>(this, &group)) {
 }
 
-region_impl& region::get_impl() {
+region_impl& region::get_impl() noexcept {
     return *static_cast<region_impl*>(_impl.get());
 }
-const region_impl& region::get_impl() const {
+const region_impl& region::get_impl() const noexcept {
     return *static_cast<const region_impl*>(_impl.get());
 }
 
-region::region(region&& other) {
+region::region(region&& other) noexcept {
     this->_impl = std::move(other._impl);
     get_impl()._region = this;
 }
 
-region& region::operator=(region&& other) {
+region& region::operator=(region&& other) noexcept {
     this->_impl = std::move(other._impl);
     get_impl()._region = this;
     return *this;
@@ -1968,11 +1968,11 @@ region& region::operator=(region&& other) {
 region::~region() {
 }
 
-occupancy_stats region::occupancy() const {
+occupancy_stats region::occupancy() const noexcept {
     return get_impl().occupancy();
 }
 
-region_group* region::group() {
+region_group* region::group() noexcept {
     return get_impl().group();
 }
 
@@ -1998,7 +1998,7 @@ memory::reclaiming_result region::evict_some() {
     return memory::reclaiming_result::reclaimed_nothing;
 }
 
-void region::make_evictable(eviction_fn fn) {
+void region::make_evictable(eviction_fn fn) noexcept {
     get_impl().make_evictable(std::move(fn));
 }
 
@@ -2006,11 +2006,11 @@ void region::ground_evictable_occupancy() {
     get_impl().ground_evictable_occupancy();
 }
 
-occupancy_stats region::evictable_occupancy() {
+occupancy_stats region::evictable_occupancy() const noexcept {
     return get_impl().evictable_occupancy();
 }
 
-const eviction_fn& region::evictor() const {
+const eviction_fn& region::evictor() const noexcept {
     return get_impl().evictor();
 }
 
