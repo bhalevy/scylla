@@ -810,7 +810,6 @@ private:
     friend void segment::operator delete(void*);
 
     segment* allocate_or_fallback_to_reserve();
-    void free_or_restore_to_reserve(segment* seg) noexcept;
     const segment* segment_from_idx(size_t idx) const {
         return _store.segment_from_idx(idx);
     }
