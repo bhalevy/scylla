@@ -122,7 +122,7 @@ class region_group {
     static region_group_reclaimer no_reclaimer;
 
     struct region_evictable_occupancy_ascending_less_comparator {
-        bool operator()(region_impl* r1, region_impl* r2) const;
+        bool operator()(region_impl* r1, region_impl* r2) const noexcept;
     };
 
     // We want to sort the subgroups so that we can easily find the one that holds the biggest
@@ -140,7 +140,7 @@ class region_group {
     //
     //      max(our_biggest_region, our_subtree_biggest_region)
     struct subgroup_maximal_region_ascending_less_comparator {
-        bool operator()(region_group* rg1, region_group* rg2) const {
+        bool operator()(region_group* rg1, region_group* rg2) const noexcept {
             return rg1->maximal_score() < rg2->maximal_score();
         }
     };
@@ -173,7 +173,7 @@ class region_group {
     struct allocating_function {
         virtual ~allocating_function() = default;
         virtual void allocate() = 0;
-        virtual void fail(std::exception_ptr) = 0;
+        virtual void fail(std::exception_ptr) noexcept = 0;
     };
 
     template <typename Func>
@@ -185,11 +185,11 @@ class region_group {
         void allocate() override {
             futurator::invoke(func).forward_to(std::move(pr));
         }
-        void fail(std::exception_ptr e) override {
+        void fail(std::exception_ptr e) noexcept override {
             pr.set_exception(e);
         }
-        concrete_allocating_function(Func&& func) : func(std::forward<Func>(func)) {}
-        typename futurator::type get_future() {
+        concrete_allocating_function(Func&& func) noexcept : func(std::forward<Func>(func)) {}
+        typename futurator::type get_future() noexcept {
             return pr.get_future();
         }
     };
@@ -207,7 +207,7 @@ class region_group {
 
         sstring _name;
     public:
-        explicit on_request_expiry(sstring name) : _name(std::move(name)) {}
+        explicit on_request_expiry(sstring name) noexcept : _name(std::move(name)) {}
         void operator()(std::unique_ptr<allocating_function>&) noexcept;
     };
 
@@ -229,10 +229,10 @@ class region_group {
     future<> _releaser;
     bool _shutdown_requested = false;
 
-    bool reclaimer_can_block() const;
-    future<> start_releaser(scheduling_group deferered_work_sg);
-    void notify_relief();
-    friend void region_group_binomial_group_sanity_check(const region_group::region_heap& bh);
+    bool reclaimer_can_block() const noexcept;
+    future<> start_releaser(scheduling_group deferered_work_sg) noexcept;
+    void notify_relief() noexcept;
+    friend void region_group_binomial_group_sanity_check(const region_group::region_heap& bh) noexcept;
 public:
     // When creating a region_group, one can specify an optional throttle_threshold parameter. This
     // parameter won't affect normal allocations, but an API is provided, through the region_group's
@@ -245,10 +245,10 @@ public:
     // at the time the call to run_when_memory_available() was made.
     region_group(sstring name = "(unnamed region_group)",
             region_group_reclaimer& reclaimer = no_reclaimer,
-            scheduling_group deferred_work_sg = default_scheduling_group())
-        : region_group(name, nullptr, reclaimer, deferred_work_sg) {}
+            scheduling_group deferred_work_sg = default_scheduling_group()) noexcept
+        : region_group(std::move(name), nullptr, reclaimer, deferred_work_sg) {}
     region_group(sstring name, region_group* parent, region_group_reclaimer& reclaimer = no_reclaimer,
-            scheduling_group deferred_work_sg = default_scheduling_group());
+            scheduling_group deferred_work_sg = default_scheduling_group()) noexcept;
     region_group(region_group&& o) = delete;
     region_group(const region_group&) = delete;
     ~region_group() {
@@ -263,7 +263,7 @@ public:
     }
     region_group& operator=(const region_group&) = delete;
     region_group& operator=(region_group&&) = delete;
-    size_t memory_used() const {
+    size_t memory_used() const noexcept {
         return _total_memory;
     }
     void update(ssize_t delta);
@@ -336,17 +336,17 @@ public:
 
     // Shutdown is mandatory for every user who has set a threshold
     // Can be called at most once.
-    future<> shutdown() {
+    future<> shutdown() noexcept {
         _shutdown_requested = true;
         _relief.signal();
         return std::move(_releaser);
     }
 
-    size_t blocked_requests() {
+    size_t blocked_requests() const noexcept {
         return _blocked_requests.size();
     }
 
-    uint64_t blocked_requests_counter() const {
+    uint64_t blocked_requests_counter() const noexcept {
         return _blocked_requests_counter;
     }
 private:
@@ -373,13 +373,13 @@ private:
         return nullptr;
     }
 
-    inline bool under_pressure() const {
+    inline bool under_pressure() const noexcept {
         return _reclaimer.under_pressure();
     }
 
-    uint64_t top_region_evictable_space() const;
+    uint64_t top_region_evictable_space() const noexcept;
 
-    uint64_t maximal_score() const {
+    uint64_t maximal_score() const noexcept {
         return _maximal_score;
     }
 
