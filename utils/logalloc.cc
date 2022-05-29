@@ -525,15 +525,15 @@ size_t tracker::reclaim(size_t bytes) {
     return _impl->reclaim(bytes, is_preemptible::no);
 }
 
-occupancy_stats tracker::region_occupancy() {
+occupancy_stats tracker::region_occupancy() noexcept {
     return _impl->region_occupancy();
 }
 
-occupancy_stats tracker::occupancy() {
+occupancy_stats tracker::occupancy() noexcept {
     return _impl->occupancy();
 }
 
-size_t tracker::non_lsa_used_space() const {
+size_t tracker::non_lsa_used_space() const noexcept {
     return _impl->non_lsa_used_space();
 }
 
@@ -1905,11 +1905,11 @@ region_group_binomial_group_sanity_check(const region_group::region_heap& bh) {
 #endif
 }
 
-size_t tracker::reclamation_step() const {
+size_t tracker::reclamation_step() const noexcept {
     return _impl->reclamation_step();
 }
 
-bool tracker::should_abort_on_bad_alloc() {
+bool tracker::should_abort_on_bad_alloc() noexcept {
     return _impl->should_abort_on_bad_alloc();
 }
 
