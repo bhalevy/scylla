@@ -68,11 +68,11 @@ protected:
     virtual void start_reclaiming() noexcept {}
     virtual void stop_reclaiming() noexcept {}
 public:
-    bool under_pressure() const {
+    bool under_pressure() const noexcept {
         return _under_pressure;
     }
 
-    bool over_soft_limit() const {
+    bool over_soft_limit() const noexcept {
         return _under_soft_pressure;
     }
 
@@ -109,10 +109,10 @@ public:
 
     virtual ~region_group_reclaimer() {}
 
-    size_t throttle_threshold() const {
+    size_t throttle_threshold() const noexcept {
         return _threshold;
     }
-    size_t soft_limit_threshold() const {
+    size_t soft_limit_threshold() const noexcept {
         return _soft_limit;
     }
 };
