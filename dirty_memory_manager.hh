@@ -28,11 +28,26 @@ class sstable_write_permit final {
     }
 
 public:
-    sstable_write_permit(sstable_write_permit&&) noexcept = default;
-    sstable_write_permit& operator=(sstable_write_permit&&) noexcept = default;
+    // The move constructor and assignment operator make sure that the moved-from _permit
+    // is disengaged following the move.
+    //
+    // Note that the default move-constructor calls std::optional(std::optional&&)
+    // that, if engaged, it moves the value, but leaves the moved-from optional engaged,
+    // thus fooling operator bool() below.
+    sstable_write_permit(sstable_write_permit&& o) noexcept : _permit(std::exchange(o._permit, std::nullopt)) {}
+    sstable_write_permit& operator=(sstable_write_permit&& o) noexcept {
+        if (this != &o) {
+            _permit = std::exchange(o._permit, std::nullopt);
+        }
+        return *this;
+    }
 
     static sstable_write_permit unconditional() {
         return sstable_write_permit();
+    }
+
+    explicit operator bool() const noexcept {
+        return _permit.has_value();
     }
 };
 
@@ -53,6 +68,10 @@ public:
 
     sstable_write_permit release_sstable_write_permit() noexcept {
         return std::move(_sstable_write_permit);
+    }
+
+    bool has_sstable_write_permit() const noexcept {
+        return bool(_sstable_write_permit);
     }
 
     future<flush_permit> reacquire_sstable_write_permit() &&;
