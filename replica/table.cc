@@ -625,19 +625,18 @@ table::seal_active_memtable(flush_permit&& flush_permit) noexcept {
             } catch (const std::bad_alloc& e) {
                 // There is a chance something else will free the memory, so we can try again
             } catch (...) {
-                try {
-                    // At this point we don't know what has happened and it's better to potentially
-                    // take the node down and rely on commitlog to replay.
-                    //
-                    // FIXME: enter maintenance mode when available.
-                    // since replaying the commitlog with a corrupt mutation
-                    // may end up in an infinite crash loop.
-                    on_internal_error(tlogger, e);
-                } catch (const std::exception& ex) {
-                    // If the node is configured to not abort on internal error,
-                    // but propagate it up the chain, we can't do anything reasonable
-                    // at this point. The error is logged and we can try again later
-                }
+                // At this point we don't know what has happened and it's better to potentially
+                // take the node down and rely on commitlog to replay.
+                //
+                // FIXME: enter maintenance mode when available.
+                // since replaying the commitlog with a corrupt mutation
+                // may end up in an infinite crash loop.
+                on_internal_error_noexcept(tlogger, format("Memtable flush failed due to: {}", e));
+
+                // If the node is configured to not abort on internal error,
+                // but propagate it up the chain, we can't do anything reasonable
+                // at this point.
+                abort();
             }
         }
         if (_async_gate.is_closed()) {
