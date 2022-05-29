@@ -14,15 +14,16 @@
 namespace detail {
 
 template<typename T, typename Comparator>
+requires std::is_nothrow_copy_constructible_v<T> && std::is_nothrow_move_constructible_v<T>
 class extremum_tracker {
     bool _is_set = false;
     T _value;
 public:
-    explicit extremum_tracker(T default_value)
+    explicit extremum_tracker(T default_value) noexcept
         : _value(std::move(default_value))
     { }
 
-    void update(T value) {
+    void update(T value) noexcept {
         if (!_is_set) {
             _value = value;
             _is_set = true;
@@ -33,13 +34,13 @@ public:
         }
     }
 
-    void update(const extremum_tracker& other) {
+    void update(const extremum_tracker& other) noexcept {
         if (other._is_set) {
             update(other._value);
         }
     }
 
-    T get() const {
+    T get() const noexcept {
         return _value;
     }
 };
@@ -53,35 +54,36 @@ template <typename T>
 using max_tracker = detail::extremum_tracker<T, std::greater<T>>;
 
 template <typename T>
+requires std::is_nothrow_copy_constructible_v<T> && std::is_nothrow_move_constructible_v<T>
 class min_max_tracker {
     min_tracker<T> _min_tracker;
     max_tracker<T> _max_tracker;
 public:
-    min_max_tracker()
+    min_max_tracker() noexcept
         : _min_tracker(std::numeric_limits<T>::min())
         , _max_tracker(std::numeric_limits<T>::max())
     {}
 
-    min_max_tracker(T default_min, T default_max)
+    min_max_tracker(T default_min, T default_max) noexcept
         : _min_tracker(default_min)
         , _max_tracker(default_max)
     {}
 
-    void update(T value) {
+    void update(T value) noexcept {
         _min_tracker.update(value);
         _max_tracker.update(value);
     }
 
-    void update(const min_max_tracker<T>& other) {
+    void update(const min_max_tracker<T>& other) noexcept {
         _min_tracker.update(other._min_tracker);
         _max_tracker.update(other._max_tracker);
     }
 
-    T min() const {
+    T min() const noexcept {
         return _min_tracker.get();
     }
 
-    T max() const {
+    T max() const noexcept {
         return _max_tracker.get();
     }
 };
