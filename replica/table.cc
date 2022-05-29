@@ -625,14 +625,11 @@ table::seal_active_memtable(flush_permit&& flush_permit) noexcept {
                     permit = co_await std::move(permit).reacquire_sstable_write_permit();
                 }
                 auto write_permit = permit.release_sstable_write_permit();
-            // FIXME: badly indented on purpose
-            if (co_await this->try_flush_memtable_to_sstable(old, std::move(write_permit)) == stop_iteration::yes) {
+                co_await this->try_flush_memtable_to_sstable(old, std::move(write_permit));
                 st = state::done;
                 r.reset();
                 // break out of the retry loop
                 continue;
-            }
-            break;
             }
             case state::done:
                 __builtin_unreachable();
@@ -640,6 +637,10 @@ table::seal_active_memtable(flush_permit&& flush_permit) noexcept {
         } catch (...) {
             e = std::current_exception();
             _config.cf_stats->failed_memtables_flushes_count++;
+            if (_async_gate.is_closed()) {
+                tlogger.warn("Memtable flush failed due to: {}. Dropped due to shutdown", e);
+                co_return;
+            }
             try {
                 std::rethrow_exception(e);
             } catch (const std::bad_alloc& e) {
@@ -648,6 +649,10 @@ table::seal_active_memtable(flush_permit&& flush_permit) noexcept {
                 try {
                     // At this point we don't know what has happened and it's better to potentially
                     // take the node down and rely on commitlog to replay.
+                    //
+                    // FIXME: enter maintenance mode when available.
+                    // since replaying the commitlog with a corrupt mutation
+                    // may end up in an infinite crash loop.
                     on_internal_error(tlogger, e);
                 } catch (const std::exception& ex) {
                     // If the node is configured to not abort on internal error,
@@ -674,9 +679,9 @@ table::seal_active_memtable(flush_permit&& flush_permit) noexcept {
     // FIXME: provide back-pressure to upper layers
 }
 
-future<stop_iteration>
+future<>
 table::try_flush_memtable_to_sstable(lw_shared_ptr<memtable> old, sstable_write_permit&& permit) {
-    auto try_flush = [this, old = std::move(old), permit = make_lw_shared(std::move(permit))] () mutable -> future<stop_iteration> {
+    auto try_flush = [this, old = std::move(old), permit = make_lw_shared(std::move(permit))] () mutable -> future<> {
         // Note that due to our sharded architecture, it is possible that
         // in the face of a value change some shards will backup sstables
         // while others won't.
@@ -728,7 +733,7 @@ table::try_flush_memtable_to_sstable(lw_shared_ptr<memtable> old, sstable_write_
             if (!fragment) {
                 co_await reader.close();
                 _memtables->erase(old);
-                co_return stop_iteration::yes;
+                co_return;
             }
         } catch (...) {
             err = std::current_exception();
@@ -736,7 +741,7 @@ table::try_flush_memtable_to_sstable(lw_shared_ptr<memtable> old, sstable_write_
         if (err) {
             tlogger.error("failed to flush memtable for {}.{}: {}", old->schema()->ks_name(), old->schema()->cf_name(), err);
             co_await reader.close();
-            co_return stop_iteration(_async_gate.is_closed());
+            co_await coroutine::return_exception_ptr(std::move(err));
         }
 
         auto f = consumer(std::move(reader));
@@ -744,7 +749,7 @@ table::try_flush_memtable_to_sstable(lw_shared_ptr<memtable> old, sstable_write_
         // Switch back to default scheduling group for post-flush actions, to avoid them being staved by the memtable flush
         // controller. Cache update does not affect the input of the memtable cpu controller, so it can be subject to
         // priority inversion.
-        auto post_flush = [this, old = std::move(old), &newtabs, f = std::move(f)] () mutable -> future<stop_iteration> {
+        auto post_flush = [this, old = std::move(old), &newtabs, f = std::move(f)] () mutable -> future<> {
             try {
                 co_await std::move(f);
                 co_await coroutine::parallel_for_each(newtabs, [] (auto& newtab) -> future<> {
@@ -752,12 +757,12 @@ table::try_flush_memtable_to_sstable(lw_shared_ptr<memtable> old, sstable_write_
                     tlogger.debug("Flushing to {} done", newtab->get_filename());
                 });
 
-                co_await with_scheduling_group(_config.memtable_to_cache_scheduling_group, [this, old, &newtabs] () -> future<> {
+                co_await with_scheduling_group(_config.memtable_to_cache_scheduling_group, [this, old, &newtabs] {
                     return update_cache(old, newtabs);
                 });
                 _memtables->erase(old);
                 tlogger.debug("Memtable for {}.{} replaced, into {} sstables", old->schema()->ks_name(), old->schema()->cf_name(), newtabs.size());
-                co_return stop_iteration::yes;
+                co_return;
             } catch (const std::exception& e) {
                 for (auto& newtab : newtabs) {
                     newtab->mark_for_deletion();
@@ -767,7 +772,7 @@ table::try_flush_memtable_to_sstable(lw_shared_ptr<memtable> old, sstable_write_
                 // If we failed this write we will try the write again and that will create a new flush reader
                 // that will decrease dirty memory again. So we need to reset the accounting.
                 old->revert_flushed_memory();
-                co_return stop_iteration(_async_gate.is_closed());
+                throw;
             }
         };
         co_return co_await with_scheduling_group(default_scheduling_group(), std::ref(post_flush));
