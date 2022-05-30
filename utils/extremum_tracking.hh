@@ -18,11 +18,11 @@ class extremum_tracker {
     bool _is_set = false;
     T _value;
 public:
-    explicit extremum_tracker(T default_value) {
-        _value = default_value;
-    }
+    explicit extremum_tracker(const T& default_value)
+        : _value(default_value)
+    { }
 
-    void update(T value) {
+    void update(const T& value) {
         if (!_is_set) {
             _value = value;
             _is_set = true;
@@ -39,7 +39,7 @@ public:
         }
     }
 
-    T get() const {
+    const T& get() const {
         return _value;
     }
 };
@@ -62,12 +62,12 @@ public:
         , _max_tracker(std::numeric_limits<T>::max())
     {}
 
-    min_max_tracker(T default_min, T default_max)
+    min_max_tracker(const T& default_min, const T& default_max)
         : _min_tracker(default_min)
         , _max_tracker(default_max)
     {}
 
-    void update(T value) {
+    void update(const T& value) {
         _min_tracker.update(value);
         _max_tracker.update(value);
     }
@@ -77,11 +77,11 @@ public:
         _max_tracker.update(other._max_tracker);
     }
 
-    T min() const {
+    const T& min() const {
         return _min_tracker.get();
     }
 
-    T max() const {
+    const T& max() const {
         return _max_tracker.get();
     }
 };
