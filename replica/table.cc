@@ -448,9 +448,7 @@ table::do_add_sstable_and_update_cache(sstables::shared_sstable sst, sstables::o
         // clone staging sstables so their content may be compacted while
         // views are built.  When done, the hard-linked copy in the staging
         // subsirectory will be simply unlinked.
-        co_await sst->create_links(dir());
-        sst = make_sstable(dir(), sst->generation(), sst->get_version(), sst->get_format());
-        co_await sst->load();
+        sst = co_await sst->clone_at(dir());
     }
 
     auto permit = co_await seastar::get_units(_sstable_set_mutation_sem, 1);
