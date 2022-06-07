@@ -30,6 +30,7 @@ public:
     virtual std::vector<sstable_run> select_sstable_runs(const std::vector<shared_sstable>& sstables) const;
     virtual lw_shared_ptr<sstable_list> all() const = 0;
     virtual void for_each_sstable(std::function<void(const shared_sstable&)> func) const = 0;
+    virtual bool contains(generation_type gen) const noexcept = 0;
     virtual void insert(shared_sstable sst) = 0;
     virtual void erase(shared_sstable sst) = 0;
     virtual std::unique_ptr<incremental_selector_impl> make_incremental_selector() const = 0;
@@ -60,6 +61,7 @@ private:
     interval_map_type _leveled_sstables;
     lw_shared_ptr<sstable_list> _all;
     std::unordered_map<utils::UUID, sstable_run> _all_runs;
+    std::unordered_map<generation_type, shared_sstable> _mapped;
     // Change counter on interval map for leveled sstables which is used by
     // incremental selector to determine whether or not to invalidate iterators.
     uint64_t _leveled_sstables_change_cnt = 0;
@@ -87,6 +89,7 @@ public:
         const interval_map_type& leveled_sstables,
         const lw_shared_ptr<sstable_list>& all,
         const std::unordered_map<utils::UUID, sstable_run>& all_runs,
+        const std::unordered_map<generation_type, shared_sstable>& mapped,
         bool use_level_metadata);
 
     virtual std::unique_ptr<sstable_set_impl> clone() const override;
@@ -94,6 +97,7 @@ public:
     virtual std::vector<sstable_run> select_sstable_runs(const std::vector<shared_sstable>& sstables) const override;
     virtual lw_shared_ptr<sstable_list> all() const override;
     virtual void for_each_sstable(std::function<void(const shared_sstable&)> func) const override;
+    virtual bool contains(generation_type gen) const noexcept override;
     virtual void insert(shared_sstable sst) override;
     virtual void erase(shared_sstable sst) override;
     virtual std::unique_ptr<incremental_selector_impl> make_incremental_selector() const override;
@@ -110,6 +114,7 @@ private:
     lw_shared_ptr<container_t> _sstables;
     // s.max_position().reversed() -> s, ordered using _reversed_schema; the set of values is the same as in _sstables
     lw_shared_ptr<container_t> _sstables_reversed;
+    std::unordered_map<generation_type, shared_sstable> _mapped;
 
 public:
     time_series_sstable_set(schema_ptr schema);
@@ -119,6 +124,7 @@ public:
     virtual std::vector<shared_sstable> select(const dht::partition_range& range = query::full_partition_range) const override;
     virtual lw_shared_ptr<sstable_list> all() const override;
     virtual void for_each_sstable(std::function<void(const shared_sstable&)> func) const override;
+    virtual bool contains(generation_type gen) const noexcept override;
     virtual void insert(shared_sstable sst) override;
     virtual void erase(shared_sstable sst) override;
     virtual std::unique_ptr<incremental_selector_impl> make_incremental_selector() const override;
@@ -158,6 +164,7 @@ public:
     virtual std::vector<sstable_run> select_sstable_runs(const std::vector<shared_sstable>& sstables) const override;
     virtual lw_shared_ptr<sstable_list> all() const override;
     virtual void for_each_sstable(std::function<void(const shared_sstable&)> func) const override;
+    virtual bool contains(generation_type gen) const noexcept override;
     virtual void insert(shared_sstable sst) override;
     virtual void erase(shared_sstable sst) override;
     virtual std::unique_ptr<incremental_selector_impl> make_incremental_selector() const override;
