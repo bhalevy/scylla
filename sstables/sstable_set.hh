@@ -11,6 +11,7 @@
 #include "readers/flat_mutation_reader_fwd.hh"
 #include "readers/flat_mutation_reader_v2.hh"
 #include "sstables/progress_monitor.hh"
+#include "sstables/generation_type.hh"
 #include "shared_sstable.hh"
 #include "dht/i_partitioner.hh"
 #include <seastar/core/shared_ptr.hh>
@@ -56,6 +57,7 @@ public:
     lw_shared_ptr<sstable_list> all() const;
     // Prefer for_each_sstable() over all() for iteration purposes, as the latter may have to copy all sstables into a temporary
     void for_each_sstable(std::function<void(const shared_sstable&)> func) const;
+    bool contains(generation_type gen) const noexcept;
     void insert(shared_sstable sst);
     void erase(shared_sstable sst);
 
