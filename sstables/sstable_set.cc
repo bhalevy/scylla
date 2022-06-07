@@ -116,6 +116,11 @@ void sstable_set::for_each_sstable(std::function<void(const shared_sstable&)> fu
     return _impl->for_each_sstable(std::move(func));
 }
 
+bool
+sstable_set::contains(const shared_sstable& sst) const noexcept {
+    return _impl->contains(sst);
+}
+
 void
 sstable_set::insert(shared_sstable sst) {
     _impl->insert(sst);
@@ -227,21 +232,31 @@ dht::partition_range partitioned_sstable_set::to_partition_range(const dht::ring
 partitioned_sstable_set::partitioned_sstable_set(schema_ptr schema, lw_shared_ptr<sstable_list> all, bool use_level_metadata)
         : _schema(std::move(schema))
         , _all(std::move(all))
-        , _use_level_metadata(use_level_metadata) {
+        , _use_level_metadata(use_level_metadata)
+{
+    _sstable_generations.reserve(_all->size());
+    for (auto& sst : *_all) {
+        auto [it, inserted] = _sstable_generations.emplace(sst->generation());
+        if (!inserted) {
+            on_internal_error(sstlog, format("could not ingest SSTable: detected non-unique sstable generation {}", sst->generation()));
+        }
+    }
 }
 
 partitioned_sstable_set::partitioned_sstable_set(schema_ptr schema, const std::vector<shared_sstable>& unleveled_sstables, const interval_map_type& leveled_sstables,
-        const lw_shared_ptr<sstable_list>& all, const std::unordered_map<utils::UUID, sstable_run>& all_runs, bool use_level_metadata)
+        const lw_shared_ptr<sstable_list>& all, const std::unordered_map<utils::UUID, sstable_run>& all_runs, const std::unordered_set<generation_type>& sstable_generations,
+        bool use_level_metadata)
         : _schema(schema)
         , _unleveled_sstables(unleveled_sstables)
         , _leveled_sstables(leveled_sstables)
         , _all(make_lw_shared<sstable_list>(*all))
         , _all_runs(all_runs)
+        , _sstable_generations(sstable_generations)
         , _use_level_metadata(use_level_metadata) {
 }
 
 std::unique_ptr<sstable_set_impl> partitioned_sstable_set::clone() const {
-    return std::make_unique<partitioned_sstable_set>(_schema, _unleveled_sstables, _leveled_sstables, _all, _all_runs, _use_level_metadata);
+    return std::make_unique<partitioned_sstable_set>(_schema, _unleveled_sstables, _leveled_sstables, _all, _all_runs, _sstable_generations, _use_level_metadata);
 }
 
 std::vector<shared_sstable> partitioned_sstable_set::select(const dht::partition_range& range) const {
@@ -267,7 +282,16 @@ void partitioned_sstable_set::for_each_sstable(std::function<void(const shared_s
     }
 }
 
+bool partitioned_sstable_set::contains(const shared_sstable& sst) const noexcept {
+    return _sstable_generations.contains(sst->generation());
+}
+
 void partitioned_sstable_set::insert(shared_sstable sst) {
+    auto [it, inserted] = _sstable_generations.emplace(sst->generation());
+    if (!inserted) {
+        throw std::runtime_error(format("could not insert SSTable: generation {} already exists", sst->generation()));
+    }
+    auto undo_mapped_insert = defer([&] () { _sstable_generations.erase(sst->generation()); });
     _all->insert(sst);
     auto undo_all_insert = defer([&] () { _all->erase(sst); });
 
@@ -282,9 +306,11 @@ void partitioned_sstable_set::insert(shared_sstable sst) {
     }
     undo_all_insert.cancel();
     undo_all_runs_insert.cancel();
+    undo_mapped_insert.cancel();
 }
 
 void partitioned_sstable_set::erase(shared_sstable sst) {
+    _sstable_generations.erase(sst->generation());
     _all_runs[sst->run_identifier()].erase(sst);
     _all->erase(sst);
     if (store_as_unleveled(sst)) {
@@ -368,6 +394,7 @@ time_series_sstable_set::time_series_sstable_set(const time_series_sstable_set& 
     , _reversed_schema(s._reversed_schema)
     , _sstables(make_lw_shared(*s._sstables))
     , _sstables_reversed(make_lw_shared(*s._sstables_reversed))
+    , _sstable_generations(s._sstable_generations)
 {}
 
 std::unique_ptr<sstable_set_impl> time_series_sstable_set::clone() const {
@@ -388,8 +415,16 @@ void time_series_sstable_set::for_each_sstable(std::function<void(const shared_s
     }
 }
 
+bool time_series_sstable_set::contains(const shared_sstable& sst) const noexcept {
+    return _sstable_generations.contains(sst->generation());
+}
+
 // O(log n)
 void time_series_sstable_set::insert(shared_sstable sst) {
+  auto [it, inserted] = _sstable_generations.emplace(sst->generation());
+  if (!inserted) {
+    throw std::runtime_error(format("could not insert SSTable: generation {} already exists", sst->generation()));
+  }
   try {
     auto min_pos = sst->min_position();
     auto max_pos_reversed = sst->max_position().reversed();
@@ -403,6 +438,8 @@ void time_series_sstable_set::insert(shared_sstable sst) {
 
 // O(n) worst case, but should be close to O(log n) most of the time
 void time_series_sstable_set::erase(shared_sstable sst) {
+    _sstable_generations.erase(sst->generation());
+
     {
         auto [first, last] = _sstables->equal_range(sst->min_position());
         auto it = std::find_if(first, last,
@@ -958,6 +995,15 @@ void compound_sstable_set::for_each_sstable(std::function<void(const shared_ssta
             func(sst);
         });
     }
+}
+
+bool compound_sstable_set::contains(const shared_sstable& sst) const noexcept {
+    for (const auto& set : _sets) {
+        if (set->contains(sst)) {
+            return true;
+        }
+    }
+    return false;
 }
 
 void compound_sstable_set::insert(shared_sstable sst) {

@@ -2207,6 +2207,10 @@ SEASTAR_TEST_CASE(sstable_set_erase) {
         }
 
         auto sst2 = sstable_for_overlapping_test(env, s, 0, key_and_token_pair[0].first, key_and_token_pair[0].first, 1);
+        // sstable with same version cannot be inserted into the set
+        BOOST_REQUIRE_THROW(set.insert(sst2), std::runtime_error);
+
+        sst2 = sstable_for_overlapping_test(env, s, 1, key_and_token_pair[0].first, key_and_token_pair[0].first, 1);
         set.insert(sst2);
         BOOST_REQUIRE(set.all()->size() == 2);
 
