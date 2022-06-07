@@ -2200,8 +2200,10 @@ SEASTAR_TEST_CASE(sstable_set_erase) {
         sstable_set set = cs.make_sstable_set(s);
 
         // triggers use-after-free, described in #4572, by operating on interval that relies on info of a destroyed sstable object.
+        sstables::sstable* sstp = nullptr;
         {
             auto sst = sstable_for_overlapping_test(env, s, 0, key_and_token_pair[0].first, key_and_token_pair[0].first, 1);
+            sstp = sst.get();
             set.insert(sst);
             BOOST_REQUIRE(set.all()->size() == 1);
         }
@@ -2215,6 +2217,9 @@ SEASTAR_TEST_CASE(sstable_set_erase) {
         BOOST_REQUIRE(set.all()->size() == 2);
 
         set.erase(sst2);
+        BOOST_REQUIRE(set.all()->size() == 1);
+        // Verify that the sstable_set still contains the original shared_sstable.
+        BOOST_REQUIRE_EQUAL(set.all()->begin()->get(), sstp);
     }
 
     {
