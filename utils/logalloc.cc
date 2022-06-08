@@ -480,9 +480,9 @@ public:
     size_t compact_and_evict(size_t reserve_segments, size_t bytes, is_preemptible p);
     void full_compaction();
     void reclaim_all_free_segments();
-    occupancy_stats region_occupancy() noexcept;
-    occupancy_stats occupancy() noexcept;
-    size_t non_lsa_used_space() noexcept;
+    occupancy_stats region_occupancy() const noexcept;
+    occupancy_stats occupancy() const noexcept;
+    size_t non_lsa_used_space() const noexcept;
     // Set the minimum number of segments reclaimed during single reclamation cycle.
     void set_reclamation_step(size_t step_in_segments) noexcept { _reclamation_step = step_in_segments; }
     size_t reclamation_step() const noexcept { return _reclamation_step; }
@@ -2034,8 +2034,8 @@ std::ostream& operator<<(std::ostream& out, const occupancy_stats& stats) {
         stats.used_fraction() * 100, stats.used_space(), stats.total_space());
 }
 
-occupancy_stats tracker::impl::region_occupancy() noexcept {
-    reclaiming_lock _(*this);
+occupancy_stats tracker::impl::region_occupancy() const noexcept {
+    reclaiming_lock _(*const_cast<tracker::impl*>(this));
     occupancy_stats total{};
     for (auto&& r: _regions) {
         total += r->occupancy();
@@ -2043,8 +2043,8 @@ occupancy_stats tracker::impl::region_occupancy() noexcept {
     return total;
 }
 
-occupancy_stats tracker::impl::occupancy() noexcept {
-    reclaiming_lock _(*this);
+occupancy_stats tracker::impl::occupancy() const noexcept {
+    reclaiming_lock _(*const_cast<tracker::impl*>(this));
     auto occ = region_occupancy();
     {
         auto s = shard_segment_pool.free_segments() * segment::size;
@@ -2053,7 +2053,7 @@ occupancy_stats tracker::impl::occupancy() noexcept {
     return occ;
 }
 
-size_t tracker::impl::non_lsa_used_space() noexcept {
+size_t tracker::impl::non_lsa_used_space() const noexcept {
 #ifdef SEASTAR_DEFAULT_ALLOCATOR
     return 0;
 #else
