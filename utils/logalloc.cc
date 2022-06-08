@@ -688,7 +688,7 @@ public:
     size_t max_segments() const noexcept {
         return (_layout.end - _segments_base) / segment::size;
     }
-    bool can_allocate_more_segments() noexcept {
+    bool can_allocate_more_segments() const noexcept {
         return memory::stats().free_memory() >= non_lsa_reserve + segment::size;
     }
 };
@@ -748,9 +748,13 @@ public:
     size_t max_segments() const noexcept {
         return _std_memory_available / segment::size;
     }
-    bool can_allocate_more_segments() noexcept {
-        auto i = find_empty();
-        return i != _segments.end();
+    bool can_allocate_more_segments() const noexcept {
+        for (auto it = _segments.cbegin() + 1; it != _segments.cend(); ++it) {
+            if (*it == nullptr) {
+                return true;
+            }
+        }
+        return false;
     }
 };
 #endif
