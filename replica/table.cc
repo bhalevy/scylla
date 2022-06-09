@@ -592,6 +592,8 @@ table::seal_active_memtable(flush_permit&& flush_permit) noexcept {
         try_flush,
         done
     };
+    // Try flushing for up to 5 minutes
+    auto timeout = db::timeout_clock::now() + 300s;
     for (auto st = state::add_memtable; st != state::done;) {
         try {
             switch (st) {
@@ -659,6 +661,9 @@ table::seal_active_memtable(flush_permit&& flush_permit) noexcept {
             try {
                 std::rethrow_exception(e);
             } catch (const std::bad_alloc& e) {
+                if (db::timeout_clock::now() >= timeout) {
+                    abort_on_error();
+                }
                 // There is a chance something else will free the memory, so we can try again
             } catch (...) {
                 abort_on_error();
