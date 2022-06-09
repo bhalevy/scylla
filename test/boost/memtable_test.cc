@@ -920,7 +920,7 @@ SEASTAR_TEST_CASE(failed_flush_prevents_writes) {
         }));
 
         // The flush failed, make sure there is still data in memtable.
-        BOOST_ASSERT(!t.active_memtable().empty());
+        BOOST_ASSERT(t.min_memtable_timestamp() < api::max_timestamp);
         utils::get_local_injector().disable("table_seal_active_memtable_pre_flush");
 
         // Release pressure, so that we can trigger flush again
@@ -930,7 +930,7 @@ SEASTAR_TEST_CASE(failed_flush_prevents_writes) {
         // should be triggerred and succeed
         dmm.notify_soft_pressure();
 
-        BOOST_ASSERT(eventually_true([&t]() { return t.active_memtable().empty(); }));
+        BOOST_ASSERT(eventually_true([&t]() { return t.min_memtable_timestamp() == api::max_timestamp; }));
     });
 #endif
 }
