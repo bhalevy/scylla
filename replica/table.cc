@@ -599,7 +599,7 @@ table::seal_active_memtable(flush_permit&& flush_permit) noexcept {
             switch (st) {
             case state::add_memtable:
                 tlogger.debug("seal_active_memtable: adding memtable");
-                utils::get_local_injector().inject("table_seal_active_memtable_pre_flush", []() {
+                utils::get_local_injector().inject("table_seal_active_memtable_add_memtable", []() {
                     throw std::bad_alloc();
                 });
 
@@ -615,6 +615,9 @@ table::seal_active_memtable(flush_permit&& flush_permit) noexcept {
                 [[fallthrough]];
             case state::start_op:
                 previous_flush = _flush_barrier.advance_and_await();
+                utils::get_local_injector().inject("table_seal_active_memtable_start_op", []() {
+                    throw std::bad_alloc();
+                });
                 op = _flush_barrier.start();
                 st = state::try_flush;
                 _stats.pending_flushes++;
@@ -625,9 +628,15 @@ table::seal_active_memtable(flush_permit&& flush_permit) noexcept {
                 // Reacquiring the write permit might be needed if retrying flush
                 if (!permit.has_sstable_write_permit()) {
                     tlogger.debug("seal_active_memtable: reacquiring write permit");
+                    utils::get_local_injector().inject("table_seal_active_memtable_reacquire_write_permit", []() {
+                        throw std::bad_alloc();
+                    });
                     permit = co_await std::move(permit).reacquire_sstable_write_permit();
                 }
                 auto write_permit = permit.release_sstable_write_permit();
+                utils::get_local_injector().inject("table_seal_active_memtable_try_flush", []() {
+                    throw std::bad_alloc();
+                });
                 co_await this->try_flush_memtable_to_sstable(old, std::move(write_permit));
                 st = state::done;
                 r.reset();
