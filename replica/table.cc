@@ -581,6 +581,8 @@ table::seal_active_memtable(flush_permit&& flush_permit) noexcept {
 
     auto permit = std::move(flush_permit);
     auto r = exponential_backoff_retry(100ms, 10s);
+    // Try flushing for around half an hour (30 minutes every 10 seconds)
+    int allowed_retries = 30 * 60 / 10;
     std::optional<utils::phased_barrier::operation> op;
     size_t memtable_size;
     future<> previous_flush = make_ready_future<>();
@@ -654,6 +656,9 @@ table::seal_active_memtable(flush_permit&& flush_permit) noexcept {
             try {
                 std::rethrow_exception(e);
             } catch (const std::bad_alloc& e) {
+                if (allowed_retries-- <= 0) {
+                    abort_on_error();
+                }
                 // There is a chance something else will free the memory, so we can try again
             } catch (...) {
                 abort_on_error();
