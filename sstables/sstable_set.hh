@@ -163,7 +163,7 @@ inline auto make_partitioned_sstable_set(schema_ptr schema) {
     return make_partitioned_sstable_set(std::move(schema), make_lw_shared(sstable_list{}), false);
 }
 
-sstable_set make_compound_sstable_set(schema_ptr schema, std::vector<sstable_set_ptr> sets);
+sstable_set_ptr make_compound_sstable_set(schema_ptr schema, std::vector<sstable_set_ptr> sets);
 
 std::ostream& operator<<(std::ostream& os, const sstables::sstable_run& run);
 

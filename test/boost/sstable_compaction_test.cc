@@ -4611,7 +4611,7 @@ SEASTAR_TEST_CASE(compound_sstable_set_incremental_selector_test) {
             set1->insert(sstable_for_overlapping_test(env, s, 5, key_and_token_pair[4].first, key_and_token_pair[5].first, 1));
 
             auto compound = sstables::make_compound_sstable_set(s, { set1, set2 });
-            sstable_set::incremental_selector sel = compound.make_incremental_selector();
+            sstable_set::incremental_selector sel = compound->make_incremental_selector();
             check(sel, decorated_keys[0], {1, 2});
             check(sel, decorated_keys[1], {1, 2});
             check(sel, decorated_keys[2], {});
@@ -4633,7 +4633,7 @@ SEASTAR_TEST_CASE(compound_sstable_set_incremental_selector_test) {
             set2->insert(sstable_for_overlapping_test(env, s, 5, key_and_token_pair[4].first, key_and_token_pair[5].first, 1));
 
             auto compound = sstables::make_compound_sstable_set(s, { set1, set2 });
-            sstable_set::incremental_selector sel = compound.make_incremental_selector();
+            sstable_set::incremental_selector sel = compound->make_incremental_selector();
             check(sel, decorated_keys[0], {0, 1, 2});
             check(sel, decorated_keys[1], {0, 1, 2});
             check(sel, decorated_keys[2], {0});
@@ -4662,7 +4662,7 @@ SEASTAR_TEST_CASE(compound_sstable_set_incremental_selector_test) {
                 set2->insert(sstable_for_overlapping_test(env, s, 3, key_and_token_pair[4].first, key_and_token_pair[4].first, 1));
 
                 auto compound = sstables::make_compound_sstable_set(s, { set1, set2 });
-                sstable_set::incremental_selector sel = compound.make_incremental_selector();
+                sstable_set::incremental_selector sel = compound->make_incremental_selector();
 
                 dht::ring_position_view pos = dht::ring_position_view::min();
                 std::unordered_set<sstables::shared_sstable> sstables;
@@ -4751,7 +4751,7 @@ SEASTAR_TEST_CASE(twcs_single_key_reader_through_compound_set_test) {
         utils::estimated_histogram eh;
         auto pr = dht::partition_range::make_singular(dkey);
 
-        auto reader = compound.create_single_key_sstable_reader(&*cf, s, permit, eh, pr, s->full_slice(), default_priority_class(),
+        auto reader = compound->create_single_key_sstable_reader(&*cf, s, permit, eh, pr, s->full_slice(), default_priority_class(),
                                                                 tracing::trace_state_ptr(), ::streamed_mutation::forwarding::no,
                                                                 ::mutation_reader::forwarding::no);
         auto close_reader = deferred_close(reader);

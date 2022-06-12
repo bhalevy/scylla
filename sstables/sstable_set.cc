@@ -1072,8 +1072,8 @@ std::unique_ptr<incremental_selector_impl> compound_sstable_set::make_incrementa
     return std::make_unique<incremental_selector>(*_schema, _sets);
 }
 
-sstable_set make_compound_sstable_set(schema_ptr schema, std::vector<sstable_set_ptr> sets) {
-    return sstable_set(std::make_unique<compound_sstable_set>(schema, std::move(sets)), schema);
+sstable_set_ptr make_compound_sstable_set(schema_ptr schema, std::vector<sstable_set_ptr> sets) {
+    return make_sstable_set_ptr(sstable_set(std::make_unique<compound_sstable_set>(schema, std::move(sets)), schema));
 }
 
 flat_mutation_reader_v2

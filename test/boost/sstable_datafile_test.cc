@@ -2941,7 +2941,7 @@ SEASTAR_TEST_CASE(compound_sstable_set_basic_test) {
 
         sstables::sstable_set_ptr set1 = make_sstable_set_ptr(cs.make_sstable_set(s));
         sstables::sstable_set_ptr set2 = make_sstable_set_ptr(cs.make_sstable_set(s));
-        sstables::sstable_set_ptr compound = make_sstable_set_ptr(sstables::make_compound_sstable_set(s, {set1, set2}));
+        sstables::sstable_set_ptr compound = sstables::make_compound_sstable_set(s, {set1, set2});
 
         auto key_and_token_pair = token_generation_for_current_shard(2);
         set1->insert(sstable_for_overlapping_test(env, s, 1, key_and_token_pair[0].first, key_and_token_pair[1].first, 0));

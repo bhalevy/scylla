@@ -90,7 +90,7 @@ table::make_sstable_reader(schema_ptr s,
 }
 
 sstables::sstable_set_ptr table::make_compound_sstable_set() {
-    return make_sstable_set_ptr(sstables::make_compound_sstable_set(_schema, { _main_sstables, _maintenance_sstables }));
+    return sstables::make_compound_sstable_set(_schema, { _main_sstables, _maintenance_sstables });
 }
 
 sstables::sstable_set_ptr table::make_maintenance_sstable_set() const {
