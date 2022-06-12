@@ -642,8 +642,8 @@ std::unique_ptr<sstable_set_impl> time_window_compaction_strategy::make_sstable_
     return std::make_unique<time_series_sstable_set>(std::move(schema));
 }
 
-sstable_set make_partitioned_sstable_set(schema_ptr schema, lw_shared_ptr<sstable_list> all, bool use_level_metadata) {
-    return sstable_set(std::make_unique<partitioned_sstable_set>(schema, std::move(all), use_level_metadata), schema);
+sstable_set_ptr make_partitioned_sstable_set(schema_ptr schema, lw_shared_ptr<sstable_list> all, bool use_level_metadata) {
+    return make_sstable_set_ptr(sstable_set(std::make_unique<partitioned_sstable_set>(schema, std::move(all), use_level_metadata), schema));
 }
 
 sstable_set

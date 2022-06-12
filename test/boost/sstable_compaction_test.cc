@@ -4610,7 +4610,7 @@ SEASTAR_TEST_CASE(compound_sstable_set_incremental_selector_test) {
             set2->insert(sstable_for_overlapping_test(env, s, 4, key_and_token_pair[4].first, key_and_token_pair[4].first, 1));
             set1->insert(sstable_for_overlapping_test(env, s, 5, key_and_token_pair[4].first, key_and_token_pair[5].first, 1));
 
-            sstable_set compound = sstables::make_compound_sstable_set(s, { set1, set2 });
+            auto compound = sstables::make_compound_sstable_set(s, { set1, set2 });
             sstable_set::incremental_selector sel = compound.make_incremental_selector();
             check(sel, decorated_keys[0], {1, 2});
             check(sel, decorated_keys[1], {1, 2});
@@ -4632,7 +4632,7 @@ SEASTAR_TEST_CASE(compound_sstable_set_incremental_selector_test) {
             set1->insert(sstable_for_overlapping_test(env, s, 4, key_and_token_pair[4].first, key_and_token_pair[4].first, 1));
             set2->insert(sstable_for_overlapping_test(env, s, 5, key_and_token_pair[4].first, key_and_token_pair[5].first, 1));
 
-            sstable_set compound = sstables::make_compound_sstable_set(s, { set1, set2 });
+            auto compound = sstables::make_compound_sstable_set(s, { set1, set2 });
             sstable_set::incremental_selector sel = compound.make_incremental_selector();
             check(sel, decorated_keys[0], {0, 1, 2});
             check(sel, decorated_keys[1], {0, 1, 2});
@@ -4654,14 +4654,14 @@ SEASTAR_TEST_CASE(compound_sstable_set_incremental_selector_test) {
             };
 
             auto incremental_selection_test = [&] (strategy_param param) {
-                auto set1 = sstables::make_sstable_set_ptr(sstables::make_partitioned_sstable_set(s, make_lw_shared<sstable_list>(), false));
-                auto set2 = sstables::make_sstable_set_ptr(sstables::make_partitioned_sstable_set(s, make_lw_shared<sstable_list>(), bool(param)));
+                auto set1 = sstables::make_partitioned_sstable_set(s, make_lw_shared<sstable_list>(), false);
+                auto set2 = sstables::make_partitioned_sstable_set(s, make_lw_shared<sstable_list>(), bool(param));
                 set1->insert(sstable_for_overlapping_test(env, s, 0, key_and_token_pair[1].first, key_and_token_pair[1].first, 1));
                 set2->insert(sstable_for_overlapping_test(env, s, 1, key_and_token_pair[0].first, key_and_token_pair[2].first, 1));
                 set2->insert(sstable_for_overlapping_test(env, s, 2, key_and_token_pair[3].first, key_and_token_pair[3].first, 1));
                 set2->insert(sstable_for_overlapping_test(env, s, 3, key_and_token_pair[4].first, key_and_token_pair[4].first, 1));
 
-                sstable_set compound = sstables::make_compound_sstable_set(s, { set1, set2 });
+                auto compound = sstables::make_compound_sstable_set(s, { set1, set2 });
                 sstable_set::incremental_selector sel = compound.make_incremental_selector();
 
                 dht::ring_position_view pos = dht::ring_position_view::min();
@@ -4745,7 +4745,7 @@ SEASTAR_TEST_CASE(twcs_single_key_reader_through_compound_set_test) {
 
         set1->insert(std::move(sst1));
         set2->insert(std::move(sst2));
-        sstable_set compound = sstables::make_compound_sstable_set(s, {set1, set2});
+        auto compound = sstables::make_compound_sstable_set(s, {set1, set2});
 
         reader_permit permit = env.make_reader_permit();
         utils::estimated_histogram eh;

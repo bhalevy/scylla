@@ -2960,7 +2960,7 @@ SEASTAR_TEST_CASE(compound_sstable_set_basic_test) {
         }
 
         set2 = make_sstable_set_ptr(cs.make_sstable_set(s));
-        compound = make_sstable_set_ptr(sstables::make_compound_sstable_set(s, {set1, set2}));
+        compound = sstables::make_compound_sstable_set(s, {set1, set2});
         {
             unsigned found = 0;
             for (auto sstables = compound->all(); auto& sst : *sstables) {

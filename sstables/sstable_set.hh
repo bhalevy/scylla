@@ -157,7 +157,7 @@ inline sstable_set_ptr clone_sstable_set(const sstable_set_ptr& sptr) {
     return make_lw_shared(*sptr);
 }
 
-sstable_set make_partitioned_sstable_set(schema_ptr schema, lw_shared_ptr<sstable_list> all, bool use_level_metadata = true);
+sstable_set_ptr make_partitioned_sstable_set(schema_ptr schema, lw_shared_ptr<sstable_list> all, bool use_level_metadata = true);
 
 sstable_set make_compound_sstable_set(schema_ptr schema, std::vector<sstable_set_ptr> sets);
 
