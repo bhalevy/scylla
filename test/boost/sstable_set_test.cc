@@ -34,14 +34,14 @@ SEASTAR_TEST_CASE(test_sstables_sstable_set_read_modify_write) {
         sstable_writer_config cfg = env.manager().configure_writer("");
         auto sst1 = make_sstable_easy(env, tmp, std::move(mr), cfg, gen++);
 
-        auto ss1 = make_lw_shared<sstables::sstable_set>(make_sstable_set(ss.schema(), make_lw_shared<sstable_list>({sst1})));
+        auto ss1 = sstables::make_sstable_set_ptr(make_sstable_set(ss.schema(), make_lw_shared<sstable_list>({sst1})));
         BOOST_REQUIRE_EQUAL(ss1->all()->size(), 1);
 
         // Test that a random sstable_origin is stored and retrieved properly.
         mr = make_flat_mutation_reader_from_mutations_v2(s, env.make_reader_permit(), {mut});
         auto sst2 = make_sstable_easy(env, tmp, std::move(mr), cfg, gen++);
 
-        auto ss2 = make_lw_shared<sstables::sstable_set>(*ss1);
+        auto ss2 = sstables::clone_sstable_set(ss1);
         ss2->insert(sst2);
         BOOST_REQUIRE_EQUAL(ss2->all()->size(), 2);
         BOOST_REQUIRE_EQUAL(ss1->all()->size(), 1);

@@ -414,11 +414,11 @@ private:
 
     sstables::compaction_strategy _compaction_strategy;
     // SSTable set which contains all non-maintenance sstables
-    lw_shared_ptr<sstables::sstable_set> _main_sstables;
+    sstables::sstable_set_ptr _main_sstables;
     // Holds SSTables created by maintenance operations, which need reshaping before integration into the main set
-    lw_shared_ptr<sstables::sstable_set> _maintenance_sstables;
+    sstables::sstable_set_ptr _maintenance_sstables;
     // Compound set which manages all the SSTable sets (e.g. main, etc) and allow their operations to be combined
-    lw_shared_ptr<sstables::sstable_set> _sstables;
+    sstables::sstable_set_ptr _sstables;
     // sstables that have been compacted (so don't look up in query) but
     // have not been deleted yet, so must not GC any tombstones in other sstables
     // that may delete data in these sstables:
@@ -530,7 +530,7 @@ public:
         sstable_list_builder(const sstable_list_builder&) = delete;
 
         // Builds new sstable set from existing one, with new sstables added to it and old sstables removed from it.
-        future<lw_shared_ptr<sstables::sstable_set>>
+        future<sstables::sstable_set_ptr>
         build_new_list(const sstables::sstable_set& current_sstables,
                        sstables::sstable_set new_sstable_list,
                        const std::vector<sstables::shared_sstable>& new_sstables,
@@ -548,8 +548,8 @@ private:
     // Cache must be synchronized atomically with this, otherwise write atomicity may not be respected.
     // Doesn't trigger compaction.
     // Strong exception guarantees.
-    lw_shared_ptr<sstables::sstable_set>
-    do_add_sstable(lw_shared_ptr<sstables::sstable_set> sstables, sstables::shared_sstable sstable,
+    sstables::sstable_set_ptr
+    do_add_sstable(sstables::sstable_set_ptr sstables, sstables::shared_sstable sstable,
         enable_backlog_tracker backlog_tracker);
     void add_sstable(sstables::shared_sstable sstable);
     void add_maintenance_sstable(sstables::shared_sstable sst);
@@ -608,7 +608,7 @@ private:
     // Mutations returned by the reader will all have given schema.
     flat_mutation_reader_v2 make_sstable_reader(schema_ptr schema,
                                         reader_permit permit,
-                                        lw_shared_ptr<sstables::sstable_set> sstables,
+                                        sstables::sstable_set_ptr sstables,
                                         const dht::partition_range& range,
                                         const query::partition_slice& slice,
                                         const io_priority_class& pc,
@@ -616,13 +616,13 @@ private:
                                         streamed_mutation::forwarding fwd,
                                         mutation_reader::forwarding fwd_mr) const;
 
-    lw_shared_ptr<sstables::sstable_set> make_maintenance_sstable_set() const;
-    lw_shared_ptr<sstables::sstable_set> make_compound_sstable_set();
+    sstables::sstable_set_ptr make_maintenance_sstable_set() const;
+    sstables::sstable_set_ptr make_compound_sstable_set();
     // Compound sstable set must be refreshed whenever any of its managed sets are changed
     void refresh_compound_sstable_set();
 
     snapshot_source sstables_as_snapshot_source();
-    partition_presence_checker make_partition_presence_checker(lw_shared_ptr<sstables::sstable_set>);
+    partition_presence_checker make_partition_presence_checker(sstables::sstable_set_ptr);
     std::chrono::steady_clock::time_point _sstable_writes_disabled_at;
     void do_trigger_compaction();
 
@@ -710,7 +710,7 @@ public:
 
     // Stream reader from the given sstables
     flat_mutation_reader_v2 make_streaming_reader(schema_ptr schema, reader_permit permit, const dht::partition_range& range,
-            lw_shared_ptr<sstables::sstable_set> sstables) const;
+            sstables::sstable_set_ptr sstables) const;
 
     sstables::shared_sstable make_streaming_sstable_for_write(std::optional<sstring> subdir = {});
     sstables::shared_sstable make_streaming_staging_sstable();

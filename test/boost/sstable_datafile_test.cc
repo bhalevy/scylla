@@ -2939,9 +2939,9 @@ SEASTAR_TEST_CASE(compound_sstable_set_basic_test) {
             {{"p1", utf8_type}}, {}, {}, {}, utf8_type);
         auto cs = sstables::make_compaction_strategy(sstables::compaction_strategy_type::size_tiered, s->compaction_strategy_options());
 
-        lw_shared_ptr<sstables::sstable_set> set1 = make_lw_shared(cs.make_sstable_set(s));
-        lw_shared_ptr<sstables::sstable_set> set2 = make_lw_shared(cs.make_sstable_set(s));
-        lw_shared_ptr<sstables::sstable_set> compound = make_lw_shared(sstables::make_compound_sstable_set(s, {set1, set2}));
+        sstables::sstable_set_ptr set1 = make_sstable_set_ptr(cs.make_sstable_set(s));
+        sstables::sstable_set_ptr set2 = make_sstable_set_ptr(cs.make_sstable_set(s));
+        sstables::sstable_set_ptr compound = make_sstable_set_ptr(sstables::make_compound_sstable_set(s, {set1, set2}));
 
         auto key_and_token_pair = token_generation_for_current_shard(2);
         set1->insert(sstable_for_overlapping_test(env, s, 1, key_and_token_pair[0].first, key_and_token_pair[1].first, 0));
@@ -2959,8 +2959,8 @@ SEASTAR_TEST_CASE(compound_sstable_set_basic_test) {
             BOOST_REQUIRE(compound_size == found);
         }
 
-        set2 = make_lw_shared(cs.make_sstable_set(s));
-        compound = make_lw_shared(sstables::make_compound_sstable_set(s, {set1, set2}));
+        set2 = make_sstable_set_ptr(cs.make_sstable_set(s));
+        compound = make_sstable_set_ptr(sstables::make_compound_sstable_set(s, {set1, set2}));
         {
             unsigned found = 0;
             for (auto sstables = compound->all(); auto& sst : *sstables) {

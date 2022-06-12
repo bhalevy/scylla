@@ -437,7 +437,7 @@ protected:
     std::unordered_set<shared_sstable> _new_partial_sstables;
     std::vector<shared_sstable> _new_unused_sstables;
     std::vector<shared_sstable> _all_new_sstables;
-    lw_shared_ptr<sstable_set> _compacting;
+    sstable_set_ptr _compacting;
     sstables::compaction_type _type;
     uint64_t _max_sstable_size;
     uint32_t _sstable_level;
@@ -619,7 +619,7 @@ private:
     }
 
     future<> setup() {
-        auto ssts = make_lw_shared<sstables::sstable_set>(make_sstable_set_for_input());
+        auto ssts = make_sstable_set_ptr(make_sstable_set_for_input());
         formatted_sstables_list formatted_msg;
         auto fully_expired = _table_s.fully_expired_sstables(_sstables, gc_clock::now());
         min_max_tracker<api::timestamp_type> timestamp_tracker;
@@ -1691,7 +1691,7 @@ static future<compaction_result> scrub_sstables_validate_mode(sstables::compacti
     auto schema = table_s.schema();
 
     formatted_sstables_list sstables_list_msg;
-    auto sstables = make_lw_shared<sstables::sstable_set>(sstables::make_partitioned_sstable_set(schema, make_lw_shared<sstable_list>(sstable_list{}), false));
+    auto sstables = sstables::make_sstable_set_ptr(sstables::make_partitioned_sstable_set(schema, make_lw_shared<sstable_list>(sstable_list{}), false));
     for (const auto& sst : descriptor.sstables) {
         sstables_list_msg += sst;
         sstables->insert(sst);

@@ -156,9 +156,9 @@ public:
 // the managed sets cannot be modified through compound_sstable_set, but only jointly read from, so insert() and erase() are disabled.
 class compound_sstable_set : public sstable_set_impl {
     schema_ptr _schema;
-    std::vector<lw_shared_ptr<sstable_set>> _sets;
+    std::vector<sstable_set_ptr> _sets;
 public:
-    compound_sstable_set(schema_ptr schema, std::vector<lw_shared_ptr<sstable_set>> sets);
+    compound_sstable_set(schema_ptr schema, std::vector<sstable_set_ptr> sets);
 
     virtual std::unique_ptr<sstable_set_impl> clone() const override;
     virtual std::vector<shared_sstable> select(const dht::partition_range& range = query::full_partition_range) const override;

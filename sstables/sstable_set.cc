@@ -923,13 +923,13 @@ time_series_sstable_set::create_single_key_sstable_reader(
                 std::move(create_reader), std::move(filter), *pos.key(), schema, permit, fwd_sm, reversed));
 }
 
-compound_sstable_set::compound_sstable_set(schema_ptr schema, std::vector<lw_shared_ptr<sstable_set>> sets)
+compound_sstable_set::compound_sstable_set(schema_ptr schema, std::vector<sstable_set_ptr> sets)
     : _schema(std::move(schema))
     , _sets(std::move(sets)) {
 }
 
 std::unique_ptr<sstable_set_impl> compound_sstable_set::clone() const {
-    std::vector<lw_shared_ptr<sstable_set>> cloned_sets;
+    std::vector<sstable_set_ptr> cloned_sets;
     cloned_sets.reserve(_sets.size());
     for (auto& set : _sets) {
         // implicit clone by using sstable_set's copy ctor.
@@ -1015,16 +1015,16 @@ void compound_sstable_set::erase(shared_sstable sst) {
 
 class compound_sstable_set::incremental_selector : public incremental_selector_impl {
     const schema& _schema;
-    const std::vector<lw_shared_ptr<sstable_set>>& _sets;
+    const std::vector<sstable_set_ptr>& _sets;
     std::vector<sstable_set::incremental_selector> _selectors;
 private:
-    std::vector<sstable_set::incremental_selector> make_selectors(const std::vector<lw_shared_ptr<sstable_set>>& sets) {
+    std::vector<sstable_set::incremental_selector> make_selectors(const std::vector<sstable_set_ptr>& sets) {
         return boost::copy_range<std::vector<sstable_set::incremental_selector>>(_sets | boost::adaptors::transformed([] (const auto& set) {
             return set->make_incremental_selector();
         }));
     }
 public:
-    incremental_selector(const schema& schema, const std::vector<lw_shared_ptr<sstable_set>>& sets)
+    incremental_selector(const schema& schema, const std::vector<sstable_set_ptr>& sets)
             : _schema(schema)
             , _sets(sets)
             , _selectors(make_selectors(sets)) {
@@ -1060,7 +1060,7 @@ std::unique_ptr<incremental_selector_impl> compound_sstable_set::make_incrementa
         abort();
     }
     auto sets = _sets;
-    auto it = std::partition(sets.begin(), sets.end(), [] (const lw_shared_ptr<sstable_set>& set) { return !set->all()->empty(); });
+    auto it = std::partition(sets.begin(), sets.end(), [] (const sstable_set_ptr& set) { return !set->all()->empty(); });
     auto non_empty_set_count = std::distance(sets.begin(), it);
 
     // optimize for common case where only primary set contains sstables, so its selector can be built without an interposer.
@@ -1072,7 +1072,7 @@ std::unique_ptr<incremental_selector_impl> compound_sstable_set::make_incrementa
     return std::make_unique<incremental_selector>(*_schema, _sets);
 }
 
-sstable_set make_compound_sstable_set(schema_ptr schema, std::vector<lw_shared_ptr<sstable_set>> sets) {
+sstable_set make_compound_sstable_set(schema_ptr schema, std::vector<sstable_set_ptr> sets) {
     return sstable_set(std::make_unique<compound_sstable_set>(schema, std::move(sets)), schema);
 }
 
@@ -1103,7 +1103,7 @@ compound_sstable_set::create_single_key_sstable_reader(
 
     auto readers = boost::copy_range<std::vector<flat_mutation_reader_v2>>(
         boost::make_iterator_range(sets.begin(), it)
-        | boost::adaptors::transformed([&] (const lw_shared_ptr<sstable_set>& non_empty_set) {
+        | boost::adaptors::transformed([&] (const sstable_set_ptr& non_empty_set) {
             return non_empty_set->create_single_key_sstable_reader(cf, schema, permit, sstable_histogram, pr, slice, pc, trace_state, fwd, fwd_mr);
         })
     );

@@ -147,9 +147,19 @@ public:
     friend class compound_sstable_set;
 };
 
+using sstable_set_ptr = lw_shared_ptr<sstable_set>;
+
+inline sstable_set_ptr make_sstable_set_ptr(sstable_set&& s) {
+    return make_lw_shared(std::move(s));
+}
+
+inline sstable_set_ptr clone_sstable_set(const sstable_set_ptr& sptr) {
+    return make_lw_shared(*sptr);
+}
+
 sstable_set make_partitioned_sstable_set(schema_ptr schema, lw_shared_ptr<sstable_list> all, bool use_level_metadata = true);
 
-sstable_set make_compound_sstable_set(schema_ptr schema, std::vector<lw_shared_ptr<sstable_set>> sets);
+sstable_set make_compound_sstable_set(schema_ptr schema, std::vector<sstable_set_ptr> sets);
 
 std::ostream& operator<<(std::ostream& os, const sstables::sstable_run& run);
 
