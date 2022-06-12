@@ -1138,7 +1138,7 @@ const sstables::sstable_set& table::maintenance_sstable_set() const {
     return *_maintenance_sstables;
 }
 
-lw_shared_ptr<const sstable_list> table::get_sstables() const {
+lw_shared_ptr<const sstables::unique_genration_sstable_set> table::get_sstables() const {
     return _sstables->all();
 }
 
@@ -1161,11 +1161,11 @@ std::vector<sstables::shared_sstable> table::in_strategy_sstables() const {
 // As long as we haven't deleted them, compaction needs to ensure it doesn't
 // garbage-collect a tombstone that covers data in an sstable that may not be
 // successfully deleted.
-lw_shared_ptr<const sstable_list> table::get_sstables_including_compacted_undeleted() const {
+lw_shared_ptr<const sstables::unique_genration_sstable_set> table::get_sstables_including_compacted_undeleted() const {
     if (_sstables_compacted_but_not_deleted.empty()) {
         return get_sstables();
     }
-    auto ret = make_lw_shared<sstable_list>(*_sstables->all());
+    auto ret = make_lw_shared<sstables::unique_genration_sstable_set>(*_sstables->all());
     for (auto&& s : _sstables_compacted_but_not_deleted) {
         ret->insert(s);
     }

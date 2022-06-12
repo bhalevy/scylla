@@ -27,6 +27,14 @@
 
 namespace sstables {
 
+size_t sstable_gen_hash::operator()(const shared_sstable &sst) const noexcept {
+    return sst->generation();
+}
+
+bool sstable_gen_equal_to::operator()(const shared_sstable& lhs, const shared_sstable& rhs) const noexcept {
+    return lhs->generation() == rhs->generation();
+}
+
 void sstable_run::insert(shared_sstable sst) {
     _all.insert(std::move(sst));
 }
@@ -107,7 +115,7 @@ partitioned_sstable_set::select_sstable_runs(const std::vector<shared_sstable>& 
     }));
 }
 
-lw_shared_ptr<sstable_list>
+lw_shared_ptr<unique_genration_sstable_set>
 sstable_set::all() const {
     return _impl->all();
 }
@@ -229,34 +237,24 @@ dht::partition_range partitioned_sstable_set::to_partition_range(const dht::ring
     return dht::partition_range::make(std::move(lower_bound), std::move(upper_bound));
 }
 
-partitioned_sstable_set::partitioned_sstable_set(schema_ptr schema, lw_shared_ptr<sstable_list> all, bool use_level_metadata)
+partitioned_sstable_set::partitioned_sstable_set(schema_ptr schema, lw_shared_ptr<unique_genration_sstable_set> all, bool use_level_metadata)
         : _schema(std::move(schema))
         , _all(std::move(all))
         , _use_level_metadata(use_level_metadata)
-{
-    _sstable_generations.reserve(_all->size());
-    for (auto& sst : *_all) {
-        auto [it, inserted] = _sstable_generations.emplace(sst->generation());
-        if (!inserted) {
-            on_internal_error(sstlog, format("could not ingest SSTable: detected non-unique sstable generation {}", sst->generation()));
-        }
-    }
-}
+{ }
 
 partitioned_sstable_set::partitioned_sstable_set(schema_ptr schema, const std::vector<shared_sstable>& unleveled_sstables, const interval_map_type& leveled_sstables,
-        const lw_shared_ptr<sstable_list>& all, const std::unordered_map<utils::UUID, sstable_run>& all_runs, const std::unordered_set<generation_type>& sstable_generations,
-        bool use_level_metadata)
+        const lw_shared_ptr<unique_genration_sstable_set>& all, const std::unordered_map<utils::UUID, sstable_run>& all_runs, bool use_level_metadata)
         : _schema(schema)
         , _unleveled_sstables(unleveled_sstables)
         , _leveled_sstables(leveled_sstables)
-        , _all(make_lw_shared<sstable_list>(*all))
+        , _all(make_lw_shared(*all))
         , _all_runs(all_runs)
-        , _sstable_generations(sstable_generations)
         , _use_level_metadata(use_level_metadata) {
 }
 
 std::unique_ptr<sstable_set_impl> partitioned_sstable_set::clone() const {
-    return std::make_unique<partitioned_sstable_set>(_schema, _unleveled_sstables, _leveled_sstables, _all, _all_runs, _sstable_generations, _use_level_metadata);
+    return std::make_unique<partitioned_sstable_set>(_schema, _unleveled_sstables, _leveled_sstables, _all, _all_runs, _use_level_metadata);
 }
 
 std::vector<shared_sstable> partitioned_sstable_set::select(const dht::partition_range& range) const {
@@ -272,7 +270,7 @@ std::vector<shared_sstable> partitioned_sstable_set::select(const dht::partition
     return r;
 }
 
-lw_shared_ptr<sstable_list> partitioned_sstable_set::all() const {
+lw_shared_ptr<unique_genration_sstable_set> partitioned_sstable_set::all() const {
     return _all;
 }
 
@@ -283,16 +281,14 @@ void partitioned_sstable_set::for_each_sstable(std::function<void(const shared_s
 }
 
 bool partitioned_sstable_set::contains(const shared_sstable& sst) const noexcept {
-    return _sstable_generations.contains(sst->generation());
+    return _all->contains(sst);
 }
 
 void partitioned_sstable_set::insert(shared_sstable sst) {
-    auto [it, inserted] = _sstable_generations.emplace(sst->generation());
+    auto [it, inserted] = _all->insert(sst);
     if (!inserted) {
         throw std::runtime_error(format("could not insert SSTable: generation {} already exists", sst->generation()));
     }
-    auto undo_mapped_insert = defer([&] () { _sstable_generations.erase(sst->generation()); });
-    _all->insert(sst);
     auto undo_all_insert = defer([&] () { _all->erase(sst); });
 
     _all_runs[sst->run_identifier()].insert(sst);
@@ -306,11 +302,9 @@ void partitioned_sstable_set::insert(shared_sstable sst) {
     }
     undo_all_insert.cancel();
     undo_all_runs_insert.cancel();
-    undo_mapped_insert.cancel();
 }
 
 void partitioned_sstable_set::erase(shared_sstable sst) {
-    _sstable_generations.erase(sst->generation());
     _all_runs[sst->run_identifier()].erase(sst);
     _all->erase(sst);
     if (store_as_unleveled(sst)) {
@@ -385,6 +379,7 @@ public:
 time_series_sstable_set::time_series_sstable_set(schema_ptr schema)
     : _schema(std::move(schema))
     , _reversed_schema(_schema->make_reversed())
+    , _all(make_lw_shared(unique_genration_sstable_set{}))
     , _sstables(make_lw_shared<container_t>(position_in_partition::less_compare(*_schema)))
     , _sstables_reversed(make_lw_shared<container_t>(position_in_partition::less_compare(*_reversed_schema)))
 {}
@@ -392,9 +387,9 @@ time_series_sstable_set::time_series_sstable_set(schema_ptr schema)
 time_series_sstable_set::time_series_sstable_set(const time_series_sstable_set& s)
     : _schema(s._schema)
     , _reversed_schema(s._reversed_schema)
+    , _all(make_lw_shared(*s._all))
     , _sstables(make_lw_shared(*s._sstables))
     , _sstables_reversed(make_lw_shared(*s._sstables_reversed))
-    , _sstable_generations(s._sstable_generations)
 {}
 
 std::unique_ptr<sstable_set_impl> time_series_sstable_set::clone() const {
@@ -405,23 +400,23 @@ std::vector<shared_sstable> time_series_sstable_set::select(const dht::partition
     return boost::copy_range<std::vector<shared_sstable>>(*_sstables | boost::adaptors::map_values);
 }
 
-lw_shared_ptr<sstable_list> time_series_sstable_set::all() const {
-    return make_lw_shared<sstable_list>(boost::copy_range<sstable_list>(*_sstables | boost::adaptors::map_values));
+lw_shared_ptr<unique_genration_sstable_set> time_series_sstable_set::all() const {
+    return _all;
 }
 
 void time_series_sstable_set::for_each_sstable(std::function<void(const shared_sstable&)> func) const {
-    for (auto& entry : *_sstables) {
-        func(entry.second);
+    for (auto& entry : *_all) {
+        func(entry);
     }
 }
 
 bool time_series_sstable_set::contains(const shared_sstable& sst) const noexcept {
-    return _sstable_generations.contains(sst->generation());
+    return _all->contains(sst);
 }
 
 // O(log n)
 void time_series_sstable_set::insert(shared_sstable sst) {
-  auto [it, inserted] = _sstable_generations.emplace(sst->generation());
+  auto [it, inserted] = _all->insert(sst);
   if (!inserted) {
     throw std::runtime_error(format("could not insert SSTable: generation {} already exists", sst->generation()));
   }
@@ -438,7 +433,7 @@ void time_series_sstable_set::insert(shared_sstable sst) {
 
 // O(n) worst case, but should be close to O(log n) most of the time
 void time_series_sstable_set::erase(shared_sstable sst) {
-    _sstable_generations.erase(sst->generation());
+    _all->erase(sst);
 
     {
         auto [first, last] = _sstables->equal_range(sst->min_position());
@@ -631,18 +626,18 @@ std::unique_ptr<incremental_selector_impl> partitioned_sstable_set::make_increme
 
 std::unique_ptr<sstable_set_impl> compaction_strategy_impl::make_sstable_set(schema_ptr schema) const {
     // with use_level_metadata enabled, L0 sstables will not go to interval map, which suits well STCS.
-    return std::make_unique<partitioned_sstable_set>(schema, make_lw_shared<sstable_list>(), true);
+    return std::make_unique<partitioned_sstable_set>(schema, make_lw_shared<unique_genration_sstable_set>(), true);
 }
 
 std::unique_ptr<sstable_set_impl> leveled_compaction_strategy::make_sstable_set(schema_ptr schema) const {
-    return std::make_unique<partitioned_sstable_set>(std::move(schema), make_lw_shared<sstable_list>());
+    return std::make_unique<partitioned_sstable_set>(std::move(schema), make_lw_shared<unique_genration_sstable_set>());
 }
 
 std::unique_ptr<sstable_set_impl> time_window_compaction_strategy::make_sstable_set(schema_ptr schema) const {
     return std::make_unique<time_series_sstable_set>(std::move(schema));
 }
 
-sstable_set_ptr make_partitioned_sstable_set(schema_ptr schema, lw_shared_ptr<sstable_list> all, bool use_level_metadata) {
+sstable_set_ptr make_partitioned_sstable_set(schema_ptr schema, lw_shared_ptr<unique_genration_sstable_set> all, bool use_level_metadata) {
     return make_sstable_set_ptr(sstable_set(std::make_unique<partitioned_sstable_set>(schema, std::move(all), use_level_metadata), schema));
 }
 
@@ -966,13 +961,13 @@ std::vector<sstable_run> compound_sstable_set::select_sstable_runs(const std::ve
     return ret;
 }
 
-lw_shared_ptr<sstable_list> compound_sstable_set::all() const {
+lw_shared_ptr<unique_genration_sstable_set> compound_sstable_set::all() const {
     auto sets = _sets;
     auto it = std::partition(sets.begin(), sets.end(), [] (const auto& set) { return !set->all()->empty(); });
     auto non_empty_set_count = std::distance(sets.begin(), it);
 
     if (!non_empty_set_count) {
-        return make_lw_shared<sstable_list>();
+        return make_lw_shared<unique_genration_sstable_set>();
     }
     // optimize for common case where primary set contains sstables, but secondary one is empty for most of the time.
     if (non_empty_set_count == 1) {
@@ -980,7 +975,7 @@ lw_shared_ptr<sstable_list> compound_sstable_set::all() const {
         return non_empty_set->all();
     }
 
-    auto ret = make_lw_shared<sstable_list>();
+    auto ret = make_lw_shared<unique_genration_sstable_set>();
     for (auto& set : boost::make_iterator_range(sets.begin(), it)) {
         auto ssts = set->all();
         ret->reserve(ret->size() + ssts->size());

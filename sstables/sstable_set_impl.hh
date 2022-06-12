@@ -28,7 +28,7 @@ public:
     virtual std::unique_ptr<sstable_set_impl> clone() const = 0;
     virtual std::vector<shared_sstable> select(const dht::partition_range& range) const = 0;
     virtual std::vector<sstable_run> select_sstable_runs(const std::vector<shared_sstable>& sstables) const;
-    virtual lw_shared_ptr<sstable_list> all() const = 0;
+    virtual lw_shared_ptr<unique_genration_sstable_set> all() const = 0;
     virtual void for_each_sstable(std::function<void(const shared_sstable&)> func) const = 0;
     // search for sstable with the same generation
     virtual bool contains(const shared_sstable&) const noexcept = 0;
@@ -60,9 +60,8 @@ private:
     schema_ptr _schema;
     std::vector<shared_sstable> _unleveled_sstables;
     interval_map_type _leveled_sstables;
-    lw_shared_ptr<sstable_list> _all;
+    lw_shared_ptr<unique_genration_sstable_set> _all;
     std::unordered_map<utils::UUID, sstable_run> _all_runs;
-    std::unordered_set<generation_type> _sstable_generations;
     // Change counter on interval map for leveled sstables which is used by
     // incremental selector to determine whether or not to invalidate iterators.
     uint64_t _leveled_sstables_change_cnt = 0;
@@ -82,21 +81,20 @@ public:
     static dht::partition_range to_partition_range(const dht::ring_position_view& pos, const interval_type& i);
 
     partitioned_sstable_set(const partitioned_sstable_set&) = delete;
-    explicit partitioned_sstable_set(schema_ptr schema, lw_shared_ptr<sstable_list> all, bool use_level_metadata = true);
+    explicit partitioned_sstable_set(schema_ptr schema, lw_shared_ptr<unique_genration_sstable_set> all, bool use_level_metadata = true);
     // For cloning the partitioned_sstable_set (makes a deep copy, including *_all)
     explicit partitioned_sstable_set(
         schema_ptr schema,
         const std::vector<shared_sstable>& unleveled_sstables,
         const interval_map_type& leveled_sstables,
-        const lw_shared_ptr<sstable_list>& all,
+        const lw_shared_ptr<unique_genration_sstable_set>& all,
         const std::unordered_map<utils::UUID, sstable_run>& all_runs,
-        const std::unordered_set<generation_type>& sstable_generations,
         bool use_level_metadata);
 
     virtual std::unique_ptr<sstable_set_impl> clone() const override;
     virtual std::vector<shared_sstable> select(const dht::partition_range& range) const override;
     virtual std::vector<sstable_run> select_sstable_runs(const std::vector<shared_sstable>& sstables) const override;
-    virtual lw_shared_ptr<sstable_list> all() const override;
+    virtual lw_shared_ptr<unique_genration_sstable_set> all() const override;
     virtual void for_each_sstable(std::function<void(const shared_sstable&)> func) const override;
     virtual bool contains(const shared_sstable&) const noexcept override;
     virtual void insert(shared_sstable sst) override;
@@ -111,11 +109,11 @@ private:
 
     schema_ptr _schema;
     schema_ptr _reversed_schema; // == _schema->make_reversed();
+    lw_shared_ptr<unique_genration_sstable_set> _all;
     // s.min_position() -> s, ordered using _schema
     lw_shared_ptr<container_t> _sstables;
     // s.max_position().reversed() -> s, ordered using _reversed_schema; the set of values is the same as in _sstables
     lw_shared_ptr<container_t> _sstables_reversed;
-    std::unordered_set<generation_type> _sstable_generations;
 
 public:
     time_series_sstable_set(schema_ptr schema);
@@ -123,7 +121,7 @@ public:
 
     virtual std::unique_ptr<sstable_set_impl> clone() const override;
     virtual std::vector<shared_sstable> select(const dht::partition_range& range = query::full_partition_range) const override;
-    virtual lw_shared_ptr<sstable_list> all() const override;
+    virtual lw_shared_ptr<unique_genration_sstable_set> all() const override;
     virtual void for_each_sstable(std::function<void(const shared_sstable&)> func) const override;
     virtual bool contains(const shared_sstable&) const noexcept override;
     virtual void insert(shared_sstable sst) override;
@@ -163,7 +161,7 @@ public:
     virtual std::unique_ptr<sstable_set_impl> clone() const override;
     virtual std::vector<shared_sstable> select(const dht::partition_range& range = query::full_partition_range) const override;
     virtual std::vector<sstable_run> select_sstable_runs(const std::vector<shared_sstable>& sstables) const override;
-    virtual lw_shared_ptr<sstable_list> all() const override;
+    virtual lw_shared_ptr<unique_genration_sstable_set> all() const override;
     virtual void for_each_sstable(std::function<void(const shared_sstable&)> func) const override;
     virtual bool contains(const shared_sstable&) const noexcept override;
     virtual void insert(shared_sstable sst) override;

@@ -3228,6 +3228,7 @@ file sstable::uncached_index_file() {
 }
 
 void sstable::unused() {
+    sstlog.info("unused sstable {}: active={}", get_filename(), _active);
     if (_active) {
         _active = false;
         _manager.deactivate(this);

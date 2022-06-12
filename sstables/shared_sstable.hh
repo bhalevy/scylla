@@ -35,6 +35,16 @@ namespace sstables {
 using shared_sstable = seastar::lw_shared_ptr<sstable>;
 using sstable_list = std::unordered_set<shared_sstable>;
 
+struct sstable_gen_hash final {
+    size_t operator()(const shared_sstable &) const noexcept;
+};
+
+struct sstable_gen_equal_to final : public std::binary_function<shared_sstable, shared_sstable, bool> {
+    bool operator()(const shared_sstable& lhs, const shared_sstable& rhs) const noexcept;
+};
+
+using unique_genration_sstable_set = std::unordered_set<shared_sstable, sstable_gen_hash, sstable_gen_equal_to>;
+
 }
 
 

@@ -272,8 +272,6 @@ private:
 
 }
 
-using sstable_list = sstables::sstable_list;
-
 namespace replica {
 
 class distributed_loader;
@@ -873,8 +871,8 @@ public:
 
     const sstables::sstable_set& get_sstable_set() const;
     const sstables::sstable_set& maintenance_sstable_set() const;
-    lw_shared_ptr<const sstable_list> get_sstables() const;
-    lw_shared_ptr<const sstable_list> get_sstables_including_compacted_undeleted() const;
+    lw_shared_ptr<const sstables::unique_genration_sstable_set> get_sstables() const;
+    lw_shared_ptr<const sstables::unique_genration_sstable_set> get_sstables_including_compacted_undeleted() const;
     const std::vector<sstables::shared_sstable>& compacted_undeleted_sstables() const;
     std::vector<sstables::shared_sstable> select_sstables(const dht::partition_range& range) const;
     // Return all sstables but those that are off-strategy like the ones in maintenance set and staging dir.

@@ -16,7 +16,7 @@
 #include "readers/from_mutations_v2.hh"
 
 static sstables::sstable_set_ptr make_sstable_set(schema_ptr schema, shared_sstable sst, bool use_level_metadata = true) {
-    auto all = make_lw_shared(sstables::sstable_list({std::move(sst)}));
+    auto all = make_lw_shared(sstables::unique_genration_sstable_set({std::move(sst)}));
     return sstables::make_sstable_set_ptr(sstables::sstable_set(std::make_unique<partitioned_sstable_set>(schema, std::move(all), use_level_metadata), schema));
 }
 

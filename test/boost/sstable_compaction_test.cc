@@ -4655,8 +4655,8 @@ SEASTAR_TEST_CASE(compound_sstable_set_incremental_selector_test) {
             };
 
             auto incremental_selection_test = [&] (strategy_param param) {
-                auto set1 = sstables::make_partitioned_sstable_set(s, make_lw_shared<sstable_list>(), false);
-                auto set2 = sstables::make_partitioned_sstable_set(s, make_lw_shared<sstable_list>(), bool(param));
+                auto set1 = sstables::make_partitioned_sstable_set(s, make_lw_shared<unique_genration_sstable_set>(), false);
+                auto set2 = sstables::make_partitioned_sstable_set(s, make_lw_shared<unique_genration_sstable_set>(), bool(param));
                 set1->insert(sstable_for_overlapping_test(env, s, 0, key_and_token_pair[1].first, key_and_token_pair[1].first, 1));
                 set2->insert(sstable_for_overlapping_test(env, s, 1, key_and_token_pair[0].first, key_and_token_pair[2].first, 1));
                 set2->insert(sstable_for_overlapping_test(env, s, 2, key_and_token_pair[3].first, key_and_token_pair[3].first, 1));

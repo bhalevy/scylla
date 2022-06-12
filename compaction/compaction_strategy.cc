@@ -579,7 +579,7 @@ date_tiered_manifest::get_compaction_candidates(table_state& table_s, std::vecto
     return newest_bucket(buckets, min_threshold, max_threshold, now, _options.base_time);
 }
 
-int64_t date_tiered_manifest::get_now(lw_shared_ptr<const sstables::sstable_list> shared_set) {
+int64_t date_tiered_manifest::get_now(lw_shared_ptr<const sstables::unique_genration_sstable_set> shared_set) {
     int64_t max_timestamp = 0;
     for (auto& sst : *shared_set) {
         int64_t candidate = sst->get_stats_metadata().max_timestamp;

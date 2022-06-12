@@ -54,7 +54,7 @@ public:
     // Return all runs which contain any of the input sstables.
     std::vector<sstable_run> select_sstable_runs(const std::vector<shared_sstable>& sstables) const;
     // Return all sstables. It's not guaranteed that sstable_set will keep a reference to the returned list, so user should keep it.
-    lw_shared_ptr<sstable_list> all() const;
+    lw_shared_ptr<unique_genration_sstable_set> all() const;
     // Prefer for_each_sstable() over all() for iteration purposes, as the latter may have to copy all sstables into a temporary
     void for_each_sstable(std::function<void(const shared_sstable&)> func) const;
     // search for sstable with the same generation
@@ -157,10 +157,10 @@ inline sstable_set_ptr clone_sstable_set(const sstable_set_ptr& sptr) {
     return make_lw_shared(*sptr);
 }
 
-sstable_set_ptr make_partitioned_sstable_set(schema_ptr schema, lw_shared_ptr<sstable_list> all, bool use_level_metadata = true);
+sstable_set_ptr make_partitioned_sstable_set(schema_ptr schema, lw_shared_ptr<unique_genration_sstable_set> all, bool use_level_metadata = true);
 
 inline auto make_partitioned_sstable_set(schema_ptr schema) {
-    return make_partitioned_sstable_set(std::move(schema), make_lw_shared(sstable_list{}), false);
+    return make_partitioned_sstable_set(std::move(schema), make_lw_shared(unique_genration_sstable_set{}), false);
 }
 
 sstable_set_ptr make_compound_sstable_set(schema_ptr schema, std::vector<sstable_set_ptr> sets);
