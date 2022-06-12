@@ -861,7 +861,7 @@ void table::rebuild_statistics() {
 
 future<sstables::sstable_set_ptr>
 table::sstable_list_builder::build_new_list(const sstables::sstable_set& current_sstables,
-                              sstables::sstable_set new_sstable_list,
+                              sstables::sstable_set_ptr new_sstable_list,
                               const std::vector<sstables::shared_sstable>& new_sstables,
                               const std::vector<sstables::shared_sstable>& old_sstables) {
     std::unordered_set<sstables::shared_sstable> s(old_sstables.begin(), old_sstables.end());
@@ -871,11 +871,11 @@ table::sstable_list_builder::build_new_list(const sstables::sstable_set& current
     // Noone is actually moving anything...
     for (auto all = current_sstables.all(); auto&& tab : boost::range::join(new_sstables, std::move(*all))) {
         if (!s.contains(tab)) {
-            new_sstable_list.insert(tab);
+            new_sstable_list->insert(tab);
         }
         co_await coroutine::maybe_yield();
     }
-    co_return sstables::make_sstable_set_ptr(std::move(new_sstable_list));
+    co_return new_sstable_list;
 }
 
 future<>
@@ -898,7 +898,7 @@ table::update_sstable_lists_on_off_strategy_completion(const std::vector<sstable
             // adding new sstables, created by off-strategy operation, to main set
             _new_main_list = co_await _builder.build_new_list(*_t._main_sstables, _t._compaction_strategy.make_sstable_set(_t._schema), _new_main, empty);
             // removing old sstables, used as input by off-strategy, from the maintenance set
-            _new_maintenance_list = co_await _builder.build_new_list(*_t._maintenance_sstables, std::move(*_t.make_maintenance_sstable_set()), empty, _old_maintenance);
+            _new_maintenance_list = co_await _builder.build_new_list(*_t._maintenance_sstables, clone_sstable_set(_t.make_maintenance_sstable_set()), empty, _old_maintenance);
         }
         virtual void execute() override {
             _t._main_sstables = std::move(_new_main_list);
@@ -1073,7 +1073,7 @@ void table::set_compaction_strategy(sstables::compaction_strategy_type strategy)
     auto new_sstables = new_cs.make_sstable_set(_schema);
     _main_sstables->for_each_sstable([&] (const sstables::shared_sstable& s) {
         add_sstable_to_backlog_tracker(new_cs.get_backlog_tracker(), s);
-        new_sstables.insert(s);
+        new_sstables->insert(s);
     });
 
     // now exception safe:
@@ -1201,7 +1201,7 @@ table::table(schema_ptr schema, config config, db::commitlog* cl, compaction_man
                         )
     , _memtables(_config.enable_disk_writes ? make_memtable_list() : make_memory_only_memtable_list())
     , _compaction_strategy(make_compaction_strategy(_schema->compaction_strategy(), _schema->compaction_strategy_options()))
-    , _main_sstables(sstables::make_sstable_set_ptr(_compaction_strategy.make_sstable_set(_schema)))
+    , _main_sstables(_compaction_strategy.make_sstable_set(_schema))
     , _maintenance_sstables(make_maintenance_sstable_set())
     , _sstables(make_compound_sstable_set())
     , _cache(_schema, sstables_as_snapshot_source(), row_cache_tracker, is_continuous::yes)
@@ -1566,7 +1566,7 @@ future<db::replay_position> table::discard_sstables(db_clock::time_point truncat
         void prune(db_clock::time_point truncated_at) {
             auto gc_trunc = to_gc_clock(truncated_at);
 
-            auto pruned = sstables::make_sstable_set_ptr(cf._compaction_strategy.make_sstable_set(cf._schema));
+            auto pruned = cf._compaction_strategy.make_sstable_set(cf._schema);
             auto maintenance_pruned = cf.make_maintenance_sstable_set();
 
             auto prune = [this, &gc_trunc] (sstables::sstable_set_ptr& pruned,
@@ -2256,7 +2256,7 @@ table::make_reader_v2_excluding_sstables(schema_ptr s,
     }
 
     auto excluded_ssts = boost::copy_range<std::unordered_set<sstables::shared_sstable>>(excluded);
-    auto effective_sstables = make_sstable_set_ptr(_compaction_strategy.make_sstable_set(_schema));
+    auto effective_sstables = _compaction_strategy.make_sstable_set(_schema);
     _sstables->for_each_sstable([&excluded_ssts, &effective_sstables] (const sstables::shared_sstable& sst) mutable {
         if (excluded_ssts.contains(sst)) {
             return;

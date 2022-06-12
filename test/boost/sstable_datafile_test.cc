@@ -2130,7 +2130,8 @@ SEASTAR_TEST_CASE(sstable_set_incremental_selector) {
     };
 
     {
-        sstable_set set = cs.make_sstable_set(s);
+        auto ssp = cs.make_sstable_set(s);
+        sstable_set set = *ssp;
         set.insert(sstable_for_overlapping_test(env, s, 1, key_and_token_pair[0].first, key_and_token_pair[1].first, 1));
         set.insert(sstable_for_overlapping_test(env, s, 2, key_and_token_pair[0].first, key_and_token_pair[1].first, 1));
         set.insert(sstable_for_overlapping_test(env, s, 3, key_and_token_pair[3].first, key_and_token_pair[4].first, 1));
@@ -2149,7 +2150,8 @@ SEASTAR_TEST_CASE(sstable_set_incremental_selector) {
     }
 
     {
-        sstable_set set = cs.make_sstable_set(s);
+        auto ssp = cs.make_sstable_set(s);
+        sstable_set set = *ssp;
         set.insert(sstable_for_overlapping_test(env, s, 0, key_and_token_pair[0].first, key_and_token_pair[1].first, 0));
         set.insert(sstable_for_overlapping_test(env, s, 1, key_and_token_pair[0].first, key_and_token_pair[1].first, 1));
         set.insert(sstable_for_overlapping_test(env, s, 2, key_and_token_pair[0].first, key_and_token_pair[1].first, 1));
@@ -2181,7 +2183,8 @@ SEASTAR_TEST_CASE(sstable_set_erase) {
     // check that sstable_set::erase is capable of working properly when a non-existing element is given.
     {
         auto cs = sstables::make_compaction_strategy(sstables::compaction_strategy_type::leveled, s->compaction_strategy_options());
-        sstable_set set = cs.make_sstable_set(s);
+        auto ssp = cs.make_sstable_set(s);
+        sstable_set set = *ssp;
 
         auto sst = sstable_for_overlapping_test(env, s, 0, key_and_token_pair[0].first, key_and_token_pair[0].first, 0);
         set.insert(sst);
@@ -2197,7 +2200,8 @@ SEASTAR_TEST_CASE(sstable_set_erase) {
 
     {
         auto cs = sstables::make_compaction_strategy(sstables::compaction_strategy_type::leveled, s->compaction_strategy_options());
-        sstable_set set = cs.make_sstable_set(s);
+        auto ssp = cs.make_sstable_set(s);
+        sstable_set set = *ssp;
 
         // triggers use-after-free, described in #4572, by operating on interval that relies on info of a destroyed sstable object.
         sstables::sstable* sstp = nullptr;
@@ -2224,7 +2228,8 @@ SEASTAR_TEST_CASE(sstable_set_erase) {
 
     {
         auto cs = sstables::make_compaction_strategy(sstables::compaction_strategy_type::size_tiered, s->compaction_strategy_options());
-        sstable_set set = cs.make_sstable_set(s);
+        auto ssp = cs.make_sstable_set(s);
+        sstable_set set = *ssp;
 
         auto sst = sstable_for_overlapping_test(env, s, 0, key_and_token_pair[0].first, key_and_token_pair[0].first, 0);
         set.insert(sst);
@@ -2939,8 +2944,8 @@ SEASTAR_TEST_CASE(compound_sstable_set_basic_test) {
             {{"p1", utf8_type}}, {}, {}, {}, utf8_type);
         auto cs = sstables::make_compaction_strategy(sstables::compaction_strategy_type::size_tiered, s->compaction_strategy_options());
 
-        sstables::sstable_set_ptr set1 = make_sstable_set_ptr(cs.make_sstable_set(s));
-        sstables::sstable_set_ptr set2 = make_sstable_set_ptr(cs.make_sstable_set(s));
+        sstables::sstable_set_ptr set1 = cs.make_sstable_set(s);
+        sstables::sstable_set_ptr set2 = cs.make_sstable_set(s);
         sstables::sstable_set_ptr compound = sstables::make_compound_sstable_set(s, {set1, set2});
 
         auto key_and_token_pair = token_generation_for_current_shard(2);
@@ -2959,7 +2964,7 @@ SEASTAR_TEST_CASE(compound_sstable_set_basic_test) {
             BOOST_REQUIRE(compound_size == found);
         }
 
-        set2 = make_sstable_set_ptr(cs.make_sstable_set(s));
+        set2 = cs.make_sstable_set(s);
         compound = sstables::make_compound_sstable_set(s, {set1, set2});
         {
             unsigned found = 0;

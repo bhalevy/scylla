@@ -3357,7 +3357,7 @@ SEASTAR_TEST_CASE(purged_tombstone_consumer_sstable_test) {
                 *s, gc_now, max_purgeable_func, std::move(cr), std::move(purged_cr));
 
             auto cs = sstables::make_compaction_strategy(sstables::compaction_strategy_type::size_tiered, s->compaction_strategy_options());
-            auto compacting = sstables::make_sstable_set_ptr(cs.make_sstable_set(s));
+            auto compacting = cs.make_sstable_set(s);
             for (auto&& sst : all) {
                 compacting->insert(std::move(sst));
             }
@@ -4433,7 +4433,8 @@ SEASTAR_TEST_CASE(test_twcs_single_key_reader_filtering) {
 
         auto cs = sstables::make_compaction_strategy(sstables::compaction_strategy_type::time_window, {});
 
-        auto set = cs.make_sstable_set(s);
+        auto ssp = cs.make_sstable_set(s);
+        auto set = *ssp;
         set.insert(std::move(sst1));
         set.insert(std::move(sst2));
 
@@ -4602,8 +4603,8 @@ SEASTAR_TEST_CASE(compound_sstable_set_incremental_selector_test) {
         };
 
         {
-            auto set1 = sstables::make_sstable_set_ptr(cs.make_sstable_set(s));
-            auto set2 = sstables::make_sstable_set_ptr(cs.make_sstable_set(s));
+            auto set1 = cs.make_sstable_set(s);
+            auto set2 = cs.make_sstable_set(s);
             set1->insert(sstable_for_overlapping_test(env, s, 1, key_and_token_pair[0].first, key_and_token_pair[1].first, 1));
             set2->insert(sstable_for_overlapping_test(env, s, 2, key_and_token_pair[0].first, key_and_token_pair[1].first, 1));
             set1->insert(sstable_for_overlapping_test(env, s, 3, key_and_token_pair[3].first, key_and_token_pair[4].first, 1));
@@ -4623,8 +4624,8 @@ SEASTAR_TEST_CASE(compound_sstable_set_incremental_selector_test) {
         }
 
         {
-            auto set1 = sstables::make_sstable_set_ptr(cs.make_sstable_set(s));
-            auto set2 = sstables::make_sstable_set_ptr(cs.make_sstable_set(s));
+            auto set1 = cs.make_sstable_set(s);
+            auto set2 = cs.make_sstable_set(s);
             set1->insert(sstable_for_overlapping_test(env, s, 0, key_and_token_pair[0].first, key_and_token_pair[1].first, 0));
             set2->insert(sstable_for_overlapping_test(env, s, 1, key_and_token_pair[0].first, key_and_token_pair[1].first, 1));
             set1->insert(sstable_for_overlapping_test(env, s, 2, key_and_token_pair[0].first, key_and_token_pair[1].first, 1));
@@ -4730,8 +4731,8 @@ SEASTAR_TEST_CASE(twcs_single_key_reader_through_compound_set_test) {
         cf->mark_ready_for_writes();
         cf->start();
 
-        auto set1 = sstables::make_sstable_set_ptr(cs.make_sstable_set(s));
-        auto set2 = sstables::make_sstable_set_ptr(cs.make_sstable_set(s));
+        auto set1 = cs.make_sstable_set(s);
+        auto set2 = cs.make_sstable_set(s);
 
         auto sst_gen = [&env, s, &tmp, gen = make_lw_shared<unsigned>(1)]() {
             return env.make_sstable(s, tmp.path().string(), (*gen)++, sstables::sstable::version_types::md, big);

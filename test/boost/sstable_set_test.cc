@@ -15,8 +15,9 @@
 #include "test/lib/simple_schema.hh"
 #include "readers/from_mutations_v2.hh"
 
-static sstables::sstable_set make_sstable_set(schema_ptr schema, lw_shared_ptr<sstable_list> all = {}, bool use_level_metadata = true) {
-    return sstables::sstable_set(std::make_unique<partitioned_sstable_set>(schema, std::move(all), use_level_metadata), schema);
+static sstables::sstable_set_ptr make_sstable_set(schema_ptr schema, shared_sstable sst, bool use_level_metadata = true) {
+    auto all = make_lw_shared(sstables::sstable_list({std::move(sst)}));
+    return sstables::make_sstable_set_ptr(sstables::sstable_set(std::make_unique<partitioned_sstable_set>(schema, std::move(all), use_level_metadata), schema));
 }
 
 SEASTAR_TEST_CASE(test_sstables_sstable_set_read_modify_write) {
@@ -34,7 +35,7 @@ SEASTAR_TEST_CASE(test_sstables_sstable_set_read_modify_write) {
         sstable_writer_config cfg = env.manager().configure_writer("");
         auto sst1 = make_sstable_easy(env, tmp, std::move(mr), cfg, gen++);
 
-        auto ss1 = sstables::make_sstable_set_ptr(make_sstable_set(ss.schema(), make_lw_shared<sstable_list>({sst1})));
+        auto ss1 = make_sstable_set(ss.schema(), sst1);
         BOOST_REQUIRE_EQUAL(ss1->all()->size(), 1);
 
         // Test that a random sstable_origin is stored and retrieved properly.

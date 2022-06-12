@@ -104,7 +104,7 @@ public:
         return name(type());
     }
 
-    sstable_set make_sstable_set(schema_ptr schema) const;
+    sstable_set_ptr make_sstable_set(schema_ptr schema) const;
 
     compaction_backlog_tracker& get_backlog_tracker();
 

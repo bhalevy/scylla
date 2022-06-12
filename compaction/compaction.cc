@@ -615,7 +615,7 @@ private:
     virtual flat_mutation_reader_v2 make_sstable_reader() const = 0;
 
     virtual sstables::sstable_set_ptr make_sstable_set_for_input() const {
-        return make_sstable_set_ptr(_table_s.get_compaction_strategy().make_sstable_set(_schema));
+        return _table_s.get_compaction_strategy().make_sstable_set(_schema);
     }
 
     future<> setup() {

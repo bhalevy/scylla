@@ -646,11 +646,11 @@ sstable_set_ptr make_partitioned_sstable_set(schema_ptr schema, lw_shared_ptr<ss
     return make_sstable_set_ptr(sstable_set(std::make_unique<partitioned_sstable_set>(schema, std::move(all), use_level_metadata), schema));
 }
 
-sstable_set
+sstable_set_ptr
 compaction_strategy::make_sstable_set(schema_ptr schema) const {
-    return sstable_set(
+    return make_sstable_set_ptr(sstable_set(
             _compaction_strategy_impl->make_sstable_set(schema),
-            schema);
+            schema));
 }
 
 using sstable_reader_factory_type = std::function<flat_mutation_reader_v2(shared_sstable&, const dht::partition_range& pr)>;

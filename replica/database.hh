@@ -532,7 +532,7 @@ public:
         // Builds new sstable set from existing one, with new sstables added to it and old sstables removed from it.
         future<sstables::sstable_set_ptr>
         build_new_list(const sstables::sstable_set& current_sstables,
-                       sstables::sstable_set new_sstable_list,
+                       sstables::sstable_set_ptr new_sstable_list,
                        const std::vector<sstables::shared_sstable>& new_sstables,
                        const std::vector<sstables::shared_sstable>& old_sstables);
     };
