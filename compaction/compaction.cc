@@ -614,12 +614,12 @@ private:
     // Default range sstable reader that will only return mutation that belongs to current shard.
     virtual flat_mutation_reader_v2 make_sstable_reader() const = 0;
 
-    virtual sstables::sstable_set make_sstable_set_for_input() const {
-        return _table_s.get_compaction_strategy().make_sstable_set(_schema);
+    virtual sstables::sstable_set_ptr make_sstable_set_for_input() const {
+        return make_sstable_set_ptr(_table_s.get_compaction_strategy().make_sstable_set(_schema));
     }
 
     future<> setup() {
-        auto ssts = make_sstable_set_ptr(make_sstable_set_for_input());
+        auto ssts = make_sstable_set_for_input();
         formatted_sstables_list formatted_msg;
         auto fully_expired = _table_s.fully_expired_sstables(_sstables, gc_clock::now());
         min_max_tracker<api::timestamp_type> timestamp_tracker;
@@ -895,8 +895,8 @@ public:
         : compaction(table_s, std::move(descriptor), cdata) {
     }
 
-    virtual sstables::sstable_set make_sstable_set_for_input() const override {
-        return sstables::make_partitioned_sstable_set(_schema, make_lw_shared<sstable_list>(sstable_list{}), false);
+    virtual sstables::sstable_set_ptr make_sstable_set_for_input() const override {
+        return make_sstable_set_ptr(sstables::make_partitioned_sstable_set(_schema, make_lw_shared<sstable_list>(sstable_list{}), false));
     }
 
     flat_mutation_reader_v2 make_sstable_reader() const override {
