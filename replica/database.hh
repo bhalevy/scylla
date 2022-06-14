@@ -882,6 +882,7 @@ public:
     size_t sstables_count() const;
     std::vector<uint64_t> sstable_count_per_level() const;
     int64_t get_unleveled_sstables() const;
+    std::vector<sstables::shared_sstable> get_staging_sstables() const;
 
     void start_compaction();
     void trigger_compaction();

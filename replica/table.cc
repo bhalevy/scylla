@@ -1153,6 +1153,10 @@ const std::vector<sstables::shared_sstable>& table::compacted_undeleted_sstables
     return _sstables_compacted_but_not_deleted;
 }
 
+std::vector<sstables::shared_sstable> table::get_staging_sstables() const {
+    return boost::copy_range<std::vector<sstables::shared_sstable>>(_sstables_staging | boost::adaptors::map_values);
+}
+
 lw_shared_ptr<memtable_list>
 table::make_memory_only_memtable_list() {
     auto get_schema = [this] { return schema(); };
