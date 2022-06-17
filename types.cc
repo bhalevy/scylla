@@ -67,13 +67,22 @@ requires requires {
 sstring
 time_point_to_string(const T& tp)
 {
-    int64_t count = tp.time_since_epoch().count();
-    auto time = boost::posix_time::from_time_t(0) + boost::posix_time::milliseconds(count);
     constexpr std::string_view units = "milliseconds";
+    int64_t count = tp.time_since_epoch().count();
+    auto fallback_format = [&] (const char* why) {
+        return format("{} {} ({})", count, units, why);
+    };
+    if constexpr (boost::posix_time::time_duration::ticks_per_second() > 1000) {
+        constexpr int64_t adjustment_ratio = boost::posix_time::time_duration::ticks_per_second() / 1000;
+        if (count >= std::numeric_limits<int64_t>::max() / adjustment_ratio || count <= std::numeric_limits<int64_t>::min() / adjustment_ratio) {
+            return fallback_format("out of range");
+        }
+    }
   try {
+    auto time = boost::posix_time::from_time_t(0) + boost::posix_time::milliseconds(count);
     return boost::posix_time::to_iso_extended_string(time);
   } catch (const std::exception& e) {
-    return format("{} {} ({})", count, units, e.what());
+    return fallback_format(e.what());
   }
 }
 
