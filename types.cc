@@ -27,6 +27,9 @@
 #include <string>
 #include <regex>
 #include <concepts>
+#include <ctime>
+#include <cstdlib>
+#include <fmt/chrono.h>
 #include <boost/iterator/transform_iterator.hpp>
 #include <boost/range/adaptor/filtered.hpp>
 #include <boost/range/numeric.hpp>
@@ -67,14 +70,19 @@ requires requires {
 sstring
 time_point_to_string(const T& tp)
 {
-    int64_t count = tp.time_since_epoch().count();
-    auto time = boost::posix_time::from_time_t(0) + boost::posix_time::milliseconds(count);
-    constexpr std::string_view units = "milliseconds";
-  try {
-    return boost::posix_time::to_iso_extended_string(time);
-  } catch (const std::exception& e) {
-    return format("{} {} ({})", count, units, e.what());
-  }
+    auto d = std::div(int64_t(tp.time_since_epoch().count()), int64_t(1000));
+    std::time_t seconds = d.quot;
+    std::tm tm = *gmtime(&seconds);
+    if (!d.rem) {
+        return fmt::format("{:%Y-%m-%dT%H:%M:%S}", tm);
+    }
+    // adjust seconds for time points earlier than posix epoch
+    if (d.quot < 0) {
+        d.quot--;
+        d.rem = 1000 + d.rem;
+    }
+    uint32_t micros = d.rem * 1000;
+    return fmt::format("{:%Y-%m-%dT%H:%M:%S}.{:06d}", tm, micros);
 }
 
 sstring simple_date_to_string(const uint32_t days_count) {
