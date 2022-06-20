@@ -34,6 +34,13 @@
 
 #include "utils/fmt-compat.hh"
 
+SEASTAR_TEST_CASE(test_asan_failure) {
+    auto p = std::make_unique<sstring>("hello");
+    return yield().then([p = p.get()] {
+        BOOST_REQUIRE_EQUAL(*p, sstring("hello"));
+    });
+}
+
 SEASTAR_TEST_CASE(test_default_authenticator) {
     return do_with_cql_env([](cql_test_env& env) {
         auto& a = env.local_auth_service().underlying_authenticator();
