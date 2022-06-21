@@ -926,10 +926,16 @@ void compaction_manager::submit(replica::table* t) {
 }
 
 class compaction_manager::offstrategy_compaction_task : public compaction_manager::task {
+    std::vector<sstables::shared_sstable> _old_sstables;
+
 public:
     offstrategy_compaction_task(compaction_manager& mgr, replica::table* t)
         : task(mgr, t, sstables::compaction_type::Reshape, "Offstrategy compaction")
     {}
+
+    const std::vector<sstables::shared_sstable>& old_sstables() const noexcept {
+        return _old_sstables;
+    }
 
     future<> run_offstrategy_compaction(sstables::compaction_data& cdata) {
         // This procedure will reshape sstables in maintenance set until it's ready for
@@ -944,10 +950,8 @@ public:
         // actual requirement is the size of the largest table's maintenance set.
 
         replica::table& t = *_compacting_table;
-        const auto& maintenance_sstables = t.maintenance_sstable_set();
 
-        const auto old_sstables = boost::copy_range<std::vector<sstables::shared_sstable>>(*maintenance_sstables.all());
-        std::vector<sstables::shared_sstable> reshape_candidates = old_sstables;
+        std::vector<sstables::shared_sstable> reshape_candidates = old_sstables();
         std::vector<sstables::shared_sstable> sstables_to_remove;
         std::unordered_set<sstables::shared_sstable> new_unused_sstables;
 
@@ -962,7 +966,7 @@ public:
             auto desc = t.get_compaction_strategy().get_reshaping_job(reshape_candidates, t.schema(), iop, sstables::reshape_mode::strict);
             if (desc.sstables.empty()) {
                 // at this moment reshape_candidates contains a set of sstables ready for integration into main set
-                co_await t.update_sstable_lists_on_off_strategy_completion(old_sstables, reshape_candidates);
+                co_await t.update_sstable_lists_on_off_strategy_completion(old_sstables(), reshape_candidates);
                 break;
             }
 
@@ -1024,8 +1028,11 @@ protected:
                 auto maintenance_sstables = t.maintenance_sstable_set().all();
                 cmlog.info("Starting off-strategy compaction for {}.{}, {} candidates were found",
                         t.schema()->ks_name(), t.schema()->cf_name(), maintenance_sstables->size());
-                co_await run_offstrategy_compaction(_compaction_data);
-                finish_compaction();
+                if (!maintenance_sstables->empty()) {
+                    _old_sstables = boost::copy_range<std::vector<sstables::shared_sstable>>(*maintenance_sstables);
+                    co_await run_offstrategy_compaction(_compaction_data);
+                    finish_compaction();
+                }
                 cmlog.info("Done with off-strategy compaction for {}.{}", t.schema()->ks_name(), t.schema()->cf_name());
                 co_return;
             } catch (...) {
@@ -1040,11 +1047,13 @@ protected:
     }
 };
 
-future<> compaction_manager::perform_offstrategy(replica::table* t) {
+future<bool> compaction_manager::perform_offstrategy(replica::table* t) {
     if (_state != state::enabled) {
-        return make_ready_future<>();
+        co_return false;
     }
-    return perform_task(make_shared<offstrategy_compaction_task>(*this, t));
+    auto task = make_shared<offstrategy_compaction_task>(*this, t);
+    co_await perform_task(task);
+    co_return !task->old_sstables().empty();
 }
 
 class compaction_manager::rewrite_sstables_compaction_task : public compaction_manager::sstables_task {
