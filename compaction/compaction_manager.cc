@@ -930,7 +930,23 @@ void compaction_manager::submit(replica::table* t) {
     (void)perform_task(make_shared<regular_compaction_task>(*this, t));
 }
 
+bool compaction_manager::can_perform_regular_compaction(replica::table* t) {
+    if (!can_proceed(t) || t->is_auto_compaction_disabled_by_user()) {
+        return false;
+    }
+    auto& lk = get_compaction_state(t).lock;
+    auto could_lock = lk.try_read_lock();
+    if (!could_lock) {
+        return false;
+    }
+    lk.read_unlock();
+    return true;
+}
+
 future<> compaction_manager::maybe_wait_for_sstable_count_reduction(replica::table* t) {
+    if (!can_perform_regular_compaction(t)) {
+        co_return;
+    }
     auto schema = t->schema();
     auto num_runs_for_compaction = [this, t] {
         auto& cs = t->get_compaction_strategy();
@@ -950,13 +966,15 @@ future<> compaction_manager::maybe_wait_for_sstable_count_reduction(replica::tab
     }
     // Reduce the chances of falling into an endless wait, if compaction
     // wasn't scheduled for the table due to a problem.
+    // FIXME: we need to be able to run regular compaction in parallel
+    // to major compaction. See https://github.com/scylladb/scylla/issues/10961
     submit(t);
     using namespace std::chrono_literals;
     auto start = db_clock::now();
     auto& cstate = get_compaction_state(t);
     try {
         co_await cstate.compaction_done.wait([this, &num_runs_for_compaction, threshold, t] {
-            return num_runs_for_compaction() <= threshold;
+            return num_runs_for_compaction() <= threshold || !can_perform_regular_compaction(t);
         });
     } catch (const broken_condition_variable&) {
         co_return;

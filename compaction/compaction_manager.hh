@@ -386,6 +386,9 @@ public:
     // Submit a table to be compacted.
     void submit(replica::table* t);
 
+    // Can regular compaction be performed in the given table
+    bool can_perform_regular_compaction(replica::table* t);
+
     // Maybe wait before adding more sstables
     // if there are too many sstables.
     future<> maybe_wait_for_sstable_count_reduction(replica::table* t);
