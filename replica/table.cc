@@ -694,9 +694,13 @@ table::try_flush_memtable_to_sstable(lw_shared_ptr<memtable> old, sstable_write_
             err = std::current_exception();
         }
         if (err) {
-            // TODO: allow silently breaking _sstables_changed on stop()
-            // to wake maybe_wait_for_sstable_count_reduction up
-            tlogger.error("failed to flush memtable for {}.{}: {}", old->schema()->ks_name(), old->schema()->cf_name(), err);
+            auto log_level = logging::log_level::error;
+            try {
+                std::rethrow_exception(err);
+            } catch (const broken_condition_variable&) {
+                log_level = logging::log_level::debug;
+            }
+            tlogger.log(log_level, "failed to flush memtable for {}.{}: {}", old->schema()->ks_name(), old->schema()->cf_name(), err);
             co_await reader.close();
             co_return stop_iteration(_async_gate.is_closed());
         }
@@ -791,6 +795,7 @@ table::stop() {
     }
     return _async_gate.close().then([this] {
         return await_pending_ops().finally([this] {
+            _sstables_changed.broken();
             return _memtables->flush().finally([this] {
                 return _compaction_manager.remove(this).then([this] {
                     return _sstable_deletion_gate.close().then([this] {
