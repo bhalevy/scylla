@@ -736,7 +736,7 @@ table::try_flush_memtable_to_sstable(lw_shared_ptr<memtable> old, sstable_write_
 }
 
 future<> table::maybe_wait_for_sstable_count_reduction() {
-    if (_async_gate.is_closed() || is_auto_compaction_disabled_by_user()) {
+    if (_async_gate.is_closed() || !_compaction_manager.can_perform_regular_compaction(this)) {
         co_return;
     }
     auto num_runs_with_memtable_origin = [this] {
