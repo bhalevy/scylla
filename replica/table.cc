@@ -689,6 +689,7 @@ table::try_flush_memtable_to_sstable(lw_shared_ptr<memtable> old, sstable_write_
                 _memtables->erase(old);
                 co_return stop_iteration::yes;
             }
+            co_await maybe_wait_for_sstable_count_reduction();
         } catch (...) {
             err = std::current_exception();
         }
@@ -698,7 +699,6 @@ table::try_flush_memtable_to_sstable(lw_shared_ptr<memtable> old, sstable_write_
             co_return stop_iteration(_async_gate.is_closed());
         }
 
-        co_await maybe_wait_for_sstable_count_reduction();
         auto f = consumer(std::move(reader));
 
         // Switch back to default scheduling group for post-flush actions, to avoid them being staved by the memtable flush
