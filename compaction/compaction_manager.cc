@@ -925,6 +925,19 @@ void compaction_manager::submit(replica::table* t) {
     (void)perform_task(make_shared<regular_compaction_task>(*this, t));
 }
 
+bool compaction_manager::can_perform_regular_compaction(replica::table* t) {
+    if (!can_proceed(t) || t->is_auto_compaction_disabled_by_user()) {
+        return false;
+    }
+    auto& lk = get_compaction_state(t).lock;
+    auto could_lock = lk.try_read_lock();
+    if (!could_lock) {
+        return false;
+    }
+    lk.read_unlock();
+    return true;
+}
+
 class compaction_manager::offstrategy_compaction_task : public compaction_manager::task {
     bool _performed = false;
 public:

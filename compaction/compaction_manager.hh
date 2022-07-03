@@ -379,6 +379,9 @@ public:
     // Submit a table to be compacted.
     void submit(replica::table* t);
 
+    // Can regular compaction be performed in the given table
+    bool can_perform_regular_compaction(replica::table* t);
+
     // Submit a table to be off-strategy compacted.
     // Returns true iff off-strategy compaction was required and performed.
     future<bool> perform_offstrategy(replica::table* t);
