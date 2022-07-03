@@ -764,7 +764,14 @@ future<> table::maybe_wait_for_sstable_count_reduction() {
     trigger_compaction();
     using namespace std::chrono_literals;
     auto start = db_clock::now();
-    co_await _sstables_changed.wait([&num_runs_with_memtable_origin, threshold] { return num_runs_with_memtable_origin() <= threshold; });
+    try {
+        auto wait_duration = (1000ms * count) / threshold;
+        co_await _sstables_changed.wait(wait_duration, [&num_runs_with_memtable_origin, threshold] { return num_runs_with_memtable_origin() <= threshold; });
+    } catch (const condition_variable_timed_out&) {
+        // ignore
+    } catch (const timed_out_error&) {
+        // ignore
+    }
     auto end = db_clock::now();
     auto elapsed_ms = (end - start) / 1ms;
     tlogger.warn("Memtable flush of {}.{} was blocked for {}ms waiting for compaction to catch up on {} newly created sstable runs",
