@@ -486,6 +486,7 @@ public:
     friend class compacting_sstable_registration;
     friend class compaction_weight_registration;
     friend class compaction_manager_test;
+    friend class replica::table;
 };
 
 bool needs_cleanup(const sstables::shared_sstable& sst, const dht::token_range_vector& owned_ranges, schema_ptr s);
