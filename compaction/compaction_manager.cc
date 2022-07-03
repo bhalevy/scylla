@@ -933,8 +933,10 @@ void compaction_manager::submit(replica::table* t) {
 future<> compaction_manager::maybe_wait_for_sstable_count_reduction(replica::table* t) {
     auto schema = t->schema();
     auto num_runs_for_compaction = [this, t] {
+        auto& cs = t->get_compaction_strategy();
+        auto desc = cs.get_sstables_for_compaction(t->as_table_state(), get_strategy_control(), get_candidates(*t));
         const auto sstable_runs_with_memtable_origin = boost::copy_range<std::unordered_set<utils::UUID>>(
-            t->in_strategy_sstables()
+            desc.sstables
             | boost::adaptors::filtered([] (const sstables::shared_sstable& sst) {
                 return sst->get_origin() == "memtable";
             })
