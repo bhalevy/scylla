@@ -102,7 +102,6 @@ lw_shared_ptr<sstables::sstable_set> table::make_maintenance_sstable_set() const
 
 void table::refresh_compound_sstable_set() {
     _sstables = make_compound_sstable_set();
-    _sstables_changed.signal();
 }
 
 // Exposed for testing, not performance critical.
@@ -750,7 +749,6 @@ table::stop() {
     }
     return _async_gate.close().then([this] {
         return await_pending_ops().finally([this] {
-            _sstables_changed.broken();
             return _memtables->flush().finally([this] {
                 return _compaction_manager.remove(this).then([this] {
                     return _sstable_deletion_gate.close().then([this] {
