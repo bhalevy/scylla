@@ -951,13 +951,9 @@ future<> compaction_manager::maybe_wait_for_sstable_count_reduction(replica::tab
     auto num_runs_for_compaction = [this, t] {
         auto& cs = t->get_compaction_strategy();
         auto desc = cs.get_sstables_for_compaction(t->as_table_state(), get_strategy_control(), get_candidates(*t));
-        const auto sstable_runs_with_memtable_origin = boost::copy_range<std::unordered_set<utils::UUID>>(
+        return boost::copy_range<std::unordered_set<utils::UUID>>(
             desc.sstables
-            | boost::adaptors::filtered([] (const sstables::shared_sstable& sst) {
-                return sst->get_origin() == "memtable";
-            })
-            | boost::adaptors::transformed(std::mem_fn(&sstables::sstable::run_identifier)));
-        return sstable_runs_with_memtable_origin.size();
+            | boost::adaptors::transformed(std::mem_fn(&sstables::sstable::run_identifier))).size();
     };
     const auto threshold = std::max(schema->max_compaction_threshold(), 32);
     auto count = num_runs_for_compaction();
