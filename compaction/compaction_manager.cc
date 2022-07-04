@@ -486,6 +486,10 @@ inline compaction_controller make_compaction_controller(compaction_manager::sche
     return compaction_controller(csg, 250ms, std::move(fn));
 }
 
+compaction_manager::compaction_state::~compaction_state() {
+    compaction_done.broken();
+}
+
 std::string compaction_manager::task::describe() const {
     auto* t = _compacting_table;
     auto s = t->schema();
@@ -584,6 +588,7 @@ void compaction_manager::task::finish_compaction(state finish_state) noexcept {
     if (finish_state != state::failed) {
         _compaction_retry.reset();
     }
+    _compaction_state.compaction_done.signal();
 }
 
 void compaction_manager::task::stop(sstring reason) noexcept {
@@ -923,6 +928,38 @@ void compaction_manager::submit(replica::table* t) {
     // OK to drop future.
     // waited via task->stop()
     (void)perform_task(make_shared<regular_compaction_task>(*this, t));
+}
+
+future<> compaction_manager::maybe_wait_for_sstable_count_reduction(replica::table* t) {
+    auto schema = t->schema();
+    auto sstable_count_below_threshold = [this, t, schema] {
+        const auto sstable_runs_with_memtable_origin = boost::copy_range<std::unordered_set<utils::UUID>>(
+            t->in_strategy_sstables()
+            | boost::adaptors::filtered([] (const sstables::shared_sstable& sst) {
+                return sst->get_origin() == "memtable";
+            })
+            | boost::adaptors::transformed(std::mem_fn(&sstables::sstable::run_identifier)));
+        const auto threshold = std::max(schema->max_compaction_threshold(), 32);
+        return sstable_runs_with_memtable_origin.size() <= threshold;
+    };
+    if (sstable_count_below_threshold()) {
+        co_return;
+    }
+    // Reduce the chances of falling into an endless wait, if compaction
+    // wasn't scheduled for the table due to a problem.
+    submit(t);
+    using namespace std::chrono_literals;
+    auto start = db_clock::now();
+    auto& cstate = get_compaction_state(t);
+    try {
+        co_await cstate.compaction_done.wait(sstable_count_below_threshold);
+    } catch (const broken_condition_variable&) {
+        co_return;
+    }
+    auto end = db_clock::now();
+    auto elapsed_ms = (end - start) / 1ms;
+    cmlog.warn("Memtable flush of {}.{} was blocked for {}ms waiting for compaction to catch up on newly created files",
+            schema->ks_name(), schema->cf_name(), elapsed_ms);
 }
 
 class compaction_manager::offstrategy_compaction_task : public compaction_manager::task {
