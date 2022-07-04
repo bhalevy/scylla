@@ -102,7 +102,6 @@ lw_shared_ptr<sstables::sstable_set> table::make_maintenance_sstable_set() const
 
 void table::refresh_compound_sstable_set() {
     _sstables = make_compound_sstable_set();
-    _sstables_changed.signal();
 }
 
 // Exposed for testing, not performance critical.
