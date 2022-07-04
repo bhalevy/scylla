@@ -503,7 +503,6 @@ private:
 
     class table_state;
     std::unique_ptr<table_state> _table_state;
-    condition_variable _sstables_changed;
 public:
     data_dictionary::table as_data_dictionary() const;
 
