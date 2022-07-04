@@ -584,6 +584,7 @@ void compaction_manager::task::finish_compaction(state finish_state) noexcept {
     if (finish_state != state::failed) {
         _compaction_retry.reset();
     }
+    _cm._compaction_done.signal();
 }
 
 void compaction_manager::task::stop(sstring reason) noexcept {
@@ -767,6 +768,7 @@ future<> compaction_manager::really_do_stop() {
     cmlog.info("Asked to stop");
     // Reset the metrics registry
     _metrics.clear();
+    _compaction_done.broken();
     co_await stop_ongoing_compactions("shutdown");
     reevaluate_postponed_compactions();
     co_await std::move(_waiting_reevalution);
@@ -936,6 +938,43 @@ bool compaction_manager::can_perform_regular_compaction(replica::table* t) {
     }
     lk.read_unlock();
     return true;
+}
+
+future<> compaction_manager::maybe_wait_for_sstable_count_reduction(replica::table *t) {
+    if (!can_perform_regular_compaction(t)) {
+        co_return;
+    }
+    auto num_runs_for_compaction = [this, t] {
+        auto& cs = t->get_compaction_strategy();
+        auto desc = cs.get_sstables_for_compaction(t->as_table_state(), get_strategy_control(), get_candidates(*t));
+        return boost::copy_range<std::unordered_set<utils::UUID>>(
+            desc.sstables
+            | boost::adaptors::transformed([] (const sstables::shared_sstable& sst) {
+                return sst->run_identifier();
+            })).size();
+    };
+    auto schema = t->schema();
+    const auto threshold = std::max(schema->max_compaction_threshold(), 32);
+    auto count = num_runs_for_compaction();
+    if (count <= threshold) {
+        co_return;
+    }
+    // FIXME: start targeted compaction to reduce the number of sstables
+    // that could run in parallel to other compaction tasks (e.g. major compaction)
+    submit(t);
+    using namespace std::chrono_literals;
+    auto start = db_clock::now();
+    try {
+        co_await _compaction_done.wait([this, &num_runs_for_compaction, threshold, t] {
+            return num_runs_for_compaction() <= threshold || !can_perform_regular_compaction(t);
+        });
+    } catch (const broken_condition_variable&) {
+        co_return;
+    }
+    auto end = db_clock::now();
+    auto elapsed_ms = (end - start) / 1ms;
+    cmlog.warn("Waited {}ms for compaction of {}.{} to catch up on {} sstable runs",
+            elapsed_ms, schema->ks_name(), schema->cf_name(), count);
 }
 
 class compaction_manager::offstrategy_compaction_task : public compaction_manager::task {

@@ -689,7 +689,9 @@ table::try_flush_memtable_to_sstable(lw_shared_ptr<memtable> old, sstable_write_
                 _memtables->erase(old);
                 co_return stop_iteration::yes;
             }
-            co_await maybe_wait_for_sstable_count_reduction();
+            if (!_async_gate.is_closed()) {
+                co_await _compaction_manager.maybe_wait_for_sstable_count_reduction(this);
+            }
         } catch (...) {
             err = std::current_exception();
         }
@@ -733,41 +735,6 @@ table::try_flush_memtable_to_sstable(lw_shared_ptr<memtable> old, sstable_write_
         co_return co_await with_scheduling_group(default_scheduling_group(), std::ref(post_flush));
     };
     co_return co_await with_scheduling_group(_config.memtable_scheduling_group, std::ref(try_flush));
-}
-
-future<> table::maybe_wait_for_sstable_count_reduction() {
-    if (_async_gate.is_closed() || !_compaction_manager.can_perform_regular_compaction(this)) {
-        co_return;
-    }
-    auto num_runs_for_compaction = [this] {
-        auto& cm = _compaction_manager;
-        auto& cs = get_compaction_strategy();
-        auto desc = cs.get_sstables_for_compaction(as_table_state(), cm.get_strategy_control(), cm.get_candidates(*this));
-        return boost::copy_range<std::unordered_set<utils::UUID>>(
-            desc.sstables
-            | boost::adaptors::transformed([] (const sstables::shared_sstable& sst) {
-                return sst->run_identifier();
-            })).size();
-    };
-    const auto threshold = std::max(schema()->max_compaction_threshold(), 32);
-    auto count = num_runs_for_compaction();
-    if (count <= threshold) {
-        co_return;
-    }
-    // Reduce the chances of falling into an endless wait, if compaction
-    // wasn't scheduled for the table due to a problem.
-    trigger_compaction();
-    using namespace std::chrono_literals;
-    auto start = db_clock::now();
-    try {
-        co_await _sstables_changed.wait([&num_runs_for_compaction, threshold] { return num_runs_for_compaction() <= threshold; });
-    } catch (const broken_condition_variable&) {
-        co_return;
-    }
-    auto end = db_clock::now();
-    auto elapsed_ms = (end - start) / 1ms;
-    tlogger.warn("Memtable flush of {}.{} was blocked for {}ms waiting for compaction to catch up on {} sstable runs",
-            schema()->ks_name(), schema()->cf_name(), elapsed_ms, count);
 }
 
 void

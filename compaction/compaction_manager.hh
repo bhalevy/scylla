@@ -292,6 +292,7 @@ private:
 
     class strategy_control;
     std::unique_ptr<strategy_control> _strategy_control;
+    condition_variable _compaction_done;
 private:
     future<> perform_task(shared_ptr<task>);
 
@@ -381,6 +382,10 @@ public:
 
     // Can regular compaction be performed in the given table
     bool can_perform_regular_compaction(replica::table* t);
+
+    // Maybe wait before adding more sstables
+    // if there are too many sstables.
+    future<> maybe_wait_for_sstable_count_reduction(replica::table* t);
 
     // Submit a table to be off-strategy compacted.
     // Returns true iff off-strategy compaction was required and performed.
@@ -489,7 +494,6 @@ public:
     friend class compacting_sstable_registration;
     friend class compaction_weight_registration;
     friend class compaction_manager_test;
-    friend class replica::table;
 };
 
 bool needs_cleanup(const sstables::shared_sstable& sst, const dht::token_range_vector& owned_ranges, schema_ptr s);
