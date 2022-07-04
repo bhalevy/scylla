@@ -739,21 +739,18 @@ future<> table::maybe_wait_for_sstable_count_reduction() {
     if (_async_gate.is_closed() || !_compaction_manager.can_perform_regular_compaction(this)) {
         co_return;
     }
-    auto num_runs_with_memtable_origin = [this] {
+    auto num_runs_for_compaction = [this] {
         auto& cm = _compaction_manager;
         auto& cs = get_compaction_strategy();
         auto desc = cs.get_sstables_for_compaction(as_table_state(), cm.get_strategy_control(), cm.get_candidates(*this));
         return boost::copy_range<std::unordered_set<utils::UUID>>(
             desc.sstables
-            | boost::adaptors::filtered([] (const sstables::shared_sstable& sst) {
-                return sst->get_origin() == "memtable";
-            })
             | boost::adaptors::transformed([] (const sstables::shared_sstable& sst) {
                 return sst->run_identifier();
             })).size();
     };
     const auto threshold = std::max(schema()->max_compaction_threshold(), 32);
-    auto count = num_runs_with_memtable_origin();
+    auto count = num_runs_for_compaction();
     if (count <= threshold) {
         co_return;
     }
@@ -763,13 +760,13 @@ future<> table::maybe_wait_for_sstable_count_reduction() {
     using namespace std::chrono_literals;
     auto start = db_clock::now();
     try {
-        co_await _sstables_changed.wait([&num_runs_with_memtable_origin, threshold] { return num_runs_with_memtable_origin() <= threshold; });
+        co_await _sstables_changed.wait([&num_runs_for_compaction, threshold] { return num_runs_for_compaction() <= threshold; });
     } catch (const broken_condition_variable&) {
         co_return;
     }
     auto end = db_clock::now();
     auto elapsed_ms = (end - start) / 1ms;
-    tlogger.warn("Memtable flush of {}.{} was blocked for {}ms waiting for compaction to catch up on {} newly created sstable runs",
+    tlogger.warn("Memtable flush of {}.{} was blocked for {}ms waiting for compaction to catch up on {} sstable runs",
             schema()->ks_name(), schema()->cf_name(), elapsed_ms, count);
 }
 
