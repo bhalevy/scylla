@@ -932,17 +932,18 @@ void compaction_manager::submit(replica::table* t) {
 
 future<> compaction_manager::maybe_wait_for_sstable_count_reduction(replica::table* t) {
     auto schema = t->schema();
-    auto sstable_count_below_threshold = [this, t, schema] {
+    auto num_runs_for_compaction = [this, t] {
         const auto sstable_runs_with_memtable_origin = boost::copy_range<std::unordered_set<utils::UUID>>(
             t->in_strategy_sstables()
             | boost::adaptors::filtered([] (const sstables::shared_sstable& sst) {
                 return sst->get_origin() == "memtable";
             })
             | boost::adaptors::transformed(std::mem_fn(&sstables::sstable::run_identifier)));
-        const auto threshold = std::max(schema->max_compaction_threshold(), 32);
-        return sstable_runs_with_memtable_origin.size() <= threshold;
+        return sstable_runs_with_memtable_origin.size();
     };
-    if (sstable_count_below_threshold()) {
+    const auto threshold = std::max(schema->max_compaction_threshold(), 32);
+    auto count = num_runs_for_compaction();
+    if (count <= threshold) {
         co_return;
     }
     // Reduce the chances of falling into an endless wait, if compaction
@@ -952,14 +953,16 @@ future<> compaction_manager::maybe_wait_for_sstable_count_reduction(replica::tab
     auto start = db_clock::now();
     auto& cstate = get_compaction_state(t);
     try {
-        co_await cstate.compaction_done.wait(sstable_count_below_threshold);
+        co_await cstate.compaction_done.wait([this, &num_runs_for_compaction, threshold, t] {
+            return num_runs_for_compaction() <= threshold;
+        });
     } catch (const broken_condition_variable&) {
         co_return;
     }
     auto end = db_clock::now();
     auto elapsed_ms = (end - start) / 1ms;
-    cmlog.warn("Memtable flush of {}.{} was blocked for {}ms waiting for compaction to catch up on newly created files",
-            schema->ks_name(), schema->cf_name(), elapsed_ms);
+    cmlog.warn("Waited {}ms for compaction of {}.{} to catch up on {} sstable runs",
+            elapsed_ms, schema->ks_name(), schema->cf_name(), count);
 }
 
 class compaction_manager::offstrategy_compaction_task : public compaction_manager::task {
