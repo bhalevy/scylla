@@ -863,7 +863,7 @@ protected:
                 cmlog.debug("{}: sstables={} can_proceed={} auto_compaction={}", *this, descriptor.sstables.size(), can_proceed(), t.is_auto_compaction_disabled_by_user());
                 co_return;
             }
-            if (!_cm.can_register_compaction(&t, weight, descriptor.fan_in())) {
+            if (!descriptor.has_only_fully_expired && !_cm.can_register_compaction(&t, weight, descriptor.fan_in())) {
                 cmlog.debug("Refused compaction job ({} sstable(s)) of weight {} for {}.{}, postponing it...",
                     descriptor.sstables.size(), weight, t.schema()->ks_name(), t.schema()->cf_name());
                 switch_state(state::postponed);
