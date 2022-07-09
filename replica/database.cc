@@ -58,6 +58,7 @@
 #include <seastar/core/shared_ptr_incomplete.hh>
 #include <seastar/coroutine/as_future.hh>
 #include <seastar/util/memory_diagnostics.hh>
+#include <seastar/util/file.hh>
 
 #include "locator/abstract_replication_strategy.hh"
 #include "timeout_config.hh"
@@ -1029,11 +1030,29 @@ future<> database::drop_column_family(const sstring& ks_name, const sstring& cf_
 }
 
 future<> database::drop_table_on_all(const sstring& ks_name, const sstring& cf_name, timestamp_func tsf, bool with_snapshot) {
+    auto cf_path = fs::path(find_column_family(ks_name, cf_name).dir());
     // copy ks and cf names as they might reference temporary variables
     co_await container().invoke_on_all([ks_name = ks_name, cf_name = cf_name, tsf = std::move(tsf), with_snapshot] (database& db) {
         return db.drop_column_family(ks_name, cf_name, tsf, with_snapshot);
     });
-    // FIXME: remove the table directory if it has no snapshots (#10896)
+    // Remove the table directory if it has no snapshots
+    auto has_snapshot = false;
+    auto snapshots_path = cf_path / sstables::snapshots_dir;
+    if (co_await file_exists(snapshots_path.native())) {
+        auto dlist = directory_lister(cf_path, {directory_entry_type::directory});
+        has_snapshot = (co_await dlist.get()).has_value();
+        co_await dlist.close();
+    }
+    if (has_snapshot) {
+        dblog.info("Leaving dropped table directory {} behind as it has snapshots", cf_path);
+        co_return;
+    }
+    try {
+        co_await recursive_remove_directory(cf_path);
+        dblog.info("Removed dropped table directory {}", cf_path);
+    } catch (...) {
+        dblog.warn("Could not remove dropped table directory {}: {}. Ignored.", cf_path, std::current_exception());
+    }
 }
 
 const utils::UUID& database::find_uuid(std::string_view ks, std::string_view cf) const {

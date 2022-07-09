@@ -1101,3 +1101,48 @@ SEASTAR_TEST_CASE(database_drop_column_family_clears_querier_cache) {
         BOOST_REQUIRE_EQUAL(qc.get_stats().population, 0);
     });
 }
+
+SEASTAR_TEST_CASE(drop_table_with_snapshots) {
+    sstring ks_name = "ks";
+    auto make_table_name = [gen = 0] () mutable {
+        return format("table{}", gen++);
+    };
+    auto make_timestamp_func = [] {
+        return [ts = db_clock::now()] { return make_ready_future<db_clock::time_point>(ts); };
+    };
+
+    // Allow auto_snapshot
+    // dir should exist
+    auto table_name = make_table_name();
+    co_await do_with_some_data({table_name}, [&] (cql_test_env& e) -> future<> {
+        auto cf_dir = e.local_db().find_column_family(ks_name, table_name).dir();
+        co_await e.local_db().drop_table_on_all(ks_name, table_name, make_timestamp_func(), true);
+        auto cf_dir_exists = co_await file_exists(cf_dir);
+        BOOST_REQUIRE_EQUAL(cf_dir_exists, true);
+        co_return;
+    });
+
+    // Disallow auto_snapshot
+    // dir should not exist
+    table_name = make_table_name();
+    co_await do_with_some_data({table_name}, [&] (cql_test_env& e) -> future<> {
+        auto cf_dir = e.local_db().find_column_family(ks_name, table_name).dir();
+        co_await e.local_db().drop_table_on_all(ks_name, table_name, make_timestamp_func(), false);
+        auto cf_dir_exists = co_await file_exists(cf_dir);
+        BOOST_REQUIRE_EQUAL(cf_dir_exists, false);
+        co_return;
+    });
+
+    // With explicit snapshot and with_snapshot=false
+    // dir should still be kept, regardless of auto_snapshot
+    table_name = make_table_name();
+    co_await do_with_some_data({table_name}, [&] (cql_test_env& e) -> future<> {
+        auto snapshot_tag = format("test-{}", db_clock::now().time_since_epoch().count());
+        co_await e.local_db().snapshot_on_all(ks_name, snapshot_tag, false);
+        auto cf_dir = e.local_db().find_column_family(ks_name, table_name).dir();
+        co_await e.local_db().drop_table_on_all(ks_name, table_name, make_timestamp_func(), false);
+        auto cf_dir_exists = co_await file_exists(cf_dir);
+        BOOST_REQUIRE_EQUAL(cf_dir_exists, true);
+        co_return;
+    });
+}
