@@ -1029,10 +1029,11 @@ future<> database::drop_column_family(const sstring& ks_name, const sstring& cf_
 }
 
 future<> database::drop_table_on_all(sstring ks_name, sstring cf_name, timestamp_func tsf, bool with_snapshot) {
+    auto table_dir = fs::path(find_column_family(ks_name, cf_name).dir());
     co_await container().invoke_on_all([&] (database& db) {
         return db.drop_column_family(ks_name, cf_name, tsf, with_snapshot);
     });
-    // FIXME: remove the table directory if it has no snapshots (#10896)
+    co_await sstables::remove_table_directory_if_has_no_snapshots(table_dir);
 }
 
 const utils::UUID& database::find_uuid(std::string_view ks, std::string_view cf) const {
