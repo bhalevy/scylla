@@ -1103,7 +1103,7 @@ SEASTAR_TEST_CASE(database_drop_column_family_clears_querier_cache) {
     });
 }
 
-SEASTAR_TEST_CASE(drop_table_with_snapshots) {
+static future<> test_drop_table_with_auto_snapshot(bool auto_snapshot) {
     sstring ks_name = "ks";
     auto make_table_name = [gen = 0] () mutable {
         return format("table{}", gen++);
@@ -1112,16 +1112,21 @@ SEASTAR_TEST_CASE(drop_table_with_snapshots) {
         return [ts = db_clock::now()] { return make_ready_future<db_clock::time_point>(ts); };
     };
 
+    auto tmpdir_for_data = make_lw_shared<tmpdir>();
+    auto db_cfg_ptr = make_shared<db::config>();
+    db_cfg_ptr->data_file_directories(std::vector<sstring>({ tmpdir_for_data->path().string() }));
+    db_cfg_ptr->auto_snapshot(auto_snapshot);
+
     // Allow auto_snapshot
-    // dir should exist
+    // dir should exist iff auto_snapshot=true
     auto table_name = make_table_name();
     co_await do_with_some_data({table_name}, [&] (cql_test_env& e) -> future<> {
         auto cf_dir = e.local_db().find_column_family(ks_name, table_name).dir();
         co_await e.local_db().drop_table_on_all(ks_name, table_name, make_timestamp_func(), true);
         auto cf_dir_exists = co_await file_exists(cf_dir);
-        BOOST_REQUIRE_EQUAL(cf_dir_exists, true);
+        BOOST_REQUIRE_EQUAL(cf_dir_exists, auto_snapshot);
         co_return;
-    });
+    }, db_cfg_ptr);
 
     // Disallow auto_snapshot
     // dir should not exist
@@ -1132,7 +1137,7 @@ SEASTAR_TEST_CASE(drop_table_with_snapshots) {
         auto cf_dir_exists = co_await file_exists(cf_dir);
         BOOST_REQUIRE_EQUAL(cf_dir_exists, false);
         co_return;
-    });
+    }, db_cfg_ptr);
 
     // With explicit snapshot and with_snapshot=false
     // dir should still be kept, regardless of auto_snapshot
@@ -1145,5 +1150,10 @@ SEASTAR_TEST_CASE(drop_table_with_snapshots) {
         auto cf_dir_exists = co_await file_exists(cf_dir);
         BOOST_REQUIRE_EQUAL(cf_dir_exists, true);
         co_return;
-    });
+    }, db_cfg_ptr);
+}
+
+SEASTAR_TEST_CASE(drop_table_with_snapshots) {
+    co_await test_drop_table_with_auto_snapshot(false);
+    co_await test_drop_table_with_auto_snapshot(true);
 }
