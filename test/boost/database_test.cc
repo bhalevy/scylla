@@ -1087,9 +1087,7 @@ SEASTAR_TEST_CASE(database_drop_column_family_clears_querier_cache) {
                 default_priority_class(),
                 nullptr);
 
-        auto f = e.db().invoke_on_all([ts] (replica::database& db) {
-            return db.drop_column_family("ks", "cf", [ts] { return make_ready_future<db_clock::time_point>(ts); });
-        });
+        auto f = e.local_db().drop_table_on_all("ks", "cf", [ts] { return make_ready_future<db_clock::time_point>(ts); });
 
         // we add a querier to the querier cache while the drop is ongoing
         auto& qc = db.get_querier_cache();

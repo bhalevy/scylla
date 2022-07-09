@@ -1028,6 +1028,13 @@ future<> database::drop_column_family(const sstring& ks_name, const sstring& cf_
     f.get(); // re-throw exception from truncate() if any
 }
 
+future<> database::drop_table_on_all(sstring ks_name, sstring cf_name, timestamp_func tsf, bool with_snapshot) {
+    co_await container().invoke_on_all([&] (database& db) {
+        return db.drop_column_family(ks_name, cf_name, tsf, with_snapshot);
+    });
+    // FIXME: remove the table directory if it has no snapshots (#10896)
+}
+
 const utils::UUID& database::find_uuid(std::string_view ks, std::string_view cf) const {
     try {
         return _ks_cf_to_uuid.at(std::make_pair(ks, cf));
