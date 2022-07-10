@@ -18,6 +18,8 @@ class everywhere_replication_strategy : public abstract_replication_strategy {
 public:
     everywhere_replication_strategy(snitch_ptr& snitch, const replication_strategy_config_options& config_options);
 
+    virtual bool has_static_natural_endpoints() const noexcept override { return true; }
+
     virtual future<endpoint_set> calculate_natural_endpoints(const token& search_token, const token_metadata& tm) const override;
 
     virtual void validate_options() const override { /* noop */ }
