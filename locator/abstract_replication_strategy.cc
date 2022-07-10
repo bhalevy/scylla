@@ -294,8 +294,16 @@ abstract_replication_strategy::get_pending_address_ranges(const token_metadata_p
     token_metadata temp;
     temp = co_await tmptr->clone_only_token_map();
     co_await temp.update_normal_tokens(pending_tokens, pending_address);
-    for (auto& x : co_await get_address_ranges(temp, pending_address)) {
-            ret.push_back(x.second);
+    for (const auto& t : temp.sorted_tokens()) {
+        auto eps = co_await calculate_natural_endpoints(t, temp);
+        for (auto ep : eps) {
+            if (ep == pending_address) {
+                dht::token_range_vector r = temp.get_primary_ranges_for(t);
+                rslogger.debug("get_pending_address_ranges: token={} primary_range={} endpoint={}", t, r, pending_address);
+                std::copy(r.begin(), r.end(), std::back_inserter(ret));
+                break;
+            }
+        }
     }
     co_await temp.clear_gently();
     co_return ret;
