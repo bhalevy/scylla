@@ -87,8 +87,8 @@ range_streamer::get_all_ranges_with_sources_for(const sstring& keyspace_name, dh
 
     auto& ks = _db.local().find_keyspace(keyspace_name);
     auto erm = ks.get_effective_replication_map();
-
-    auto range_addresses = erm->get_range_addresses();
+    auto tmptr = erm->get_token_metadata_ptr();
+    auto range_addresses = erm->get_range_addresses().get0();
 
     logger.debug("keyspace={}, desired_ranges.size={}, range_addresses.size={}", keyspace_name, desired_ranges.size(), range_addresses.size());
 
