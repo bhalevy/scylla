@@ -2627,7 +2627,7 @@ future<> storage_service::rebuild(sstring source_dc) {
             }
             auto ks_erms = ss.local_db().get_non_system_keyspaces_erms();
             for (const auto& [keyspace_name, erm] : ks_erms) {
-                co_await streamer->add_ranges(keyspace_name, ss.get_ranges_for_endpoint(erm, utils::fb_utilities::get_broadcast_address()), ss._gossiper, false);
+                co_await streamer->add_ranges(keyspace_name, erm, ss.get_ranges_for_endpoint(erm, utils::fb_utilities::get_broadcast_address()), ss._gossiper, false);
             }
             try {
                 co_await streamer->stream_async();
