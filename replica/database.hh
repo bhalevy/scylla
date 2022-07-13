@@ -1497,6 +1497,7 @@ public:
     void drop_keyspace(const sstring& name);
     std::vector<sstring> get_non_system_keyspaces() const;
     std::vector<sstring> get_all_keyspaces() const;
+    std::vector<sstring> get_non_local_strategy_keyspaces() const;
     column_family& find_column_family(std::string_view ks, std::string_view name);
     const column_family& find_column_family(std::string_view ks, std::string_view name) const;
     column_family& find_column_family(const utils::UUID&);

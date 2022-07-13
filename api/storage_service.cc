@@ -797,9 +797,7 @@ void set_storage_service(http_context& ctx, routes& r, sharded<service::storage_
         if (type == "user") {
             return ctx.db.local().get_non_system_keyspaces();
         } else if (type == "non_local_strategy") {
-            return map_keys(ctx.db.local().get_keyspaces() | boost::adaptors::filtered([](const auto& p) {
-                return p.second.get_replication_strategy().get_type() != locator::replication_strategy_type::local;
-            }));
+            return ctx.db.local().get_non_local_strategy_keyspaces();
         }
         return map_keys(ctx.db.local().get_keyspaces());
     });

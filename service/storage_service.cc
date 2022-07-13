@@ -780,13 +780,14 @@ std::unordered_map<dht::token_range, inet_address_vector_replica_set>
 storage_service::get_range_to_address_map(const sstring& keyspace,
         const std::vector<token>& sorted_tokens) const {
     sstring ks = keyspace;
-    // some people just want to get a visual representation of things. Allow null and set it to the first
-    // non-system keyspace.
+    // some people just want to get a visual representation of things. Allow null and set it to a
+    // non-local_strategy keyspace.
     if (keyspace == "") {
-        auto keyspaces = _db.local().get_non_system_keyspaces();
+        auto keyspaces = _db.local().get_non_local_strategy_keyspaces();
         if (keyspaces.empty()) {
-            throw std::runtime_error("No keyspace provided and no non system kespace exist");
+            throw std::runtime_error("No keyspace provided and no non local-strategy keyspace exist");
         }
+        // FIXME: prefer a keyspace using network-topology or everywhere strategy
         ks = keyspaces[0];
     }
     return construct_range_to_endpoint_map(ks, get_all_ranges(sorted_tokens));
@@ -1864,7 +1865,7 @@ future<> storage_service::decommission() {
 
             ss.update_pending_ranges(format("decommission {}", endpoint)).get();
 
-            auto non_system_keyspaces = db.get_non_system_keyspaces();
+            auto non_system_keyspaces = db.get_non_local_strategy_keyspaces();
             for (const auto& keyspace_name : non_system_keyspaces) {
                 if (ss.get_token_metadata().has_pending_ranges(keyspace_name, ss.get_broadcast_address())) {
                     throw std::runtime_error("data is currently moving to this node; unable to leave the ring");
@@ -2621,7 +2622,7 @@ future<> storage_service::rebuild(sstring source_dc) {
             if (source_dc != "") {
                 streamer->add_source_filter(std::make_unique<dht::range_streamer::single_datacenter_filter>(source_dc));
             }
-            auto keyspaces = ss._db.local().get_non_system_keyspaces();
+            auto keyspaces = ss._db.local().get_non_local_strategy_keyspaces();
             for (auto& keyspace_name : keyspaces) {
                 co_await streamer->add_ranges(keyspace_name, ss.get_ranges_for_endpoint(keyspace_name, utils::fb_utilities::get_broadcast_address()), ss._gossiper, false);
             }
@@ -2726,8 +2727,8 @@ future<> storage_service::unbootstrap() {
     } else {
         std::unordered_map<sstring, std::unordered_multimap<dht::token_range, inet_address>> ranges_to_stream;
 
-        auto non_system_keyspaces = _db.local().get_non_system_keyspaces();
-        for (const auto& keyspace_name : non_system_keyspaces) {
+        auto keyspaces = _db.local().get_non_local_strategy_keyspaces();
+        for (const auto& keyspace_name : keyspaces) {
             auto ranges_mm = co_await get_changed_ranges_for_leaving(keyspace_name, get_broadcast_address());
             if (slogger.is_enabled(logging::log_level::debug)) {
                 std::vector<range<token>> ranges;
@@ -2758,8 +2759,8 @@ future<> storage_service::unbootstrap() {
 
 future<> storage_service::removenode_add_ranges(lw_shared_ptr<dht::range_streamer> streamer, gms::inet_address leaving_node) {
     auto my_address = get_broadcast_address();
-    auto non_system_keyspaces = _db.local().get_non_system_keyspaces();
-    for (const auto& keyspace_name : non_system_keyspaces) {
+    auto keyspaces = _db.local().get_non_local_strategy_keyspaces();
+    for (const auto& keyspace_name : keyspaces) {
         std::unordered_multimap<dht::token_range, inet_address> changed_ranges = co_await get_changed_ranges_for_leaving(keyspace_name, leaving_node);
         dht::token_range_vector my_new_ranges;
         for (auto& x : changed_ranges) {
@@ -3160,7 +3161,7 @@ future<> storage_service::update_pending_ranges(mutable_token_metadata_ptr tmptr
     assert(this_shard_id() == 0);
 
     try {
-        auto keyspaces = _db.local().get_non_system_keyspaces();
+        auto keyspaces = _db.local().get_non_local_strategy_keyspaces();
         for (const auto& keyspace_name : keyspaces) {
             auto& ks = this->_db.local().find_keyspace(keyspace_name);
             auto& strategy = ks.get_replication_strategy();
