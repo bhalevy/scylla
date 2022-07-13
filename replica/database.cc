@@ -1080,6 +1080,16 @@ std::vector<sstring> database::get_all_keyspaces() const {
     return res;
 }
 
+std::unordered_map<sstring, locator::effective_replication_map_ptr> database::get_non_system_keyspaces_erms() const {
+    std::unordered_map<sstring, locator::effective_replication_map_ptr> res;
+    for (const auto& [ks_name, ks] : _keyspaces) {
+        if (!is_system_keyspace(ks_name)) {
+            res.emplace(ks_name, ks.get_effective_replication_map());
+        }
+    }
+    return res;
+}
+
 std::vector<lw_shared_ptr<column_family>> database::get_non_system_column_families() const {
     return boost::copy_range<std::vector<lw_shared_ptr<column_family>>>(
         get_column_families()

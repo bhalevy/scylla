@@ -2621,8 +2621,8 @@ future<> storage_service::rebuild(sstring source_dc) {
             if (source_dc != "") {
                 streamer->add_source_filter(std::make_unique<dht::range_streamer::single_datacenter_filter>(source_dc));
             }
-            auto keyspaces = ss._db.local().get_non_system_keyspaces();
-            for (auto& keyspace_name : keyspaces) {
+            auto ks_erms = ss.local_db().get_non_system_keyspaces_erms();
+            for (const auto& [keyspace_name, erm] : ks_erms) {
                 co_await streamer->add_ranges(keyspace_name, ss.get_ranges_for_endpoint(keyspace_name, utils::fb_utilities::get_broadcast_address()), ss._gossiper, false);
             }
             try {
@@ -2726,8 +2726,8 @@ future<> storage_service::unbootstrap() {
     } else {
         std::unordered_map<sstring, std::unordered_multimap<dht::token_range, inet_address>> ranges_to_stream;
 
-        auto non_system_keyspaces = _db.local().get_non_system_keyspaces();
-        for (const auto& keyspace_name : non_system_keyspaces) {
+        auto ks_erms = local_db().get_non_system_keyspaces_erms();
+        for (const auto& [keyspace_name, erm] : ks_erms) {
             auto ranges_mm = co_await get_changed_ranges_for_leaving(keyspace_name, get_broadcast_address());
             if (slogger.is_enabled(logging::log_level::debug)) {
                 std::vector<range<token>> ranges;
@@ -2758,8 +2758,8 @@ future<> storage_service::unbootstrap() {
 
 future<> storage_service::removenode_add_ranges(lw_shared_ptr<dht::range_streamer> streamer, gms::inet_address leaving_node) {
     auto my_address = get_broadcast_address();
-    auto non_system_keyspaces = _db.local().get_non_system_keyspaces();
-    for (const auto& keyspace_name : non_system_keyspaces) {
+    auto ks_erms = local_db().get_non_system_keyspaces_erms();
+    for (const auto& [keyspace_name, erm] : ks_erms) {
         std::unordered_multimap<dht::token_range, inet_address> changed_ranges = co_await get_changed_ranges_for_leaving(keyspace_name, leaving_node);
         dht::token_range_vector my_new_ranges;
         for (auto& x : changed_ranges) {

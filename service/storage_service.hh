@@ -191,6 +191,10 @@ public:
 private:
     using acquire_merge_lock = bool_class<class acquire_merge_lock_tag>;
 
+    const replica::database& local_db() const noexcept {
+        return _db.local();
+    }
+
     // Token metadata changes are serialized
     // using the schema_tables merge_lock.
     //

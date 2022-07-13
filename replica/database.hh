@@ -1497,6 +1497,7 @@ public:
     void drop_keyspace(const sstring& name);
     std::vector<sstring> get_non_system_keyspaces() const;
     std::vector<sstring> get_all_keyspaces() const;
+    std::unordered_map<sstring, locator::effective_replication_map_ptr> get_non_system_keyspaces_erms() const;
     column_family& find_column_family(std::string_view ks, std::string_view name);
     const column_family& find_column_family(std::string_view ks, std::string_view name) const;
     column_family& find_column_family(const utils::UUID&);

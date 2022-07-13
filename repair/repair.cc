@@ -1519,17 +1519,17 @@ future<> repair_service::do_decommission_removenode_with_repair(locator::token_m
     return seastar::async([this, tmptr = std::move(tmptr), leaving_node = std::move(leaving_node), ops] () mutable {
         seastar::sharded<replica::database>& db = get_db();
         auto myip = utils::fb_utilities::get_broadcast_address();
-        auto keyspaces = db.local().get_non_system_keyspaces();
+        auto ks_erms = db.local().get_non_system_keyspaces_erms();
+        auto keyspaces = boost::copy_range<std::vector<sstring>>(ks_erms | boost::adaptors::map_keys);
         bool is_removenode = myip != leaving_node;
         auto op = is_removenode ? "removenode_with_repair" : "decommission_with_repair";
         streaming::stream_reason reason = is_removenode ? streaming::stream_reason::removenode : streaming::stream_reason::decommission;
         size_t nr_ranges_total = 0;
-        for (auto& keyspace_name : keyspaces) {
+        for (const auto& [keyspace_name, erm] : ks_erms) {
             if (!db.local().has_keyspace(keyspace_name)) {
                 continue;
             }
-            auto& ks = db.local().find_keyspace(keyspace_name);
-            dht::token_range_vector ranges = ks.get_effective_replication_map()->get_ranges(leaving_node);
+            dht::token_range_vector ranges = erm->get_ranges(leaving_node);
             auto nr_tables = get_nr_tables(db.local(), keyspace_name);
             nr_ranges_total += ranges.size() * nr_tables;
         }
@@ -1545,14 +1545,12 @@ future<> repair_service::do_decommission_removenode_with_repair(locator::token_m
             }).get();
         }
         rlogger.info("{}: started with keyspaces={}, leaving_node={}", op, keyspaces, leaving_node);
-        for (auto& keyspace_name : keyspaces) {
+        for (const auto& [keyspace_name, erm] : ks_erms) {
             if (!db.local().has_keyspace(keyspace_name)) {
                 rlogger.info("{}: keyspace={} does not exist any more, ignoring it", op, keyspace_name);
                 continue;
             }
-            auto& ks = db.local().find_keyspace(keyspace_name);
-            auto& strat = ks.get_replication_strategy();
-            auto erm = ks.get_effective_replication_map();
+            auto& strat = erm->get_replication_strategy();
             // First get all ranges the leaving node is responsible for
             dht::token_range_vector ranges = erm->get_ranges(leaving_node);
             auto nr_tables = get_nr_tables(db.local(), keyspace_name);
@@ -1583,7 +1581,7 @@ future<> repair_service::do_decommission_removenode_with_repair(locator::token_m
                     ops->check_abort();
                 }
                 auto end_token = r.end() ? r.end()->value() : dht::maximum_token();
-                const auto new_eps = ks.get_replication_strategy().calculate_natural_endpoints(end_token, temp).get0();
+                const auto new_eps = erm->get_replication_strategy().calculate_natural_endpoints(end_token, temp).get0();
                 const auto& current_eps = current_replica_endpoints[r];
                 std::unordered_set<inet_address> neighbors_set = new_eps.get_set();
                 bool skip_this_range = false;
@@ -1595,7 +1593,7 @@ future<> repair_service::do_decommission_removenode_with_repair(locator::token_m
                     throw std::runtime_error(format("{}: keyspace={}, range={}, current_replica_endpoints={}, new_replica_endpoints={}, zero replica after the removal",
                             op, keyspace_name, r, current_eps, new_eps));
                 }
-                auto get_neighbors_set = [&] (const std::vector<inet_address>& nodes) {
+                auto get_neighbors_set = [&, &keyspace_name = keyspace_name] (const std::vector<inet_address>& nodes) {
                     for (auto& node : nodes) {
                         if (topology.get_datacenter(node) == local_dc) {
                             return std::unordered_set<inet_address>{node};;
