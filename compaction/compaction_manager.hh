@@ -60,21 +60,7 @@ public:
         utils::updateable_value<uint32_t> throughput_mb_per_sec = utils::updateable_value<uint32_t>(0);
     };
 private:
-    struct compaction_state {
-        // Used both by compaction tasks that refer to the compaction_state
-        // and by any function running under run_with_compaction_disabled().
-        seastar::gate gate;
-
-        // Prevents table from running major and minor compaction at the same time.
-        rwlock lock;
-
-        // Raised by any function running under run_with_compaction_disabled();
-        long compaction_disabled_counter = 0;
-
-        bool compaction_disabled() const noexcept {
-            return compaction_disabled_counter > 0;
-        }
-    };
+    struct compaction_state;
 
 public:
     class can_purge_tombstones_tag;
@@ -277,6 +263,22 @@ private:
     // tracks taken weights of ongoing compactions, only one compaction per weight is allowed.
     // weight is value assigned to a compaction job that is log base N of total size of all input sstables.
     std::unordered_set<int> _weight_tracker;
+
+    struct compaction_state {
+        // Used both by compaction tasks that refer to the compaction_state
+        // and by any function running under run_with_compaction_disabled().
+        seastar::gate gate;
+
+        // Prevents table from running major and minor compaction at the same time.
+        rwlock lock;
+
+        // Raised by any function running under run_with_compaction_disabled();
+        long compaction_disabled_counter = 0;
+
+        bool compaction_disabled() const noexcept {
+            return compaction_disabled_counter > 0;
+        }
+    };
 
     std::unordered_map<replica::table*, compaction_state> _compaction_state;
 
