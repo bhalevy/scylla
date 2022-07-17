@@ -152,7 +152,7 @@ unsigned compaction_manager::current_compaction_fan_in_threshold() const {
         return 0;
     }
     auto largest_fan_in = std::ranges::max(_tasks | boost::adaptors::transformed([] (auto& task) {
-        return task->compaction_running() ? task->compaction_data().compaction_fan_in : 0;
+        return task.compaction_running() ? task.compaction_data().compaction_fan_in : 0;
     }));
     // conservatively limit fan-in threshold to 32, such that tons of small sstables won't accumulate if
     // running major on a leveled table, which can even have more than one thousand files.
@@ -262,9 +262,9 @@ compaction_manager::compaction_state& compaction_manager::get_compaction_state(r
 }
 
 future<> compaction_manager::perform_task(shared_ptr<compaction_manager::task> task) {
-    _tasks.push_back(task);
+    _tasks.push_back(*task);
     auto unregister_task = defer([this, task] {
-        _tasks.remove(task);
+        task->_tasks_link.unlink();
     });
     cmlog.debug("{}: started", *task);
 
@@ -759,7 +759,9 @@ future<> compaction_manager::stop_tasks(std::vector<shared_ptr<task>> tasks, sst
 future<> compaction_manager::stop_ongoing_compactions(sstring reason, replica::table* t, std::optional<sstables::compaction_type> type_opt) {
     auto ongoing_compactions = get_compactions(t).size();
     auto tasks = boost::copy_range<std::vector<shared_ptr<task>>>(_tasks | boost::adaptors::filtered([t, type_opt] (auto& task) {
-        return (!t || task->compacting_table() == t) && (!type_opt || task->type() == *type_opt);
+        return (!t || task.compacting_table() == t) && (!type_opt || task.type() == *type_opt);
+    }) | boost::adaptors::transformed([] (auto& task) {
+        return task.shared_from_this();
     }));
     logging::log_level level = tasks.empty() ? log_level::debug : log_level::info;
     if (cmlog.is_enabled(level)) {
@@ -1342,7 +1344,7 @@ bool needs_cleanup(const sstables::shared_sstable& sst,
 future<> compaction_manager::perform_cleanup(replica::database& db, replica::table* t) {
     auto check_for_cleanup = [this, t] {
         return boost::algorithm::any_of(_tasks, [t] (auto& task) {
-            return task->compacting_table() == t && task->type() == sstables::compaction_type::Cleanup;
+            return task.compacting_table() == t && task.type() == sstables::compaction_type::Cleanup;
         });
     };
     if (check_for_cleanup()) {
@@ -1451,7 +1453,7 @@ future<> compaction_manager::remove(replica::table* t) {
     auto found = false;
     sstring msg;
     for (auto& task : _tasks) {
-        if (task->compacting_table() == t) {
+        if (task.compacting_table() == t) {
             if (!msg.empty()) {
                 msg += "\n";
             }
@@ -1466,19 +1468,19 @@ future<> compaction_manager::remove(replica::table* t) {
 }
 
 const std::vector<sstables::compaction_info> compaction_manager::get_compactions(replica::table* t) const {
-    auto to_info = [] (const shared_ptr<task>& task) {
-        sstables::compaction_info ret;
-        ret.compaction_uuid = task->compaction_data().compaction_uuid;
-        ret.type = task->type();
-        ret.ks_name = task->compacting_table()->schema()->ks_name();
-        ret.cf_name = task->compacting_table()->schema()->cf_name();
-        ret.total_partitions = task->compaction_data().total_partitions;
-        ret.total_keys_written = task->compaction_data().total_keys_written;
-        return ret;
+    auto to_info = [] (const task& task) {
+        return sstables::compaction_info {
+            .compaction_uuid = task.compaction_data().compaction_uuid,
+            .type = task.type(),
+            .ks_name = task.compacting_table()->schema()->ks_name(),
+            .cf_name = task.compacting_table()->schema()->cf_name(),
+            .total_partitions = task.compaction_data().total_partitions,
+            .total_keys_written = task.compaction_data().total_keys_written,
+        };
     };
     using ret = std::vector<sstables::compaction_info>;
-    return boost::copy_range<ret>(_tasks | boost::adaptors::filtered([t] (const shared_ptr<task>& task) {
-                return (!t || task->compacting_table() == t) && task->compaction_running();
+    return boost::copy_range<ret>(_tasks | boost::adaptors::filtered([t] (const task& task) {
+                return (!t || task.compacting_table() == t) && task.compaction_running();
             }) | boost::adaptors::transformed(to_info));
 }
 
@@ -1504,8 +1506,8 @@ future<> compaction_manager::stop_compaction(sstring type, replica::table* table
 void compaction_manager::propagate_replacement(replica::table* t,
         const std::vector<sstables::shared_sstable>& removed, const std::vector<sstables::shared_sstable>& added) {
     for (auto& task : _tasks) {
-        if (task->compacting_table() == t && task->compaction_running()) {
-            task->compaction_data().pending_replacements.push_back({ removed, added });
+        if (task.compacting_table() == t && task.compaction_running()) {
+            task.compaction_data().pending_replacements.push_back({ removed, added });
         }
     }
 }
@@ -1516,10 +1518,10 @@ public:
     explicit strategy_control(compaction_manager& cm) noexcept : _cm(cm) {}
 
     bool has_ongoing_compaction(table_state& table_s) const noexcept override {
-        return std::any_of(_cm._tasks.begin(), _cm._tasks.end(), [&s = table_s.schema()] (const shared_ptr<task>& task) {
-            return task->compaction_running()
-                && task->compacting_table()->schema()->ks_name() == s->ks_name()
-                && task->compacting_table()->schema()->cf_name() == s->cf_name();
+        return std::any_of(_cm._tasks.begin(), _cm._tasks.end(), [&s = table_s.schema()] (const task& task) {
+            return task.compaction_running()
+                && task.compacting_table()->schema()->ks_name() == s->ks_name()
+                && task.compacting_table()->schema()->cf_name() == s->cf_name();
         });
     }
 };

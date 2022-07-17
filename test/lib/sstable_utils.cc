@@ -227,22 +227,22 @@ protected:
 future<> compaction_manager_test::run(utils::UUID output_run_id, replica::column_family* cf, noncopyable_function<future<> (sstables::compaction_data&)> job) {
     auto task = make_shared<compaction_manager::compaction_manager_test_task>(_cm, cf, output_run_id, std::move(job));
     auto& cdata = register_compaction(task);
-    return task->run().finally([this, &cdata] {
+    return task->run().finally([this, &cdata, task] {
         deregister_compaction(cdata);
     });
 }
 
 sstables::compaction_data& compaction_manager_test::register_compaction(shared_ptr<compaction_manager::task> task) {
     testlog.debug("compaction_manager_test: register_compaction uuid={}: {}", task->compaction_data().compaction_uuid, *task);
-    _cm._tasks.push_back(task);
+    _cm._tasks.push_back(*task);
     return task->compaction_data();
 }
 
 void compaction_manager_test::deregister_compaction(const sstables::compaction_data& c) {
-    auto it = boost::find_if(_cm._tasks, [&c] (auto& task) { return task->compaction_data().compaction_uuid == c.compaction_uuid; });
+    auto it = boost::find_if(_cm._tasks, [&c] (auto& task) { return task.compaction_data().compaction_uuid == c.compaction_uuid; });
     if (it != _cm._tasks.end()) {
-        auto task = *it;
-        testlog.debug("compaction_manager_test: deregister_compaction uuid={}: {}", c.compaction_uuid, *task);
+        const auto& task = *it;
+        testlog.debug("compaction_manager_test: deregister_compaction uuid={}: {}", c.compaction_uuid, task);
         _cm._tasks.erase(it);
     } else {
         testlog.error("compaction_manager_test: deregister_compaction uuid={}: task not found", c.compaction_uuid);

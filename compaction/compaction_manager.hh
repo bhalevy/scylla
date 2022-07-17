@@ -26,6 +26,7 @@
 #include <list>
 #include <functional>
 #include <algorithm>
+#include <boost/intrusive/list.hpp>
 #include "compaction.hh"
 #include "compaction_weight_registration.hh"
 #include "compaction_backlog_manager.hh"
@@ -79,7 +80,7 @@ public:
     class can_purge_tombstones_tag;
     using can_purge_tombstones = bool_class<can_purge_tombstones_tag>;
 
-    class task {
+    class task : public enable_shared_from_this<task> {
     public:
         enum class state {
             none,       // initial and final state
@@ -104,6 +105,11 @@ public:
         state _state = state::none;
 
     private:
+        friend class compaction_manager;
+
+        using bi_link_type = boost::intrusive::list_member_hook<boost::intrusive::link_mode<boost::intrusive::auto_unlink>>;
+        bi_link_type _tasks_link;
+
         shared_future<> _compaction_done = make_ready_future<>();
         exponential_backoff_retry _compaction_retry = exponential_backoff_retry(std::chrono::seconds(5), std::chrono::seconds(300));
         sstables::compaction_type _type;
@@ -234,7 +240,10 @@ public:
 
 private:
     // compaction manager may have N fibers to allow parallel compaction per shard.
-    std::list<shared_ptr<task>> _tasks;
+    using bi_list_type = boost::intrusive::list<task,
+            boost::intrusive::member_hook<task, task::bi_link_type, &task::_tasks_link>,
+            boost::intrusive::constant_time_size<false>>;   // required for boost::intrusive::auto_unlink mode
+    bi_list_type _tasks;
 
     // Possible states in which the compaction manager can be found.
     //
@@ -463,8 +472,8 @@ public:
 
     // Returns true if table has an ongoing compaction, running on its behalf
     bool has_table_ongoing_compaction(const replica::table* t) const {
-        return std::any_of(_tasks.begin(), _tasks.end(), [t] (const shared_ptr<task>& task) {
-            return task->compacting_table() == t && task->compaction_running();
+        return std::any_of(_tasks.begin(), _tasks.end(), [t] (const task& task) {
+            return task.compacting_table() == t && task.compaction_running();
         });
     };
 
