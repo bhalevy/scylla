@@ -342,7 +342,10 @@ private:
 
     // gets the table's compaction state
     // throws std::out_of_range exception if not found.
-    compaction_state& get_compaction_state(replica::table* t);
+    compaction_state& get_compaction_state(const replica::table* t);
+    const compaction_state& get_compaction_state(const replica::table* t) const {
+        return const_cast<compaction_manager*>(this)->get_compaction_state(t);
+    }
 
     // Return true if compaction manager is enabled and
     // table still exists and compaction is not disabled for the table.
