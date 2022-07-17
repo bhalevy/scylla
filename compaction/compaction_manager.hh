@@ -95,6 +95,7 @@ public:
 
         using bi_link_type = boost::intrusive::list_member_hook<boost::intrusive::link_mode<boost::intrusive::auto_unlink>>;
         bi_link_type _tasks_link;
+        bi_link_type _state_tasks_link;
 
         shared_future<> _compaction_done = make_ready_future<>();
         exponential_backoff_retry _compaction_retry = exponential_backoff_retry(std::chrono::seconds(5), std::chrono::seconds(300));
@@ -104,14 +105,7 @@ public:
         sstring _description;
 
     public:
-        explicit task(compaction_manager& mgr, replica::table* t, sstables::compaction_type type, sstring desc)
-            : _cm(mgr)
-            , _compacting_table(t)
-            , _compaction_state(_cm.get_compaction_state(t))
-            , _type(type)
-            , _gate_holder(_compaction_state.gate.hold())
-            , _description(std::move(desc))
-        {}
+        explicit task(compaction_manager& mgr, replica::table* t, sstables::compaction_type type, sstring desc);
 
         task(task&&) = delete;
         task(const task&) = delete;
@@ -272,8 +266,17 @@ private:
         // Prevents table from running major and minor compaction at the same time.
         rwlock lock;
 
+        using bi_state_list_type = boost::intrusive::list<task,
+                boost::intrusive::member_hook<task, task::bi_link_type, &task::_state_tasks_link>,
+                boost::intrusive::constant_time_size<false>>;   // required for boost::intrusive::auto_unlink mode
+        bi_state_list_type tasks;
+
         // Raised by any function running under run_with_compaction_disabled();
         long compaction_disabled_counter = 0;
+
+        compaction_state() = default;
+        compaction_state(compaction_state&&) = default;
+        ~compaction_state();
 
         bool compaction_disabled() const noexcept {
             return compaction_disabled_counter > 0;

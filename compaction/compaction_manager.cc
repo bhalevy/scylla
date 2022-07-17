@@ -265,6 +265,7 @@ future<> compaction_manager::perform_task(shared_ptr<compaction_manager::task> t
     _tasks.push_back(*task);
     auto unregister_task = defer([this, task] {
         task->_tasks_link.unlink();
+        task->_state_tasks_link.unlink();
     });
     cmlog.debug("{}: started", *task);
 
@@ -502,12 +503,29 @@ std::string compaction_manager::task::describe() const {
     return fmt::format("{} task {} for table {}.{} [{}]", _description, fmt::ptr(this), s->ks_name(), s->cf_name(), fmt::ptr(t));
 }
 
+compaction_manager::task::task(compaction_manager& mgr, replica::table* t, sstables::compaction_type type, sstring desc)
+    : _cm(mgr)
+    , _compacting_table(t)
+    , _compaction_state(_cm.get_compaction_state(t))
+    , _type(type)
+    , _gate_holder(_compaction_state.gate.hold())
+    , _description(std::move(desc))
+{
+    _compaction_state.tasks.push_back(*this);
+}
+
 compaction_manager::task::~task() {
     switch_state(state::none);
 }
 
 compaction_manager::sstables_task::~sstables_task() {
     _cm._stats.pending_tasks -= _sstables.size() - (_state == state::pending);
+}
+
+compaction_manager::compaction_state::~compaction_state() {
+    if (!tasks.empty()) {
+        on_internal_error_noexcept(cmlog, "compaction destroyed with active tasks");
+    }
 }
 
 future<> compaction_manager::task::run() noexcept {
