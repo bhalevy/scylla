@@ -1614,6 +1614,10 @@ public:
         return total;
     }
 
+    const region_group* group() const noexcept {
+        return _group;
+    }
+
     region_group* group() noexcept {
         return _group;
     }
