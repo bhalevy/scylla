@@ -654,6 +654,7 @@ public:
         return *_impl;
     }
 
+    const region_group* group() const noexcept;
     region_group* group() noexcept;
 
     // Allocates a buffer of a given size.

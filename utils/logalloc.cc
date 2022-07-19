@@ -1997,6 +1997,10 @@ occupancy_stats region::occupancy() const noexcept {
     return get_impl().occupancy();
 }
 
+const region_group* region::group() const noexcept {
+    return get_impl().group();
+}
+
 region_group* region::group() noexcept {
     return get_impl().group();
 }
