@@ -57,7 +57,7 @@ protected:
         float output;
     };
 
-    scheduling_group& _scheduling_group;
+    scheduling_group _scheduling_group;
     timer<> _update_timer;
 
     std::vector<control_point> _control_points;
@@ -78,7 +78,7 @@ protected:
 
     void adjust();
 
-    backlog_controller(scheduling_group& sg, std::chrono::milliseconds interval,
+    backlog_controller(const scheduling_group& sg, std::chrono::milliseconds interval,
                        std::vector<control_point> control_points, std::function<float()> backlog,
                        float static_shares = 0)
         : _scheduling_group(sg)
@@ -116,7 +116,7 @@ public:
 class flush_controller : public backlog_controller {
     static constexpr float hard_dirty_limit = 1.0f;
 public:
-    flush_controller(backlog_controller::scheduling_group& sg, float static_shares, std::chrono::milliseconds interval, float soft_limit, std::function<float()> current_dirty)
+    flush_controller(const backlog_controller::scheduling_group& sg, float static_shares, std::chrono::milliseconds interval, float soft_limit, std::function<float()> current_dirty)
         : backlog_controller(sg, std::move(interval),
           std::vector<backlog_controller::control_point>({{0.0, 0.0}, {soft_limit, 10}, {soft_limit + (hard_dirty_limit - soft_limit) / 2, 200} , {hard_dirty_limit, 1000}}),
           std::move(current_dirty),
@@ -130,7 +130,7 @@ public:
     static constexpr unsigned normalization_factor = 30;
     static constexpr float disable_backlog = std::numeric_limits<double>::infinity();
     static constexpr float backlog_disabled(float backlog) { return std::isinf(backlog); }
-    compaction_controller(backlog_controller::scheduling_group& sg, float static_shares, std::chrono::milliseconds interval, std::function<float()> current_backlog)
+    compaction_controller(const backlog_controller::scheduling_group& sg, float static_shares, std::chrono::milliseconds interval, std::function<float()> current_backlog)
         : backlog_controller(sg, std::move(interval),
           std::vector<backlog_controller::control_point>({{0.0, 50}, {1.5, 100} , {normalization_factor, 1000}}),
           std::move(current_backlog),
