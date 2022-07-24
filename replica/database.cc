@@ -1049,7 +1049,10 @@ future<> database::drop_table_on_all_shards(sharded<database>& sharded_db, sstri
     co_await smp::invoke_on_all([&] {
         return table_shards[this_shard_id()]->stop();
     });
-    f.get(); // re-throw exception from truncate() if any
+    // return exception from truncate() if any
+    if (f.failed()) {
+        co_await coroutine::return_exception_ptr(f.get_exception());
+    }
     co_await sstables::remove_table_directory_if_has_no_snapshots(table_dir);
 }
 
