@@ -1022,7 +1022,6 @@ future<> database::drop_column_family(const sstring& ks_name, const sstring& cf_
     } catch (std::out_of_range&) {
         on_internal_error(dblog, fmt::format("drop_column_family {}.{}: UUID={} not found", ks_name, cf_name, uuid));
     }
-    dblog.debug("Dropping {}.{}", ks_name, cf_name);
     remove(*cf);
     cf->clear_views();
     co_await cf->await_pending_ops();
@@ -1033,6 +1032,7 @@ future<> database::drop_column_family(const sstring& ks_name, const sstring& cf_
 }
 
 future<> database::drop_table_on_all_shards(sharded<database>& sharded_db, sstring ks_name, sstring cf_name, timestamp_func tsf, bool with_snapshot) {
+    dblog.debug("Dropping {}.{}", ks_name, cf_name);
     auto table_dir = fs::path(sharded_db.local().find_column_family(ks_name, cf_name).dir());
     co_await sharded_db.invoke_on_all([&] (database& db) {
         return db.drop_column_family(ks_name, cf_name, tsf, with_snapshot);
