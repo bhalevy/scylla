@@ -1003,16 +1003,13 @@ void database::remove(const table& cf) noexcept {
     }
 }
 
-future<> database::drop_column_family(table& cf, timestamp_func tsf, bool snapshot) {
+future<> database::detach_column_family(table& cf) {
     auto uuid = cf.schema()->id();
     drop_repair_history_map_for_table(uuid);
     remove(cf);
     cf.clear_views();
     co_await cf.await_pending_ops();
     co_await _querier_cache.evict_all_for_table(uuid);
-    auto f = co_await coroutine::as_future(truncate(cf, std::move(tsf), snapshot));
-    co_await cf.stop();
-    f.get(); // re-throw exception from truncate() if any
 }
 
 future<std::vector<foreign_ptr<lw_shared_ptr<table>>>> database::get_table_on_all_shards(sharded<database>& sharded_db, utils::UUID uuid) {
@@ -1038,8 +1035,13 @@ future<> database::drop_table_on_all_shards(sharded<database>& sharded_db, sstri
     auto table_shards = co_await get_table_on_all_shards(sharded_db, uuid);
     auto table_dir = fs::path(table_shards[this_shard_id()]->dir());
     co_await sharded_db.invoke_on_all([&] (database& db) {
-        return db.drop_column_family(*table_shards[this_shard_id()], tsf, with_snapshot);
+        return db.detach_column_family(*table_shards[this_shard_id()]);
     });
+    auto f = co_await coroutine::as_future(truncate_table_on_all_shards(sharded_db, table_shards, std::move(tsf), with_snapshot));
+    co_await smp::invoke_on_all([&] {
+        return table_shards[this_shard_id()]->stop();
+    });
+    f.get(); // re-throw exception from truncate() if any
     co_await sstables::remove_table_directory_if_has_no_snapshots(table_dir);
 }
 
