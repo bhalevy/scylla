@@ -1644,7 +1644,11 @@ private:
 public:
     bool update_column_family(schema_ptr s);
 private:
-    future<> drop_column_family(const sstring& ks_name, const sstring& cf_name, timestamp_func, bool with_snapshot = true);
+    future<> drop_column_family(table& cf, timestamp_func, bool with_snapshot = true);
+
+    static future<std::vector<foreign_ptr<lw_shared_ptr<table>>>> get_table_on_all_shards(sharded<database>& db, utils::UUID uuid);
+
+    static future<> truncate_table_on_all_shards(sharded<database>& db, const std::vector<foreign_ptr<lw_shared_ptr<table>>>&, timestamp_func, bool with_snapshot);
 public:
     /** Truncates the given column family */
     static future<> truncate_table_on_all_shards(sharded<database>& db, sstring ks_name, sstring cf_name, timestamp_func, bool with_snapshot = true);
