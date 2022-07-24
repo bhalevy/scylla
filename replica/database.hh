@@ -1639,14 +1639,16 @@ public:
     // that must be guaranteed to be the same for all shards.
     typedef std::function<future<db_clock::time_point>()> timestamp_func;
 
-    /** Truncates the given column family */
-    future<> truncate(sstring ksname, sstring cfname, timestamp_func);
+private:
     future<> truncate(const keyspace& ks, column_family& cf, timestamp_func, bool with_snapshot = true);
-
+public:
     bool update_column_family(schema_ptr s);
 private:
     future<> drop_column_family(const sstring& ks_name, const sstring& cf_name, timestamp_func, bool with_snapshot = true);
 public:
+    /** Truncates the given column family */
+    static future<> truncate_table_on_all_shards(sharded<database>& db, sstring ks_name, sstring cf_name, timestamp_func, bool with_snapshot = true);
+
     // drops the table on all shards and removes the table directory if there are no snapshots
     static future<> drop_table_on_all_shards(sharded<database>& db, sstring ks_name, sstring cf_name, timestamp_func, bool with_snapshot = true);
 

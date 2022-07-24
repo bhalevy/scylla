@@ -5436,12 +5436,7 @@ storage_proxy::handle_read_digest(const rpc::client_info& cinfo, rpc::opt_time_p
 
 future<>
 storage_proxy::handle_truncate(rpc::opt_time_point timeout, sstring ksname, sstring cfname) {
-        return do_with(utils::make_joinpoint([] { return db_clock::now();}),
-                        [this, ksname, cfname](auto& tsf) {
-            return container().invoke_on_all(_write_smp_service_group, [ksname, cfname, &tsf](storage_proxy& sp) {
-                return sp._db.local().truncate(ksname, cfname, [&tsf] { return tsf.value(); });
-            });
-        });
+    return replica::database::truncate_table_on_all_shards(_db, ksname, cfname, [ts = db_clock::now()] { return make_ready_future<db_clock::time_point>(ts); });
 }
 
 future<foreign_ptr<std::unique_ptr<service::paxos::prepare_response>>>
