@@ -1022,8 +1022,7 @@ future<> database::drop_column_family(table& cf) {
     co_await _querier_cache.evict_all_for_table(uuid);
 }
 
-future<std::vector<foreign_ptr<lw_shared_ptr<table>>>> database::get_table_on_all_shards(sharded<database>& sharded_db, const sstring& ks_name, const sstring& cf_name) {
-    auto uuid = sharded_db.local().find_uuid(ks_name, cf_name);
+future<std::vector<foreign_ptr<lw_shared_ptr<table>>>> database::get_table_on_all_shards(sharded<database>& sharded_db, utils::UUID uuid) {
     std::vector<foreign_ptr<lw_shared_ptr<table>>> table_shards;
     table_shards.resize(smp::count);
     co_await coroutine::parallel_for_each(boost::irange(0u, smp::count), [&] (unsigned shard) -> future<> {
@@ -1031,7 +1030,7 @@ future<std::vector<foreign_ptr<lw_shared_ptr<table>>>> database::get_table_on_al
             try {
                 return make_foreign(sharded_db.local()._column_families.at(uuid));
             } catch (std::out_of_range&) {
-                on_internal_error(dblog, fmt::format("{}.{}: UUID={} not found", ks_name, cf_name, uuid));
+                on_internal_error(dblog, fmt::format("{}.{}: UUID={}", uuid));
             }
         });
     });
@@ -1040,7 +1039,8 @@ future<std::vector<foreign_ptr<lw_shared_ptr<table>>>> database::get_table_on_al
 
 future<> database::drop_table_on_all_shards(sharded<database>& sharded_db, sstring ks_name, sstring cf_name, timestamp_func tsf, bool with_snapshot) {
     dblog.debug("Dropping {}.{}", ks_name, cf_name);
-    auto table_shards = co_await get_table_on_all_shards(sharded_db, ks_name, cf_name);
+    auto uuid = sharded_db.local().find_uuid(ks_name, cf_name);
+    auto table_shards = co_await get_table_on_all_shards(sharded_db, uuid);
     auto table_dir = fs::path(table_shards[this_shard_id()]->dir());
     co_await sharded_db.invoke_on_all([&] (database& db) {
         return db.drop_column_family(*table_shards[this_shard_id()]);
@@ -2349,10 +2349,9 @@ future<> database::snapshot_table_on_all_shards(sharded<database>& sharded_db, s
         if (!skip_flush) {
             co_await flush_table_on_all_shards(sharded_db, ks_name, table_name);
         }
-        co_await sharded_db.invoke_on_all([ks_name, &table_name, tag, skip_flush] (replica::database& db) {
-            auto& t = db.find_column_family(ks_name, table_name);
-            return t.snapshot(db, tag);
-        });
+    auto uuid = sharded_db.local().find_uuid(ks_name, table_name);
+    auto table_shards = co_await get_table_on_all_shards(sharded_db, uuid);
+    co_await table::snapshot_on_all_shards(sharded_db, table_shards, tag);
 }
 
 future<> database::snapshot_tables_on_all_shards(sharded<database>& sharded_db, std::string_view ks_name, std::vector<sstring> table_names, sstring tag, bool skip_flush) {
@@ -2364,18 +2363,18 @@ future<> database::snapshot_tables_on_all_shards(sharded<database>& sharded_db, 
 future<> database::snapshot_keyspace_on_all_shards(sharded<database>& sharded_db, std::string_view ks_name, sstring tag, bool skip_flush) {
     auto& ks = sharded_db.local().find_keyspace(ks_name);
     co_await coroutine::parallel_for_each(ks.metadata()->cf_meta_data(), [&, tag = std::move(tag), skip_flush] (const auto& pair) -> future<> {
+        auto uuid = pair.second->id();
         if (!skip_flush) {
-            co_await flush_table_on_all_shards(sharded_db, pair.second->id());
+            co_await flush_table_on_all_shards(sharded_db, uuid);
         }
-        co_await sharded_db.invoke_on_all([id = pair.second, tag, skip_flush] (replica::database& db) {
-            auto& t = db.find_column_family(id);
-            return t.snapshot(db, tag);
-        });
+        auto table_shards = co_await get_table_on_all_shards(sharded_db, uuid);
+        co_await table::snapshot_on_all_shards(sharded_db, table_shards, tag);
     });
 }
 
 future<> database::truncate_table_on_all_shards(sharded<database>& sharded_db, sstring ks_name, sstring cf_name, timestamp_func tsf, bool with_snapshot) {
-    auto table_shards = co_await get_table_on_all_shards(sharded_db, ks_name, cf_name);
+    auto uuid = sharded_db.local().find_uuid(ks_name, cf_name);
+    auto table_shards = co_await get_table_on_all_shards(sharded_db, uuid);
     co_return co_await truncate_table_on_all_shards(sharded_db, table_shards, std::move(tsf), with_snapshot);
 }
 

@@ -1343,6 +1343,17 @@ future<> table::write_schema_as_cql(database& db, sstring dir) const {
 
 }
 
+future<> table::snapshot_on_all_shards(sharded<database>& sharded_db, const std::vector<foreign_ptr<lw_shared_ptr<table>>>& table_shards, sstring tag) {
+    auto s = table_shards[this_shard_id()]->schema();
+    tlogger.debug("Taking snapshot of {}.{}: tag={}", s->ks_name(), s->cf_name(), tag);
+
+    // FIXME: refactor per-shard snapshot and
+    // run the centralized code here
+    co_await sharded_db.invoke_on_all([&] (replica::database& db) {
+        return table_shards[this_shard_id()]->snapshot(db, tag);
+    });
+}
+
 future<> table::snapshot(database& db, sstring name) {
     auto jsondir = _config.datadir + "/snapshots/" + name;
     tlogger.debug("snapshot {}", jsondir);
