@@ -2381,67 +2381,87 @@ future<> database::truncate_table_on_all_shards(sharded<database>& sharded_db, c
     auto& cf = *table_shards[this_shard_id()];
     auto s = cf.schema();
     dblog.debug("Truncating {}.{} on all shards: with_snapshot={} auto_snapshot={}", s->ks_name(), s->cf_name(), with_snapshot, sharded_db.local().get_config().auto_snapshot());
-    co_await sharded_db.invoke_on_all([&, tsf = std::move(tsf)] (database& db) {
-        auto shard = this_shard_id();
-        auto& cf = *table_shards[shard];
-        return db.truncate(cf, tsf, with_snapshot);
-    });
-}
-
-future<> database::truncate(column_family& cf, timestamp_func tsf, bool with_snapshot) {
-    dblog.trace("Truncating {}.{}: with_snapshot={} auto_snapshot={}", cf.schema()->ks_name(), cf.schema()->cf_name(), with_snapshot, get_config().auto_snapshot());
-    auto holder = cf.async_gate().hold();
-
-    const auto auto_snapshot = with_snapshot && get_config().auto_snapshot();
-    const auto should_flush = auto_snapshot;
 
     // Schema tables changed commitlog domain at some point and this node will refuse to boot with
     // truncation record present for schema tables to protect against misinterpreting of replay positions.
     // Also, the replay_position returned by discard_sstables() may refer to old commit log domain.
-    if (cf.schema()->ks_name() == db::schema_tables::NAME) {
-        throw std::runtime_error(format("Truncating of {}.{} is not allowed.", cf.schema()->ks_name(), cf.schema()->cf_name()));
+    if (s->ks_name() == db::schema_tables::NAME) {
+        throw std::runtime_error(format("Truncating of {}.{} is not allowed.", s->ks_name(), s->cf_name()));
     }
 
-    // Force mutations coming in to re-acquire higher rp:s
-    // This creates a "soft" ordering, in that we will guarantee that
-    // any sstable written _after_ we issue the flush below will
-    // only have higher rp:s than we will get from the discard_sstable
-    // call.
-    auto low_mark = cf.set_low_replay_position_mark();
+    struct state {
+        gate::holder holder;
+        db::replay_position low_mark;
+        std::vector<compaction_manager::compaction_reenabler> cres;
+    };
+    std::vector<state> table_states;
+    table_states.resize(smp::count);
 
-    const auto uuid = cf.schema()->id();
+    co_await sharded_db.invoke_on_all([&] (replica::database& db) -> future<> {
+        auto shard = this_shard_id();
+        auto& cf = *table_shards[shard];
+        state& st = table_states[shard];
 
-    std::vector<compaction_manager::compaction_reenabler> cres;
-    cres.reserve(1 + cf.views().size());
+        st.holder = cf.async_gate().hold();
 
-    cres.emplace_back(co_await _compaction_manager->stop_and_disable_compaction(cf.as_table_state()));
-    co_await coroutine::parallel_for_each(cf.views(), [&, this] (view_ptr v) -> future<> {
-        auto& vcf = find_column_family(v);
-        cres.emplace_back(co_await _compaction_manager->stop_and_disable_compaction(vcf.as_table_state()));
+        // Force mutations coming in to re-acquire higher rp:s
+        // This creates a "soft" ordering, in that we will guarantee that
+        // any sstable written _after_ we issue the flush below will
+        // only have higher rp:s than we will get from the discard_sstable
+        // call.
+        st.low_mark = cf.set_low_replay_position_mark();
+
+        st.cres.reserve(1 + cf.views().size());
+        st.cres.emplace_back(co_await db._compaction_manager->stop_and_disable_compaction(cf.as_table_state()));
+        co_await coroutine::parallel_for_each(cf.views(), [&] (view_ptr v) -> future<> {
+            auto& vcf = db.find_column_family(v);
+            st.cres.emplace_back(co_await db._compaction_manager->stop_and_disable_compaction(vcf.as_table_state()));
+        });
     });
 
+    const auto auto_snapshot = with_snapshot && sharded_db.local().get_config().auto_snapshot();
+    const auto should_flush = auto_snapshot && cf.can_flush();
     bool did_flush = false;
-    if (should_flush && cf.can_flush()) {
-        // TODO:
-        // this is not really a guarantee at all that we've actually
-        // gotten all things to disk. Again, need queue-ish or something.
-        co_await cf.flush();
-        did_flush = true;
-    } else {
-        co_await cf.clear();
-    }
 
-    dblog.debug("Discarding sstable data for truncated CF + indexes");
-    // TODO: notify truncation
+    dblog.debug("{} memtable for truncated CF {}.{} + indexes", should_flush ? "Flushing" : "Clearing", s->ks_name(), s->cf_name());
+    // TODO:
+    // this is not really a guarantee at all that we've actually
+    // gotten all things to disk. Again, need queue-ish or something.
+    co_await sharded_db.invoke_on_all([&] (replica::database& db) -> future<> {
+        auto shard = this_shard_id();
+        auto& cf = *table_shards[shard];
+        co_await (should_flush ? cf.flush() : cf.clear());
+        co_await coroutine::parallel_for_each(cf.views(), [&] (view_ptr v) {
+            auto& vcf = db.find_column_family(v);
+            return should_flush ? vcf.flush() : vcf.clear();
+        });
+    });
+    did_flush = should_flush;
 
     db_clock::time_point truncated_at = co_await tsf();
 
     if (auto_snapshot) {
-        auto name = format("{:d}-{}", truncated_at.time_since_epoch().count(), cf.schema()->cf_name());
-        co_await cf.snapshot(*this, name);
+        dblog.debug("Taking snapshot of truncated CF {}.{}", s->ks_name(), s->cf_name());
+        auto name = format("{:d}-{}", truncated_at.time_since_epoch().count(), s->cf_name());
+        co_await sharded_db.invoke_on_all([&] (replica::database& db) {
+            return table_shards[this_shard_id()]->snapshot(db, name);
+        });
     }
 
+    dblog.debug("Discarding sstable data for truncated CF {}.{} + indexes", s->ks_name(), s->cf_name());
+    co_await sharded_db.invoke_on_all([&] (database& db) {
+        auto shard = this_shard_id();
+        auto& cf = *table_shards[shard];
+        state& st = table_states[shard];
+        return db.truncate(cf, truncated_at, did_flush, st.low_mark);
+    });
+}
+
+future<> database::truncate(column_family& cf, db_clock::time_point truncated_at, bool did_flush, db::replay_position low_mark) {
+    const auto uuid = cf.schema()->id();
+
     db::replay_position rp = co_await cf.discard_sstables(truncated_at);
+
     // TODO: indexes.
     // Note: since discard_sstables was changed to only count tables owned by this shard,
     // we can get zero rp back. Changed assert, and ensure we save at least low_mark.
@@ -2451,15 +2471,10 @@ future<> database::truncate(column_family& cf, timestamp_func tsf, bool with_sna
     // creating the sstables that would create them.
     assert(!did_flush || low_mark <= rp || rp == db::replay_position());
     rp = std::max(low_mark, rp);
-    co_await coroutine::parallel_for_each(cf.views(), [this, truncated_at, should_flush] (view_ptr v) -> future<> {
+    co_await coroutine::parallel_for_each(cf.views(), [this, truncated_at] (view_ptr v) -> future<> {
         auto& vcf = find_column_family(v);
-            if (should_flush) {
-                co_await vcf.flush();
-            } else {
-                co_await vcf.clear();
-            }
-            db::replay_position rp = co_await vcf.discard_sstables(truncated_at);
-            co_await db::system_keyspace::save_truncation_record(vcf, truncated_at, rp);
+        db::replay_position rp = co_await vcf.discard_sstables(truncated_at);
+        co_await db::system_keyspace::save_truncation_record(vcf, truncated_at, rp);
     });
     // save_truncation_record() may actually fail after we cached the truncation time
     // but this is not be worse that if failing without caching: at least the correct time
