@@ -1213,9 +1213,6 @@ future<std::set<sstring>> merge_keyspaces(distributed<service::storage_proxy>& p
 struct schema_diff {
     struct dropped_schema {
         global_schema_ptr schema;
-        utils::joinpoint<db_clock::time_point> jp{[] {
-            return make_ready_future<db_clock::time_point>(db_clock::now());
-        }};
     };
 
     struct altered_schema {
@@ -1326,13 +1323,14 @@ static future<> merge_tables_and_views(distributed<service::storage_proxy>& prox
     // to a mv not finding its schema when snapshoting since the main table
     // was already dropped (see https://github.com/scylladb/scylla/issues/5614)
     auto& db = proxy.local().get_db();
-    co_await coroutine::parallel_for_each(views_diff.dropped, [&db] (schema_diff::dropped_schema& dt) {
+    auto ts = db_clock::now();
+    co_await coroutine::parallel_for_each(views_diff.dropped, [&db, ts] (schema_diff::dropped_schema& dt) {
         auto& s = *dt.schema.get();
-        return replica::database::drop_table_on_all_shards(db, s.ks_name(), s.cf_name(), [&] { return dt.jp.value(); });
+        return replica::database::drop_table_on_all_shards(db, s.ks_name(), s.cf_name(), ts);
     });
-    co_await coroutine::parallel_for_each(tables_diff.dropped, [&db] (schema_diff::dropped_schema& dt) -> future<> {
+    co_await coroutine::parallel_for_each(tables_diff.dropped, [&db, ts] (schema_diff::dropped_schema& dt) -> future<> {
         auto& s = *dt.schema.get();
-        return replica::database::drop_table_on_all_shards(db, s.ks_name(), s.cf_name(), [&] { return dt.jp.value(); });
+        return replica::database::drop_table_on_all_shards(db, s.ks_name(), s.cf_name(), ts);
     });
 
     co_await proxy.local().get_db().invoke_on_all([&] (replica::database& db) -> future<> {
