@@ -1650,7 +1650,7 @@ private:
     static future<std::vector<foreign_ptr<lw_shared_ptr<table>>>> get_table_on_all_shards(sharded<database>& db, utils::UUID uuid);
 
     static future<> truncate_table_on_all_shards(sharded<database>& db, const std::vector<foreign_ptr<lw_shared_ptr<table>>>&, timestamp_func, bool with_snapshot);
-    future<> truncate(column_family& cf, db::replay_position low_mark, timestamp_func, bool with_snapshot = true);
+    future<> truncate(column_family& cf, db::replay_position low_mark, bool did_flush, timestamp_func, bool with_snapshot = true);
 public:
     /** Truncates the given column family */
     static future<> truncate_table_on_all_shards(sharded<database>& db, sstring ks_name, sstring cf_name, timestamp_func, bool with_snapshot = true);
