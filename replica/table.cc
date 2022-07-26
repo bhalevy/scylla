@@ -1283,11 +1283,11 @@ struct snapshot_manager {
 static thread_local std::unordered_map<sstring, lw_shared_ptr<snapshot_manager>> pending_snapshots;
 
 future<>
-table::seal_snapshot(sstring jsondir) {
+table::seal_snapshot(sstring jsondir, std::vector<snapshot_file_set> file_sets) {
     std::ostringstream ss;
     int n = 0;
     ss << "{" << std::endl << "\t\"files\" : [ ";
-    for (const auto& fsp : pending_snapshots.at(jsondir)->file_sets) {
+    for (const auto& fsp : file_sets) {
       for (const auto& rf : *fsp) {
         if (n++ > 0) {
             ss << ", ";
@@ -1432,7 +1432,7 @@ future<> table::snapshot(database& db, sstring name) {
             // this_shard_id() here == requester == this_shard_id() before submit_to() above,
             // so the db reference is still local
             try {
-                co_await finalize_snapshot(db, jsondir);
+                co_await finalize_snapshot(db, jsondir, std::move(snapshot->file_sets));
             } catch (...) {
                 ex = std::current_exception();
             }
@@ -1447,7 +1447,7 @@ future<> table::snapshot(database& db, sstring name) {
     });
 }
 
-future<> table::finalize_snapshot(database& db, sstring jsondir) {
+future<> table::finalize_snapshot(database& db, sstring jsondir, std::vector<snapshot_file_set> file_sets) {
     std::exception_ptr ex;
 
     tlogger.debug("snapshot {}: writing schema.cql", jsondir);
@@ -1456,7 +1456,7 @@ future<> table::finalize_snapshot(database& db, sstring jsondir) {
         ex = std::move(ptr);
     });
     tlogger.debug("snapshot {}: seal_snapshot", jsondir);
-    co_await seal_snapshot(jsondir).handle_exception([&] (std::exception_ptr ptr) {
+    co_await seal_snapshot(jsondir, std::move(file_sets)).handle_exception([&] (std::exception_ptr ptr) {
         tlogger.error("Failed to seal snapshot in {}: {}.", jsondir, ptr);
         ex = std::move(ptr);
     });
