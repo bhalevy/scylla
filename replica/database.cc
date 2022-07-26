@@ -2393,33 +2393,45 @@ future<> database::truncate_table_on_all_shards(sharded<database>& sharded_db, c
         });
     });
 
+    const auto should_snapshot = with_snapshot && auto_snapshot;
+    const auto should_flush = should_snapshot && cf.can_flush();
+    dblog.trace("{} {}.{} and views on all shards", should_flush ? "Flushing" : "Clearing", s->ks_name(), s->cf_name());
+    std::function<future<>(replica::table&)> flush_or_clear = should_flush ?
+            [] (replica::table& cf) {
+                // TODO:
+                // this is not really a guarantee at all that we've actually
+                // gotten all things to disk. Again, need queue-ish or something.
+                return cf.flush();
+            } :
+            [] (replica::table& cf) {
+                return cf.clear();
+            };
+    co_await sharded_db.invoke_on_all([&] (replica::database& db) -> future<> {
+        unsigned shard = this_shard_id();
+        auto& cf = *table_shards[shard];
+
+        co_await flush_or_clear(cf);
+        co_await coroutine::parallel_for_each(cf.views(), [&] (view_ptr v) -> future<> {
+            auto& vcf = db.find_column_family(v);
+            co_await flush_or_clear(vcf);
+        });
+    });
+
     co_await sharded_db.invoke_on_all([&, tsf = std::move(tsf)] (database& db) {
         auto shard = this_shard_id();
         auto& cf = *table_shards[shard];
         auto& st = *table_states[shard];
 
-        return db.truncate(cf, st.low_mark, tsf, with_snapshot);
+        return db.truncate(cf, st.low_mark, should_flush, tsf, with_snapshot);
     });
 }
 
-future<> database::truncate(column_family& cf, db::replay_position low_mark, timestamp_func tsf, bool with_snapshot) {
+future<> database::truncate(column_family& cf, db::replay_position low_mark, bool did_flush, timestamp_func tsf, bool with_snapshot) {
     dblog.trace("Truncating {}.{} on shard: with_snapshot={} auto_snapshot={}", cf.schema()->ks_name(), cf.schema()->cf_name(), with_snapshot, get_config().auto_snapshot());
-
-    const auto auto_snapshot = with_snapshot && get_config().auto_snapshot();
-    const auto should_flush = auto_snapshot;
 
     const auto uuid = cf.schema()->id();
 
-    bool did_flush = false;
-    if (should_flush && cf.can_flush()) {
-        // TODO:
-        // this is not really a guarantee at all that we've actually
-        // gotten all things to disk. Again, need queue-ish or something.
-        co_await cf.flush();
-        did_flush = true;
-    } else {
-        co_await cf.clear();
-    }
+    const auto auto_snapshot = with_snapshot && get_config().auto_snapshot();
 
     dblog.debug("Discarding sstable data for truncated CF + indexes");
     // TODO: notify truncation
@@ -2441,13 +2453,8 @@ future<> database::truncate(column_family& cf, db::replay_position low_mark, tim
     // creating the sstables that would create them.
     assert(!did_flush || low_mark <= rp || rp == db::replay_position());
     rp = std::max(low_mark, rp);
-    co_await coroutine::parallel_for_each(cf.views(), [this, truncated_at, should_flush] (view_ptr v) -> future<> {
+    co_await coroutine::parallel_for_each(cf.views(), [this, truncated_at] (view_ptr v) -> future<> {
         auto& vcf = find_column_family(v);
-            if (should_flush) {
-                co_await vcf.flush();
-            } else {
-                co_await vcf.clear();
-            }
             db::replay_position rp = co_await vcf.discard_sstables(truncated_at);
             co_await db::system_keyspace::save_truncation_record(vcf, truncated_at, rp);
     });
