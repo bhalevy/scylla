@@ -1316,9 +1316,6 @@ table::seal_snapshot(sstring jsondir, std::vector<snapshot_file_set> file_sets) 
         });
     }).then([jsondir] {
         return io_check(sync_directory, std::move(jsondir));
-    }).finally([jsondir] {
-        pending_snapshots.erase(jsondir);
-        return make_ready_future<>();
     });
 }
 
@@ -1436,6 +1433,7 @@ future<> table::snapshot(database& db, sstring name) {
             } catch (...) {
                 ex = std::current_exception();
             }
+            pending_snapshots.erase(jsondir);
             snapshot->manifest_write.signal(smp::count);
         }
         tlogger.debug("snapshot {}: waiting for manifest on behalf of shard {}", jsondir, requester);
