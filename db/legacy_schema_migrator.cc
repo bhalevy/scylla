@@ -537,7 +537,7 @@ public:
         auto ts = db_clock::now();
         auto with_snapshot = !_keyspaces.empty();
         return parallel_for_each(legacy_schema_tables, [this, ts, with_snapshot](const sstring& cfname) {
-            return replica::database::drop_table_on_all_shards(_db, db::system_keyspace::NAME, cfname, [ts] { return make_ready_future<db_clock::time_point>(ts); }, with_snapshot);
+            return replica::database::drop_table_on_all_shards(_db, db::system_keyspace::NAME, cfname, ts, with_snapshot);
         });
     }
 
