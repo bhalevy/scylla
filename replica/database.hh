@@ -1637,10 +1637,6 @@ public:
     static future<> snapshot_tables_on_all_shards(sharded<database>& sharded_db, std::string_view ks_name, std::vector<sstring> table_names, sstring tag, bool skip_flush);
     static future<> snapshot_keyspace_on_all_shards(sharded<database>& sharded_db, std::string_view ks_name, sstring tag, bool skip_flush);
 
-    // See #937. Truncation now requires a callback to get a time stamp
-    // that must be guaranteed to be the same for all shards.
-    typedef std::function<future<db_clock::time_point>()> timestamp_func;
-
 public:
     bool update_column_family(schema_ptr s);
 private:
@@ -1648,14 +1644,14 @@ private:
 
     static future<std::vector<foreign_ptr<lw_shared_ptr<table>>>> get_table_on_all_shards(sharded<database>& db, utils::UUID uuid);
 
-    static future<> truncate_table_on_all_shards(sharded<database>& db, const std::vector<foreign_ptr<lw_shared_ptr<table>>>&, timestamp_func, bool with_snapshot);
+    static future<> truncate_table_on_all_shards(sharded<database>& db, const std::vector<foreign_ptr<lw_shared_ptr<table>>>&, db_clock::time_point truncated_at, bool with_snapshot);
     future<> truncate(column_family& cf, db::replay_position low_mark, bool did_flush, db_clock::time_point truncated_at);
 public:
     /** Truncates the given column family */
-    static future<> truncate_table_on_all_shards(sharded<database>& db, sstring ks_name, sstring cf_name, timestamp_func, bool with_snapshot = true);
+    static future<> truncate_table_on_all_shards(sharded<database>& db, sstring ks_name, sstring cf_name, db_clock::time_point truncated_at = db_clock::now(), bool with_snapshot = true);
 
     // drops the table on all shards and removes the table directory if there are no snapshots
-    static future<> drop_table_on_all_shards(sharded<database>& db, sstring ks_name, sstring cf_name, timestamp_func, bool with_snapshot = true);
+    static future<> drop_table_on_all_shards(sharded<database>& db, sstring ks_name, sstring cf_name, db_clock::time_point truncated_at = db_clock::now(), bool with_snapshot = true);
 
     const dirty_memory_manager_logalloc::region_group& dirty_memory_region_group() const {
         return _dirty_memory_manager.region_group();

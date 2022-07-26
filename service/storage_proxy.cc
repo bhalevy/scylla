@@ -5436,7 +5436,7 @@ storage_proxy::handle_read_digest(const rpc::client_info& cinfo, rpc::opt_time_p
 
 future<>
 storage_proxy::handle_truncate(rpc::opt_time_point timeout, sstring ksname, sstring cfname) {
-    return replica::database::truncate_table_on_all_shards(_db, ksname, cfname, [ts = db_clock::now()] { return make_ready_future<db_clock::time_point>(ts); });
+    return replica::database::truncate_table_on_all_shards(_db, ksname, cfname);
 }
 
 future<foreign_ptr<std::unique_ptr<service::paxos::prepare_response>>>

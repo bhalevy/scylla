@@ -1027,7 +1027,7 @@ future<std::vector<foreign_ptr<lw_shared_ptr<table>>>> database::get_table_on_al
     co_return table_shards;
 }
 
-future<> database::drop_table_on_all_shards(sharded<database>& sharded_db, sstring ks_name, sstring cf_name, timestamp_func tsf, bool with_snapshot) {
+future<> database::drop_table_on_all_shards(sharded<database>& sharded_db, sstring ks_name, sstring cf_name, db_clock::time_point truncated_at, bool with_snapshot) {
     auto auto_snapshot = sharded_db.local().get_config().auto_snapshot();
     dblog.info("Dropping {}.{} {}snapshot", ks_name, cf_name, with_snapshot && auto_snapshot ? "with auto-" : "without ");
 
@@ -1037,7 +1037,7 @@ future<> database::drop_table_on_all_shards(sharded<database>& sharded_db, sstri
     co_await sharded_db.invoke_on_all([&] (database& db) {
         return db.detach_column_family(*table_shards[this_shard_id()]);
     });
-    auto f = co_await coroutine::as_future(truncate_table_on_all_shards(sharded_db, table_shards, std::move(tsf), with_snapshot));
+    auto f = co_await coroutine::as_future(truncate_table_on_all_shards(sharded_db, table_shards, truncated_at, with_snapshot));
     co_await smp::invoke_on_all([&] {
         return table_shards[this_shard_id()]->stop();
     });
@@ -2338,13 +2338,13 @@ future<> database::snapshot_keyspace_on_all_shards(sharded<database>& sharded_db
     });
 }
 
-future<> database::truncate_table_on_all_shards(sharded<database>& sharded_db, sstring ks_name, sstring cf_name, timestamp_func tsf, bool with_snapshot) {
+future<> database::truncate_table_on_all_shards(sharded<database>& sharded_db, sstring ks_name, sstring cf_name, db_clock::time_point truncated_at, bool with_snapshot) {
     auto uuid = sharded_db.local().find_uuid(ks_name, cf_name);
     auto table_shards = co_await get_table_on_all_shards(sharded_db, uuid);
-    co_return co_await truncate_table_on_all_shards(sharded_db, table_shards, std::move(tsf), with_snapshot);
+    co_return co_await truncate_table_on_all_shards(sharded_db, table_shards, truncated_at, with_snapshot);
 }
 
-future<> database::truncate_table_on_all_shards(sharded<database>& sharded_db, const std::vector<foreign_ptr<lw_shared_ptr<table>>>& table_shards, timestamp_func tsf, bool with_snapshot) {
+future<> database::truncate_table_on_all_shards(sharded<database>& sharded_db, const std::vector<foreign_ptr<lw_shared_ptr<table>>>& table_shards, db_clock::time_point truncated_at, bool with_snapshot) {
     auto& cf = *table_shards[this_shard_id()];
     auto s = cf.schema();
 
@@ -2415,17 +2415,6 @@ future<> database::truncate_table_on_all_shards(sharded<database>& sharded_db, c
             auto& vcf = db.find_column_family(v);
             co_await flush_or_clear(vcf);
         });
-    });
-
-    // FIXME: for now, we need to call tsf on all shards since it
-    // may use utils::joinpoint to synchronize truncation on all shards;
-    db_clock::time_point truncated_at;
-    auto coordinator = this_shard_id();
-    co_await smp::invoke_on_all([&] () -> future<> {
-        auto local_truncated_at = co_await tsf();
-        if (this_shard_id() == coordinator) {
-            truncated_at = local_truncated_at;
-        }
     });
 
     if (should_snapshot) {
