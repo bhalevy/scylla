@@ -2360,6 +2360,7 @@ future<> database::truncate_table_on_all_shards(sharded<database>& sharded_db, c
 
     struct table_state {
         gate::holder holder;
+        db::replay_position low_mark;
     };
     std::vector<foreign_ptr<std::unique_ptr<table_state>>> table_states;
     table_states.resize(smp::count);
@@ -2371,6 +2372,13 @@ future<> database::truncate_table_on_all_shards(sharded<database>& sharded_db, c
 
             st->holder = cf.async_gate().hold();
 
+            // Force mutations coming in to re-acquire higher rp:s
+            // This creates a "soft" ordering, in that we will guarantee that
+            // any sstable written _after_ we issue the flush below will
+            // only have higher rp:s than we will get from the discard_sstable
+            // call.
+            st->low_mark = cf.set_low_replay_position_mark();
+
             co_return make_foreign(std::move(st));
         });
     });
@@ -2378,22 +2386,17 @@ future<> database::truncate_table_on_all_shards(sharded<database>& sharded_db, c
     co_await sharded_db.invoke_on_all([&, tsf = std::move(tsf)] (database& db) {
         auto shard = this_shard_id();
         auto& cf = *table_shards[shard];
-        return db.truncate(cf, tsf, with_snapshot);
+        auto& st = *table_states[shard];
+
+        return db.truncate(cf, st.low_mark, tsf, with_snapshot);
     });
 }
 
-future<> database::truncate(column_family& cf, timestamp_func tsf, bool with_snapshot) {
+future<> database::truncate(column_family& cf, db::replay_position low_mark, timestamp_func tsf, bool with_snapshot) {
     dblog.trace("Truncating {}.{} on shard: with_snapshot={} auto_snapshot={}", cf.schema()->ks_name(), cf.schema()->cf_name(), with_snapshot, get_config().auto_snapshot());
 
     const auto auto_snapshot = with_snapshot && get_config().auto_snapshot();
     const auto should_flush = auto_snapshot;
-
-    // Force mutations coming in to re-acquire higher rp:s
-    // This creates a "soft" ordering, in that we will guarantee that
-    // any sstable written _after_ we issue the flush below will
-    // only have higher rp:s than we will get from the discard_sstable
-    // call.
-    auto low_mark = cf.set_low_replay_position_mark();
 
     const auto uuid = cf.schema()->id();
 
