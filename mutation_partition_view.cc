@@ -230,11 +230,107 @@ void mutation_partition_view::do_accept(const column_mapping& cm, Visitor& visit
     }
 }
 
-template<typename Visitor>
-requires MutationViewVisitor<Visitor>
-future<> mutation_partition_view::do_accept_gently(const column_mapping& cm, Visitor& visitor) const {
+void mutation_partition_view::accept_ordered(const schema& s, mutation_partition_view_virtual_visitor& visitor) const {
     auto in = _in;
     auto mpv = ser::deserialize(in, boost::type<ser::mutation_partition_view>());
+    const column_mapping& cm = s.get_column_mapping();
+
+    visitor.accept_partition_tombstone(mpv.tomb());
+
+    struct static_row_cell_visitor {
+        mutation_partition_view_virtual_visitor& _visitor;
+
+        void accept_atomic_cell(column_id id, atomic_cell ac) const {
+           _visitor.accept_static_cell(id, std::move(ac));
+        }
+        void accept_collection(column_id id, const collection_mutation& cm) const {
+           _visitor.accept_static_cell(id, cm);
+        }
+    };
+    read_and_visit_row(mpv.static_row(), cm, column_kind::static_column, static_row_cell_visitor{visitor});
+
+    auto rt_it = mpv.range_tombstones().cbegin();
+    auto rt_e = mpv.range_tombstones().cend();
+    auto cr_it = mpv.rows().cbegin();
+    auto cr_e = mpv.rows().cend();
+
+    auto consume_rt = [&] (range_tombstone&& rt) {
+        visitor.accept_row_tombstone(std::move(rt));
+    };
+    auto consume_cr = [&] (ser::deletable_row_view&& cr) {
+        auto t = row_tombstone(cr.deleted_at(), shadowable_tombstone(cr.shadowable_deleted_at()));
+        visitor.accept_row(position_in_partition_view::for_key(cr.key()), t, read_row_marker(cr.marker()), is_dummy::no, is_continuous::yes);
+
+        struct cell_visitor {
+            mutation_partition_view_virtual_visitor& _visitor;
+
+            void accept_atomic_cell(column_id id, atomic_cell ac) const {
+               _visitor.accept_row_cell(id, std::move(ac));
+            }
+            void accept_collection(column_id id, const collection_mutation& cm) const {
+               _visitor.accept_row_cell(id, cm);
+            }
+        };
+        read_and_visit_row(cr.cells(), cm, column_kind::regular_column, cell_visitor{visitor});
+    };
+
+    std::optional<range_tombstone> rt;
+    auto next_rt = [&] {
+        if (!rt) {
+            if (rt_it != rt_e) {
+                rt = *rt_it;
+                ++rt_it;
+            }
+        }
+    };
+
+    std::optional<ser::deletable_row_view> cr;
+    auto next_cr = [&] {
+        while (!cr) {
+            if (cr_it != cr_e) {
+                cr = *cr_it;
+                ++cr_it;
+                auto ck = cr->key();
+                if (ck == clustering_key(std::vector<bytes>{})) {
+                    cr = {};
+                    continue;
+                }
+            }
+            break;
+        }
+    };
+
+    position_in_partition::tri_compare cmp{s};
+
+    for (;;) {
+        next_rt();
+        next_cr();
+        if (!rt || !cr) {
+            break;
+        }
+        auto rt_pos = rt->position();
+        auto cr_pos = position_in_partition_view::for_key(cr->key());
+        auto res = cmp(rt_pos, cr_pos);
+        if (cmp(rt_pos, cr_pos) <= 0) {
+            consume_rt(std::move(*std::exchange(rt, std::nullopt)));
+        } else {
+            consume_cr(std::move(*std::exchange(cr, std::nullopt)));
+        }
+    }
+    for (; rt; next_rt()) {
+        consume_rt(std::move(*std::exchange(rt, std::nullopt)));
+    }
+    for (; cr; next_cr()) {
+        consume_cr(std::move(*std::exchange(cr, std::nullopt)));
+    }
+}
+
+template<typename Visitor>
+requires MutationViewVisitor<Visitor>
+future<> mutation_partition_view::do_accept_gently(const schema& s, Visitor& visitor) const {
+    auto in = _in;
+    auto mpv = ser::deserialize(in, boost::type<ser::mutation_partition_view>());
+    const column_mapping& cm = s.get_column_mapping();
 
     visitor.accept_partition_tombstone(mpv.tomb());
 
@@ -251,15 +347,17 @@ future<> mutation_partition_view::do_accept_gently(const column_mapping& cm, Vis
     read_and_visit_row(mpv.static_row(), cm, column_kind::static_column, static_row_cell_visitor{visitor});
     co_await coroutine::maybe_yield();
 
-    for (auto rt : mpv.range_tombstones()) {
-        visitor.accept_row_tombstone(rt);
-        co_await coroutine::maybe_yield();
-    }
+    auto rt_it = mpv.range_tombstones().cbegin();
+    auto rt_e = mpv.range_tombstones().cend();
+    auto cr_it = mpv.rows().cbegin();
+    auto cr_e = mpv.rows().cend();
 
-    for (auto cr : mpv.rows()) {
+    auto consume_rt = [&] (range_tombstone&& rt) {
+        visitor.accept_row_tombstone(std::move(rt));
+    };
+    auto consume_cr = [&] (ser::deletable_row_view&& cr) {
         auto t = row_tombstone(cr.deleted_at(), shadowable_tombstone(cr.shadowable_deleted_at()));
-        auto key = cr.key();
-        visitor.accept_row(position_in_partition_view::for_key(key), t, read_row_marker(cr.marker()), is_dummy::no, is_continuous::yes);
+        visitor.accept_row(position_in_partition_view::for_key(cr.key()), t, read_row_marker(cr.marker()), is_dummy::no, is_continuous::yes);
 
         struct cell_visitor {
             Visitor& _visitor;
@@ -272,6 +370,58 @@ future<> mutation_partition_view::do_accept_gently(const column_mapping& cm, Vis
             }
         };
         read_and_visit_row(cr.cells(), cm, column_kind::regular_column, cell_visitor{visitor});
+    };
+
+    std::optional<range_tombstone> rt;
+    auto next_rt = [&] {
+        if (!rt) {
+            if (rt_it != rt_e) {
+                rt = *rt_it;
+                ++rt_it;
+            }
+        }
+    };
+
+    std::optional<ser::deletable_row_view> cr;
+    auto next_cr = [&] {
+        while (!cr) {
+            if (cr_it != cr_e) {
+                cr = *cr_it;
+                ++cr_it;
+                auto ck = cr->key();
+                if (ck == clustering_key(std::vector<bytes>{})) {
+                    cr = {};
+                    continue;
+                }
+            }
+            break;
+        }
+    };
+
+    position_in_partition::tri_compare cmp{s};
+
+    for (;;) {
+        next_rt();
+        next_cr();
+        if (!rt || !cr) {
+            break;
+        }
+        auto rt_pos = rt->position();
+        auto cr_pos = position_in_partition_view::for_key(cr->key());
+        auto res = cmp(rt_pos, cr_pos);
+        if (cmp(rt_pos, cr_pos) <= 0) {
+            consume_rt(std::move(*std::exchange(rt, std::nullopt)));
+        } else {
+            consume_cr(std::move(*std::exchange(cr, std::nullopt)));
+        }
+        co_await coroutine::maybe_yield();
+    }
+    for (; rt; next_rt()) {
+        consume_rt(std::move(*std::exchange(rt, std::nullopt)));
+        co_await coroutine::maybe_yield();
+    }
+    for (; cr; next_cr()) {
+        consume_cr(std::move(*std::exchange(cr, std::nullopt)));
         co_await coroutine::maybe_yield();
     }
 }
@@ -282,7 +432,7 @@ void mutation_partition_view::accept(const schema& s, partition_builder& visitor
 }
 
 future<> mutation_partition_view::accept_gently(const schema& s, partition_builder& visitor) const {
-    return do_accept_gently(s.get_column_mapping(), visitor);
+    return do_accept_gently(s, visitor);
 }
 
 void mutation_partition_view::accept(const column_mapping& cm, converting_mutation_partition_applier& visitor) const
@@ -290,16 +440,16 @@ void mutation_partition_view::accept(const column_mapping& cm, converting_mutati
     do_accept(cm, visitor);
 }
 
-future<> mutation_partition_view::accept_gently(const column_mapping& cm, converting_mutation_partition_applier& visitor) const {
-    return do_accept_gently(cm, visitor);
+future<> mutation_partition_view::accept_gently(const schema& s, converting_mutation_partition_applier& visitor) const {
+    return do_accept_gently(s, visitor);
 }
 
 void mutation_partition_view::accept(const column_mapping& cm, mutation_partition_view_virtual_visitor& visitor) const {
     do_accept(cm, visitor);
 }
 
-future<> mutation_partition_view::accept_gently(const column_mapping& cm, mutation_partition_view_virtual_visitor& visitor) const {
-    return do_accept_gently(cm, visitor);
+future<> mutation_partition_view::accept_gently(const schema& s, mutation_partition_view_virtual_visitor& visitor) const {
+    return do_accept_gently(s, visitor);
 }
 
 std::optional<clustering_key> mutation_partition_view::first_row_key() const

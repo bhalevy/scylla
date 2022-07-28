@@ -20,6 +20,7 @@
 #include "test/lib/mutation_source_test.hh"
 
 #include <seastar/core/thread.hh>
+#include <seastar/core/coroutine.hh>
 #include "readers/from_mutations_v2.hh"
 #include "readers/mutation_fragment_v1_stream.hh"
 
@@ -168,4 +169,20 @@ SEASTAR_TEST_CASE(test_deserialization_using_wrong_schema_throws) {
             BOOST_REQUIRE_THROW(freeze(m).unfreeze(s), schema_mismatch_error);
         }
     });
+}
+
+SEASTAR_TEST_CASE(frozen_mutation_is_consumed_in_order) {
+    random_mutation_generator gen{random_mutation_generator::generate_counters::no};
+    mutation m = gen();
+    auto& s = m.schema();
+    frozen_mutation fm{m};
+
+    testlog.info("Testing frozen_mutation::consume");
+    auto c0 = validating_consumer(*s);
+    fm.consume(s, c0);
+
+    testlog.info("Testing frozen_mutation::consume_gently");
+    auto c1 = validating_consumer(*s);
+    auto adaptor = frozen_mutation_consumer_adaptor(s, c1);
+    co_await fm.consume_gently(s, adaptor);
 }
