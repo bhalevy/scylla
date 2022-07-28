@@ -103,6 +103,10 @@ public:
     sstring get_datacenter() const;
     sstring get_datacenter(inet_address ep) const;
 
+    const std::unordered_map<inet_address, endpoint_dc_rack>& get_locations() const noexcept {
+        return _current_locations;
+    };
+
 private:
     /** multi-map: DC -> endpoints in that DC */
     std::unordered_map<sstring,
