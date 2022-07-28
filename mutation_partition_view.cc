@@ -11,8 +11,11 @@
 #include <seastar/coroutine/maybe_yield.hh>
 
 #include "mutation_partition_view.hh"
+#include "replica/database_fwd.hh"
 #include "schema.hh"
 #include "atomic_cell.hh"
+#include "seastar/core/loop.hh"
+#include "seastar/core/preempt.hh"
 #include "utils/data_input.hh"
 #include "mutation_partition_serializer.hh"
 #include "mutation_partition.hh"
@@ -22,9 +25,9 @@
 #include "converting_mutation_partition_applier.hh"
 #include "concrete_types.hh"
 #include "types/user.hh"
+#include "log.hh"
 
-#include "idl/mutation.dist.hh"
-#include "idl/mutation.dist.impl.hh"
+static logging::logger mpvlog("mutation_partition_view");
 
 using namespace db;
 
@@ -276,6 +279,132 @@ future<> mutation_partition_view::do_accept_gently(const column_mapping& cm, Vis
     }
 }
 
+mutation_partition_view::accept_ordered_result mutation_partition_view::do_accept_ordered(const schema& s, mutation_partition_view_virtual_visitor& visitor, accept_ordered_cookie cookie, is_preemptible preempt) const {
+    auto in = _in;
+    auto mpv = ser::deserialize(in, boost::type<ser::mutation_partition_view>());
+    const column_mapping& cm = s.get_column_mapping();
+
+    if (!cookie.accepted_partition_tombstone) {
+        mpvlog.trace("do_accept_ordered: accept partition tombstone");
+        visitor.accept_partition_tombstone(mpv.tomb());
+        cookie.accepted_partition_tombstone = true;
+    }
+
+    if (!cookie.accepted_static_row) {
+        mpvlog.trace("do_accept_ordered: accept static_row");
+        struct static_row_cell_visitor {
+            mutation_partition_view_virtual_visitor& _visitor;
+
+            void accept_atomic_cell(column_id id, atomic_cell ac) const {
+            _visitor.accept_static_cell(id, std::move(ac));
+            }
+            void accept_collection(column_id id, const collection_mutation& cm) const {
+            _visitor.accept_static_cell(id, cm);
+            }
+        };
+        read_and_visit_row(mpv.static_row(), cm, column_kind::static_column, static_row_cell_visitor{visitor});
+        cookie.accepted_static_row = true;
+    }
+
+    if (!cookie.iterators) {
+        mpvlog.trace("do_accept_ordered: building cookie iterators");
+        cookie.iterators.emplace(accept_ordered_cookie::rts_crs_iterators{
+            .rts_begin = mpv.range_tombstones().cbegin(),
+            .rts_end = mpv.range_tombstones().cend(),
+            .crs_begin = mpv.rows().cbegin(),
+            .crs_end = mpv.rows().cend(),
+        });
+    }
+
+    auto rt_it = cookie.iterators->rts_begin;
+    const auto& rt_e = cookie.iterators->rts_end;
+    auto cr_it = cookie.iterators->crs_begin;
+    const auto& cr_e = cookie.iterators->crs_end;
+
+    auto consume_rt = [&] (range_tombstone&& rt) {
+        cookie.iterators->rts_begin = rt_it;
+        mpvlog.trace("do_accept_ordered: accept range_tombstone: {}", rt);
+        visitor.accept_row_tombstone(std::move(rt));
+    };
+    auto consume_cr = [&] (ser::deletable_row_view&& cr, clustering_key_prefix&& cr_key) {
+        cookie.iterators->crs_begin = cr_it;
+        auto t = row_tombstone(cr.deleted_at(), shadowable_tombstone(cr.shadowable_deleted_at()));
+        mpvlog.trace("do_accept_ordered: accept clustering_row: {}", cr_key);
+        visitor.accept_row(position_in_partition_view::for_key(cr_key), t, read_row_marker(cr.marker()), is_dummy::no, is_continuous::yes);
+
+        struct cell_visitor {
+            mutation_partition_view_virtual_visitor& _visitor;
+
+            void accept_atomic_cell(column_id id, atomic_cell ac) const {
+               _visitor.accept_row_cell(id, std::move(ac));
+            }
+            void accept_collection(column_id id, const collection_mutation& cm) const {
+               _visitor.accept_row_cell(id, cm);
+            }
+        };
+        read_and_visit_row(cr.cells(), cm, column_kind::regular_column, cell_visitor{visitor});
+    };
+
+    std::optional<range_tombstone> rt;
+    auto next_rt = [&] {
+        if (rt || rt_it == rt_e) {
+            return;
+        }
+        rt = *rt_it;
+        ++rt_it;
+    };
+
+    std::optional<ser::deletable_row_view> cr;
+    std::optional<clustering_key_prefix> cr_key;
+    auto next_cr = [&] {
+        if (cr) {
+            return;
+        }
+        while (cr_it != cr_e) {
+            cr = *cr_it;
+            ++cr_it;
+            // dummy row?
+            auto&& ck = cr->key();
+            if (!ck.is_empty()) {
+                cr_key = std::move(ck);
+                return;
+            }
+            cr.reset();
+        }
+    };
+
+    position_in_partition::tri_compare cmp{s};
+
+    for (;;) {
+        if (preempt && need_preempt()) {
+            mpvlog.trace("do_accept_ordered: preempt");
+            return accept_ordered_result{stop_iteration::no, std::move(cookie)};
+        }
+        next_rt();
+        next_cr();
+        if (rt) {
+            bool emit_rt = !cr;
+            if (cr) {
+                auto rt_pos = rt->position();
+                auto cr_pos = position_in_partition_view::for_key(*cr_key);
+                emit_rt = (cmp(rt_pos, cr_pos) < 0);
+            }
+            if (emit_rt) {
+                consume_rt(std::move(*std::exchange(rt, std::nullopt)));
+                // FIXME: allow visitor to return stop_iteration
+                continue;
+            }
+        }
+        if (cr) {
+            consume_cr(std::move(*std::exchange(cr, std::nullopt)), std::move(*cr_key));
+            // FIXME: allow visitor to return stop_iteration
+            continue;
+        }
+        mpvlog.trace("do_accept_ordered: done");
+        return accept_ordered_result{stop_iteration::yes, accept_ordered_cookie{}};
+    }
+}
+
 void mutation_partition_view::accept(const schema& s, partition_builder& visitor) const
 {
     do_accept(s.get_column_mapping(), visitor);
@@ -298,8 +427,16 @@ void mutation_partition_view::accept(const column_mapping& cm, mutation_partitio
     do_accept(cm, visitor);
 }
 
-future<> mutation_partition_view::accept_gently(const column_mapping& cm, mutation_partition_view_virtual_visitor& visitor) const {
-    return do_accept_gently(cm, visitor);
+void mutation_partition_view::accept_ordered(const schema& s, mutation_partition_view_virtual_visitor& visitor) const {
+    do_accept_ordered(s, visitor, accept_ordered_cookie{}, is_preemptible::no);
+}
+
+future<> mutation_partition_view::accept_gently_ordered(const schema& s, mutation_partition_view_virtual_visitor& visitor) const {
+    accept_ordered_result res;
+    do {
+        res = do_accept_ordered(s, visitor, std::move(res.cookie), is_preemptible::yes);
+        co_await coroutine::maybe_yield();
+    } while (!res.stop);
 }
 
 std::optional<clustering_key> mutation_partition_view::first_row_key() const
