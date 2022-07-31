@@ -30,6 +30,7 @@
 #include "timestamp.hh"
 #include "tombstone_gc_options.hh"
 #include "db/per_partition_rate_limit_options.hh"
+#include "tombstone.hh"
 
 namespace dht {
 
@@ -645,6 +646,7 @@ private:
         // Sharding info is not stored in the schema mutation and does not affect
         // schema digest. It is also not set locally on a schema tables.
         std::reference_wrapper<const dht::sharder> _sharder;
+        tombstone _truncate_tombstone;
     };
     raw_schema _raw;
     thrift_schema _thrift;
@@ -927,6 +929,9 @@ public:
     }
     const query::partition_slice& full_slice() const {
         return *_full_slice;
+    }
+    const tombstone& truncate_tombstone() const noexcept {
+        return _raw._truncate_tombstone;
     }
     // Returns all index names of this schema.
     std::vector<sstring> index_names() const;

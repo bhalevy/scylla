@@ -725,6 +725,9 @@ std::ostream& operator<<(std::ostream& os, const schema& s) {
     if (s.is_view()) {
         os << ", viewInfo=" << *s.view_info();
     }
+    if (s.truncate_tombstone()) {
+        os << ",truncated=" << s.truncate_tombstone();
+    }
     os << "]";
     return os;
 }
@@ -1129,6 +1132,13 @@ schema_builder& schema_builder::with(compact_storage cs) {
 
 schema_builder& schema_builder::with_version(table_schema_version v) {
     _version = v;
+    return *this;
+}
+
+schema_builder& schema_builder::with_truncate_tombstone(tombstone t) {
+    if (t > _raw._truncate_tombstone) {
+        _raw._truncate_tombstone = std::move(t);
+    }
     return *this;
 }
 

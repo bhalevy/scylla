@@ -272,6 +272,7 @@ public:
 
     schema_builder& with(compact_storage);
     schema_builder& with_version(table_schema_version);
+    schema_builder& with_truncate_tombstone(tombstone);
 
     schema_builder& with_view_info(utils::UUID base_id, sstring base_name, bool include_all_columns, sstring where_clause);
     schema_builder& with_view_info(const schema& base_schema, bool include_all_columns, sstring where_clause) {
