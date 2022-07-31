@@ -213,6 +213,7 @@ std::vector<schema_ptr> do_load_schemas(std::string_view schema_str) {
                 std::map<sstring, sstring>{},
                 false));
     real_db.tables.emplace_back(dd_impl, real_db.keyspaces.back(), db::schema_tables::dropped_columns());
+    real_db.tables.emplace_back(dd_impl, real_db.keyspaces.back(), db::schema_tables::truncates());
 
     std::vector<schema_ptr> schemas;
 

@@ -19,6 +19,7 @@ class schema_mutations {
     std::optional<canonical_mutation> scylla_tables_canonical_mutation()[[version 2.0]];
     std::optional<canonical_mutation> view_virtual_columns_canonical_mutation()[[version 2.4]];
     std::optional<canonical_mutation> computed_columns_canonical_mutation()[[version 3.2]];
+    std::optional<canonical_mutation> truncates_canonical_mutation()[[version 5.1]];
 };
 
 class schema stub [[writable]] {

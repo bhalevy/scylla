@@ -23,9 +23,10 @@ class schema_mutations {
     mutation_opt _indices;
     mutation_opt _dropped_columns;
     mutation_opt _scylla_tables;
+    mutation_opt _truncates;
 public:
     schema_mutations(mutation columnfamilies, mutation columns, mutation_opt view_virtual_columns, mutation_opt computed_columns, mutation_opt indices, mutation_opt dropped_columns,
-        mutation_opt scylla_tables)
+        mutation_opt scylla_tables, mutation_opt truncates)
             : _columnfamilies(std::move(columnfamilies))
             , _columns(std::move(columns))
             , _view_virtual_columns(std::move(view_virtual_columns))
@@ -33,6 +34,7 @@ public:
             , _indices(std::move(indices))
             , _dropped_columns(std::move(dropped_columns))
             , _scylla_tables(std::move(scylla_tables))
+            , _truncates(std::move(truncates))
     { }
     schema_mutations(canonical_mutation columnfamilies,
                      canonical_mutation columns,
@@ -41,7 +43,8 @@ public:
                      std::optional<canonical_mutation> dropped_columns,
                      std::optional<canonical_mutation> scylla_tables,
                      std::optional<canonical_mutation> view_virtual_columns,
-                     std::optional<canonical_mutation> computed_columns);
+                     std::optional<canonical_mutation> computed_columns,
+                     std::optional<canonical_mutation> truncates);
 
     schema_mutations(schema_mutations&&) = default;
     schema_mutations& operator=(schema_mutations&&) = default;
@@ -81,6 +84,10 @@ public:
         return _dropped_columns;
     }
 
+    const mutation_opt& truncates() const {
+        return _truncates;
+    }
+
     canonical_mutation columnfamilies_canonical_mutation() const {
         return canonical_mutation(_columnfamilies);
     }
@@ -118,6 +125,13 @@ public:
     std::optional<canonical_mutation> scylla_tables_canonical_mutation() const {
         if (_scylla_tables) {
             return canonical_mutation(*_scylla_tables);
+        }
+        return {};
+    }
+
+    std::optional<canonical_mutation> truncates_canonical_mutation() const {
+        if (_truncates) {
+            return canonical_mutation(*_truncates);
         }
         return {};
     }

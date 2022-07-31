@@ -119,6 +119,7 @@ static constexpr auto SCYLLA_AGGREGATES = "scylla_aggregates";
 static constexpr auto INDEXES = "indexes";
 static constexpr auto VIEW_VIRTUAL_COLUMNS = "view_virtual_columns"; // Scylla specific
 static constexpr auto COMPUTED_COLUMNS = "computed_columns"; // Scylla specific
+static constexpr auto TRUNCATES = "truncates"; // Scylla specific
 static constexpr auto SCYLLA_TABLE_SCHEMA_HISTORY = "scylla_table_schema_history"; // Scylla specific;
 
 schema_ptr columns();
@@ -129,6 +130,7 @@ schema_ptr tables();
 schema_ptr scylla_tables(schema_features features = schema_features::full());
 schema_ptr views();
 schema_ptr computed_columns();
+schema_ptr truncates();
 // Belongs to the "system" keyspace
 schema_ptr scylla_table_schema_history();
 
@@ -251,6 +253,8 @@ std::vector<mutation> make_create_view_mutations(lw_shared_ptr<keyspace_metadata
 std::vector<mutation> make_update_view_mutations(lw_shared_ptr<keyspace_metadata> keyspace, view_ptr old_view, view_ptr new_view, api::timestamp_type timestamp, bool include_base);
 
 std::vector<mutation> make_drop_view_mutations(lw_shared_ptr<keyspace_metadata> keyspace, view_ptr view, api::timestamp_type timestamp);
+
+mutation make_truncates_mutation(schema_ptr, tombstone t, api::timestamp_type timestamp);
 
 class preserve_version_tag {};
 using preserve_version = bool_class<preserve_version_tag>;

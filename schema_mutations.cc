@@ -19,7 +19,8 @@ schema_mutations::schema_mutations(canonical_mutation columnfamilies,
                                    std::optional<canonical_mutation> dropped_columns,
                                    std::optional<canonical_mutation> scylla_tables,
                                    std::optional<canonical_mutation> view_virtual_columns,
-                                   std::optional<canonical_mutation> computed_columns)
+                                   std::optional<canonical_mutation> computed_columns,
+                                   std::optional<canonical_mutation> truncates)
     : _columnfamilies(columnfamilies.to_mutation(is_view ? db::schema_tables::views() : db::schema_tables::tables()))
     , _columns(columns.to_mutation(db::schema_tables::columns()))
     , _view_virtual_columns(view_virtual_columns ? mutation_opt{view_virtual_columns.value().to_mutation(db::schema_tables::view_virtual_columns())} : std::nullopt)
@@ -27,6 +28,7 @@ schema_mutations::schema_mutations(canonical_mutation columnfamilies,
     , _indices(indices ? mutation_opt{indices.value().to_mutation(db::schema_tables::indexes())} : std::nullopt)
     , _dropped_columns(dropped_columns ? mutation_opt{dropped_columns.value().to_mutation(db::schema_tables::dropped_columns())} : std::nullopt)
     , _scylla_tables(scylla_tables ? mutation_opt{scylla_tables.value().to_mutation(db::schema_tables::scylla_tables())} : std::nullopt)
+    , _truncates(truncates ? mutation_opt{truncates.value().to_mutation(db::schema_tables::truncates())} : std::nullopt)
 {}
 
 void schema_mutations::copy_to(std::vector<mutation>& dst) const {

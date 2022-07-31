@@ -678,6 +678,33 @@ schema_ptr scylla_aggregates() {
     return schema;
 }
 
+schema_ptr truncates() {
+    static thread_local auto schema = [] {
+        schema_builder builder(generate_legacy_id(NAME, TRUNCATES), NAME, TRUNCATES,
+        // partition key
+        {{"keyspace_name", utf8_type}},
+        // clustering key
+        {{"table_name", utf8_type}},
+        // regular columns
+        {
+            {"truncate_timestamp", reversed(long_type)},
+            {"truncated_at", reversed(timestamp_type)},
+        },
+        // static columns
+        {},
+        // regular column name type
+        utf8_type,
+        // comment
+        "table truncates registry"
+        );
+        builder.set_gc_grace_seconds(schema_gc_grace);
+        builder.with_version(system_keyspace::generate_schema_version(builder.uuid()));
+        builder.with_null_sharder();
+        return builder.build();
+    }();
+    return schema;
+}
+
 schema_ptr scylla_table_schema_history() {
     static thread_local auto s = [] {
         schema_builder builder(db::system_keyspace::NAME, SCYLLA_TABLE_SCHEMA_HISTORY, generate_legacy_id(db::system_keyspace::NAME, SCYLLA_TABLE_SCHEMA_HISTORY));
@@ -2341,6 +2368,16 @@ mutation make_scylla_tables_mutation(schema_ptr table, api::timestamp_type times
     return m;
 }
 
+mutation make_truncates_mutation(schema_ptr table, tombstone t, api::timestamp_type timestamp) {
+    schema_ptr s = truncates();
+    auto pkey = partition_key::from_singular(*s, table->ks_name());
+    auto ckey = clustering_key::from_singular(*s, table->cf_name());
+    mutation m(scylla_tables(), pkey);
+    m.set_clustered_cell(ckey, "truncate_timestamp", data_value(t.timestamp), timestamp);
+    m.set_clustered_cell(ckey, "truncated_at", data_value(to_db_clock(t.deletion_time)), timestamp);
+    return m;
+}
+
 static schema_mutations make_table_mutations(schema_ptr table, api::timestamp_type timestamp, bool with_columns_and_triggers)
 {
     // When adding new schema properties, don't set cells for default values so that
@@ -2399,9 +2436,14 @@ static schema_mutations make_table_mutations(schema_ptr table, api::timestamp_ty
         }
     }
 
+    mutation_opt truncates_mutation;
+    if (table->truncate_tombstone()) {
+        truncates_mutation = make_truncates_mutation(table, table->truncate_tombstone(), timestamp);
+    }
+
     return schema_mutations{std::move(m), std::move(columns_mutation), std::nullopt, std::move(computed_columns_mutation),
                             std::move(indices_mutation), std::move(dropped_columns_mutation),
-                            std::move(scylla_tables_mutation)};
+                            std::move(scylla_tables_mutation), std::move(truncates_mutation)};
 }
 
 void add_table_or_view_to_schema_mutation(schema_ptr s, api::timestamp_type timestamp, bool with_columns, std::vector<mutation>& mutations)
@@ -2585,16 +2627,17 @@ std::vector<mutation> make_drop_table_mutations(lw_shared_ptr<keyspace_metadata>
 
 static future<schema_mutations> read_table_mutations(distributed<service::storage_proxy>& proxy, const qualified_name& table, schema_ptr s)
 {
-    auto&& [cf_m, col_m, vv_col_m, c_col_m, dropped_m, idx_m, st_m] = co_await coroutine::all(
+    auto&& [cf_m, col_m, vv_col_m, c_col_m, dropped_m, idx_m, st_m, t_m] = co_await coroutine::all(
         [&] { return read_schema_partition_for_table(proxy, s, table.keyspace_name, table.table_name); },
         [&] { return read_schema_partition_for_table(proxy, columns(), table.keyspace_name, table.table_name); },
         [&] { return read_schema_partition_for_table(proxy, view_virtual_columns(), table.keyspace_name, table.table_name); },
         [&] { return read_schema_partition_for_table(proxy, computed_columns(), table.keyspace_name, table.table_name); },
         [&] { return read_schema_partition_for_table(proxy, dropped_columns(), table.keyspace_name, table.table_name); },
         [&] { return read_schema_partition_for_table(proxy, indexes(), table.keyspace_name, table.table_name); },
-        [&] { return read_schema_partition_for_table(proxy, scylla_tables(), table.keyspace_name, table.table_name); }
+        [&] { return read_schema_partition_for_table(proxy, scylla_tables(), table.keyspace_name, table.table_name); },
+        [&] { return read_schema_partition_for_table(proxy, truncates(), table.keyspace_name, table.table_name); }
     );
-    co_return schema_mutations{std::move(cf_m), std::move(col_m), std::move(vv_col_m), std::move(c_col_m), std::move(idx_m), std::move(dropped_m), std::move(st_m)};
+    co_return schema_mutations{std::move(cf_m), std::move(col_m), std::move(vv_col_m), std::move(c_col_m), std::move(idx_m), std::move(dropped_m), std::move(st_m), std::move(t_m)};
 #if 0
         // FIXME:
     Row serializedTriggers = readSchemaPartitionForTable(TRIGGERS, ksName, cfName);
@@ -3182,9 +3225,14 @@ static schema_mutations make_view_mutations(view_ptr view, api::timestamp_type t
 
     auto scylla_tables_mutation = make_scylla_tables_mutation(view, timestamp);
 
+    mutation_opt truncates_mutation;
+    if (view->truncate_tombstone()) {
+        truncates_mutation = make_truncates_mutation(view, view->truncate_tombstone(), timestamp);
+    }
+
     return schema_mutations{std::move(m), std::move(columns_mutation), std::move(view_virtual_columns_mutation), std::move(computed_columns_mutation),
                             std::move(indices_mutation), std::move(dropped_columns_mutation),
-                            std::move(scylla_tables_mutation)};
+                            std::move(scylla_tables_mutation), std::move(truncates_mutation)};
 }
 
 schema_mutations make_schema_mutations(schema_ptr s, api::timestamp_type timestamp, bool with_columns)
@@ -3401,6 +3449,9 @@ std::vector<schema_ptr> all_tables(schema_features features) {
     }
     if (features.contains<schema_feature::SCYLLA_AGGREGATES>()) {
         result.emplace_back(scylla_aggregates());
+    }
+    if (features.contains<schema_feature::TRUNCATE_TOMBSTONE>()) {
+        result.emplace_back(truncates());
     }
     return result;
 }
