@@ -84,7 +84,7 @@ struct experimental_features_t {
     // NOTE: RAFT feature is not enabled via `experimental` umbrella flag.
     // This option should be enabled explicitly.
     enum class feature { UNUSED, UDF, ALTERNATOR_STREAMS, ALTERNATOR_TTL, RAFT,
-            KEYSPACE_STORAGE_OPTIONS };
+            KEYSPACE_STORAGE_OPTIONS, TRUNCATE_TOMBSTONE };
     static std::map<sstring, feature> map(); // See enum_option.
     static std::vector<enum_option<experimental_features_t>> all();
 };

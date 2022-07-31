@@ -24,6 +24,7 @@ enum class schema_feature {
     PER_TABLE_PARTITIONERS,
     SCYLLA_KEYSPACES,
     SCYLLA_AGGREGATES,
+    TRUNCATE_TOMBSTONE,
 };
 
 using schema_features = enum_set<super_enum<schema_feature,
@@ -33,7 +34,8 @@ using schema_features = enum_set<super_enum<schema_feature,
     schema_feature::CDC_OPTIONS,
     schema_feature::PER_TABLE_PARTITIONERS,
     schema_feature::SCYLLA_KEYSPACES,
-    schema_feature::SCYLLA_AGGREGATES
+    schema_feature::SCYLLA_AGGREGATES,
+    schema_feature::TRUNCATE_TOMBSTONE
     >>;
 
 }

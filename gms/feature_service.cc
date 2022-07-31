@@ -76,6 +76,9 @@ feature_config feature_config_from_db_config(db::config& cfg, std::set<sstring> 
     if (!cfg.check_experimental(db::experimental_features_t::feature::KEYSPACE_STORAGE_OPTIONS)) {
         fcfg._disabled_features.insert("KEYSPACE_STORAGE_OPTIONS"s);
     }
+    if (!cfg.check_experimental(db::experimental_features_t::feature::TRUNCATE_TOMBSTONE)) {
+        fcfg._disabled_features.insert("TRUNCATE_TOMBSTONE"s);
+    }
 
     return fcfg;
 }
@@ -206,6 +209,7 @@ db::schema_features feature_service::cluster_schema_features() const {
     f.set_if<db::schema_feature::PER_TABLE_PARTITIONERS>(per_table_partitioners);
     f.set_if<db::schema_feature::SCYLLA_KEYSPACES>(keyspace_storage_options);
     f.set_if<db::schema_feature::SCYLLA_AGGREGATES>(aggregate_storage_options);
+    f.set_if<db::schema_feature::TRUNCATE_TOMBSTONE>(truncate_tombstone);
     return f;
 }
 

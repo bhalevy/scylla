@@ -1056,6 +1056,7 @@ std::map<sstring, db::experimental_features_t::feature> db::experimental_feature
         {"alternator-ttl", feature::ALTERNATOR_TTL},
         {"raft", feature::RAFT},
         {"keyspace-storage-options", feature::KEYSPACE_STORAGE_OPTIONS},
+        {"truncate-tombstone", feature::TRUNCATE_TOMBSTONE},
     };
 }
 
