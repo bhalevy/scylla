@@ -1168,7 +1168,8 @@ public:
         return mutation_partition(incomplete_tag(), s, t);
     }
     mutation_partition(schema_ptr s)
-        : _rows()
+        : _tombstone(s->truncate_tombstone())
+        , _rows()
         , _row_tombstones(*s)
 #ifdef SEASTAR_DEBUG
         , _schema_version(s->version())

@@ -136,7 +136,7 @@ struct reversal_traits<true> {
 };
 
 mutation_partition::mutation_partition(const schema& s, const mutation_partition& x)
-        : _tombstone(x._tombstone)
+        : _tombstone(std::max(s.truncate_tombstone(), x._tombstone))
         , _static_row(s, column_kind::static_column, x._static_row)
         , _static_row_continuous(x._static_row_continuous)
         , _rows()
@@ -156,7 +156,7 @@ mutation_partition::mutation_partition(const schema& s, const mutation_partition
 
 mutation_partition::mutation_partition(const mutation_partition& x, const schema& schema,
         query::clustering_key_filter_ranges ck_ranges)
-        : _tombstone(x._tombstone)
+        : _tombstone(std::max(x._tombstone, schema.truncate_tombstone()))
         , _static_row(schema, column_kind::static_column, x._static_row)
         , _static_row_continuous(x._static_row_continuous)
         , _rows()
@@ -186,7 +186,7 @@ mutation_partition::mutation_partition(const mutation_partition& x, const schema
 
 mutation_partition::mutation_partition(mutation_partition&& x, const schema& schema,
     query::clustering_key_filter_ranges ck_ranges)
-    : _tombstone(x._tombstone)
+    : _tombstone(std::max(x._tombstone, schema.truncate_tombstone()))
     , _static_row(std::move(x._static_row))
     , _static_row_continuous(x._static_row_continuous)
     , _rows(std::move(x._rows))
@@ -2281,7 +2281,7 @@ public:
 };
 
 mutation_partition::mutation_partition(mutation_partition::incomplete_tag, const schema& s, tombstone t)
-    : _tombstone(t)
+    : _tombstone(std::max(s.truncate_tombstone(), t))
     , _static_row_continuous(!s.has_static_columns())
     , _rows()
     , _row_tombstones(s)
