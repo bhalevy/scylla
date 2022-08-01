@@ -878,6 +878,47 @@ future<std::vector<mutation>> migration_manager::prepare_view_drop_announcement(
     }
 }
 
+future<std::vector<mutation>> migration_manager::prepare_table_truncate_announcement(const sstring& ks_name,
+                    const sstring& cf_name, api::timestamp_type ts) {
+    try {
+        auto& db = _storage_proxy.get_db().local();
+        auto& old_cfm = db.find_column_family(ks_name, cf_name);
+        auto& schema = old_cfm.schema();
+        if (schema->is_view()) {
+            co_await coroutine::return_exception(exceptions::invalid_request_exception("Cannot TRUNCATE a Materialized View. TRUNCATE the base table instead."));
+        }
+        auto keyspace = db.find_keyspace(ks_name).metadata();
+
+        mlogger.info("Truncate table '{}.{}'", schema->ks_name(), schema->cf_name());
+
+        auto&& views = old_cfm.views();
+
+        std::vector<mutation> drop_si_mutations;
+        if (!schema->all_indices().empty()) {
+            auto builder = schema_builder(schema).without_indexes();
+            drop_si_mutations = db::schema_tables::make_update_table_mutations(db, keyspace, schema, builder.build(), ts, false);
+        }
+        auto mutations = db::schema_tables::make_truncate_table_mutations(keyspace, schema, ts);
+        mutations.insert(mutations.end(), std::make_move_iterator(drop_si_mutations.begin()), std::make_move_iterator(drop_si_mutations.end()));
+        for (auto& v : views) {
+            if (!old_cfm.get_index_manager().is_index(v)) {
+                mlogger.info("Drop view '{}.{}' of table '{}'", v->ks_name(), v->cf_name(), schema->cf_name());
+                auto m = db::schema_tables::make_drop_view_mutations(keyspace, v, ts);
+                mutations.insert(mutations.end(), std::make_move_iterator(m.begin()), std::make_move_iterator(m.end()));
+            }
+        }
+
+        // notifiers must run in seastar thread
+        co_await seastar::async([&] {
+            get_notifier().before_drop_column_family(*schema, mutations, ts);
+        });
+        co_return co_await include_keyspace(*keyspace, std::move(mutations));
+    } catch (const replica::no_such_column_family& e) {
+        auto&& ex = std::make_exception_ptr(exceptions::configuration_exception(format("Cannot drop non existing table '{}' in keyspace '{}'.", cf_name, ks_name)));
+        co_return coroutine::exception(std::move(ex));
+    }
+}
+
 future<> migration_manager::push_schema_mutation(const gms::inet_address& endpoint, const std::vector<mutation>& schema)
 {
     netw::messaging_service::msg_addr id{endpoint, 0};

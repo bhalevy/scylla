@@ -2625,6 +2625,25 @@ std::vector<mutation> make_drop_table_mutations(lw_shared_ptr<keyspace_metadata>
     return mutations;
 }
 
+static void make_truncate_table_or_view_mutations(schema_ptr schema_table,
+            schema_ptr table_or_view,
+            api::timestamp_type timestamp,
+            tombstone t,
+            std::vector<mutation>& mutations) {
+    if (!t) {
+        t = tombstone(timestamp, gc_clock::now());
+    }
+    mutations.apply_back(make_truncates_mutation(table_or_view, t, timestamp));
+}
+
+std::vector<mutation> make_truncate_table_mutations(lw_shared_ptr<keyspace_metadata> keyspace, schema_ptr table, api::timestamp_type timestamp, tombstone t)
+{
+    std::vector<mutation> mutations;
+    make_truncate_table_or_view_mutations(truncates(), std::move(table), timestamp, t, mutations);
+
+    return mutations;
+}
+
 static future<schema_mutations> read_table_mutations(distributed<service::storage_proxy>& proxy, const qualified_name& table, schema_ptr s)
 {
     auto&& [cf_m, col_m, vv_col_m, c_col_m, dropped_m, idx_m, st_m, t_m] = co_await coroutine::all(

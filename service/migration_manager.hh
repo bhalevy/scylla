@@ -146,6 +146,8 @@ public:
 
     future<std::vector<mutation>> prepare_view_drop_announcement(const sstring& ks_name, const sstring& cf_name, api::timestamp_type);
 
+    future<std::vector<mutation>> prepare_table_truncate_announcement(const sstring& ks_name, const sstring& cf_name, api::timestamp_type);
+
     // The function needs to be called if the user wants to read most up-to-date group 0 state (including schema state)
     // (the function ensures that all previously finished group0 operations are visible on this node) or to write it.
     //
