@@ -953,6 +953,78 @@ SEASTAR_TEST_CASE(sstable_compaction_does_not_resurrect_data) {
     }, db_config);
 }
 
+SEASTAR_TEST_CASE(sstable_compaction_does_not_resurrect_data_after_truncate) {
+    auto db_config = make_shared<db::config>();
+    db_config->enable_cache.set(false);
+    return do_with_cql_env_thread([](cql_test_env& env) {
+        replica::database& db = env.local_db();
+        service::migration_manager& mm = env.migration_manager().local();
+
+        sstring ks_name = "ks";
+        sstring table_name = "table_name";
+
+        auto base_schema = schema_builder(ks_name, table_name)
+            .with_column(to_bytes("pk"), int32_type, column_kind::partition_key)
+            .with_column(to_bytes("ck"), int32_type, column_kind::clustering_key)
+            .with_column(to_bytes("id"), int32_type)
+            .set_gc_grace_seconds(1);
+        schema_ptr s = base_schema.build();
+        auto group0_guard = mm.start_group0_operation().get();
+        auto ts = group0_guard.write_timestamp();
+        mm.announce(mm.prepare_new_column_family_announcement(s, ts).get(), std::move(group0_guard)).get();
+
+        replica::table& t = db.find_column_family(ks_name, table_name);
+
+        dht::decorated_key pk = dht::decorate_key(*s, partition_key::from_single_value(*s, serialized(1)));
+        clustering_key ck_to_truncate = clustering_key::from_single_value(*s, serialized(2));
+        clustering_key ck = clustering_key::from_single_value(*s, serialized(3));
+
+        api::timestamp_type insertion_timestamp_before_truncate = api::new_timestamp();
+        forward_jump_clocks(1s);
+        api::timestamp_type truncate_timestamp = api::new_timestamp();
+        forward_jump_clocks(1s);
+        api::timestamp_type insertion_timestamp_after_truncate = api::new_timestamp();
+
+        auto m_insert = mutation(s, pk);
+        m_insert.set_clustered_cell(ck_to_truncate, to_bytes("id"), data_value(2), insertion_timestamp_before_truncate);
+        t.apply(m_insert);
+
+        // Insert data that won't be removed by tombstone to prevent compaction from skipping whole partition
+        m_insert = mutation(s, pk);
+        m_insert.set_clustered_cell(ck, to_bytes("id"), data_value(3), insertion_timestamp_after_truncate);
+        t.apply(m_insert);
+
+        // Flush and wait until the gc_grace_seconds pass
+        t.flush().get();
+
+        // Apply truncate tombstone
+        s = base_schema
+            .with_truncate_tombstone(tombstone{truncate_timestamp, gc_clock::now()})
+            .build();
+        auto m_truncate = mutation(s, pk);
+        t.apply(m_truncate);
+
+        // Apply the past mutation to memtable to simulate repair. This row should be deleted by truncate tombstone
+        mutation m_past_insert = mutation(s, pk);
+        m_past_insert.set_clustered_cell(
+            ck_to_truncate,
+            to_bytes("id"),
+            data_value(4),
+            insertion_timestamp_before_truncate);
+        t.apply(m_past_insert);
+
+        // Trigger compaction.
+        t.compact_all_sstables().get();
+
+        // If we get additional row (1, 2, 4), that means that data was resurrected post truncate.
+        assert_that(env.execute_cql(format("SELECT * FROM {}.{};", ks_name, table_name)).get0())
+            .is_rows()
+            .with_rows_ignore_order({
+                {serialized(1), serialized(3), serialized(3)}, 
+            });
+    }, db_config);
+}
+
 SEASTAR_TEST_CASE(failed_flush_prevents_writes) {
 #ifndef SCYLLA_ENABLE_ERROR_INJECTION
     std::cerr << "Skipping test as it depends on error injection. Please run in mode where it's enabled (debug,dev).\n";
