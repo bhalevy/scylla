@@ -54,7 +54,6 @@
 #include <boost/range/join.hpp>
 
 #include "compaction/compaction_strategy.hh"
-#include "utils/joinpoint.hh"
 #include "view_info.hh"
 #include "cql_type_parser.hh"
 #include "db/timeout_clock.hh"
