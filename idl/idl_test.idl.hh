@@ -8,6 +8,8 @@
 
 // TODO: test final types more
 
+import uuid
+
 class simple_compound {
     uint32_t foo;
     uint32_t bar;

@@ -16,9 +16,11 @@ By default, all generated code for Scylla is created under `ser` namespace.
 As noted above, the syntax of IDL definitions file resembles C++ by providing similar-looking code constructs for class
 and enum serializers.
 
-The IDL file contains a sequence of entity declarations, most of which correspond directly to those from the actual
+The IDL file contains a sequence of includes, imports, and entity declarations, most of which correspond directly to those from the actual
 C++ code:
 
+- Includes (`include`)
+- Imports (`import`)
 - Namespaces (`namespace`)
 - Classes / structures (`class` / `struct`)
 - Enums (`enum class`)
@@ -29,6 +31,17 @@ declaration, similar to C++.
 
 Some places (e.g. classes, class members and RPC verbs) also support modifying generation behavior by providing
 attribute sequences (via C++ syntax of `[[attr]]` form).
+
+### Include and import
+
+Data types that are defined elsewhere can be used in IDL definition files.
+
+To include definitions from C++ headers, use the `include "filename.hh"` statement.
+The idl compiler generates a respective `#include "filename.hh"` directive in the generated `<mod_name>.dist.hh` file.
+
+To import definitions from other IDL definition files, use the `import <other_mod_name>` statement.
+The idl compiler generates a respective `#include "<other_mod_name>.dist.hh"` directive in the generated `<mod_name>.dist.hh` file
+and a `#include "<other_mod_name>.dist.impl.hh"` directive in the generated `<mod_name>.dist.impl.hh` file
 
 ### Namespaces
 
