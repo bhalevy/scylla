@@ -1,3 +1,16 @@
+/*
+ * Copyright 2022-present ScyllaDB
+ */
+
+/*
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ */
+
+include "dht/i_partitioner.hh"
+
+import read_command
+import consistency_level
+
 namespace db {
 namespace functions {
 class function_name {

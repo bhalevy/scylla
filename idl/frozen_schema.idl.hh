@@ -6,6 +6,12 @@
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
+include "canonical_mutation.hh"
+include "schema_mutations.hh"
+include "frozen_schema.hh"
+
+import uuid
+
 class canonical_mutation final {
     bytes representation();
 };

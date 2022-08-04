@@ -6,6 +6,14 @@
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
+include "dht/i_partitioner.hh"
+include "gms/inet_address_serializer.hh"
+
+import keys
+import uuid
+import frozen_mutation
+import token
+
 class repair_hash {
     uint64_t hash;
 };
