@@ -31,3 +31,27 @@ public:
 namespace std {
 template<> struct hash<table_id> : public hash<utils::UUID_class<table_id>> {};
 }
+
+// Cluster-wide identifier of schema version of particular table.
+//
+// The version changes the value not only on structural changes but also
+// temporal. For example, schemas with the same set of columns but created at
+// different times should have different versions. This allows nodes to detect
+// if the version they see was already synchronized with or not even if it has
+// the same structure as the past versions.
+//
+// Schema changes merged in any order should result in the same final version.
+//
+// When table_schema_version changes, schema_tables::calculate_schema_digest() should
+// also change when schema mutations are applied.
+class table_schema_version : public utils::UUID_class<table_schema_version> {
+public:
+    table_schema_version() = default;
+    explicit table_schema_version(utils::UUID uuid) noexcept : utils::UUID_class<table_schema_version>(uuid) {}
+
+    table_schema_version reversed() const noexcept;
+};
+
+namespace std {
+template<> struct hash<table_schema_version> : public hash<utils::UUID_class<table_schema_version>> {};
+}

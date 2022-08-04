@@ -24,3 +24,7 @@ class counter_id final {
 class table_id final {
     utils::UUID to_uuid();
 };
+
+class table_schema_version final {
+    utils::UUID to_uuid();
+};

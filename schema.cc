@@ -41,6 +41,10 @@ static_assert(
         std::is_standard_layout_v<table_id> && std::is_trivial_v<table_id>,
         "table_id should be a POD type");
 
+static_assert(
+        std::is_standard_layout_v<table_schema_version> && std::is_trivial_v<table_schema_version>,
+        "table_schema_version should be a POD type");
+
 sstring to_sstring(column_kind k) {
     switch (k) {
     case column_kind::partition_key:  return "PARTITION_KEY";
@@ -435,7 +439,7 @@ schema::schema(const schema& o)
 
 schema::schema(reversed_tag, const schema& o)
     : schema(o, [] (schema& s) {
-        s._raw._version = utils::UUID_gen::negate(s._raw._version);
+        s._raw._version = s._raw._version.reversed();
         for (auto& col : s._raw._columns) {
             if (col.kind == column_kind::clustering_key) {
                 col.type = reversed(col.type);
@@ -1236,7 +1240,7 @@ schema_ptr schema_builder::build() {
     if (_version) {
         new_raw._version = *_version;
     } else {
-        new_raw._version = utils::UUID_gen::get_time_UUID();
+        new_raw._version = table_schema_version(utils::UUID_gen::get_time_UUID());
     }
 
     if (new_raw._is_counter) {
@@ -1674,7 +1678,7 @@ schema_ptr schema::make_reversed() const {
 }
 
 schema_ptr schema::get_reversed() const {
-    return local_schema_registry().get_or_load(utils::UUID_gen::negate(_raw._version), [this] (table_schema_version) {
+    return local_schema_registry().get_or_load(_raw._version.reversed(), [this] (table_schema_version) {
         return frozen_schema(make_reversed());
     });
 }
@@ -1750,3 +1754,7 @@ schema_mismatch_error::schema_mismatch_error(table_schema_version expected, cons
     : std::runtime_error(fmt::format("Attempted to deserialize schema-dependent object of version {} using {}.{} {}",
         expected, access.ks_name(), access.cf_name(), access.version()))
 { }
+
+table_schema_version table_schema_version::reversed() const noexcept {
+    return table_schema_version(utils::UUID_gen::negate(to_uuid()));
+}
