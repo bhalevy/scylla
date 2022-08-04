@@ -8,6 +8,7 @@
 
 include "utils/UUID.hh"
 include "counters.hh"
+include "schema_fwd.hh"
 
 namespace utils {
 class UUID final {
@@ -17,5 +18,9 @@ class UUID final {
 }
 
 class counter_id final {
+    utils::UUID to_uuid();
+};
+
+class table_id final {
     utils::UUID to_uuid();
 };

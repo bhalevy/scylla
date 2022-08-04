@@ -244,9 +244,21 @@ public:
     bool operator!=(const UUID_class& other) const noexcept {
         return !(*this == other);
     }
+
+    sstring to_sstring() const {
+        return to_uuid().to_sstring();
+    }
 };
 
+template <typename T>
+concept uuid_class = std::derived_from<T, UUID_class<T>>;
+
 } // namespace utils
+
+template <utils::uuid_class T>
+std::ostream& operator<<(std::ostream& out, const T& id) {
+    return out << id.to_uuid();
+}
 
 template<>
 struct appending_hash<utils::UUID> {
@@ -266,4 +278,11 @@ struct hash<utils::UUID> {
         return size_t((hilo >> 32) ^ hilo);
     }
 };
-}
+
+template <typename T>
+struct hash<utils::UUID_class<T>> : private hash<utils::UUID> {
+    size_t operator()(const utils::UUID_class<T>& t) const noexcept {
+        return hash<utils::UUID>::operator()(t.to_uuid());
+    }
+};
+} // namespace std

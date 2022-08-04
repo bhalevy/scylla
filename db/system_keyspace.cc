@@ -85,9 +85,9 @@ api::timestamp_type system_keyspace::schema_creation_timestamp() {
 // FIXME: Make automatic by calculating from schema structure.
 static const uint16_t version_sequence_number = 1;
 
-table_schema_version system_keyspace::generate_schema_version(utils::UUID table_id, uint16_t offset) {
+table_schema_version system_keyspace::generate_schema_version(::table_id table_id, uint16_t offset) {
     md5_hasher h;
-    feed_hash(h, table_id);
+    feed_hash(h, table_id.to_uuid());
     feed_hash(h, version_sequence_number + offset);
     return utils::UUID_gen::get_name_UUID(h.finalize());
 }
@@ -1394,13 +1394,13 @@ typedef std::unordered_map<truncation_key, truncation_record> truncation_map;
 
 static constexpr uint8_t current_version = 1;
 
-future<truncation_record> system_keyspace::get_truncation_record(utils::UUID cf_id) {
+future<truncation_record> system_keyspace::get_truncation_record(table_id cf_id) {
     if (qctx->qp().db().get_config().ignore_truncation_record.is_set()) {
         truncation_record r{truncation_record::current_magic};
         return make_ready_future<truncation_record>(std::move(r));
     }
     sstring req = format("SELECT * from system.{} WHERE table_uuid = ?", TRUNCATED);
-    return qctx->qp().execute_internal(req, {cf_id}, cql3::query_processor::cache_internal::yes).then([](::shared_ptr<cql3::untyped_result_set> rs) {
+    return qctx->qp().execute_internal(req, {cf_id.to_uuid()}, cql3::query_processor::cache_internal::yes).then([](::shared_ptr<cql3::untyped_result_set> rs) {
         truncation_record r{truncation_record::current_magic};
 
         for (const cql3::untyped_result_set_row& row : *rs) {
@@ -1424,7 +1424,7 @@ future<> system_keyspace::cache_truncation_record() {
     sstring req = format("SELECT DISTINCT table_uuid, truncated_at from system.{}", TRUNCATED);
     return execute_cql(req).then([this] (::shared_ptr<cql3::untyped_result_set> rs) {
         return parallel_for_each(rs->begin(), rs->end(), [this] (const cql3::untyped_result_set_row& row) {
-            auto table_uuid = row.get_as<utils::UUID>("table_uuid");
+            auto table_uuid = table_id(row.get_as<utils::UUID>("table_uuid"));
             auto ts = row.get_as<db_clock::time_point>("truncated_at");
 
             return _db.invoke_on_all([table_uuid, ts] (replica::database& db) mutable {
@@ -1439,9 +1439,9 @@ future<> system_keyspace::cache_truncation_record() {
     });
 }
 
-future<> system_keyspace::save_truncation_record(utils::UUID id, db_clock::time_point truncated_at, db::replay_position rp) {
+future<> system_keyspace::save_truncation_record(table_id id, db_clock::time_point truncated_at, db::replay_position rp) {
     sstring req = format("INSERT INTO system.{} (table_uuid, shard, position, segment_id, truncated_at) VALUES(?,?,?,?,?)", TRUNCATED);
-    return qctx->qp().execute_internal(req, {id, int32_t(rp.shard_id()), int32_t(rp.pos), int64_t(rp.base_id()), truncated_at}, cql3::query_processor::cache_internal::yes).discard_result().then([] {
+    return qctx->qp().execute_internal(req, {id.to_uuid(), int32_t(rp.shard_id()), int32_t(rp.pos), int64_t(rp.base_id()), truncated_at}, cql3::query_processor::cache_internal::yes).discard_result().then([] {
         return force_blocking_flush(TRUNCATED);
     });
 }
@@ -1450,7 +1450,7 @@ future<> system_keyspace::save_truncation_record(const replica::column_family& c
     return save_truncation_record(cf.schema()->id(), truncated_at, rp);
 }
 
-future<db::replay_position> system_keyspace::get_truncated_position(utils::UUID cf_id, uint32_t shard) {
+future<db::replay_position> system_keyspace::get_truncated_position(table_id cf_id, uint32_t shard) {
     return get_truncated_position(std::move(cf_id)).then([shard](replay_positions positions) {
        for (auto& rp : positions) {
            if (shard == rp.shard_id()) {
@@ -1461,13 +1461,13 @@ future<db::replay_position> system_keyspace::get_truncated_position(utils::UUID 
     });
 }
 
-future<replay_positions> system_keyspace::get_truncated_position(utils::UUID cf_id) {
+future<replay_positions> system_keyspace::get_truncated_position(table_id cf_id) {
     return get_truncation_record(cf_id).then([](truncation_record e) {
         return make_ready_future<replay_positions>(e.positions);
     });
 }
 
-future<db_clock::time_point> system_keyspace::get_truncated_at(utils::UUID cf_id) {
+future<db_clock::time_point> system_keyspace::get_truncated_at(table_id cf_id) {
     return get_truncation_record(cf_id).then([](truncation_record e) {
         return make_ready_future<db_clock::time_point>(e.time_stamp);
     });
@@ -2646,7 +2646,7 @@ public:
 };
 
 // Map from table's schema ID to table itself. Helps avoiding accidental duplication.
-static thread_local std::map<utils::UUID, std::unique_ptr<virtual_table>> virtual_tables;
+static thread_local std::map<table_id, std::unique_ptr<virtual_table>> virtual_tables;
 
 void register_virtual_tables(distributed<replica::database>& dist_db, distributed<service::storage_service>& dist_ss, sharded<gms::gossiper>& dist_gossiper, db::config& cfg) {
     auto add_table = [] (std::unique_ptr<virtual_table>&& tbl) {
@@ -2880,15 +2880,15 @@ future<> system_keyspace::get_compaction_history(compaction_history_consumer&& f
 
 future<> system_keyspace::update_repair_history(repair_history_entry entry) {
     sstring req = format("INSERT INTO system.{} (table_uuid, repair_time, repair_uuid, keyspace_name, table_name, range_start, range_end) VALUES (?, ?, ?, ?, ?, ?, ?)", REPAIR_HISTORY);
-    co_await execute_cql(req, entry.table_uuid, entry.ts, entry.id, entry.ks, entry.cf, entry.range_start, entry.range_end).discard_result();
+    co_await execute_cql(req, entry.table_uuid.to_uuid(), entry.ts, entry.id, entry.ks, entry.cf, entry.range_start, entry.range_end).discard_result();
 }
 
-future<> system_keyspace::get_repair_history(utils::UUID table_id, repair_history_consumer f) {
+future<> system_keyspace::get_repair_history(::table_id table_id, repair_history_consumer f) {
     sstring req = format("SELECT * from system.{} WHERE table_uuid = {}", REPAIR_HISTORY, table_id);
     co_await _qp.local().query_internal(req, [&f] (const cql3::untyped_result_set::row& row) mutable -> future<stop_iteration> {
         repair_history_entry ent;
         ent.id = row.get_as<utils::UUID>("repair_uuid");
-        ent.table_uuid = row.get_as<utils::UUID>("table_uuid");
+        ent.table_uuid = ::table_id(row.get_as<utils::UUID>("table_uuid"));
         ent.range_start = row.get_as<int64_t>("range_start");
         ent.range_end = row.get_as<int64_t>("range_end");
         ent.ks = row.get_as<sstring>("keyspace_name");
@@ -3040,7 +3040,7 @@ future<service::paxos::paxos_state> system_keyspace::load_paxos_state(partition_
     static auto cql = format("SELECT * FROM system.{} WHERE row_key = ? AND cf_id = ?", PAXOS);
     // FIXME: we need execute_cql_with_now()
     (void)now;
-    auto f = qctx->execute_cql_with_timeout(cql, timeout, to_legacy(*key.get_compound_type(*s), key.representation()), s->id());
+    auto f = qctx->execute_cql_with_timeout(cql, timeout, to_legacy(*key.get_compound_type(*s), key.representation()), s->id().to_uuid());
     return f.then([s, key = std::move(key)] (shared_ptr<cql3::untyped_result_set> results) mutable {
         if (results->empty()) {
             return service::paxos::paxos_state();
@@ -3085,7 +3085,7 @@ future<> system_keyspace::save_paxos_promise(const schema& s, const partition_ke
             paxos_ttl_sec(s),
             ballot,
             to_legacy(*key.get_compound_type(s), key.representation()),
-            s.id()
+            s.id().to_uuid()
         ).discard_result();
 }
 
@@ -3100,7 +3100,7 @@ future<> system_keyspace::save_paxos_proposal(const schema& s, const service::pa
             proposal.ballot,
             ser::serialize_to_buffer<bytes>(proposal.update),
             to_legacy(*key.get_compound_type(s), key.representation()),
-            s.id()
+            s.id().to_uuid()
         ).discard_result();
 }
 
@@ -3121,7 +3121,7 @@ future<> system_keyspace::save_paxos_decision(const schema& s, const service::pa
             decision.ballot,
             ser::serialize_to_buffer<bytes>(decision.update),
             to_legacy(*key.get_compound_type(s), key.representation()),
-            s.id()
+            s.id().to_uuid()
         ).discard_result();
 }
 
@@ -3135,7 +3135,7 @@ future<> system_keyspace::delete_paxos_decision(const schema& s, const partition
             timeout,
             utils::UUID_gen::micros_timestamp(ballot),
             to_legacy(*key.get_compound_type(s), key.representation()),
-            s.id()
+            s.id().to_uuid()
         ).discard_result();
 }
 
