@@ -6,6 +6,11 @@
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
+include "mutation.hh"
+
+import uuid
+import keys
+
 class counter_id final {
     utils::UUID to_uuid();
 };
