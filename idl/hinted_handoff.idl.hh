@@ -6,6 +6,11 @@
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
+include "gms/inet_address_serializer.hh"
+
+import replay_position
+import uuid
+
 namespace db {
 
 namespace hints {

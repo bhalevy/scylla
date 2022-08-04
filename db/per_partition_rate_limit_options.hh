@@ -11,7 +11,6 @@
 #include <optional>
 
 #include "operation_type.hh"
-#include "serializer.hh"
 #include "log.hh"
 
 namespace db {

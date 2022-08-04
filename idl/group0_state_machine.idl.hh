@@ -6,6 +6,12 @@
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
+include "raft/raft.hh"
+
+import frozen_schema
+import uuid
+import raft_storage
+
 namespace service {
 
 struct schema_change {

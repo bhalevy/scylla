@@ -6,6 +6,10 @@
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
+import range
+import token
+import uuid
+
 namespace streaming {
 
 class stream_request {

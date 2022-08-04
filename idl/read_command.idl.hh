@@ -6,6 +6,12 @@
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
+include "query-request.hh"
+
+import keys
+import range
+import uuid
+
 class cql_serialization_format final {
     uint8_t protocol_version();
 };
