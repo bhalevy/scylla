@@ -11,10 +11,6 @@ include "mutation.hh"
 import uuid
 import keys
 
-class counter_id final {
-    utils::UUID to_uuid();
-};
-
 class counter_shard final {
     counter_id id();
     int64_t value();
