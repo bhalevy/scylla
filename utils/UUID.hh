@@ -206,7 +206,47 @@ inline std::strong_ordering uuid_tri_compare_timeuuid(bytes_view o1, bytes_view 
     return res;
 }
 
-}
+template <typename T>
+class UUID_class {
+    int64_t most_sig_bits;
+    int64_t least_sig_bits;
+public:
+    UUID_class() = default;
+    UUID_class(const UUID_class& o) = default;
+    UUID_class(UUID_class&& o) = default;
+
+    explicit UUID_class(UUID uuid) noexcept
+        : most_sig_bits(uuid.get_most_significant_bits())
+        , least_sig_bits(uuid.get_least_significant_bits())
+    {}
+
+    UUID_class& operator=(const UUID_class&) = default;
+    UUID_class& operator=(const UUID_class&&) = default;
+
+    utils::UUID to_uuid() const noexcept {
+        return utils::UUID(most_sig_bits, least_sig_bits);
+    }
+
+    // Prevent accidental typecasting to generic UUID
+    explicit operator utils::UUID() const noexcept {
+        return to_uuid();
+    }
+
+    bool operator<(const UUID_class& other) const {
+        return to_uuid() < other.to_uuid();
+    }
+    bool operator>(const UUID_class& other) const {
+        return other.to_uuid() < to_uuid();
+    }
+    bool operator==(const UUID_class& other) const {
+        return to_uuid() == other.to_uuid();
+    }
+    bool operator!=(const UUID_class& other) const {
+        return !(*this == other);
+    }
+};
+
+} // namespace utils
 
 template<>
 struct appending_hash<utils::UUID> {
