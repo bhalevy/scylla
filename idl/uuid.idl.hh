@@ -9,6 +9,7 @@
 include "utils/UUID.hh"
 include "counters.hh"
 include "schema_fwd.hh"
+include "types/query_id.hh"
 
 namespace utils {
 class UUID final {
@@ -26,5 +27,9 @@ class table_id final {
 };
 
 class table_schema_version final {
+    utils::UUID to_uuid();
+};
+
+class query_id final {
     utils::UUID to_uuid();
 };
