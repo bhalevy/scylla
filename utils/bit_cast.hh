@@ -9,6 +9,7 @@
 #pragma once
 
 #include <bit>
+#include <cstdint>
 #include <cstring>
 #include <cstddef>
 #include <type_traits>
@@ -16,11 +17,11 @@
 template <class T> concept Trivial = std::is_trivial_v<T>;
 template <class T> concept TriviallyCopyable = std::is_trivially_copyable_v<T>;
 
-template <Trivial To>
+template <TriviallyCopyable To>
 To read_unaligned(const void* src) {
-    To dst;
+    uint8_t dst[sizeof(To)];
     std::memcpy(&dst, src, sizeof(To));
-    return dst;
+    return *reinterpret_cast<To*>(dst);
 }
 
 template <TriviallyCopyable From>
