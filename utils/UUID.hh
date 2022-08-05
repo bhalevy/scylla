@@ -76,8 +76,6 @@ public:
                 ((uint64_t)least_sig_bits & 0xffffffffffffLL));
     }
 
-    friend std::ostream& operator<<(std::ostream& out, const UUID& uuid);
-
     bool operator==(const UUID& v) const noexcept {
         return most_sig_bits == v.most_sig_bits
                 && least_sig_bits == v.least_sig_bits
@@ -208,7 +206,7 @@ inline std::strong_ordering uuid_tri_compare_timeuuid(bytes_view o1, bytes_view 
     return res;
 }
 
-}
+} // namespace utils
 
 template<>
 struct appending_hash<utils::UUID> {
@@ -228,4 +226,8 @@ struct hash<utils::UUID> {
         return size_t((hilo >> 32) ^ hilo);
     }
 };
+
+inline std::ostream& operator<<(std::ostream& out, const utils::UUID& uuid) {
+    return out << uuid.to_sstring();
 }
+} // namespace std

@@ -33,10 +33,6 @@ make_random_uuid() noexcept {
     return UUID(msb, lsb);
 }
 
-std::ostream& operator<<(std::ostream& out, const UUID& uuid) {
-    return out << uuid.to_sstring();
-}
-
 UUID::UUID(sstring_view uuid) {
     sstring uuid_string(uuid.begin(), uuid.end());
     boost::erase_all(uuid_string, "-");
