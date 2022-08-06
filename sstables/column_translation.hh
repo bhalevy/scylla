@@ -11,7 +11,7 @@
 #include <vector>
 #include <seastar/core/shared_ptr.hh>
 
-#include "schema_fwd.hh"
+#include "schema_basic_types.hh"
 #include "sstables/types.hh"
 #include "utils/UUID.hh"
 #include "db/marshal/type_parser.hh"

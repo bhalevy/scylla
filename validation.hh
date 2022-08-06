@@ -11,7 +11,7 @@
 #pragma once
 
 #include <seastar/core/sstring.hh>
-#include "schema_fwd.hh"
+#include "schema_basic_types.hh"
 
 using namespace seastar;
 

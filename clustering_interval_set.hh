@@ -8,7 +8,7 @@
 
 #pragma once
 
-#include "schema_fwd.hh"
+#include "schema_basic_types.hh"
 #include "position_in_partition.hh"
 #include <boost/icl/interval_set.hpp>
 

@@ -11,7 +11,7 @@
 
 #include "mutation.hh"
 #include "db/commitlog/replay_position.hh"
-#include "schema_fwd.hh"
+#include "schema_basic_types.hh"
 #include "schema_features.hh"
 #include "hashing.hh"
 #include "schema_mutations.hh"

@@ -14,7 +14,7 @@
 #include "utils/managed_bytes.hh"
 #include "hashing.hh"
 #include "replica/database_fwd.hh"
-#include "schema_fwd.hh"
+#include "schema_basic_types.hh"
 #include <compare>
 
 //

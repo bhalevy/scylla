@@ -14,7 +14,7 @@
 #include <seastar/core/weak_ptr.hh>
 
 #include "utils/hash.hh"
-#include "schema_fwd.hh"
+#include "schema_basic_types.hh"
 #include "readers/flat_mutation_reader_v2.hh"
 #include "utils/top_k.hh"
 #include "schema_registry.hh"

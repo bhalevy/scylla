@@ -26,7 +26,7 @@
 #include <seastar/core/enum.hh>
 #include "compress.hh"
 #include "dht/i_partitioner.hh"
-#include "schema_fwd.hh"
+#include "schema_basic_types.hh"
 #include "utils/i_filter.hh"
 #include <seastar/core/stream.hh>
 #include "encoding_stats.hh"

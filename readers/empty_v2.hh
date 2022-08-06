@@ -7,7 +7,7 @@
  */
 
 #pragma once
-#include "schema_fwd.hh"
+#include "schema_basic_types.hh"
 
 class flat_mutation_reader_v2;
 class reader_permit;

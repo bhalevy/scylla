@@ -12,7 +12,7 @@
 #include "seastarx.hh"
 
 #include "db/timeout_clock.hh"
-#include "schema_fwd.hh"
+#include "schema_basic_types.hh"
 #include "query_class_config.hh"
 
 namespace seastar {

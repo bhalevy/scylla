@@ -34,7 +34,7 @@
 #include "db/commitlog/replay_position.hh"
 #include "db/commitlog/commitlog_types.hh"
 #include <limits>
-#include "schema_fwd.hh"
+#include "schema_basic_types.hh"
 #include "db/view/view.hh"
 #include "db/snapshot-ctl.hh"
 #include "gms/feature.hh"

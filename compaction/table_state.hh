@@ -9,7 +9,7 @@
 
 #pragma once
 
-#include "schema_fwd.hh"
+#include "schema_basic_types.hh"
 #include "sstables/sstable_set.hh"
 #include "sstables/sstables_manager.hh"
 #include "compaction_descriptor.hh"

@@ -9,7 +9,7 @@
 #pragma once
 
 #include "bytes.hh"
-#include "schema_fwd.hh"
+#include "schema_basic_types.hh"
 #include "replica/database_fwd.hh"
 #include "bytes_ostream.hh"
 #include <iosfwd>

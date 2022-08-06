@@ -8,7 +8,7 @@
 
 #pragma once
 
-#include "schema_fwd.hh"
+#include "schema_basic_types.hh"
 #include "frozen_mutation.hh"
 #include "bytes_ostream.hh"
 

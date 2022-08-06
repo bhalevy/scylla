@@ -11,7 +11,7 @@
 #include <memory>
 #include <seastar/core/io_priority_class.hh>
 #include <seastar/core/smp.hh>
-#include "schema_fwd.hh"
+#include "schema_basic_types.hh"
 #include "mutation_fragment.hh"
 #include "mutation_fragment_v2.hh"
 

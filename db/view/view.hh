@@ -11,7 +11,7 @@
 #include "dht/i_partitioner.hh"
 #include "gc_clock.hh"
 #include "query-request.hh"
-#include "schema_fwd.hh"
+#include "schema_basic_types.hh"
 #include "readers/flat_mutation_reader_v2.hh"
 #include "frozen_mutation.hh"
 

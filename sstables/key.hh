@@ -8,7 +8,7 @@
 
 #pragma once
 #include "bytes.hh"
-#include "schema_fwd.hh"
+#include "schema_basic_types.hh"
 #include <seastar/core/future.hh>
 #include "replica/database_fwd.hh"
 #include "keys.hh"

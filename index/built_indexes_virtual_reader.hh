@@ -11,7 +11,7 @@
 #include "readers/flat_mutation_reader_v2.hh"
 #include "mutation_fragment_v2.hh"
 #include "query-request.hh"
-#include "schema_fwd.hh"
+#include "schema_basic_types.hh"
 #include "secondary_index_manager.hh"
 #include "tracing/tracing.hh"
 #include "view_info.hh"

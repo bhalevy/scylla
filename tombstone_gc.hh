@@ -11,7 +11,7 @@
 #include <seastar/core/shared_ptr.hh>
 #include "gc_clock.hh"
 #include "dht/token.hh"
-#include "schema_fwd.hh"
+#include "schema_basic_types.hh"
 #include "range.hh"
 #include "interval.hh"
 

@@ -9,7 +9,7 @@
 #pragma once
 
 #include "utils/chunked_vector.hh"
-#include "schema_fwd.hh"
+#include "schema_basic_types.hh"
 #include "gc_clock.hh"
 #include "atomic_cell.hh"
 #include <iosfwd>

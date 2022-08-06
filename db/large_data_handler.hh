@@ -9,7 +9,7 @@
 #pragma once
 
 #include <cstdint>
-#include "schema_fwd.hh"
+#include "schema_basic_types.hh"
 #include "system_keyspace.hh"
 #include "sstables/shared_sstable.hh"
 

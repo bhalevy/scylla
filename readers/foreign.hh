@@ -11,7 +11,7 @@
 #include <seastar/core/sharded.hh>
 
 #include "readers/flat_mutation_reader_fwd.hh"
-#include "schema_fwd.hh"
+#include "schema_basic_types.hh"
 
 class reader_permit;
 

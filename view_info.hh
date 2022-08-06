@@ -10,7 +10,7 @@
 
 #include "dht/i_partitioner.hh"
 #include "query-request.hh"
-#include "schema_fwd.hh"
+#include "schema_basic_types.hh"
 #include "db/view/view.hh"
 
 namespace cql3::statements {
