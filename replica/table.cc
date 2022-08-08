@@ -1098,7 +1098,7 @@ future<bool> table::perform_offstrategy_compaction() {
 
 void table::set_compaction_strategy(sstables::compaction_strategy_type strategy) {
     tlogger.debug("Setting compaction strategy of {}.{} to {}", _schema->ks_name(), _schema->cf_name(), sstables::compaction_strategy::name(strategy));
-    auto new_cs = make_compaction_strategy(strategy, _schema->compaction_strategy_options());
+    auto new_cs = make_compaction_strategy(strategy, _compaction_manager, _schema->compaction_strategy_options());
 
     _compaction_manager.register_backlog_tracker(new_cs.get_backlog_tracker());
     auto move_read_charges = new_cs.type() == _compaction_strategy.type();
@@ -1226,7 +1226,7 @@ table::table(schema_ptr schema, config config, db::commitlog* cl, compaction_man
                          column_family_label(_schema->cf_name())
                         )
     , _memtables(_config.enable_disk_writes ? make_memtable_list() : make_memory_only_memtable_list())
-    , _compaction_strategy(make_compaction_strategy(_schema->compaction_strategy(), _schema->compaction_strategy_options()))
+    , _compaction_strategy(make_compaction_strategy(_schema->compaction_strategy(), compaction_manager, _schema->compaction_strategy_options()))
     , _main_sstables(make_lw_shared<sstables::sstable_set>(_compaction_strategy.make_sstable_set(_schema)))
     , _maintenance_sstables(make_maintenance_sstable_set())
     , _sstables(make_compound_sstable_set())

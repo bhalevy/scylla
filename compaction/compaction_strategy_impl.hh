@@ -38,14 +38,17 @@ protected:
     bool _disable_tombstone_compaction = false;
     float _tombstone_threshold = DEFAULT_TOMBSTONE_THRESHOLD;
     db_clock::duration _tombstone_compaction_interval = DEFAULT_TOMBSTONE_COMPACTION_INTERVAL();
+    // null_compation_strategy has no compaction_manager
+    compaction_manager_opt _compaction_manager = compaction_manager_nullopt;
 public:
     static std::optional<sstring> get_value(const std::map<sstring, sstring>& options, const sstring& name);
 protected:
     compaction_strategy_impl() = default;
-    explicit compaction_strategy_impl(const std::map<sstring, sstring>& options);
+    explicit compaction_strategy_impl(compaction_manager& cm, const std::map<sstring, sstring>& options);
     static compaction_descriptor make_major_compaction_job(std::vector<sstables::shared_sstable> candidates,
             int level = compaction_descriptor::default_level,
             uint64_t max_sstable_bytes = compaction_descriptor::default_max_sstable_bytes);
+
 public:
     virtual ~compaction_strategy_impl() {}
     virtual compaction_descriptor get_sstables_for_compaction(table_state& table_s, strategy_control& control, std::vector<sstables::shared_sstable> candidates) = 0;
@@ -80,5 +83,9 @@ public:
     }
 
     virtual compaction_descriptor get_reshaping_job(std::vector<shared_sstable> input, schema_ptr schema, const ::io_priority_class& iop, reshape_mode mode);
+
+    compaction_manager_opt get_compaction_manager_opt() const noexcept {
+        return _compaction_manager;
+    }
 };
 }

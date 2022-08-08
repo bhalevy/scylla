@@ -29,6 +29,10 @@ class database;
 
 }
 
+class compaction_manager;
+using compaction_manager_opt = const compaction_manager* const;
+constexpr compaction_manager_opt compaction_manager_nullopt = nullptr;
+
 class tombstone_gc_options;
 
 struct get_gc_before_for_range_result {

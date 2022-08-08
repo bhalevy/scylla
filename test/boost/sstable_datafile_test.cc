@@ -2112,7 +2112,7 @@ SEASTAR_TEST_CASE(sstable_set_incremental_selector) {
   return test_env::do_with([] (test_env& env) {
     auto s = make_shared_schema({}, some_keyspace, some_column_family,
         {{"p1", utf8_type}}, {}, {}, {}, utf8_type);
-    auto cs = sstables::make_compaction_strategy(sstables::compaction_strategy_type::leveled, s->compaction_strategy_options());
+    auto cs = sstables::make_compaction_strategy(sstables::compaction_strategy_type::leveled, env.get_compaction_manager(), s->compaction_strategy_options());
     auto key_and_token_pair = token_generation_for_current_shard(8);
     auto decorated_keys = boost::copy_range<std::vector<dht::decorated_key>>(
             key_and_token_pair | boost::adaptors::transformed([&s] (const std::pair<sstring, dht::token>& key_and_token) {
@@ -2180,7 +2180,7 @@ SEASTAR_TEST_CASE(sstable_set_erase) {
 
     // check that sstable_set::erase is capable of working properly when a non-existing element is given.
     {
-        auto cs = sstables::make_compaction_strategy(sstables::compaction_strategy_type::leveled, s->compaction_strategy_options());
+        auto cs = sstables::make_compaction_strategy(sstables::compaction_strategy_type::leveled, env.get_compaction_manager(), s->compaction_strategy_options());
         sstable_set set = cs.make_sstable_set(s);
 
         auto sst = sstable_for_overlapping_test(env, s, 0, key_and_token_pair[0].first, key_and_token_pair[0].first, 0);
@@ -2196,7 +2196,7 @@ SEASTAR_TEST_CASE(sstable_set_erase) {
     }
 
     {
-        auto cs = sstables::make_compaction_strategy(sstables::compaction_strategy_type::leveled, s->compaction_strategy_options());
+        auto cs = sstables::make_compaction_strategy(sstables::compaction_strategy_type::leveled, env.get_compaction_manager(), s->compaction_strategy_options());
         sstable_set set = cs.make_sstable_set(s);
 
         // triggers use-after-free, described in #4572, by operating on interval that relies on info of a destroyed sstable object.
@@ -2214,7 +2214,7 @@ SEASTAR_TEST_CASE(sstable_set_erase) {
     }
 
     {
-        auto cs = sstables::make_compaction_strategy(sstables::compaction_strategy_type::size_tiered, s->compaction_strategy_options());
+        auto cs = sstables::make_compaction_strategy(sstables::compaction_strategy_type::size_tiered, env.get_compaction_manager(), s->compaction_strategy_options());
         sstable_set set = cs.make_sstable_set(s);
 
         auto sst = sstable_for_overlapping_test(env, s, 0, key_and_token_pair[0].first, key_and_token_pair[0].first, 0);
@@ -2928,7 +2928,7 @@ SEASTAR_TEST_CASE(compound_sstable_set_basic_test) {
     return test_env::do_with([] (test_env& env) {
         auto s = make_shared_schema({}, some_keyspace, some_column_family,
             {{"p1", utf8_type}}, {}, {}, {}, utf8_type);
-        auto cs = sstables::make_compaction_strategy(sstables::compaction_strategy_type::size_tiered, s->compaction_strategy_options());
+        auto cs = sstables::make_compaction_strategy(sstables::compaction_strategy_type::size_tiered, env.get_compaction_manager(), s->compaction_strategy_options());
 
         lw_shared_ptr<sstables::sstable_set> set1 = make_lw_shared(cs.make_sstable_set(s));
         lw_shared_ptr<sstables::sstable_set> set2 = make_lw_shared(cs.make_sstable_set(s));
