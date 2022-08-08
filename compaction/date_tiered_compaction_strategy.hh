@@ -261,7 +261,7 @@ class date_tiered_compaction_strategy : public compaction_strategy_impl {
     date_tiered_manifest _manifest;
     compaction_backlog_tracker _backlog_tracker;
 public:
-    date_tiered_compaction_strategy(const std::map<sstring, sstring>& options);
+    date_tiered_compaction_strategy(compaction_manager& cm, const std::map<sstring, sstring>& options);
     virtual compaction_descriptor get_sstables_for_compaction(table_state& table_s, strategy_control& control, std::vector<sstables::shared_sstable> candidates) override;
 
     virtual int64_t estimated_pending_compactions(table_state& table_s) const override {

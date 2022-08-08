@@ -18,6 +18,7 @@
 #include "compaction_strategy_type.hh"
 #include "table_state.hh"
 #include "strategy_control.hh"
+#include "utils/optional_reference.hh"
 
 struct mutation_source_metadata;
 class compaction_backlog_tracker;
@@ -128,9 +129,11 @@ public:
     // SSTables that can be added into a single job.
     compaction_descriptor get_reshaping_job(std::vector<shared_sstable> input, schema_ptr schema, const ::io_priority_class& iop, reshape_mode mode);
 
+    // null_compation_strategy has no compaction_manager
+    const utils::optional_reference<const compaction_manager>& get_compaction_manager() const noexcept;
 };
 
 // Creates a compaction_strategy object from one of the strategies available.
-compaction_strategy make_compaction_strategy(compaction_strategy_type strategy, const std::map<sstring, sstring>& options);
+compaction_strategy make_compaction_strategy(compaction_strategy_type strategy, compaction_manager& cm, const std::map<sstring, sstring>& options);
 
 }

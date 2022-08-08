@@ -1693,7 +1693,7 @@ SEASTAR_TEST_CASE(time_window_strategy_correctness_test) {
         }
 
         std::map<sstring, sstring> options;
-        time_window_compaction_strategy twcs(options);
+        time_window_compaction_strategy twcs(env.get_compaction_manager(), options);
         std::map<api::timestamp_type, std::vector<shared_sstable>> buckets;
         column_family_for_tests cf(env.manager(), s);
         auto close_cf = deferred_stop(cf);
@@ -1777,7 +1777,7 @@ SEASTAR_TEST_CASE(time_window_strategy_size_tiered_behavior_correctness) {
         };
 
         std::map<sstring, sstring> options;
-        time_window_compaction_strategy twcs(options);
+        time_window_compaction_strategy twcs(env.get_compaction_manager(), options);
         std::map<api::timestamp_type, std::vector<shared_sstable>> buckets; // windows
         int min_threshold = 4;
         int max_threshold = 32;
@@ -1906,7 +1906,7 @@ SEASTAR_TEST_CASE(min_max_clustering_key_test_2) {
 SEASTAR_TEST_CASE(size_tiered_beyond_max_threshold_test) {
   return test_env::do_with([] (test_env& env) {
     column_family_for_tests cf(env.manager());
-    auto cs = sstables::make_compaction_strategy(sstables::compaction_strategy_type::size_tiered, cf.schema()->compaction_strategy_options());
+    auto cs = sstables::make_compaction_strategy(sstables::compaction_strategy_type::size_tiered, env.get_compaction_manager(), cf.schema()->compaction_strategy_options());
 
     std::vector<sstables::shared_sstable> candidates;
     int max_threshold = cf->schema()->max_compaction_threshold();
@@ -1984,7 +1984,7 @@ SEASTAR_TEST_CASE(sstable_expired_data_ratio) {
         std::map<sstring, sstring> options;
         options.emplace("tombstone_threshold", "0.3f");
 
-        auto cs = sstables::make_compaction_strategy(sstables::compaction_strategy_type::size_tiered, options);
+        auto cs = sstables::make_compaction_strategy(sstables::compaction_strategy_type::size_tiered, env.get_compaction_manager(), options);
         // that's needed because sstable with expired data should be old enough.
         sstables::test(sst).set_data_file_write_time(db_clock::time_point::min());
         auto table_s = make_table_state_for_test(cf, env);
@@ -1993,7 +1993,7 @@ SEASTAR_TEST_CASE(sstable_expired_data_ratio) {
         BOOST_REQUIRE(descriptor.sstables.size() == 1);
         BOOST_REQUIRE(descriptor.sstables.front() == sst);
 
-        cs = sstables::make_compaction_strategy(sstables::compaction_strategy_type::leveled, options);
+        cs = sstables::make_compaction_strategy(sstables::compaction_strategy_type::leveled, env.get_compaction_manager(), options);
         sst->set_sstable_level(1);
         descriptor = cs.get_sstables_for_compaction(*table_s, *strategy_c, { sst });
         BOOST_REQUIRE(descriptor.sstables.size() == 1);
@@ -2002,10 +2002,10 @@ SEASTAR_TEST_CASE(sstable_expired_data_ratio) {
         BOOST_REQUIRE(descriptor.sstables.front()->get_sstable_level() == 1U);
 
         // check tombstone compaction is disabled by default for DTCS
-        cs = sstables::make_compaction_strategy(sstables::compaction_strategy_type::date_tiered, {});
+        cs = sstables::make_compaction_strategy(sstables::compaction_strategy_type::date_tiered, env.get_compaction_manager(), {});
         descriptor = cs.get_sstables_for_compaction(*table_s, *strategy_c, { sst });
         BOOST_REQUIRE(descriptor.sstables.size() == 0);
-        cs = sstables::make_compaction_strategy(sstables::compaction_strategy_type::date_tiered, options);
+        cs = sstables::make_compaction_strategy(sstables::compaction_strategy_type::date_tiered, env.get_compaction_manager(), options);
         descriptor = cs.get_sstables_for_compaction(*table_s, *strategy_c, { sst });
         BOOST_REQUIRE(descriptor.sstables.size() == 1);
         BOOST_REQUIRE(descriptor.sstables.front() == sst);
@@ -2014,7 +2014,7 @@ SEASTAR_TEST_CASE(sstable_expired_data_ratio) {
         {
             std::map<sstring, sstring> options;
             options.emplace("tombstone_threshold", "0.5f");
-            auto cs = sstables::make_compaction_strategy(sstables::compaction_strategy_type::size_tiered, options);
+            auto cs = sstables::make_compaction_strategy(sstables::compaction_strategy_type::size_tiered, env.get_compaction_manager(), options);
             auto descriptor = cs.get_sstables_for_compaction(*table_s, *strategy_c, { sst });
             BOOST_REQUIRE(descriptor.sstables.size() == 0);
         }
@@ -2022,7 +2022,7 @@ SEASTAR_TEST_CASE(sstable_expired_data_ratio) {
         {
             std::map<sstring, sstring> options;
             options.emplace("tombstone_compaction_interval", "3600");
-            auto cs = sstables::make_compaction_strategy(sstables::compaction_strategy_type::size_tiered, options);
+            auto cs = sstables::make_compaction_strategy(sstables::compaction_strategy_type::size_tiered, env.get_compaction_manager(), options);
             sstables::test(sst).set_data_file_write_time(db_clock::now());
             auto descriptor = cs.get_sstables_for_compaction(*table_s, *strategy_c, { sst });
             BOOST_REQUIRE(descriptor.sstables.size() == 0);
@@ -3212,7 +3212,7 @@ SEASTAR_TEST_CASE(compaction_strategy_aware_major_compaction_test) {
         auto table_s = make_table_state_for_test(cf, env);
 
         {
-            auto cs = sstables::make_compaction_strategy(sstables::compaction_strategy_type::leveled, cf.schema()->compaction_strategy_options());
+            auto cs = sstables::make_compaction_strategy(sstables::compaction_strategy_type::leveled, env.get_compaction_manager(), cf.schema()->compaction_strategy_options());
             auto descriptor = cs.get_major_compaction_job(*table_s, candidates);
             BOOST_REQUIRE(descriptor.sstables.size() == candidates.size());
             BOOST_REQUIRE(uint32_t(descriptor.level) == leveled_compaction_strategy::ideal_level_for_input(candidates, 160*1024*1024));
@@ -3220,7 +3220,7 @@ SEASTAR_TEST_CASE(compaction_strategy_aware_major_compaction_test) {
         }
 
         {
-            auto cs = sstables::make_compaction_strategy(sstables::compaction_strategy_type::size_tiered, cf.schema()->compaction_strategy_options());
+            auto cs = sstables::make_compaction_strategy(sstables::compaction_strategy_type::size_tiered, env.get_compaction_manager(), cf.schema()->compaction_strategy_options());
             auto descriptor = cs.get_major_compaction_job(*table_s, candidates);
             BOOST_REQUIRE(descriptor.sstables.size() == candidates.size());
             BOOST_REQUIRE(descriptor.level == 0);
@@ -3403,7 +3403,7 @@ SEASTAR_TEST_CASE(purged_tombstone_consumer_sstable_test) {
             auto cfc = compact_for_compaction_v2<compacting_sstable_writer_test, compacting_sstable_writer_test>(
                 *s, gc_now, max_purgeable_func, std::move(cr), std::move(purged_cr));
 
-            auto cs = sstables::make_compaction_strategy(sstables::compaction_strategy_type::size_tiered, s->compaction_strategy_options());
+            auto cs = sstables::make_compaction_strategy(sstables::compaction_strategy_type::size_tiered, env.get_compaction_manager(), s->compaction_strategy_options());
             auto compacting = make_lw_shared<sstables::sstable_set>(cs.make_sstable_set(s));
             for (auto&& sst : all) {
                 compacting->insert(std::move(sst));
@@ -3991,7 +3991,7 @@ SEASTAR_TEST_CASE(stcs_reshape_test) {
         }
 
         auto cs = sstables::make_compaction_strategy(sstables::compaction_strategy_type::size_tiered,
-                                                    s->compaction_strategy_options());
+                                                    env.get_compaction_manager(), s->compaction_strategy_options());
 
         BOOST_REQUIRE(cs.get_reshaping_job(sstables, s, default_priority_class(), reshape_mode::strict).sstables.size());
         BOOST_REQUIRE(cs.get_reshaping_job(sstables, s, default_priority_class(), reshape_mode::relaxed).sstables.size());
@@ -4004,7 +4004,7 @@ SEASTAR_TEST_CASE(lcs_reshape_test) {
         auto s = ss.schema();
         auto keys = token_generation_for_current_shard(256);
         auto cs = sstables::make_compaction_strategy(sstables::compaction_strategy_type::leveled,
-                                                     s->compaction_strategy_options());
+                                                     env.get_compaction_manager(), s->compaction_strategy_options());
 
         // non overlapping
         {
@@ -4227,7 +4227,7 @@ SEASTAR_TEST_CASE(twcs_reshape_with_disjoint_set_test) {
         size_t min_threshold = tests::random::get_int(4, 8);
         builder.set_min_compaction_threshold(min_threshold);
         auto s = builder.build();
-        auto cs = sstables::make_compaction_strategy(sstables::compaction_strategy_type::time_window, s->compaction_strategy_options());
+        auto cs = sstables::make_compaction_strategy(sstables::compaction_strategy_type::time_window, env.get_compaction_manager(), s->compaction_strategy_options());
 
         std::random_device rd;
         std::mt19937 gen(rd());
@@ -4389,7 +4389,7 @@ SEASTAR_TEST_CASE(stcs_reshape_overlapping_test) {
         builder.set_compaction_strategy(sstables::compaction_strategy_type::size_tiered);
         auto s = builder.build();
         std::map<sstring, sstring> opts;
-        auto cs = sstables::make_compaction_strategy(sstables::compaction_strategy_type::size_tiered, std::move(opts));
+        auto cs = sstables::make_compaction_strategy(sstables::compaction_strategy_type::size_tiered, env.get_compaction_manager(), std::move(opts));
 
         auto tokens = token_generation_for_shard(disjoint_sstable_count, this_shard_id(), test_db_config.murmur3_partitioner_ignore_msb_bits(), smp::count);
 
@@ -4475,7 +4475,7 @@ SEASTAR_TEST_CASE(test_twcs_single_key_reader_filtering) {
         cf.mark_ready_for_writes();
         cf.start();
 
-        auto cs = sstables::make_compaction_strategy(sstables::compaction_strategy_type::time_window, {});
+        auto cs = sstables::make_compaction_strategy(sstables::compaction_strategy_type::time_window, env.get_compaction_manager(), {});
 
         auto set = cs.make_sstable_set(s);
         set.insert(std::move(sst1));
@@ -4659,7 +4659,7 @@ SEASTAR_TEST_CASE(compound_sstable_set_incremental_selector_test) {
     return test_env::do_with([] (test_env& env) {
         auto s = make_shared_schema({}, some_keyspace, some_column_family,
                                     {{"p1", utf8_type}}, {}, {}, {}, utf8_type);
-        auto cs = sstables::make_compaction_strategy(sstables::compaction_strategy_type::leveled, s->compaction_strategy_options());
+        auto cs = sstables::make_compaction_strategy(sstables::compaction_strategy_type::leveled, env.get_compaction_manager(), s->compaction_strategy_options());
         auto key_and_token_pair = token_generation_for_current_shard(8);
         auto decorated_keys = boost::copy_range<std::vector<dht::decorated_key>>(
                 key_and_token_pair | boost::adaptors::transformed([&s] (const std::pair<sstring, dht::token>& key_and_token) {
@@ -4771,7 +4771,7 @@ SEASTAR_TEST_CASE(twcs_single_key_reader_through_compound_set_test) {
         };
         builder.set_compaction_strategy_options(std::move(opts));
         auto s = builder.build();
-        auto cs = sstables::make_compaction_strategy(sstables::compaction_strategy_type::time_window, std::move(opts));
+        auto cs = sstables::make_compaction_strategy(sstables::compaction_strategy_type::time_window, env.get_compaction_manager(), std::move(opts));
 
         auto next_timestamp = [](auto step) {
             using namespace std::chrono;

@@ -13,11 +13,14 @@
 #include "compaction_strategy.hh"
 #include "db_clock.hh"
 #include "compaction_descriptor.hh"
+#include "utils/optional_reference.hh"
 
 namespace compaction {
 class table_state;
 class strategy_control;
 }
+
+class compaction_manager;
 
 namespace sstables {
 
@@ -38,14 +41,17 @@ protected:
     bool _disable_tombstone_compaction = false;
     float _tombstone_threshold = DEFAULT_TOMBSTONE_THRESHOLD;
     db_clock::duration _tombstone_compaction_interval = DEFAULT_TOMBSTONE_COMPACTION_INTERVAL();
+    // null_compation_strategy has no compaction_manager
+    utils::optional_reference<const compaction_manager> _compaction_manager;
 public:
     static std::optional<sstring> get_value(const std::map<sstring, sstring>& options, const sstring& name);
 protected:
     compaction_strategy_impl() = default;
-    explicit compaction_strategy_impl(const std::map<sstring, sstring>& options);
+    explicit compaction_strategy_impl(compaction_manager& cm, const std::map<sstring, sstring>& options);
     static compaction_descriptor make_major_compaction_job(std::vector<sstables::shared_sstable> candidates,
             int level = compaction_descriptor::default_level,
             uint64_t max_sstable_bytes = compaction_descriptor::default_max_sstable_bytes);
+
 public:
     virtual ~compaction_strategy_impl() {}
     virtual compaction_descriptor get_sstables_for_compaction(table_state& table_s, strategy_control& control, std::vector<sstables::shared_sstable> candidates) = 0;
@@ -80,5 +86,9 @@ public:
     }
 
     virtual compaction_descriptor get_reshaping_job(std::vector<shared_sstable> input, schema_ptr schema, const ::io_priority_class& iop, reshape_mode mode);
+
+    const utils::optional_reference<const compaction_manager>& get_compaction_manager() const noexcept {
+        return _compaction_manager;
+    }
 };
 }
