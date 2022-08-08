@@ -19,6 +19,8 @@
 #include <seastar/core/thread.hh>
 #include <seastar/core/abort_source.hh>
 
+class compaction_manager;
+
 using namespace compaction;
 
 namespace sstables {
@@ -123,7 +125,7 @@ future<compaction_result> compact_sstables(sstables::compaction_descriptor descr
 // In simpler words, a sstable is fully expired if all of its live cells with TTL is expired
 // and possibly doesn't contain any tombstone that covers cells in other sstables.
 std::unordered_set<sstables::shared_sstable>
-get_fully_expired_sstables(const table_state& table_s, const std::vector<sstables::shared_sstable>& compacting, gc_clock::time_point gc_before);
+get_fully_expired_sstables(const table_state& table_s, const std::vector<sstables::shared_sstable>& compacting, const compaction_manager& cm, gc_clock::time_point gc_before);
 
 // For tests, can drop after we virtualize sstables.
 flat_mutation_reader_v2 make_scrubbing_reader(flat_mutation_reader_v2 rd, compaction_type_options::scrub::mode scrub_mode, uint64_t& validation_errors);

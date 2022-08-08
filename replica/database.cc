@@ -2497,7 +2497,7 @@ future<> database::truncate(column_family& cf, const table_truncate_state& st, d
     cf.cache_truncation_record(truncated_at);
     co_await db::system_keyspace::save_truncation_record(cf, truncated_at, rp);
 
-    drop_repair_history_map_for_table(uuid);
+    _compaction_manager.drop_repair_history_map_for_table(uuid);
 }
 
 const sstring& database::get_snitch_name() const {

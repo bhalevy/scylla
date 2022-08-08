@@ -162,6 +162,7 @@ public:
 future<query::result> to_data_query_result(
         const reconcilable_result&,
         schema_ptr,
+        utils::optional_reference<const compaction_manager>,
         const query::partition_slice&,
         uint64_t row_limit,
         uint32_t partition_limit,

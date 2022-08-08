@@ -1169,7 +1169,7 @@ void view_update_builder::generate_update(clustering_row&& update, std::optional
     }
 
     auto dk = dht::decorate_key(*_schema, _key);
-    auto gc_before = ::get_gc_before_for_key(_schema, dk, _now);
+    auto gc_before = ::get_gc_before_for_key(_schema, _compaction_manager, dk, _now);
 
     // We allow existing to be disengaged, which we treat the same as an empty row.
     if (existing) {
@@ -2255,6 +2255,7 @@ void view_builder::execute(build_step& step, exponential_backoff_retry r) {
     gc_clock::time_point now = gc_clock::now();
     auto consumer = compact_for_query_v2<view_builder::consumer>(
             *step.reader.schema(),
+            _db.get_compaction_manager(),
             now,
             step.pslice,
             batch_size,

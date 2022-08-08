@@ -50,11 +50,13 @@
 #include "mutation_fragment_stream_validator.hh"
 #include "readers/flat_mutation_reader_fwd.hh"
 #include "tracing/trace_state.hh"
+#include "utils/optional_reference.hh"
 
 #include <seastar/util/optimized_optional.hh>
 
 class sstable_assertions;
 class cached_file;
+class compaction_manager;
 
 namespace sstables {
 
@@ -887,8 +889,8 @@ public:
     friend std::unique_ptr<DataConsumeRowsContext>
     data_consume_rows(const schema&, shared_sstable, typename DataConsumeRowsContext::consumer&);
     friend void lw_shared_ptr_deleter<sstables::sstable>::dispose(sstable* s);
-    gc_clock::time_point get_gc_before_for_drop_estimation(const gc_clock::time_point& compaction_time) const;
-    gc_clock::time_point get_gc_before_for_fully_expire(const gc_clock::time_point& compaction_time) const;
+    gc_clock::time_point get_gc_before_for_drop_estimation(utils::optional_reference<const compaction_manager> cm, const gc_clock::time_point& compaction_time) const;
+    gc_clock::time_point get_gc_before_for_fully_expire(utils::optional_reference<const compaction_manager> cm, const gc_clock::time_point& compaction_time) const;
 };
 
 // When we compact sstables, we have to atomically instantiate the new

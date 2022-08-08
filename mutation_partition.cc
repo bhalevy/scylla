@@ -1394,6 +1394,7 @@ void mutation_partition::trim_rows(const schema& s,
 }
 
 uint32_t mutation_partition::do_compact(const schema& s,
+    utils::optional_reference<const compaction_manager> cm,
     const dht::decorated_key& dk,
     gc_clock::time_point query_time,
     const std::vector<query::clustering_range>& row_ranges,
@@ -1407,7 +1408,7 @@ uint32_t mutation_partition::do_compact(const schema& s,
     assert(row_limit > 0);
 
     auto gc_before = drop_tombstones_unconditionally ? gc_clock::time_point::max() :
-        ::get_gc_before_for_key(s.shared_from_this(), dk, query_time);
+        ::get_gc_before_for_key(s.shared_from_this(), cm, dk, query_time);
 
     auto should_purge_tombstone = [&] (const tombstone& t) {
         return t.deletion_time < gc_before && can_gc(t);
@@ -1459,6 +1460,7 @@ uint32_t mutation_partition::do_compact(const schema& s,
 uint64_t
 mutation_partition::compact_for_query(
     const schema& s,
+    utils::optional_reference<const compaction_manager> cm,
     const dht::decorated_key& dk,
     gc_clock::time_point query_time,
     const std::vector<query::clustering_range>& row_ranges,
@@ -1468,10 +1470,10 @@ mutation_partition::compact_for_query(
 {
     check_schema(s);
     bool drop_tombstones_unconditionally = false;
-    return do_compact(s, dk, query_time, row_ranges, always_return_static_content, reverse, row_limit, always_gc, drop_tombstones_unconditionally);
+    return do_compact(s, cm, dk, query_time, row_ranges, always_return_static_content, reverse, row_limit, always_gc, drop_tombstones_unconditionally);
 }
 
-void mutation_partition::compact_for_compaction(const schema& s,
+void mutation_partition::compact_for_compaction(const schema& s, utils::optional_reference<const compaction_manager> cm,
     can_gc_fn& can_gc, const dht::decorated_key& dk, gc_clock::time_point compaction_time)
 {
     check_schema(s);
@@ -1480,7 +1482,7 @@ void mutation_partition::compact_for_compaction(const schema& s,
     };
 
     bool drop_tombstones_unconditionally = false;
-    do_compact(s, dk, compaction_time, all_rows, true, false, query::partition_max_rows, can_gc, drop_tombstones_unconditionally);
+    do_compact(s, cm, dk, compaction_time, all_rows, true, false, query::partition_max_rows, can_gc, drop_tombstones_unconditionally);
 }
 
 void mutation_partition::compact_for_compaction_drop_tombstones_unconditionally(const schema& s, const dht::decorated_key& dk)
@@ -1491,7 +1493,7 @@ void mutation_partition::compact_for_compaction_drop_tombstones_unconditionally(
     };
     bool drop_tombstones_unconditionally = true;
     auto compaction_time = gc_clock::time_point::max();
-    do_compact(s, dk, compaction_time, all_rows, true, false, query::partition_max_rows, always_gc, drop_tombstones_unconditionally);
+    do_compact(s, std::nullopt, dk, compaction_time, all_rows, true, false, query::partition_max_rows, always_gc, drop_tombstones_unconditionally);
 }
 
 // Returns true if the mutation_partition represents no writes.
@@ -2201,7 +2203,7 @@ reconcilable_result reconcilable_result_builder::consume_end_of_stream() {
 }
 
 future<query::result>
-to_data_query_result(const reconcilable_result& r, schema_ptr s, const compaction_manager& cm, const query::partition_slice& slice, uint64_t max_rows, uint32_t max_partitions,
+to_data_query_result(const reconcilable_result& r, schema_ptr s, utils::optional_reference<const compaction_manager> cm, const query::partition_slice& slice, uint64_t max_rows, uint32_t max_partitions,
         query::result_options opts) {
     // This result was already built with a limit, don't apply another one.
     query::result::builder builder(slice, opts, query::result_memory_accounter{ query::result_memory_limiter::unlimited_result_size }, query::max_tombstones);
@@ -2235,9 +2237,9 @@ to_data_query_result(const reconcilable_result& r, schema_ptr s, const compactio
 }
 
 query::result
-query_mutation(mutation&& m, utils::optional_reference<const compaction_manager> cm, const query::partition_slice& slice, uint64_t row_limit, gc_clock::time_point now, query::result_options opts) {
+query_mutation(mutation&& m, const query::partition_slice& slice, uint64_t row_limit, gc_clock::time_point now, query::result_options opts) {
     query::result::builder builder(slice, opts, query::result_memory_accounter{ query::result_memory_limiter::unlimited_result_size }, query::max_tombstones);
-    auto consumer = compact_for_query_v2<query_result_builder>(*m.schema(), cm, now, slice, row_limit,
+    auto consumer = compact_for_query_v2<query_result_builder>(*m.schema(), std::nullopt, now, slice, row_limit,
             query::max_partitions, query_result_builder(*m.schema(), builder));
     auto compaction_state = consumer.get_state();
     const auto reverse = slice.options.contains(query::partition_slice::option::reversed) ? consume_in_reverse::legacy_half_reverse : consume_in_reverse::no;
@@ -2441,7 +2443,7 @@ mutation_partition::fully_discontinuous(const schema& s, const position_range& r
     return check_continuity(s, r, is_continuous::no);
 }
 
-future<mutation_opt> counter_write_query(schema_ptr s, utils::optional_reference<const compaction_manager> cm, const mutation_source& source, reader_permit permit,
+future<mutation_opt> counter_write_query(schema_ptr s, const mutation_source& source, reader_permit permit,
                                          const dht::decorated_key& dk,
                                          const query::partition_slice& slice,
                                          tracing::trace_state_ptr trace_ptr)
@@ -2468,7 +2470,7 @@ future<mutation_opt> counter_write_query(schema_ptr s, utils::optional_reference
     auto r_a_r = std::make_unique<range_and_reader>(s, source, std::move(permit), dk, slice, std::move(trace_ptr));
     auto cwqrb = counter_write_query_result_builder(*s);
     auto cfq = compact_for_query_v2<counter_write_query_result_builder>(
-            *s, cm, gc_clock::now(), slice, query::max_rows, query::max_partitions, std::move(cwqrb));
+            *s, std::nullopt, gc_clock::now(), slice, query::max_rows, query::max_partitions, std::move(cwqrb));
     auto f = r_a_r->reader.consume(std::move(cfq));
     return f.finally([r_a_r = std::move(r_a_r)] {
         return r_a_r->reader.close();

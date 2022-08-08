@@ -209,11 +209,7 @@ private:
 
 class view_update_builder {
     schema_ptr _schema; // The base schema
-// FIXME: silence copiler error until _compaction_manager is used
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wunused-private-field"
     const compaction_manager& _compaction_manager;
-#pragma GCC diagnostic pop
     std::vector<view_updates> _view_updates;
     flat_mutation_reader_v2 _updates;
     flat_mutation_reader_v2_opt _existings;

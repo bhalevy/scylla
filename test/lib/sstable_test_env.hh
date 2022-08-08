@@ -35,12 +35,12 @@ class test_env {
         cache_tracker cache_tracker;
         test_env_sstables_manager mgr;
         reader_concurrency_semaphore semaphore;
-        compaction_manager _compaction_manager;
+        compaction_manager compaction_manager;
 
         impl()
             : mgr(nop_lp_handler, test_db_config, test_feature_service, cache_tracker)
             , semaphore(reader_concurrency_semaphore::no_limits{}, "sstables::test_env")
-            , _compaction_manager(compaction_manager::for_testing_tag{})
+            , compaction_manager(compaction_manager::for_testing_tag{})
         { }
         impl(impl&&) = delete;
         impl(const impl&) = delete;
@@ -97,7 +97,7 @@ public:
 
 
     compaction_manager& get_compaction_manager() noexcept {
-        return *_compaction_manager;
+        return _impl->compaction_manager;
     }
 
     template <typename Func>

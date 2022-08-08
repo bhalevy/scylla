@@ -32,10 +32,12 @@
 #include "utils/managed_ref.hh"
 #include "utils/compact-radix-tree.hh"
 #include "utils/immutable-collection.hh"
+#include "utils/optional_reference.hh"
 
 class mutation_fragment;
 class mutation_partition_view;
 class mutation_partition_visitor;
+class compaction_manager;
 
 namespace query {
     class clustering_key_filter_ranges;
@@ -1310,6 +1312,7 @@ private:
     void insert_row(const schema& s, const clustering_key& key, const deletable_row& row);
 
     uint32_t do_compact(const schema& s,
+        utils::optional_reference<const compaction_manager> cm,
         const dht::decorated_key& dk,
         gc_clock::time_point now,
         const std::vector<query::clustering_range>& row_ranges,
@@ -1346,7 +1349,8 @@ public:
     //
     // The row_limit parameter must be > 0.
     //
-    uint64_t compact_for_query(const schema& s, const dht::decorated_key& dk, gc_clock::time_point query_time,
+    uint64_t compact_for_query(const schema& s, utils::optional_reference<const compaction_manager> cm,
+        const dht::decorated_key& dk, gc_clock::time_point query_time,
         const std::vector<query::clustering_range>& row_ranges, bool always_return_static_content,
         bool reversed, uint64_t row_limit);
 
@@ -1354,7 +1358,9 @@ public:
     //   - expires cells based on compaction_time
     //   - drops cells covered by higher-level tombstones
     //   - drops expired tombstones which timestamp is before max_purgeable
-    void compact_for_compaction(const schema& s, can_gc_fn&,
+    void compact_for_compaction(const schema& s,
+        utils::optional_reference<const compaction_manager> cm,
+        can_gc_fn&,
         const dht::decorated_key& dk,
         gc_clock::time_point compaction_time);
 
