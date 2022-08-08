@@ -86,7 +86,9 @@ std::optional<sstring> compaction_strategy_impl::get_value(const std::map<sstrin
     return it->second;
 }
 
-compaction_strategy_impl::compaction_strategy_impl(const std::map<sstring, sstring>& options) {
+compaction_strategy_impl::compaction_strategy_impl(compaction_manager& cm, const std::map<sstring, sstring>& options)
+    : _compaction_manager(&cm)
+{
     using namespace cql3::statements;
 
     auto tmp_value = get_value(options, TOMBSTONE_THRESHOLD_OPTION);
@@ -458,8 +460,8 @@ public:
     }
 };
 
-leveled_compaction_strategy::leveled_compaction_strategy(const std::map<sstring, sstring>& options)
-        : compaction_strategy_impl(options)
+leveled_compaction_strategy::leveled_compaction_strategy(compaction_manager& cm, const std::map<sstring, sstring>& options)
+        : compaction_strategy_impl(cm, options)
         , _max_sstable_size_in_mb(calculate_max_sstable_size_in_mb(compaction_strategy_impl::get_value(options, SSTABLE_SIZE_OPTION)))
         , _stcs_options(options)
         , _backlog_tracker(std::make_unique<leveled_compaction_backlog_tracker>(_max_sstable_size_in_mb, _stcs_options))
@@ -482,8 +484,8 @@ leveled_compaction_strategy::calculate_max_sstable_size_in_mb(std::optional<sstr
     return max_size;
 }
 
-time_window_compaction_strategy::time_window_compaction_strategy(const std::map<sstring, sstring>& options)
-    : compaction_strategy_impl(options)
+time_window_compaction_strategy::time_window_compaction_strategy(compaction_manager& cm, const std::map<sstring, sstring>& options)
+    : compaction_strategy_impl(cm, options)
     , _options(options)
     , _stcs_options(options)
     , _backlog_tracker(std::make_unique<time_window_backlog_tracker>(_options, _stcs_options))
@@ -637,8 +639,8 @@ date_tiered_compaction_strategy_options::date_tiered_compaction_strategy_options
 
 namespace sstables {
 
-date_tiered_compaction_strategy::date_tiered_compaction_strategy(const std::map<sstring, sstring>& options)
-    : compaction_strategy_impl(options)
+date_tiered_compaction_strategy::date_tiered_compaction_strategy(compaction_manager& cm, const std::map<sstring, sstring>& options)
+    : compaction_strategy_impl(cm, options)
     , _manifest(options)
     , _backlog_tracker(std::make_unique<unimplemented_backlog_tracker>())
 {
@@ -685,8 +687,8 @@ compaction_descriptor date_tiered_compaction_strategy::get_sstables_for_compacti
     return sstables::compaction_descriptor({ *it }, service::get_local_compaction_priority());
 }
 
-size_tiered_compaction_strategy::size_tiered_compaction_strategy(const std::map<sstring, sstring>& options)
-    : compaction_strategy_impl(options)
+size_tiered_compaction_strategy::size_tiered_compaction_strategy(compaction_manager& cm, const std::map<sstring, sstring>& options)
+    : compaction_strategy_impl(cm, options)
     , _options(options)
     , _backlog_tracker(std::make_unique<size_tiered_backlog_tracker>(_options))
 {}
@@ -757,7 +759,7 @@ bool compaction_strategy::use_interposer_consumer() const {
     return _compaction_strategy_impl->use_interposer_consumer();
 }
 
-compaction_strategy make_compaction_strategy(compaction_strategy_type strategy, const std::map<sstring, sstring>& options) {
+compaction_strategy make_compaction_strategy(compaction_strategy_type strategy, compaction_manager& cm, const std::map<sstring, sstring>& options) {
     ::shared_ptr<compaction_strategy_impl> impl;
 
     switch (strategy) {
@@ -765,22 +767,26 @@ compaction_strategy make_compaction_strategy(compaction_strategy_type strategy, 
         impl = ::make_shared<null_compaction_strategy>();
         break;
     case compaction_strategy_type::size_tiered:
-        impl = ::make_shared<size_tiered_compaction_strategy>(options);
+        impl = ::make_shared<size_tiered_compaction_strategy>(cm, options);
         break;
     case compaction_strategy_type::leveled:
-        impl = ::make_shared<leveled_compaction_strategy>(options);
+        impl = ::make_shared<leveled_compaction_strategy>(cm, options);
         break;
     case compaction_strategy_type::date_tiered:
-        impl = ::make_shared<date_tiered_compaction_strategy>(options);
+        impl = ::make_shared<date_tiered_compaction_strategy>(cm, options);
         break;
     case compaction_strategy_type::time_window:
-        impl = ::make_shared<time_window_compaction_strategy>(options);
+        impl = ::make_shared<time_window_compaction_strategy>(cm, options);
         break;
     default:
         throw std::runtime_error("strategy not supported");
     }
 
     return compaction_strategy(std::move(impl));
+}
+
+compaction_manager_opt compaction_strategy::get_compaction_manager_opt() const noexcept {
+    return _compaction_strategy_impl->get_compaction_manager_opt();
 }
 
 }
