@@ -26,6 +26,8 @@ struct allow_hints_tag;
 using allow_hints = bool_class<allow_hints_tag>;
 }
 
+class compaction_manager;
+
 namespace db {
 
 namespace view {
@@ -207,6 +209,10 @@ private:
 
 class view_update_builder {
     schema_ptr _schema; // The base schema
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-private-field"
+    const compaction_manager& _compaction_manager;
+#pragma GCC diagnostic pop
     std::vector<view_updates> _view_updates;
     flat_mutation_reader_v2 _updates;
     flat_mutation_reader_v2_opt _existings;
@@ -221,11 +227,13 @@ class view_update_builder {
 public:
 
     view_update_builder(schema_ptr s,
+        const compaction_manager& compaction_manager,
         std::vector<view_updates>&& views_to_update,
         flat_mutation_reader_v2&& updates,
         flat_mutation_reader_v2_opt&& existings,
         gc_clock::time_point now)
             : _schema(std::move(s))
+            , _compaction_manager(compaction_manager)
             , _view_updates(std::move(views_to_update))
             , _updates(std::move(updates))
             , _existings(std::move(existings))
@@ -250,6 +258,7 @@ private:
 
 view_update_builder make_view_update_builder(
         const schema_ptr& base,
+        const compaction_manager& cm,
         std::vector<view_and_base>&& views_to_update,
         flat_mutation_reader_v2&& updates,
         flat_mutation_reader_v2_opt&& existings,
