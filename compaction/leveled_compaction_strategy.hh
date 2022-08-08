@@ -40,7 +40,7 @@ class leveled_compaction_strategy : public compaction_strategy_impl {
 public:
     static unsigned ideal_level_for_input(const std::vector<sstables::shared_sstable>& input, uint64_t max_sstable_size);
 
-    leveled_compaction_strategy(const std::map<sstring, sstring>& options);
+    leveled_compaction_strategy(compaction_manager& cm, const std::map<sstring, sstring>& options);
     virtual compaction_descriptor get_sstables_for_compaction(table_state& table_s, strategy_control& control, std::vector<sstables::shared_sstable> candidates) override;
 
     virtual std::vector<compaction_descriptor> get_cleanup_compaction_jobs(table_state& table_s, std::vector<shared_sstable> candidates) const override;
