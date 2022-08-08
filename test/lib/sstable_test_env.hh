@@ -14,6 +14,8 @@
 #include <seastar/util/defer.hh>
 
 #include "sstables/sstables.hh"
+#include "compaction/compaction_manager.hh"
+
 #include "test/lib/tmpdir.hh"
 #include "test/lib/test_services.hh"
 #include "test/lib/log.hh"
@@ -33,10 +35,12 @@ class test_env {
         cache_tracker cache_tracker;
         test_env_sstables_manager mgr;
         reader_concurrency_semaphore semaphore;
+        compaction_manager compaction_manager;
 
         impl()
             : mgr(nop_lp_handler, test_db_config, test_feature_service, cache_tracker)
             , semaphore(reader_concurrency_semaphore::no_limits{}, "sstables::test_env")
+            , compaction_manager(compaction_manager::for_testing_tag{})
         { }
         impl(impl&&) = delete;
         impl(const impl&) = delete;
@@ -89,6 +93,11 @@ public:
 
     future<> working_sst(schema_ptr schema, sstring dir, unsigned long generation) {
         return reusable_sst(std::move(schema), dir, generation).then([] (auto ptr) { return make_ready_future<>(); });
+    }
+
+
+    compaction_manager& get_compaction_manager() noexcept {
+        return _impl->compaction_manager;
     }
 
     template <typename Func>
