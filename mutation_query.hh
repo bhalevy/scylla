@@ -15,6 +15,7 @@
 #include "mutation.hh"
 #include "utils/chunked_vector.hh"
 #include "range_tombstone_assembler.hh"
+#include "tombstone_gc.hh"
 
 class reconcilable_result;
 class frozen_reconcilable_result;
@@ -165,6 +166,7 @@ future<query::result> to_data_query_result(
         const query::partition_slice&,
         uint64_t row_limit,
         uint32_t partition_limit,
+        compaction_manager_opt cm_opt,
         query::result_options opts = query::result_options::only_result());
 
 // Query the content of the mutation.
@@ -175,11 +177,21 @@ query::result query_mutation(
         const query::partition_slice& slice,
         uint64_t row_limit = query::max_rows,
         gc_clock::time_point now = gc_clock::now(),
+        compaction_manager_opt cm_opt = compaction_manager_nullopt,
         query::result_options opts = query::result_options::only_result());
+
+inline query::result query_mutation(
+        mutation&& m,
+        const query::partition_slice& slice,
+        compaction_manager_opt cm_opt,
+        query::result_options opts = query::result_options::only_result()) {
+    return query_mutation(std::move(m), slice, query::max_rows, gc_clock::now(), cm_opt, std::move(opts));
+}
 
 // Performs a query for counter updates.
 future<mutation_opt> counter_write_query(schema_ptr, const mutation_source&, reader_permit permit,
                                          const dht::decorated_key& dk,
                                          const query::partition_slice& slice,
+                                         compaction_manager_opt cm_opt,
                                          tracing::trace_state_ptr trace_ptr);
 

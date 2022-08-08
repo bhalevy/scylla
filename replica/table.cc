@@ -1285,6 +1285,7 @@ table::sstables_as_snapshot_source() {
                 std::move(reader),
                 gc_clock::now(),
                 [](const dht::decorated_key&) { return api::min_timestamp; },
+                &_compaction_manager,
                 fwd);
         }, [this, sst_set] {
             return make_partition_presence_checker(sst_set);
@@ -2068,7 +2069,7 @@ table::query(schema_ptr s,
         auto&& range = *qs.current_partition_range++;
 
         if (!querier_opt) {
-            querier_opt = query::querier(as_mutation_source(), s, permit, range, qs.cmd.slice,
+            querier_opt = query::querier(as_mutation_source(), s, permit, range, qs.cmd.slice, &_compaction_manager,
                     service::get_local_sstable_query_read_priority(), trace_state);
         }
         auto& q = *querier_opt;
@@ -2122,7 +2123,7 @@ table::mutation_query(schema_ptr s,
         querier_opt = std::move(*saved_querier);
     }
     if (!querier_opt) {
-        querier_opt = query::querier(as_mutation_source(), s, permit, range, cmd.slice,
+        querier_opt = query::querier(as_mutation_source(), s, permit, range, cmd.slice, &_compaction_manager,
                 service::get_local_sstable_query_read_priority(), trace_state);
     }
     auto& q = *querier_opt;

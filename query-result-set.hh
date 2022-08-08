@@ -12,6 +12,7 @@
 #include <seastar/core/shared_ptr.hh>
 #include "types.hh"
 #include "schema.hh"
+#include "tombstone_gc.hh"
 
 #include <optional>
 #include <stdexcept>
@@ -112,7 +113,7 @@ public:
     result_set(schema_ptr s, std::vector<result_set_row>&& rows)
         : _schema(std::move(s)), _rows{std::move(rows)}
     { }
-    explicit result_set(const mutation&);
+    explicit result_set(const mutation&, compaction_manager_opt cm_opt = compaction_manager_nullopt);
     bool empty() const {
         return _rows.empty();
     }

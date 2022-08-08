@@ -684,7 +684,8 @@ private:
                 reader.consume_in_thread(std::move(cfc));
             });
         });
-        return consumer(make_compacting_reader(make_sstable_reader(), compaction_time, max_purgeable_func()));
+        auto cm_opt = _table_s.get_compaction_strategy().get_compaction_manager_opt();
+        return consumer(make_compacting_reader(make_sstable_reader(), compaction_time, max_purgeable_func(), cm_opt));
     }
 
     future<> consume() {
@@ -699,11 +700,13 @@ private:
         {
             return seastar::async([this, reader = std::move(reader), now] () mutable {
                 auto close_reader = deferred_close(reader);
+                auto cm_opt = _table_s.get_compaction_strategy().get_compaction_manager_opt();
 
                 if (enable_garbage_collected_sstable_writer()) {
                     using compact_mutations = compact_for_compaction_v2<compacted_fragments_writer, compacted_fragments_writer>;
                     auto cfc = compact_mutations(*schema(), now,
                         max_purgeable_func(),
+                        cm_opt,
                         get_compacted_fragments_writer(),
                         get_gc_compacted_fragments_writer());
 
@@ -713,6 +716,7 @@ private:
                 using compact_mutations = compact_for_compaction_v2<compacted_fragments_writer, noop_compacted_fragments_consumer>;
                 auto cfc = compact_mutations(*schema(), now,
                     max_purgeable_func(),
+                    cm_opt,
                     get_compacted_fragments_writer(),
                     noop_compacted_fragments_consumer());
                 reader.consume_in_thread(std::move(cfc));

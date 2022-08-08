@@ -1248,9 +1248,9 @@ SEASTAR_TEST_CASE(test_query_digest) {
         auto check_digests_equal = [now] (const mutation& m1, const mutation& m2) {
             auto ps1 = partition_slice_builder(*m1.schema()).build();
             auto ps2 = partition_slice_builder(*m2.schema()).build();
-            auto digest1 = *query_mutation(mutation(m1), ps1, query::max_rows, now,
+            auto digest1 = *query_mutation(mutation(m1), ps1, query::max_rows, now, compaction_manager_nullopt,
                     query::result_options::only_digest(query::digest_algorithm::xxHash)).digest();
-            auto digest2 = *query_mutation( mutation(m2), ps2, query::max_rows, now,
+            auto digest2 = *query_mutation( mutation(m2), ps2, query::max_rows, now, compaction_manager_nullopt,
                     query::result_options::only_digest(query::digest_algorithm::xxHash)).digest();
 
             if (digest1 != digest2) {
@@ -1501,7 +1501,7 @@ SEASTAR_THREAD_TEST_CASE(test_querying_expired_rows) {
                 .without_partition_key_columns()
                 .build();
         auto opts = query::result_options{query::result_request::result_and_digest, query::digest_algorithm::xxHash};
-        return query::result_set::from_raw_result(s, slice, query_mutation(mutation(m), slice, query::max_rows, t, opts));
+        return query::result_set::from_raw_result(s, slice, query_mutation(mutation(m), slice, query::max_rows, t, compaction_manager_nullopt, opts));
     };
 
     mutation m(s, pk);
@@ -1565,7 +1565,7 @@ SEASTAR_TEST_CASE(test_querying_expired_cells) {
                     .without_partition_key_columns()
                     .build();
             auto opts = query::result_options{query::result_request::result_and_digest, query::digest_algorithm::xxHash};
-            return query::result_set::from_raw_result(s, slice, query_mutation(mutation(m), slice, query::max_rows, t, opts));
+            return query::result_set::from_raw_result(s, slice, query_mutation(mutation(m), slice, query::max_rows, t, compaction_manager_nullopt, opts));
         };
 
         {
@@ -2328,6 +2328,7 @@ void run_compaction_data_stream_split_test(const schema& schema, reader_permit p
             schema,
             query_time,
             get_max_purgeable,
+            compaction_manager_nullopt,
             survived_compacted_fragments_consumer(schema, query_time, get_max_purgeable),
             purged_compacted_fragments_consumer(schema, query_time, get_max_purgeable));
 
@@ -2783,7 +2784,7 @@ SEASTAR_THREAD_TEST_CASE(test_compactor_range_tombstone_spanning_many_pages) {
     testlog.info("non-paged v2");
     {
         mutation res_mut(s, pk);
-        auto c = compact_for_query_v2<consumer_v2>(*s, query_time, s->full_slice(), max_rows, max_partitions, consumer_v2{permit, res_mut, max_rows});
+        auto c = compact_for_query_v2<consumer_v2>(*s, query_time, s->full_slice(), max_rows, max_partitions, compaction_manager_nullopt, consumer_v2{permit, res_mut, max_rows});
         auto reader = make_flat_mutation_reader_from_fragments(s, permit, make_frags());
         auto close_reader = deferred_close(reader);
 
@@ -2795,7 +2796,7 @@ SEASTAR_THREAD_TEST_CASE(test_compactor_range_tombstone_spanning_many_pages) {
     testlog.info("limited pages v2");
     {
         mutation res_mut(s, pk);
-        auto compaction_state = make_lw_shared<compact_mutation_state<compact_for_sstables::no>>(*s, query_time, s->full_slice(), 1, max_partitions);
+        auto compaction_state = make_lw_shared<compact_mutation_state<compact_for_sstables::no>>(*s, query_time, s->full_slice(), 1, max_partitions, compaction_manager_nullopt);
         auto reader = make_flat_mutation_reader_from_fragments(s, permit, make_frags());
         auto close_reader = deferred_close(reader);
 
@@ -2811,7 +2812,7 @@ SEASTAR_THREAD_TEST_CASE(test_compactor_range_tombstone_spanning_many_pages) {
     testlog.info("short pages v2");
     {
         mutation res_mut(s, pk);
-        auto compaction_state = make_lw_shared<compact_mutation_state<compact_for_sstables::no>>(*s, query_time, s->full_slice(), max_rows, max_partitions);
+        auto compaction_state = make_lw_shared<compact_mutation_state<compact_for_sstables::no>>(*s, query_time, s->full_slice(), max_rows, max_partitions, compaction_manager_nullopt);
         auto reader = make_flat_mutation_reader_from_fragments(s, permit, make_frags());
         auto close_reader = deferred_close(reader);
 
@@ -2836,7 +2837,7 @@ SEASTAR_THREAD_TEST_CASE(test_compactor_range_tombstone_spanning_many_pages) {
             if (detached_state) {
                 restore_state(reader, std::move(*detached_state));
             }
-            auto compaction_state = make_lw_shared<compact_mutation_state<compact_for_sstables::no>>(*s, query_time, s->full_slice(), 1, max_partitions);
+            auto compaction_state = make_lw_shared<compact_mutation_state<compact_for_sstables::no>>(*s, query_time, s->full_slice(), 1, max_partitions, compaction_manager_nullopt);
             auto c = consumer_v2{permit, res_mut, max_rows};
             reader.consume(compact_for_query_v2<consumer_v2>(compaction_state, std::move(c))).get();
             detached_state = std::move(*compaction_state).detach_state();
@@ -2857,7 +2858,7 @@ SEASTAR_THREAD_TEST_CASE(test_compactor_range_tombstone_spanning_many_pages) {
             if (detached_state) {
                 restore_state(reader, std::move(*detached_state));
             }
-            auto compaction_state = make_lw_shared<compact_mutation_state<compact_for_sstables::no>>(*s, query_time, s->full_slice(), max_rows, max_partitions);
+            auto compaction_state = make_lw_shared<compact_mutation_state<compact_for_sstables::no>>(*s, query_time, s->full_slice(), max_rows, max_partitions, compaction_manager_nullopt);
             auto c = consumer_v2{permit, res_mut, 2};
             reader.consume(compact_for_query_v2<consumer_v2>(compaction_state, std::move(c))).get();
             detached_state = std::move(*compaction_state).detach_state();

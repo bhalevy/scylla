@@ -281,7 +281,7 @@ std::vector<schema_ptr> do_load_schemas(std::string_view schema_str) {
                 throw std::runtime_error(fmt::format("tools::do_load_schemas(): expected only update against {}.{}, not deletes",
                             db::schema_tables::NAME, db::schema_tables::DROPPED_COLUMNS));
             }
-            query::result_set rs(mut);
+            query::result_set rs(mut, compaction_manager_nullopt);
             for (auto& row : rs.rows()) {
                 const auto keyspace_name = row.get_nonnull<sstring>("keyspace_name");
                 const auto table_name = row.get_nonnull<sstring>("table_name");
