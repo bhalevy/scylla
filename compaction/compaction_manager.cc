@@ -657,6 +657,7 @@ compaction_manager::compaction_manager(config cfg, abort_source& as)
     , _update_compaction_static_shares_action([this] { return update_static_shares(static_shares()); })
     , _compaction_static_shares_observer(_cfg.static_shares.observe(_update_compaction_static_shares_action.make_observer()))
     , _strategy_control(std::make_unique<strategy_control>(*this))
+    , _tombstone_gc_state(&_repair_history_maps)
 {
     register_metrics();
     // Bandwidth throttling is node-wide, updater is needed on single shard
