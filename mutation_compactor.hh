@@ -13,6 +13,9 @@
 #include "range_tombstone_assembler.hh"
 #include "tombstone_gc.hh"
 #include "full_position.hh"
+#include "utils/optional_reference.hh"
+
+class compaction_manager;
 
 static inline bool has_ck_selector(const query::clustering_row_ranges& ranges) {
     // Like PK range, an empty row range, should be considered an "exclude all" restriction
@@ -131,6 +134,9 @@ struct compaction_stats {
 template<compact_for_sstables SSTableCompaction>
 class compact_mutation_state {
     const schema& _schema;
+    // We don't always have a reference to the compaction_manager,
+    // like when compacting for query or with null_compaction_strategy.
+    utils::optional_reference<const compaction_manager> _compaction_manager;
     gc_clock::time_point _query_time;
     std::function<api::timestamp_type(const dht::decorated_key&)> _get_max_purgeable;
     can_gc_fn _can_gc;
@@ -263,9 +269,10 @@ private:
 public:
     compact_mutation_state(compact_mutation_state&&) = delete; // Because 'this' is captured
 
-    compact_mutation_state(const schema& s, gc_clock::time_point query_time, const query::partition_slice& slice, uint64_t limit,
+    compact_mutation_state(const schema& s, utils::optional_reference<const compaction_manager> cm, gc_clock::time_point query_time, const query::partition_slice& slice, uint64_t limit,
               uint32_t partition_limit)
         : _schema(s)
+        , _compaction_manager(cm)
         , _query_time(query_time)
         , _can_gc(always_gc)
         , _slice(slice)
@@ -278,9 +285,10 @@ public:
         static_assert(!sstable_compaction(), "This constructor cannot be used for sstable compaction.");
     }
 
-    compact_mutation_state(const schema& s, gc_clock::time_point compaction_time,
+    compact_mutation_state(const schema& s, utils::optional_reference<const compaction_manager> cm, gc_clock::time_point compaction_time,
             std::function<api::timestamp_type(const dht::decorated_key&)> get_max_purgeable)
         : _schema(s)
+        , _compaction_manager(cm)
         , _query_time(compaction_time)
         , _get_max_purgeable(std::move(get_max_purgeable))
         , _can_gc([this] (tombstone t) { return can_gc(t); })
@@ -572,9 +580,9 @@ class compact_mutation_v2 {
     GCConsumer _gc_consumer;
 
 public:
-    compact_mutation_v2(const schema& s, gc_clock::time_point query_time, const query::partition_slice& slice, uint64_t limit,
+    compact_mutation_v2(const schema& s, utils::optional_reference<const compaction_manager> cm, gc_clock::time_point query_time, const query::partition_slice& slice, uint64_t limit,
               uint32_t partition_limit, Consumer consumer, GCConsumer gc_consumer = GCConsumer())
-        : _state(make_lw_shared<compact_mutation_state<SSTableCompaction>>(s, query_time, slice, limit, partition_limit))
+        : _state(make_lw_shared<compact_mutation_state<SSTableCompaction>>(s, cm, query_time, slice, limit, partition_limit))
         , _consumer(std::move(consumer))
         , _gc_consumer(std::move(gc_consumer)) {
     }
@@ -583,6 +591,14 @@ public:
             std::function<api::timestamp_type(const dht::decorated_key&)> get_max_purgeable,
             Consumer consumer, GCConsumer gc_consumer = GCConsumer())
         : _state(make_lw_shared<compact_mutation_state<SSTableCompaction>>(s, compaction_time, get_max_purgeable))
+        , _consumer(std::move(consumer))
+        , _gc_consumer(std::move(gc_consumer)) {
+    }
+
+    compact_mutation_v2(const schema& s, utils::optional_reference<const compaction_manager> cm, gc_clock::time_point compaction_time,
+            std::function<api::timestamp_type(const dht::decorated_key&)> get_max_purgeable,
+            Consumer consumer, GCConsumer gc_consumer = GCConsumer())
+        : _state(make_lw_shared<compact_mutation_state<SSTableCompaction>>(s, cm, compaction_time, get_max_purgeable))
         , _consumer(std::move(consumer))
         , _gc_consumer(std::move(gc_consumer)) {
     }

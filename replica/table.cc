@@ -1283,6 +1283,7 @@ table::sstables_as_snapshot_source() {
             auto reader = make_sstable_reader(std::move(s), std::move(permit), sst_set, r, slice, pc, std::move(trace_state), fwd, fwd_mr);
             return make_compacting_reader(
                 std::move(reader),
+                _compaction_manager,
                 gc_clock::now(),
                 [](const dht::decorated_key&) { return api::min_timestamp; },
                 fwd);

@@ -910,7 +910,7 @@ SEASTAR_THREAD_TEST_CASE(test_reverse_reader_reads_in_native_reverse_order) {
 
     auto compacted = [] (flat_mutation_reader_v2 rd) {
         return make_compacting_reader(std::move(rd),
-                                      gc_clock::time_point::max(),
+                                      std::nullopt, gc_clock::time_point::max(),
                                       [] (const dht::decorated_key&) { return api::max_timestamp; });
     };
 

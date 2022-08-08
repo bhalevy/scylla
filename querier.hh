@@ -143,7 +143,7 @@ public:
             const io_priority_class& pc,
             tracing::trace_state_ptr trace_ptr)
         : querier_base(schema, permit, std::move(range), std::move(slice), ms, pc, std::move(trace_ptr))
-        , _compaction_state(make_lw_shared<compact_for_query_state_v2>(*schema, gc_clock::time_point{}, *_slice, 0, 0)) {
+        , _compaction_state(make_lw_shared<compact_for_query_state_v2>(*schema, std::nullopt, gc_clock::time_point{}, *_slice, 0, 0)) {
     }
 
     bool are_limits_reached() const {

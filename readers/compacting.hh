@@ -11,6 +11,9 @@
 #include "gc_clock.hh"
 #include "readers/flat_mutation_reader_fwd.hh"
 #include "timestamp.hh"
+#include "utils/optional_reference.hh"
+
+class compaction_manager;
 
 namespace dht {
 class decorated_key;
@@ -31,6 +34,6 @@ class decorated_key;
 /// reader supports it
 /// Intra-partition forwarding: `fast_forward_to(position_range)` is supported
 /// if the source reader supports it
-flat_mutation_reader_v2 make_compacting_reader(flat_mutation_reader_v2 source, gc_clock::time_point compaction_time,
+flat_mutation_reader_v2 make_compacting_reader(flat_mutation_reader_v2 source, utils::optional_reference<const compaction_manager> cm, gc_clock::time_point compaction_time,
         std::function<api::timestamp_type(const dht::decorated_key&)> get_max_purgeable,
         streamed_mutation::forwarding fwd = streamed_mutation::forwarding::no);

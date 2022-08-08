@@ -2201,11 +2201,11 @@ reconcilable_result reconcilable_result_builder::consume_end_of_stream() {
 }
 
 future<query::result>
-to_data_query_result(const reconcilable_result& r, schema_ptr s, const query::partition_slice& slice, uint64_t max_rows, uint32_t max_partitions,
+to_data_query_result(const reconcilable_result& r, schema_ptr s, const compaction_manager& cm, const query::partition_slice& slice, uint64_t max_rows, uint32_t max_partitions,
         query::result_options opts) {
     // This result was already built with a limit, don't apply another one.
     query::result::builder builder(slice, opts, query::result_memory_accounter{ query::result_memory_limiter::unlimited_result_size }, query::max_tombstones);
-    auto consumer = compact_for_query_v2<query_result_builder>(*s, gc_clock::time_point::min(), slice, max_rows,
+    auto consumer = compact_for_query_v2<query_result_builder>(*s, cm, gc_clock::time_point::min(), slice, max_rows,
             max_partitions, query_result_builder(*s, builder));
     auto compaction_state = consumer.get_state();
     const auto reverse = slice.options.contains(query::partition_slice::option::reversed) ? consume_in_reverse::legacy_half_reverse : consume_in_reverse::no;
@@ -2235,9 +2235,9 @@ to_data_query_result(const reconcilable_result& r, schema_ptr s, const query::pa
 }
 
 query::result
-query_mutation(mutation&& m, const query::partition_slice& slice, uint64_t row_limit, gc_clock::time_point now, query::result_options opts) {
+query_mutation(mutation&& m, utils::optional_reference<const compaction_manager> cm, const query::partition_slice& slice, uint64_t row_limit, gc_clock::time_point now, query::result_options opts) {
     query::result::builder builder(slice, opts, query::result_memory_accounter{ query::result_memory_limiter::unlimited_result_size }, query::max_tombstones);
-    auto consumer = compact_for_query_v2<query_result_builder>(*m.schema(), now, slice, row_limit,
+    auto consumer = compact_for_query_v2<query_result_builder>(*m.schema(), cm, now, slice, row_limit,
             query::max_partitions, query_result_builder(*m.schema(), builder));
     auto compaction_state = consumer.get_state();
     const auto reverse = slice.options.contains(query::partition_slice::option::reversed) ? consume_in_reverse::legacy_half_reverse : consume_in_reverse::no;
@@ -2441,7 +2441,7 @@ mutation_partition::fully_discontinuous(const schema& s, const position_range& r
     return check_continuity(s, r, is_continuous::no);
 }
 
-future<mutation_opt> counter_write_query(schema_ptr s, const mutation_source& source, reader_permit permit,
+future<mutation_opt> counter_write_query(schema_ptr s, utils::optional_reference<const compaction_manager> cm, const mutation_source& source, reader_permit permit,
                                          const dht::decorated_key& dk,
                                          const query::partition_slice& slice,
                                          tracing::trace_state_ptr trace_ptr)
@@ -2468,7 +2468,7 @@ future<mutation_opt> counter_write_query(schema_ptr s, const mutation_source& so
     auto r_a_r = std::make_unique<range_and_reader>(s, source, std::move(permit), dk, slice, std::move(trace_ptr));
     auto cwqrb = counter_write_query_result_builder(*s);
     auto cfq = compact_for_query_v2<counter_write_query_result_builder>(
-            *s, gc_clock::now(), slice, query::max_rows, query::max_partitions, std::move(cwqrb));
+            *s, cm, gc_clock::now(), slice, query::max_rows, query::max_partitions, std::move(cwqrb));
     auto f = r_a_r->reader.consume(std::move(cfq));
     return f.finally([r_a_r = std::move(r_a_r)] {
         return r_a_r->reader.close();
