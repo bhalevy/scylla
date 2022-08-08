@@ -47,8 +47,8 @@ compaction_descriptor leveled_compaction_strategy::get_sstables_for_compaction(t
             continue;
         }
         auto& sst = *std::max_element(sstables.begin(), sstables.end(), [&] (auto& i, auto& j) {
-            auto gc_before1 = i->get_gc_before_for_drop_estimation(compaction_time);
-            auto gc_before2 = j->get_gc_before_for_drop_estimation(compaction_time);
+            auto gc_before1 = i->get_gc_before_for_drop_estimation(get_compaction_manager_opt(), compaction_time);
+            auto gc_before2 = j->get_gc_before_for_drop_estimation(get_compaction_manager_opt(), compaction_time);
             return i->estimate_droppable_tombstone_ratio(gc_before1) < j->estimate_droppable_tombstone_ratio(gc_before2);
         });
         return sstables::compaction_descriptor({ sst }, service::get_local_compaction_priority(), sst->get_sstable_level());

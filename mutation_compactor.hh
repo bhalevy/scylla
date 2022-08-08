@@ -242,7 +242,7 @@ private:
             return _gc_before.value();
         } else {
             if (_dk) {
-                _gc_before = ::get_gc_before_for_key(_schema.shared_from_this(), *_dk, _query_time);
+                _gc_before = ::get_gc_before_for_key(_schema.shared_from_this(), _compaction_manager_opt, *_dk, _query_time);
                 return _gc_before.value();
             } else {
                 return gc_clock::time_point::min();

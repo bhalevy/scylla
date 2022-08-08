@@ -1030,7 +1030,7 @@ sstables::shared_sstable create_sstable(sstables::test_env& env, schema_ptr s, s
 
 static mutation compacted(const mutation& m) {
     auto result = m;
-    result.partition().compact_for_compaction(*result.schema(), always_gc, result.decorated_key(), gc_clock::now());
+    result.partition().compact_for_compaction(*result.schema(), compaction_manager_nullopt, always_gc, result.decorated_key(), gc_clock::now());
     return result;
 }
 

@@ -8,6 +8,9 @@
 
 #pragma once
 
+#include <boost/icl/interval.hpp>
+#include <boost/icl/interval_map.hpp>
+
 #include <seastar/core/semaphore.hh>
 #include <seastar/core/sstring.hh>
 #include <seastar/core/shared_ptr.hh>
@@ -33,8 +36,14 @@
 #include "backlog_controller.hh"
 #include "seastarx.hh"
 #include "sstables/exceptions.hh"
+#include "tombstone_gc.hh"
 
 class compacting_sstable_registration;
+
+class repair_history_map {
+public:
+    boost::icl::interval_map<dht::token, gc_clock::time_point, boost::icl::partial_absorber, std::less, boost::icl::inplace_max> map;
+};
 
 // Compaction manager provides facilities to submit and track compaction jobs on
 // behalf of existing tables.
@@ -294,6 +303,8 @@ private:
 
     class strategy_control;
     std::unique_ptr<strategy_control> _strategy_control;
+
+    std::unordered_map<table_id, seastar::lw_shared_ptr<repair_history_map>> _repair_history_maps;
 private:
     future<compaction_stats_opt> perform_task(shared_ptr<task>);
 
@@ -507,6 +518,11 @@ public:
     static sstables::compaction_data create_compaction_data();
 
     compaction::strategy_control& get_strategy_control() const noexcept;
+
+    seastar::lw_shared_ptr<repair_history_map> get_or_create_repair_history_map_for_table(const table_id& id);
+    seastar::lw_shared_ptr<repair_history_map> get_repair_history_map_for_table(const table_id& id) const noexcept;
+    void drop_repair_history_map_for_table(const table_id& id);
+    void update_repair_time(table_id table_uuid, const dht::token_range& range, gc_clock::time_point repair_time);
 
     friend class compacting_sstable_registration;
     friend class compaction_weight_registration;

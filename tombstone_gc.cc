@@ -19,37 +19,33 @@
 #include "replica/database.hh"
 #include "data_dictionary/data_dictionary.hh"
 #include "gms/feature_service.hh"
+#include "compaction/compaction_manager.hh"
 
 extern logging::logger dblog;
 
-class repair_history_map {
-public:
-    boost::icl::interval_map<dht::token, gc_clock::time_point, boost::icl::partial_absorber, std::less, boost::icl::inplace_max> map;
-};
+// FIXME: move to compaction_manager methods to compaction_manager.cc
 
-thread_local std::unordered_map<table_id, seastar::lw_shared_ptr<repair_history_map>> repair_history_maps;
-
-static seastar::lw_shared_ptr<repair_history_map> get_or_create_repair_history_map_for_table(const table_id& id) {
-    auto it = repair_history_maps.find(id);
-    if (it != repair_history_maps.end()) {
+seastar::lw_shared_ptr<repair_history_map> compaction_manager::get_or_create_repair_history_map_for_table(const table_id& id) {
+    auto it = _repair_history_maps.find(id);
+    if (it != _repair_history_maps.end()) {
         return it->second;
     } else {
-        repair_history_maps[id] = seastar::make_lw_shared<repair_history_map>();
-        return repair_history_maps[id];
+        _repair_history_maps[id] = seastar::make_lw_shared<repair_history_map>();
+        return _repair_history_maps[id];
     }
 }
 
-seastar::lw_shared_ptr<repair_history_map> get_repair_history_map_for_table(const table_id& id) {
-    auto it = repair_history_maps.find(id);
-    if (it != repair_history_maps.end()) {
+seastar::lw_shared_ptr<repair_history_map> compaction_manager::get_repair_history_map_for_table(const table_id& id) const noexcept {
+    auto it = _repair_history_maps.find(id);
+    if (it != _repair_history_maps.end()) {
         return it->second;
     } else {
         return {};
     }
 }
 
-void drop_repair_history_map_for_table(const table_id& id) {
-    repair_history_maps.erase(id);
+void compaction_manager::drop_repair_history_map_for_table(const table_id& id) {
+    _repair_history_maps.erase(id);
 }
 
 // This is useful for a sstable to query a gc_before for a range. The range is
@@ -60,7 +56,7 @@ void drop_repair_history_map_for_table(const table_id& id) {
 // The knows_entire_range is set to true:
 // 1) if the tombstone_gc_mode is not repair, since we have the same value for all the keys in the ranges.
 // 2) if the tombstone_gc_mode is repair, and the range is a sub range of a range in the repair history map.
-get_gc_before_for_range_result get_gc_before_for_range(schema_ptr s, const dht::token_range& range, const gc_clock::time_point& query_time) {
+get_gc_before_for_range_result get_gc_before_for_range(schema_ptr s, compaction_manager_opt cm_opt, const dht::token_range& range, const gc_clock::time_point& query_time) {
     bool knows_entire_range = true;
     const auto& options = s->tombstone_gc_options();
     switch (options.mode()) {
@@ -85,7 +81,10 @@ get_gc_before_for_range_result get_gc_before_for_range(schema_ptr s, const dht::
         auto max_repair_timestamp = gc_clock::time_point::min();
         int hits = 0;
         knows_entire_range = false;
-        auto m = get_repair_history_map_for_table(s->id());
+        seastar::lw_shared_ptr<repair_history_map> m;
+        if (cm_opt) {
+            m = cm_opt->get_repair_history_map_for_table(s->id());
+        }
         if (m) {
             auto interval = locator::token_metadata::range_to_interval(range);
             auto min = gc_clock::time_point::max();
@@ -118,7 +117,7 @@ get_gc_before_for_range_result get_gc_before_for_range(schema_ptr s, const dht::
     std::abort();
 }
 
-gc_clock::time_point get_gc_before_for_key(schema_ptr s, const dht::decorated_key& dk, const gc_clock::time_point& query_time) {
+gc_clock::time_point get_gc_before_for_key(schema_ptr s, compaction_manager_opt cm_opt, const dht::decorated_key& dk, const gc_clock::time_point& query_time) {
     // if mode = timeout    // default option, if user does not specify tombstone_gc options
     // if mode = disabled   // never gc tombstone
     // if mode = immediate  // can gc tombstone immediately
@@ -138,7 +137,10 @@ gc_clock::time_point get_gc_before_for_key(schema_ptr s, const dht::decorated_ke
         const std::chrono::seconds& propagation_delay = options.propagation_delay_in_seconds();
         auto gc_before = gc_clock::time_point::min();
         auto repair_timestamp = gc_clock::time_point::min();
-        auto m = get_repair_history_map_for_table(s->id());
+        seastar::lw_shared_ptr<repair_history_map> m;
+        if (cm_opt) {
+            m = cm_opt->get_repair_history_map_for_table(s->id());
+        }
         if (m) {
             const auto it = m->map.find(dk.token());
             if (it == m->map.end()) {
@@ -155,7 +157,7 @@ gc_clock::time_point get_gc_before_for_key(schema_ptr s, const dht::decorated_ke
     std::abort();
 }
 
-void update_repair_time(table_id id, const dht::token_range& range, gc_clock::time_point repair_time) {
+void compaction_manager::update_repair_time(table_id id, const dht::token_range& range, gc_clock::time_point repair_time) {
     auto m = get_or_create_repair_history_map_for_table(id);
     m->map += std::make_pair(locator::token_metadata::range_to_interval(range), repair_time);
 }

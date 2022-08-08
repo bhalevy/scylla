@@ -9,6 +9,7 @@
 #include "mutation.hh"
 #include "query-result-writer.hh"
 #include "mutation_rebuilder.hh"
+#include "tombstone_gc.hh"
 
 mutation::data::data(dht::decorated_key&& key, schema_ptr&& schema)
     : _schema(std::move(schema))
@@ -174,7 +175,7 @@ mutation mutation::sliced(const query::clustering_row_ranges& ranges) const {
 
 mutation mutation::compacted() const {
     auto m = *this;
-    m.partition().compact_for_compaction(*schema(), always_gc, m.decorated_key(), gc_clock::time_point::min());
+    m.partition().compact_for_compaction(*schema(), compaction_manager_nullopt, always_gc, m.decorated_key(), gc_clock::time_point::min());
     return m;
 }
 

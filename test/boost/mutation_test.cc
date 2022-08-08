@@ -447,7 +447,7 @@ SEASTAR_THREAD_TEST_CASE(test_large_collection_allocation) {
         auto res_mut_opt = read_mutation_from_flat_mutation_reader(rd).get0();
         BOOST_REQUIRE(res_mut_opt);
 
-        res_mut_opt->partition().compact_for_query(*schema, res_mut_opt->decorated_key(), gc_clock::now(), {query::full_clustering_range}, true, false,
+        res_mut_opt->partition().compact_for_query(*schema, compaction_manager_nullopt, res_mut_opt->decorated_key(), gc_clock::now(), {query::full_clustering_range}, true, false,
                 std::numeric_limits<uint32_t>::max());
 
         const auto stats_after = memory::stats();
@@ -1238,7 +1238,7 @@ SEASTAR_TEST_CASE(test_mutation_hash) {
 
 static mutation compacted(const mutation& m, gc_clock::time_point now) {
     auto result = m;
-    result.partition().compact_for_compaction(*result.schema(), always_gc, result.decorated_key(), now);
+    result.partition().compact_for_compaction(*result.schema(), compaction_manager_nullopt, always_gc, result.decorated_key(), now);
     return result;
 }
 
@@ -1632,7 +1632,7 @@ SEASTAR_TEST_CASE(test_tombstone_purge) {
     tombstone tomb(api::new_timestamp(), gc_clock::now() - std::chrono::seconds(1));
     m.partition().apply(tomb);
     BOOST_REQUIRE(!m.partition().empty());
-    m.partition().compact_for_compaction(*s, always_gc, m.decorated_key(), gc_clock::now());
+    m.partition().compact_for_compaction(*s, compaction_manager_nullopt, always_gc, m.decorated_key(), gc_clock::now());
     // Check that row was covered by tombstone.
     BOOST_REQUIRE(m.partition().empty());
     // Check that tombstone was purged after compact_for_compaction().
@@ -1738,11 +1738,11 @@ SEASTAR_TEST_CASE(test_trim_rows) {
 
         auto compact_and_expect_empty = [&] (mutation m, std::vector<query::clustering_range> ranges) {
             mutation m2 = m;
-            m.partition().compact_for_query(*s, m.decorated_key(), now, ranges, false, false, query::max_rows);
+            m.partition().compact_for_query(*s, compaction_manager_nullopt, m.decorated_key(), now, ranges, false, false, query::max_rows);
             BOOST_REQUIRE(m.partition().clustered_rows().empty());
 
             std::reverse(ranges.begin(), ranges.end());
-            m2.partition().compact_for_query(*s, m2.decorated_key(), now, ranges, false, true, query::max_rows);
+            m2.partition().compact_for_query(*s, compaction_manager_nullopt, m2.decorated_key(), now, ranges, false, true, query::max_rows);
             BOOST_REQUIRE(m2.partition().clustered_rows().empty());
         };
 
@@ -1824,8 +1824,8 @@ SEASTAR_TEST_CASE(test_mutation_diff_with_random_generator) {
             if (s != m2.schema()) {
                 return;
             }
-            m1.partition().compact_for_compaction(*s, never_gc, m1.decorated_key(), now);
-            m2.partition().compact_for_compaction(*s, never_gc, m2.decorated_key(), now);
+            m1.partition().compact_for_compaction(*s, compaction_manager_nullopt, never_gc, m1.decorated_key(), now);
+            m2.partition().compact_for_compaction(*s, compaction_manager_nullopt, never_gc, m2.decorated_key(), now);
             auto m12 = m1;
             m12.apply(m2);
             auto m12_with_diff = m1;
@@ -2315,7 +2315,7 @@ void run_compaction_data_stream_split_test(const schema& schema, reader_permit p
         std::vector<mutation> mutations) {
     auto never_gc = std::function<bool(tombstone)>([] (tombstone) { return false; });
     for (auto& mut : mutations) {
-        mut.partition().compact_for_compaction(schema, never_gc, mut.decorated_key(), query_time);
+        mut.partition().compact_for_compaction(schema, compaction_manager_nullopt, never_gc, mut.decorated_key(), query_time);
     }
 
     auto reader = make_flat_mutation_reader_from_mutations_v2(schema.shared_from_this(), std::move(permit), mutations);
@@ -2736,7 +2736,7 @@ SEASTAR_THREAD_TEST_CASE(test_compactor_range_tombstone_spanning_many_pages) {
         auto mut_opt = reader.consume(mutation_rebuilder_v2(s)).get();
         BOOST_REQUIRE(mut_opt);
         ref_mut = std::move(*mut_opt);
-        ref_mut.partition().compact_for_query(*s, pk, query_time, {query::clustering_range::make_open_ended_both_sides()}, true, false, max_rows);
+        ref_mut.partition().compact_for_query(*s, compaction_manager_nullopt, pk, query_time, {query::clustering_range::make_open_ended_both_sides()}, true, false, max_rows);
     }
 
     struct consumer_v2 {

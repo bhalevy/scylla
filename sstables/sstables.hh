@@ -55,6 +55,7 @@
 
 class sstable_assertions;
 class cached_file;
+class compaction_manager;
 
 namespace sstables {
 
@@ -887,8 +888,8 @@ public:
     friend std::unique_ptr<DataConsumeRowsContext>
     data_consume_rows(const schema&, shared_sstable, typename DataConsumeRowsContext::consumer&);
     friend void lw_shared_ptr_deleter<sstables::sstable>::dispose(sstable* s);
-    gc_clock::time_point get_gc_before_for_drop_estimation(const gc_clock::time_point& compaction_time) const;
-    gc_clock::time_point get_gc_before_for_fully_expire(const gc_clock::time_point& compaction_time) const;
+    gc_clock::time_point get_gc_before_for_drop_estimation(compaction_manager_opt cm_opt, const gc_clock::time_point& compaction_time) const;
+    gc_clock::time_point get_gc_before_for_fully_expire(compaction_manager_opt cm_opt, const gc_clock::time_point& compaction_time) const;
 };
 
 // When we compact sstables, we have to atomically instantiate the new

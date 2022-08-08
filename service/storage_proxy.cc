@@ -3743,6 +3743,7 @@ protected:
     bool _request_failed = false; // will be true if request fails or timeouts
     timer<storage_proxy::clock_type> _timeout;
     schema_ptr _schema;
+    const compaction_manager& _cm;
     size_t _failed = 0;
 
     virtual void on_failure(exceptions::coordinator_exception_container&& ex) = 0;
@@ -3757,10 +3758,11 @@ protected:
         on_failure(std::move(ex));
     }
 public:
-    abstract_read_resolver(schema_ptr schema, db::consistency_level cl, size_t target_count, storage_proxy::clock_type::time_point timeout)
+    abstract_read_resolver(schema_ptr schema, const compaction_manager& cm, db::consistency_level cl, size_t target_count, storage_proxy::clock_type::time_point timeout)
         : _cl(cl)
         , _targets_count(target_count)
         , _schema(std::move(schema))
+        , _cm(cm)
     {
         _timeout.set_callback([this] {
             on_timeout();
@@ -3850,7 +3852,7 @@ public:
     digest_read_resolver(shared_ptr<storage_proxy> proxy,
             locator::effective_replication_map_ptr ermp,
             schema_ptr schema, db::consistency_level cl, size_t block_for, size_t target_count_for_cl, storage_proxy::clock_type::time_point timeout)
-        : abstract_read_resolver(std::move(schema), cl, 0, timeout)
+        : abstract_read_resolver(std::move(schema), proxy->local_db().get_compaction_manager(), cl, 0, timeout)
         , _proxy(std::move(proxy))
         , _effective_replication_map_ptr(std::move(ermp))
         , _block_for(block_for)
@@ -4094,21 +4096,21 @@ private:
         return get_last_row(s, *last_partition, is_reversed);
     }
 
-    static primary_key get_last_reconciled_row(const schema& s, const mutation_and_live_row_count& m_a_rc, const query::read_command& cmd, uint64_t limit, bool is_reversed) {
+    static primary_key get_last_reconciled_row(const schema& s, const compaction_manager& cm, const mutation_and_live_row_count& m_a_rc, const query::read_command& cmd, uint64_t limit, bool is_reversed) {
         const auto& m = m_a_rc.mut;
         auto mp = mutation_partition(s, m.partition());
         auto&& ranges = cmd.slice.row_ranges(s, m.key());
         bool always_return_static_content = cmd.slice.options.contains<query::partition_slice::option::always_return_static_content>();
-        mp.compact_for_query(s, m.decorated_key(), cmd.timestamp, ranges, always_return_static_content, is_reversed, limit);
-        return primary_key{m.decorated_key(), get_last_reconciled_row(s, mp, is_reversed)};
+        mp.compact_for_query(s, &cm, m.decorated_key(), cmd.timestamp, ranges, always_return_static_content, is_reversed, limit);
+        return primary_key{m.decorated_key(), get_last_reconciled_row(s, cm, mp, is_reversed)};
     }
 
-    static primary_key get_last_reconciled_row(const schema& s, const mutation_and_live_row_count& m_a_rc, bool is_reversed) {
+    static primary_key get_last_reconciled_row(const schema& s, const compaction_manager& cm, const mutation_and_live_row_count& m_a_rc, bool is_reversed) {
         const auto& m = m_a_rc.mut;
-        return primary_key{m.decorated_key(), get_last_reconciled_row(s, m.partition(), is_reversed)};
+        return primary_key{m.decorated_key(), get_last_reconciled_row(s, cm, m.partition(), is_reversed)};
     }
 
-    static std::optional<clustering_key> get_last_reconciled_row(const schema& s, const mutation_partition& mp, bool is_reversed) {
+    static std::optional<clustering_key> get_last_reconciled_row(const schema& s, const compaction_manager&, const mutation_partition& mp, bool is_reversed) {
         std::optional<clustering_key> ck;
         if (!mp.clustered_rows().empty()) {
             if (is_reversed) {
@@ -4134,7 +4136,7 @@ private:
         return false;
     }
 
-    bool got_incomplete_information_across_partitions(const schema& s, const query::read_command& cmd,
+    bool got_incomplete_information_across_partitions(const schema& s, const compaction_manager& cm, const query::read_command& cmd,
                                                       const primary_key& last_reconciled_row, std::vector<mutation_and_live_row_count>& rp,
                                                       const std::vector<std::vector<version>>& versions, bool is_reversed) {
         bool short_reads_allowed = cmd.slice.options.contains<query::partition_slice::option::allow_short_read>();
@@ -4174,7 +4176,7 @@ private:
                     std::vector<query::clustering_range> ranges;
                     ranges.emplace_back(is_reversed ? query::clustering_range::make_starting_with(std::move(*shortest_read->clustering))
                                                     : query::clustering_range::make_ending_with(std::move(*shortest_read->clustering)));
-                    it->live_row_count = it->mut.partition().compact_for_query(s, it->mut.decorated_key(), cmd.timestamp, ranges, always_return_static_content,
+                    it->live_row_count = it->mut.partition().compact_for_query(s, &cm, it->mut.decorated_key(), cmd.timestamp, ranges, always_return_static_content,
                             is_reversed, query::partition_max_rows);
                 }
             }
@@ -4216,26 +4218,28 @@ private:
                 rows_left -= row_count;
                 partitions_left -= !!row_count;
                 if (original_per_partition_limit < query:: max_rows_if_set) {
-                    auto&& last_row = get_last_reconciled_row(s, m_a_rc, cmd, original_per_partition_limit, is_reversed);
+                    auto&& last_row = get_last_reconciled_row(s, _cm, m_a_rc, cmd, original_per_partition_limit, is_reversed);
                     if (got_incomplete_information_in_partition(s, last_row, *pv, is_reversed)) {
                         _increase_per_partition_limit = true;
                         return true;
                     }
                 }
             } else {
-                auto&& last_row = get_last_reconciled_row(s, m_a_rc, cmd, rows_left, is_reversed);
-                return got_incomplete_information_across_partitions(s, cmd, last_row, rp, versions, is_reversed);
+                auto&& last_row = get_last_reconciled_row(s, _cm, m_a_rc, cmd, rows_left, is_reversed);
+                return got_incomplete_information_across_partitions(s, _cm, cmd, last_row, rp, versions, is_reversed);
             }
             ++pv;
         }
         if (rp.empty()) {
             return false;
         }
-        auto&& last_row = get_last_reconciled_row(s, *rp.begin(), is_reversed);
-        return got_incomplete_information_across_partitions(s, cmd, last_row, rp, versions, is_reversed);
+        auto&& last_row = get_last_reconciled_row(s, _cm, *rp.begin(), is_reversed);
+        return got_incomplete_information_across_partitions(s, _cm, cmd, last_row, rp, versions, is_reversed);
     }
 public:
-    data_read_resolver(schema_ptr schema, db::consistency_level cl, size_t targets_count, storage_proxy::clock_type::time_point timeout) : abstract_read_resolver(std::move(schema), cl, targets_count, timeout) {
+    data_read_resolver(schema_ptr schema, const compaction_manager& cm, db::consistency_level cl, size_t targets_count, storage_proxy::clock_type::time_point timeout)
+            : abstract_read_resolver(std::move(schema), cm, cl, targets_count, timeout)
+    {
         _data_results.reserve(targets_count);
     }
     void add_mutate_data(gms::inet_address from, foreign_ptr<lw_shared_ptr<reconcilable_result>> result) {
@@ -4640,9 +4644,12 @@ protected:
         return _cmd->partition_limit;
     }
     virtual void adjust_targets_for_reconciliation() {}
+    const compaction_manager& get_compaction_manager() const {
+        return _proxy->local_db().get_compaction_manager();
+    }
     void reconcile(db::consistency_level cl, storage_proxy::clock_type::time_point timeout, lw_shared_ptr<query::read_command> cmd) {
         adjust_targets_for_reconciliation();
-        data_resolver_ptr data_resolver = ::make_shared<data_read_resolver>(_schema, cl, _targets.size(), timeout);
+        data_resolver_ptr data_resolver = ::make_shared<data_read_resolver>(_schema, get_compaction_manager(), cl, _targets.size(), timeout);
         auto exec = shared_from_this();
 
         // Waited on indirectly.
