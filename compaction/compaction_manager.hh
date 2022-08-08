@@ -26,6 +26,8 @@
 #include <list>
 #include <functional>
 #include <algorithm>
+
+#include "compaction_manager_fwd.hh"
 #include "compaction.hh"
 #include "compaction_weight_registration.hh"
 #include "compaction_backlog_manager.hh"
