@@ -1278,6 +1278,7 @@ future<stop_iteration> view_update_builder::on_results() {
 
 view_update_builder make_view_update_builder(
         const schema_ptr& base,
+        const compaction_manager& cm,
         std::vector<view_and_base>&& views_to_update,
         flat_mutation_reader_v2&& updates,
         flat_mutation_reader_v2_opt&& existings,
@@ -1290,7 +1291,7 @@ view_update_builder make_view_update_builder(
         }
         return view_updates(std::move(v));
     }));
-    return view_update_builder(base, std::move(vs), std::move(updates), std::move(existings), now);
+    return view_update_builder(base, cm, std::move(vs), std::move(updates), std::move(existings), now);
 }
 
 future<query::clustering_row_ranges> calculate_affected_clustering_ranges(const schema& base,

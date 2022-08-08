@@ -1699,6 +1699,7 @@ future<> table::generate_and_propagate_view_updates(const schema_ptr& base,
     auto base_token = m.token();
     db::view::view_update_builder builder = db::view::make_view_update_builder(
             base,
+            _compaction_manager,
             std::move(views),
             make_flat_mutation_reader_from_mutations_v2(m.schema(), std::move(permit), std::move(m)),
             std::move(existings),
@@ -1834,6 +1835,7 @@ future<> table::populate_views(
     auto schema = reader.schema();
     db::view::view_update_builder builder = db::view::make_view_update_builder(
             schema,
+            _compaction_manager,
             std::move(views),
             std::move(reader),
             { },
