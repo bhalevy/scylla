@@ -44,7 +44,7 @@ struct mutation_consume_cookie {
     bool partition_start_consumed = false;
     bool static_row_consumed = false;
     // only used when reverse == consume_in_reverse::yes
-    std::unique_ptr<range_tombstone_list> reversed_range_tombstones;
+    std::optional<range_tombstone> reversed_rt;
     std::unique_ptr<clustering_iterators> iterators;
 };
 
@@ -206,7 +206,7 @@ namespace {
 template<consume_in_reverse reverse, FlattenedConsumerV2 Consumer>
 std::optional<stop_iteration> consume_clustering_fragments(schema_ptr s, mutation_partition& partition, Consumer& consumer, mutation_consume_cookie& cookie, is_preemptible preempt = is_preemptible::no) {
     constexpr bool crs_in_reverse = reverse == consume_in_reverse::legacy_half_reverse || reverse == consume_in_reverse::yes;
-    constexpr bool rts_in_reverse = reverse == consume_in_reverse::legacy_half_reverse;
+    constexpr bool rts_in_reverse = reverse == consume_in_reverse::legacy_half_reverse || reverse == consume_in_reverse::yes;
 
     using crs_type = mutation_partition::rows_type;
     using crs_iterator_type = std::conditional_t<crs_in_reverse, std::reverse_iterator<crs_type::iterator>, crs_type::iterator>;
@@ -222,20 +222,9 @@ std::optional<stop_iteration> consume_clustering_fragments(schema_ptr s, mutatio
     }
     s = cookie.schema;
 
-    auto* rt_list = &partition.mutable_row_tombstones();
-    if (reverse == consume_in_reverse::yes && !cookie.reversed_range_tombstones) {
-        cookie.reversed_range_tombstones = std::make_unique<rts_type>(*s);
-        while (!rt_list->empty()) {
-            auto rt = rt_list->pop_front_and_lock();
-            rt.reverse();
-            cookie.reversed_range_tombstones->apply(*s, std::move(rt));
-        }
-        rt_list = &*cookie.reversed_range_tombstones;
-    }
-
     if (!cookie.iterators) {
         auto& crs = partition.mutable_clustered_rows();
-        auto& rts = *rt_list;
+        auto& rts = partition.mutable_row_tombstones();
         cookie.iterators = std::make_unique<mutation_consume_cookie::clustering_iterators>(*s, crs.begin(), crs.end(), rts.begin(), rts.end());
     }
 
@@ -276,20 +265,34 @@ std::optional<stop_iteration> consume_clustering_fragments(schema_ptr s, mutatio
             ++crs_it;
             continue;
         }
-        bool emit_rt;
-        if (crs_it != crs_end && rts_it != rts_end) {
-            const auto cmp_res = cmp(rts_it->position(), crs_it->position());
-            if constexpr (reverse == consume_in_reverse::legacy_half_reverse) {
-                emit_rt = cmp_res > 0;
+        range_tombstone* rt_to_emit = nullptr;
+        if (rts_it != rts_end) {
+            if constexpr (reverse == consume_in_reverse::yes) {
+                if (!cookie.reversed_rt) {
+                    cookie.reversed_rt = std::move(rts_it->tombstone());
+                    cookie.reversed_rt->reverse();
+                }
+                rt_to_emit = &*cookie.reversed_rt;
             } else {
-                emit_rt = cmp_res < 0;
+                rt_to_emit = &rts_it->tombstone();
             }
-        } else {
-            emit_rt = rts_it != rts_end;
+            if (crs_it != crs_end) {
+                auto cmp_res = cmp(rt_to_emit->position(), crs_it->position());
+                if constexpr (reverse == consume_in_reverse::legacy_half_reverse) {
+                    if (cmp_res < 0) {
+                        rt_to_emit = nullptr;
+                    }
+                } else if (cmp_res > 0) {
+                    rt_to_emit = nullptr;
+                }
+            }
         }
-        if (emit_rt) {
-            flush_tombstones(rts_it->position());
-            cookie.iterators->rt_gen.consume(std::move(rts_it->tombstone()));
+        if (rt_to_emit) {
+            flush_tombstones(rt_to_emit->position());
+            cookie.iterators->rt_gen.consume(std::move(*rt_to_emit));
+            if constexpr (reverse == consume_in_reverse::yes) {
+                cookie.reversed_rt.reset();
+            }
             ++rts_it;
         } else {
             flush_tombstones(crs_it->position());
