@@ -27,6 +27,8 @@ public:
     virtual ~local_strategy() {};
     virtual size_t get_replication_factor(const token_metadata&) const override;
 
+    virtual bool has_static_natural_endpoints() const noexcept override { return true; }
+
     virtual future<endpoint_set> calculate_natural_endpoints(const token& search_token, const token_metadata& tm) const override;
 
     virtual void validate_options() const override;
