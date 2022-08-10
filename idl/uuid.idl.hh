@@ -9,6 +9,7 @@
 #include "utils/UUID.hh"
 #include "schema_fwd.hh"
 #include "query-request.hh"
+#include "locator/host_id.hh"
 
 namespace utils {
 class UUID final {
@@ -26,5 +27,9 @@ class table_schema_version final {
 };
 
 class query_id final {
+    utils::UUID uuid();
+};
+
+class host_id final {
     utils::UUID uuid();
 };
