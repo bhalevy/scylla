@@ -62,8 +62,8 @@ private:
                 _stop_consuming = stop_iteration::yes;
             }
         }
-        _rt_gen.flush(pos, [this] (range_tombstone_change rt) {
-            if (_consumer.consume(std::move(rt))) {
+        _rt_gen.flush(pos, [this] (range_tombstone_change rtc) {
+            if (_consumer.consume(std::move(rtc))) {
                 _stop_consuming = stop_iteration::yes;
             }
         });
