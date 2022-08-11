@@ -371,13 +371,17 @@ effective_replication_map::factory_key effective_replication_map::make_factory_k
     return factory_key(rs->get_type(), rs->get_config_options(), tmptr->get_ring_version());
 }
 
-future<effective_replication_map_ptr> effective_replication_map_factory::create_effective_replication_map(abstract_replication_strategy::ptr_type rs, token_metadata_ptr tmptr) {
+future<effective_replication_map_ptr> effective_replication_map_factory::create_effective_replication_map(abstract_replication_strategy::ptr_type rs, token_metadata_ptr tmptr, bool allow_empty) {
     // lookup key on local shard
     auto key = effective_replication_map::make_factory_key(rs, tmptr);
     auto erm = find_effective_replication_map(key);
     if (erm) {
         rslogger.debug("create_effective_replication_map: found {} [{}]", key, fmt::ptr(erm.get()));
         co_return erm;
+    }
+
+    if (tmptr->sorted_tokens().empty() && !allow_empty) {
+        rslogger.warn("create_effective_replication_map: token metadata is empty, at {}", current_backtrace());
     }
 
     // try to find a reference erm on shard 0
