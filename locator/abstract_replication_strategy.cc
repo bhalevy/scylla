@@ -381,7 +381,7 @@ future<effective_replication_map_ptr> effective_replication_map_factory::create_
     }
 
     if (tmptr->sorted_tokens().empty() && !allow_empty) {
-        rslogger.warn("create_effective_replication_map: token metadata is empty, at {}", current_backtrace());
+        on_internal_error(rslogger, "create_effective_replication_map: token metadata is empty");
     }
 
     // try to find a reference erm on shard 0
