@@ -390,7 +390,8 @@ future<> storage_service::join_token_ring(cdc::generation_service& cdc_gen_servi
     // Replicate the tokens early because once gossip runs other nodes
     // might send reads/writes to this node. Replicate it early to make
     // sure the tokens are valid on all the shards.
-    co_await replicate_to_all_cores(std::move(tmptr));
+    bool allow_empty = true;
+    co_await replicate_to_all_cores(std::move(tmptr), allow_empty);
     tmlock.reset();
 
     auto broadcast_rpc_address = utils::fb_utilities::get_broadcast_rpc_address();
@@ -874,7 +875,8 @@ future<> storage_service::handle_state_bootstrap(inet_address endpoint) {
         tmptr->update_host_id(_gossiper.get_host_id(endpoint), endpoint);
     }
     co_await update_pending_ranges(tmptr, format("handle_state_bootstrap {}", endpoint));
-    co_await replicate_to_all_cores(std::move(tmptr));
+    bool allow_empty = true;
+    co_await replicate_to_all_cores(std::move(tmptr), allow_empty);
 }
 
 future<> storage_service::handle_state_normal(inet_address endpoint) {
@@ -1403,7 +1405,8 @@ future<> storage_service::join_cluster(cdc::generation_service& cdc_gen_service,
                     _gossiper.add_saved_endpoint(ep).get();
                 }
             }
-            replicate_to_all_cores(std::move(tmptr)).get();
+            bool allow_empty = true;
+            replicate_to_all_cores(std::move(tmptr), true).get();
         }
 
         // Seeds are now only used as the initial contact point nodes. If the
@@ -1424,8 +1427,12 @@ future<> storage_service::join_cluster(cdc::generation_service& cdc_gen_service,
     });
 }
 
-future<> storage_service::replicate_to_all_cores(mutable_token_metadata_ptr tmptr) noexcept {
+future<> storage_service::replicate_to_all_cores(mutable_token_metadata_ptr tmptr, bool allow_empty) noexcept {
     assert(this_shard_id() == 0);
+
+    if (tmptr->sorted_tokens().empty() && !allow_empty) {
+        on_internal_error(slogger, "replicate_to_all_cores: token_metadata is empty");
+    }
 
     slogger.debug("Replicating token_metadata to all cores");
     std::exception_ptr ex;
@@ -1453,7 +1460,7 @@ future<> storage_service::replicate_to_all_cores(mutable_token_metadata_ptr tmpt
         auto keyspaces = db.get_all_keyspaces();
         for (auto& ks_name : keyspaces) {
             auto rs = db.find_keyspace(ks_name).get_replication_strategy_ptr();
-            auto erm = co_await get_erm_factory().create_effective_replication_map(rs, tmptr);
+            auto erm = co_await get_erm_factory().create_effective_replication_map(rs, tmptr, allow_empty);
             pending_effective_replication_maps[base_shard].emplace(ks_name, std::move(erm));
         }
         co_await container().invoke_on_others([&, base_shard] (storage_service& ss) -> future<> {
@@ -1461,7 +1468,7 @@ future<> storage_service::replicate_to_all_cores(mutable_token_metadata_ptr tmpt
             for (auto& ks_name : keyspaces) {
                 auto rs = db.find_keyspace(ks_name).get_replication_strategy_ptr();
                 auto tmptr = pending_token_metadata_ptr[this_shard_id()];
-                auto erm = co_await ss.get_erm_factory().create_effective_replication_map(rs, std::move(tmptr));
+                auto erm = co_await ss.get_erm_factory().create_effective_replication_map(rs, std::move(tmptr), allow_empty);
                 pending_effective_replication_maps[this_shard_id()].emplace(ks_name, std::move(erm));
 
             }
