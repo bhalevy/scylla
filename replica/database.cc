@@ -1354,6 +1354,7 @@ database::create_keyspace(const lw_shared_ptr<keyspace_metadata>& ksm, locator::
         co_return;
     }
 
+    dblog.debug("Creating keyspace '{}': internal={} system={} bootstrap={}", ksm->name(), is_internal_keyspace(ksm->name()), system, is_bootstrap);
     co_await create_in_memory_keyspace(ksm, erm_factory, system);
     auto& ks = _keyspaces.at(ksm->name());
     auto& datadir = ks.datadir();
