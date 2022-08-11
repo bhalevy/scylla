@@ -1162,7 +1162,7 @@ public:
      * boom, it is replaced.
      */
     lw_shared_ptr<keyspace_metadata> metadata() const;
-    future<> create_replication_strategy(const locator::shared_token_metadata& stm, const locator::replication_strategy_config_options& options);
+    future<> create_replication_strategy(const locator::shared_token_metadata& stm, const locator::replication_strategy_config_options& options, bool allow_empty_token_metadata = false);
     void update_effective_replication_map(locator::effective_replication_map_ptr erm);
 
     /**
@@ -1386,7 +1386,7 @@ private:
     future<> flush_system_column_families();
 
     using system_keyspace = bool_class<struct system_keyspace_tag>;
-    future<> create_in_memory_keyspace(const lw_shared_ptr<keyspace_metadata>& ksm, locator::effective_replication_map_factory& erm_factory, system_keyspace system);
+    future<> create_in_memory_keyspace(const lw_shared_ptr<keyspace_metadata>& ksm, locator::effective_replication_map_factory& erm_factory, bool is_bootstrap, system_keyspace system);
     friend future<> db::system_keyspace_make(distributed<database>& db, distributed<service::storage_service>& ss, sharded<gms::gossiper>& g, db::config& cfg, db::table_selector&);
     void setup_metrics();
     void setup_scylla_memory_diagnostics_producer();

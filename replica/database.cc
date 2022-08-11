@@ -1180,14 +1180,16 @@ bool database::column_family_exists(const table_id& uuid) const {
 }
 
 future<>
-keyspace::create_replication_strategy(const locator::shared_token_metadata& stm, const locator::replication_strategy_config_options& options) {
+keyspace::create_replication_strategy(const locator::shared_token_metadata& stm, const locator::replication_strategy_config_options& options, bool allow_empty_token_metadata) {
     using namespace locator;
 
     _replication_strategy =
             abstract_replication_strategy::create_replication_strategy(
                 _metadata->strategy_name(), options);
 
-    auto erm = co_await get_erm_factory().create_effective_replication_map(_replication_strategy, stm.get());
+    // We allow the token_metadata to be empty
+    // only when creating system keyspaces
+    auto erm = co_await get_erm_factory().create_effective_replication_map(_replication_strategy, stm.get(), allow_empty_token_metadata);
     update_effective_replication_map(std::move(erm));
 }
 
@@ -1330,7 +1332,7 @@ std::vector<view_ptr> database::get_views() const {
             | boost::adaptors::transformed([] (auto& cf) { return view_ptr(cf->schema()); }));
 }
 
-future<> database::create_in_memory_keyspace(const lw_shared_ptr<keyspace_metadata>& ksm, locator::effective_replication_map_factory& erm_factory, system_keyspace system) {
+future<> database::create_in_memory_keyspace(const lw_shared_ptr<keyspace_metadata>& ksm, locator::effective_replication_map_factory& erm_factory, bool is_bootstrap, system_keyspace system) {
     auto kscfg = make_keyspace_config(*ksm);
     if (system == system_keyspace::yes) {
         kscfg.enable_disk_reads = kscfg.enable_disk_writes = kscfg.enable_commitlog = !_cfg.volatile_system_keyspace_for_testing();
@@ -1339,7 +1341,8 @@ future<> database::create_in_memory_keyspace(const lw_shared_ptr<keyspace_metada
         kscfg.dirty_memory_manager = &_system_dirty_memory_manager;
     }
     keyspace ks(ksm, std::move(kscfg), erm_factory);
-    co_await ks.create_replication_strategy(get_shared_token_metadata(), ksm->strategy_options());
+    bool allow_empty_token_metadata = is_bootstrap || system || is_internal_keyspace(ksm->name());
+    co_await ks.create_replication_strategy(get_shared_token_metadata(), ksm->strategy_options(), allow_empty_token_metadata);
     _keyspaces.emplace(ksm->name(), std::move(ks));
 }
 
@@ -1355,7 +1358,7 @@ database::create_keyspace(const lw_shared_ptr<keyspace_metadata>& ksm, locator::
     }
 
     dblog.debug("Creating keyspace '{}': internal={} system={} bootstrap={}", ksm->name(), is_internal_keyspace(ksm->name()), system, is_bootstrap);
-    co_await create_in_memory_keyspace(ksm, erm_factory, system);
+    co_await create_in_memory_keyspace(ksm, erm_factory, is_bootstrap, system);
     auto& ks = _keyspaces.at(ksm->name());
     auto& datadir = ks.datadir();
 
