@@ -2056,6 +2056,9 @@ uint64_t mutation_querier::consume_end_of_stream() {
     }
 }
 
+void mutation_querier::on_error() {
+}
+
 query_result_builder::query_result_builder(const schema& s, query::result::builder& rb) noexcept
     : _schema(s), _rb(rb)
 { }
@@ -2101,6 +2104,10 @@ stop_iteration query_result_builder::consume_end_of_partition() {
 }
 
 void query_result_builder::consume_end_of_stream() {
+}
+
+void query_result_builder::on_error() {
+    _mutation_consumer->on_error();
 }
 
 stop_iteration query::result_memory_accounter::check_local_limit() const {
@@ -2200,6 +2207,10 @@ reconcilable_result reconcilable_result_builder::consume_end_of_stream() {
                                std::move(_memory_accounter).done());
 }
 
+void reconcilable_result_builder::on_error() {
+    _rt_assembler.on_error();
+}
+
 future<query::result>
 to_data_query_result(const reconcilable_result& r, schema_ptr s, const query::partition_slice& slice, uint64_t max_rows, uint32_t max_partitions,
         query::result_options opts) {
@@ -2277,6 +2288,7 @@ public:
     mutation_opt consume_end_of_stream() {
         return std::move(_mutation);
     }
+    void on_error() { }
 };
 
 mutation_partition::mutation_partition(mutation_partition::incomplete_tag, const schema& s, tombstone t)

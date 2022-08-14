@@ -82,4 +82,10 @@ public:
         }
         return muts;
     }
+
+    void on_error() {
+        for (auto& mut_builder : _mutations) {
+            mut_builder.on_error();
+        }
+    }
 };

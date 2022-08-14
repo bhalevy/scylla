@@ -326,6 +326,7 @@ public:
 
     stop_iteration consume_end_of_partition();
     void consume_end_of_stream();
+    void on_error() { }
 };
 
 struct compaction_read_monitor_generator final : public read_monitor_generator {

@@ -149,6 +149,8 @@ public:
         : _schema(s), _slice(slice), _reversed(_slice.options.contains(query::partition_slice::option::reversed))
         , _memory_accounter(std::move(accounter))
     { }
+    reconcilable_result_builder(reconcilable_result_builder&&) = default;
+    reconcilable_result_builder& operator=(reconcilable_result_builder&&) = default;
 
     void consume_new_partition(const dht::decorated_key& dk);
     void consume(tombstone t);
@@ -157,6 +159,7 @@ public:
     stop_iteration consume(range_tombstone_change&& rtc);
     stop_iteration consume_end_of_partition();
     reconcilable_result consume_end_of_stream();
+    void on_error();
 };
 
 future<query::result> to_data_query_result(

@@ -812,6 +812,7 @@ public:
         return stop_iteration::no;
     }
     void consume_end_of_stream() { }
+    void on_error() { }
 
 public:
     reader_from_mutation_base(schema_ptr schema, reader_permit permit) noexcept
@@ -1451,6 +1452,9 @@ private:
     }
     void consume_end_of_stream() {
     }
+    void on_error() {
+    }
+
     streamed_mutation::forwarding _fwd;
 
 public:

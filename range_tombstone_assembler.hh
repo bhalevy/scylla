@@ -12,6 +12,9 @@
 #include <seastar/core/print.hh>
 
 #include "mutation_fragment_v2.hh"
+#include "log.hh"
+
+extern logging::logger mplog;
 
 /// Converts a stream of range_tombstone_change fragments to an equivalent stream of range_tombstone objects.
 /// The input fragments must be ordered by their position().
@@ -35,11 +38,28 @@
 ///
 class range_tombstone_assembler {
     std::optional<range_tombstone_change> _prev_rt;
+    bool _end_of_stream = false;
+    bool _error = false;
 private:
     bool has_active_tombstone() const {
         return _prev_rt && _prev_rt->tombstone();
     }
 public:
+    range_tombstone_assembler() = default;
+    range_tombstone_assembler(range_tombstone_assembler&& o) noexcept
+        : _prev_rt(std::move(o._prev_rt))
+        , _end_of_stream(std::exchange(o._end_of_stream, true))
+        , _error(std::exchange(o._error, false))
+    { }
+    range_tombstone_assembler& operator=(range_tombstone_assembler&&) = default;
+
+    ~range_tombstone_assembler() {
+        if (!_end_of_stream && !_error) {
+            std::string active_tombstone_desc = has_active_tombstone() ? format("{}", *_prev_rt) : "none";
+            on_internal_error_noexcept(mplog, format("Stream ended with no end_of_stream or error. active tombstone={}", active_tombstone_desc));
+        }
+    }
+
     tombstone get_current_tombstone() const {
         return _prev_rt ? _prev_rt->tombstone() : tombstone();
     }
@@ -63,9 +83,14 @@ public:
     }
 
     void on_end_of_stream() {
+        _end_of_stream = true;
         if (has_active_tombstone()) {
             throw std::logic_error(format("Stream ends with an active range tombstone: {}", *_prev_rt));
         }
+    }
+
+    void on_error() {
+        _error = true;
     }
 
     // Returns true if and only if flush() may return something.

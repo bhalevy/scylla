@@ -223,5 +223,8 @@ public:
     void consume_end_of_stream() {
         BOOST_REQUIRE(_validator.on_end_of_stream());
     }
+    void on_error() {
+        _validator.on_error();
+    }
 };
 

@@ -2192,7 +2192,7 @@ SEASTAR_TEST_CASE(sstable_cleanup_correctness_test) {
 }
 
 std::vector<mutation_fragment_v2> write_corrupt_sstable(test_env& env, sstable& sst, reader_permit permit,
-        std::function<void(mutation_fragment_v2&&, bool)> write_to_secondary) {
+        noncopyable_function<void(mutation_fragment_v2&&, bool)> write_to_secondary) {
     auto schema = sst.get_schema();
     std::vector<mutation_fragment_v2> corrupt_fragments;
 
@@ -3376,6 +3376,7 @@ SEASTAR_TEST_CASE(purged_tombstone_consumer_sstable_test) {
 
             stop_iteration consume_end_of_partition() { return _writer.consume_end_of_partition(); }
             void consume_end_of_stream() { _writer.consume_end_of_stream(); _sst->open_data().get0(); }
+            void on_error() { _writer.on_error(); }
         };
 
         std::optional<gc_clock::time_point> gc_before;

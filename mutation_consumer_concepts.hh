@@ -54,6 +54,8 @@ concept FlattenedConsumerV2 =
     StreamedMutationConsumerV2<T> && requires(T obj, const dht::decorated_key& dk) {
         { obj.consume_new_partition(dk) };
         { obj.consume_end_of_partition() };
+        { obj.consume_end_of_stream() };
+        { obj.on_error() };
     };
 
 template<typename T>
@@ -62,4 +64,5 @@ concept FlattenedConsumerFilterV2 =
         { filter(dk) } -> std::same_as<bool>;
         { filter(mf) } -> std::same_as<bool>;
         { filter.on_end_of_stream() } -> std::same_as<void>;
+        { filter.on_error() } -> std::same_as<void>;
     };

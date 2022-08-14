@@ -58,6 +58,8 @@ public:
     mutation_opt consume_end_of_stream() {
         return std::move(_m);
     }
+
+    void on_error() { }
 };
 
 // Builds the mutation corresponding to the next partition in the mutation fragment stream.
@@ -70,6 +72,8 @@ class mutation_rebuilder_v2 {
 public:
     mutation_rebuilder_v2(schema_ptr s) : _s(std::move(s)), _builder(_s) { }
 public:
+    mutation_rebuilder_v2(mutation_rebuilder_v2&&) = default;
+    mutation_rebuilder_v2& operator=(mutation_rebuilder_v2&&) = default;
     stop_iteration consume(partition_start mf) {
         consume_new_partition(mf.key());
         return consume(mf.partition_tombstone());
@@ -115,5 +119,10 @@ public:
     mutation_opt consume_end_of_stream() {
         _rt_assembler.on_end_of_stream();
         return _builder.consume_end_of_stream();
+    }
+
+    void on_error() {
+        _rt_assembler.on_error();
+        _builder.on_error();
     }
 };

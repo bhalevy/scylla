@@ -29,6 +29,8 @@ class mutation_fragment_stream_validator {
     position_in_partition _prev_pos;
     dht::decorated_key _prev_partition_key;
     tombstone _current_tombstone;
+    bool _end_of_stream = false;
+    bool _error = false;
 public:
     explicit mutation_fragment_stream_validator(const schema& s);
 
@@ -113,6 +115,10 @@ public:
     /// fragment wasn't a `partition_end` fragment.
     bool on_end_of_stream();
 
+    /// Notify the validator the an error occured hence on_end_of_stream
+    /// might not be called
+    void on_error();
+
     /// The previous valid fragment kind.
     mutation_fragment_v2::kind previous_mutation_fragment_kind() const {
         return _prev_kind;
@@ -142,6 +148,16 @@ public:
     const dht::decorated_key& previous_partition_key() const {
         return _prev_partition_key;
     }
+
+    /// Was on_end_of_stream called?
+    bool end_of_stream() const {
+        return _end_of_stream;
+    }
+
+    /// Did an error occur?
+    bool error() const {
+        return _error;
+    }
 };
 
 struct invalid_mutation_fragment_stream : public std::runtime_error {
@@ -168,6 +184,9 @@ public:
     /// \arg compare_keys enable validating clustering key monotonicity
     mutation_fragment_stream_validating_filter(sstring_view name, const schema& s, mutation_fragment_stream_validation_level level);
 
+    /// Validates that end_of_stream
+    ~mutation_fragment_stream_validating_filter();
+
     bool operator()(const dht::decorated_key& dk);
     bool operator()(mutation_fragment_v2::kind kind, position_in_partition_view pos);
     bool operator()(mutation_fragment::kind kind, position_in_partition_view pos);
@@ -177,4 +196,5 @@ public:
     /// Equivalent to `operator()(partition_end{})`
     bool on_end_of_partition();
     void on_end_of_stream();
+    void on_error();
 };

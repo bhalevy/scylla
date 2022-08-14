@@ -2164,6 +2164,7 @@ class basic_compacted_fragments_consumer_base {
 
     std::vector<mutation> _mutations;
     mutation_rebuilder_v2 _mutation;
+    bool _error = false;
 
 private:
     bool can_gc(tombstone t) {
@@ -2227,6 +2228,11 @@ public:
         , _get_max_purgeable(std::move(get_max_purgeable))
         , _mutation(_schema.shared_from_this()) {
     }
+    basic_compacted_fragments_consumer_base(basic_compacted_fragments_consumer_base&&) = default;
+    basic_compacted_fragments_consumer_base& operator=(basic_compacted_fragments_consumer_base&&) = default;
+    ~basic_compacted_fragments_consumer_base() {
+        BOOST_REQUIRE(_mutations.empty() || _error);
+    }
     void consume_new_partition(const dht::decorated_key& dk) {
         _max_purgeable = _get_max_purgeable(dk);
         _mutation.consume_new_partition(dk);
@@ -2281,7 +2287,10 @@ public:
         return stop_iteration::no;
     }
     std::vector<mutation> consume_end_of_stream() {
-        return _mutations;
+        return std::move(_mutations);
+    }
+    void on_error() {
+        _error = true;
     }
 };
 
@@ -2708,11 +2717,25 @@ SEASTAR_THREAD_TEST_CASE(test_compactor_range_tombstone_spanning_many_pages) {
         const uint64_t row_limit;
         uint64_t rows = 0;
         mutation_rebuilder_v2 builder;
+        bool end_of_stream = false;
+        bool error = false;
 
         consumer_v2(reader_permit permit, mutation& mut, uint64_t row_limit, uint64_t rows = 0)
             : permit(std::move(permit)), mut(mut), row_limit(row_limit), rows(rows), builder(mut.schema())
         { }
-
+        consumer_v2(consumer_v2&& o) noexcept
+            : permit(std::move(o.permit))
+            , mut(o.mut)
+            , row_limit(o.row_limit)
+            , rows(o.rows)
+            , builder(std::move(o.builder))
+            , end_of_stream(std::exchange(o.end_of_stream, true))
+            , error(std::exchange(o.error, false))
+        { }
+        consumer_v2& operator=(consumer_v2&&) = default;
+        ~consumer_v2() {
+            BOOST_REQUIRE(end_of_stream || error);
+        }
         void consume_new_partition(const dht::decorated_key& dk) {
             BOOST_REQUIRE(mut.decorated_key().equal(*mut.schema(), dk));
             builder.consume_new_partition(dk);
@@ -2738,9 +2761,13 @@ SEASTAR_THREAD_TEST_CASE(test_compactor_range_tombstone_spanning_many_pages) {
             return stop_iteration::yes;
         }
         void consume_end_of_stream() {
+            end_of_stream = true;
             if (auto mut_opt = builder.consume_end_of_stream()) {
                 mut += *mut_opt;
             }
+        }
+        void on_error() {
+            error = true;
         }
     };
 

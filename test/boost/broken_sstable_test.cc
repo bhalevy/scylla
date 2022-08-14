@@ -24,6 +24,7 @@ struct my_consumer {
     void consume_end_of_stream() {}
     void consume_new_partition(const dht::decorated_key& dk) {}
     stop_iteration consume_end_of_partition() { return stop_iteration::no; }
+    void on_error() {}
 };
 }
 

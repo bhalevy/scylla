@@ -18,9 +18,12 @@
 #include <seastar/core/circular_buffer.hh>
 #include "mutation.hh"
 #include "mutation_rebuilder.hh"
+#include "log.hh"
 
 class evictable_reader_handle;
 class evictable_reader_handle_v2;
+
+extern logging::logger vlogger;
 
 namespace db::view {
 
@@ -45,6 +48,7 @@ private:
     std::optional<mutation_rebuilder_v2> _mut_builder;
     size_t _buffer_size{0};
     noncopyable_function<future<row_locker::lock_holder>(mutation)> _view_update_pusher;
+    bool _error = false;
 
 private:
     void do_flush_buffer();
@@ -68,6 +72,12 @@ public:
     view_updating_consumer(view_updating_consumer&&) = default;
 
     view_updating_consumer& operator=(view_updating_consumer&&) = delete;
+
+    ~view_updating_consumer() {
+        if (!_buffer.empty() && !_error) {
+            on_internal_error(vlogger, "view_updating_consumer destroyed without consuming end-of-stream");
+        }
+    }
 
     void consume_new_partition(const dht::decorated_key& dk) {
         _mut_builder.emplace(_schema);
@@ -125,6 +135,10 @@ public:
             do_flush_buffer();
         }
         return stop_iteration(_as->abort_requested());
+    }
+
+    void on_error() {
+        _error = true;
     }
 };
 

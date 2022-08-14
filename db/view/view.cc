@@ -62,7 +62,7 @@
 
 using namespace std::chrono_literals;
 
-static logging::logger vlogger("view");
+logging::logger vlogger("view");
 
 static inline void inject_failure(std::string_view operation) {
     utils::get_local_injector().inject(operation,
@@ -2052,6 +2052,8 @@ public:
         }
         return std::move(_built_views);
     }
+
+    void on_error() { }
 };
 
 // Called in the context of a seastar::thread.

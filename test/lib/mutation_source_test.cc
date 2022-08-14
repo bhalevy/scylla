@@ -2677,7 +2677,7 @@ mutation forwardable_reader_to_mutation(flat_mutation_reader_v2 r, const std::ve
 
         void consume_new_partition(const dht::decorated_key& dk) {
             assert(!_builder);
-            _builder = mutation_rebuilder_v2(std::move(_s));
+            _builder.emplace(mutation_rebuilder_v2(std::move(_s)));
             _builder->consume_new_partition(dk);
         }
 
@@ -2706,7 +2706,15 @@ mutation forwardable_reader_to_mutation(flat_mutation_reader_v2 r, const std::ve
             return stop_iteration::yes;
         }
 
-        void consume_end_of_stream() { }
+        void consume_end_of_stream() {
+            assert(_builder);
+            _builder->consume_end_of_stream();
+        }
+
+        void on_error() {
+            assert(_builder);
+            _builder->on_error();
+        }
     };
 
     std::optional<mutation_rebuilder_v2> builder{};
