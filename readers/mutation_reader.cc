@@ -122,12 +122,7 @@ bool mutation_fragment_stream_validator::operator()(mutation_fragment::kind kind
 }
 
 bool mutation_fragment_stream_validator::on_end_of_stream() {
-    _end_of_stream = true;
     return _prev_kind == mutation_fragment_v2::kind::partition_end;
-}
-
-void mutation_fragment_stream_validator::on_error() {
-    _error = true;
 }
 
 void mutation_fragment_stream_validator::reset(dht::decorated_key dk) {
@@ -208,12 +203,6 @@ mutation_fragment_stream_validating_filter::mutation_fragment_stream_validating_
     }
 }
 
-mutation_fragment_stream_validating_filter::~mutation_fragment_stream_validating_filter() {
-    if (!_validator.end_of_stream() && !_validator.error()) {
-        on_validation_error(mrlog, format("[validator {} for {}] missing end_of_stream", static_cast<void*>(this), _name));
-    }
-}
-
 bool mutation_fragment_stream_validating_filter::operator()(mutation_fragment_v2::kind kind, position_in_partition_view pos) {
     bool valid = false;
 
@@ -271,11 +260,6 @@ void mutation_fragment_stream_validating_filter::on_end_of_stream() {
         on_validation_error(mrlog, format("[validator {} for {}] Stream ended with unclosed partition: {}", static_cast<const void*>(this), _name,
                 _validator.previous_mutation_fragment_kind()));
     }
-}
-
-void mutation_fragment_stream_validating_filter::on_error() {
-    mrlog.debug("[validator {}] error", static_cast<const void*>(this));
-    _validator.on_error();
 }
 
 static size_t compute_buffer_size(const schema& s, const flat_mutation_reader_v2::tracked_buffer& buffer)

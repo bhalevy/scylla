@@ -187,7 +187,6 @@ class test_bucket_writer {
 
     size_t _throw_after;
     size_t _mutation_consumed = 0;
-    bool _error = false;
 
 public:
     class expected_exception : public std::exception {
@@ -263,11 +262,6 @@ public:
         , _current_rtc(position_in_partition::before_all_clustered_rows(), tombstone())
         , _throw_after(throw_after)
     { }
-    test_bucket_writer(test_bucket_writer&&) = default;
-    test_bucket_writer& operator=(test_bucket_writer&&) = default;
-    ~test_bucket_writer() {
-        BOOST_REQUIRE(!_current_mutation || _error);
-    }
     void consume_new_partition(const dht::decorated_key& dk) {
         maybe_throw();
         BOOST_REQUIRE(!_current_mutation);
@@ -322,9 +316,6 @@ public:
     }
     void consume_end_of_stream() {
         BOOST_REQUIRE(!_current_mutation);
-    }
-    void on_error() {
-        _error = true;
     }
 };
 

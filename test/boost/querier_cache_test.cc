@@ -27,17 +27,11 @@ using namespace std::chrono_literals;
 class dummy_result_builder {
     std::optional<dht::decorated_key> _dk;
     std::optional<clustering_key_prefix> _ck;
-    bool _end_of_stream = false;
-    bool _error = false;
 
 public:
     dummy_result_builder()
         : _dk({dht::token(), partition_key::make_empty()})
         , _ck(clustering_key_prefix::make_empty()) {
-    }
-
-    ~dummy_result_builder() {
-        BOOST_REQUIRE(_end_of_stream || _error);
     }
 
     void consume_new_partition(const dht::decorated_key& dk) {
@@ -60,11 +54,7 @@ public:
         return stop_iteration::no;
     }
     std::pair<std::optional<dht::decorated_key>, std::optional<clustering_key_prefix>> consume_end_of_stream() {
-        _end_of_stream = true;
         return {std::move(_dk), std::move(_ck)};
-    }
-    void on_error() {
-        _error = true;
     }
 };
 

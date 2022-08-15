@@ -46,19 +46,7 @@ struct mock_consumer {
         size_t _consume_tombstone_call_count = 0;
         size_t _consume_end_of_partition_call_count = 0;
         bool _consume_end_of_stream_called = false;
-        bool _error = false;
         std::vector<mutation_fragment_v2> _fragments;
-
-        result() = default;
-        result(result&& o) noexcept
-            : _depth(o._depth)
-            , _consume_new_partition_call_count(o._consume_new_partition_call_count)
-            , _consume_tombstone_call_count(o._consume_tombstone_call_count)
-            , _consume_end_of_partition_call_count(o._consume_end_of_partition_call_count)
-            , _consume_end_of_stream_called(std::exchange(o._consume_end_of_stream_called, true))
-            , _error(std::exchange(o._error, false))
-            , _fragments(std::move(o._fragments))
-        { }
     };
     const schema& _schema;
     reader_permit _permit;
@@ -66,11 +54,6 @@ struct mock_consumer {
     mock_consumer(const schema& s, reader_permit permit, size_t depth) : _schema(s), _permit(std::move(permit)) {
         _result._depth = depth;
         testlog.debug("mock_consumer [{}] constructed: depth={}", fmt::ptr(this), _result._depth);
-    }
-    mock_consumer(mock_consumer&&) = default;
-    mock_consumer& operator=(mock_consumer&&) = default;
-    ~mock_consumer() {
-        BOOST_REQUIRE(_result._consume_end_of_stream_called || _result._error);
     }
     stop_iteration update_depth() {
         --_result._depth;
@@ -111,9 +94,6 @@ struct mock_consumer {
         _result._consume_end_of_stream_called = true;
         testlog.debug("mock_consumer [{}]: consume_end_of_stream", fmt::ptr(this));
         return std::move(_result);
-    }
-    void on_error() {
-        _result._error = true;
     }
 };
 
@@ -515,8 +495,6 @@ struct flat_stream_consumer {
     tombstone _current_tombstone;
     circular_buffer<range_tombstone_change> _reversed_rtcs;
     bool _inside_partition = false;
-    bool _end_of_stream = false;
-    bool _error = false;
 private:
     void verify_order(position_in_partition_view pos) {
         const schema& s = _reversed_schema ? *_reversed_schema : *_schema;
@@ -533,26 +511,6 @@ public:
         , _skip_partition(skip_partition)
         , _skip_stream(skip_stream)
     { }
-    flat_stream_consumer(flat_stream_consumer&& o) noexcept
-        : _schema(std::move(o._schema))
-        , _reversed_schema(std::move(o._reversed_schema))
-        , _permit(std::move(o._permit))
-        , _skip_partition(o._skip_partition)
-        , _skip_stream(o._skip_stream)
-        , _mutations(std::move(o._mutations))
-        , _mut(std::move(o._mut))
-        , _previous_position(std::move(o._previous_position))
-        , _current_tombstone(std::move(o._current_tombstone))
-        , _reversed_rtcs(std::move(o._reversed_rtcs))
-        , _inside_partition(std::exchange(o._inside_partition, false))
-        , _end_of_stream(std::exchange(o._end_of_stream, true))
-        , _error(std::exchange(o._error, false))
-    { }
-    flat_stream_consumer& operator=(flat_stream_consumer&&) = default;
-    ~flat_stream_consumer() {
-        BOOST_REQUIRE(!_inside_partition);
-        BOOST_REQUIRE(_mutations.empty() || _error);
-    }
     void consume_new_partition(dht::decorated_key dk) {
         BOOST_REQUIRE(!_inside_partition);
         BOOST_REQUIRE(!_previous_position);
@@ -612,12 +570,8 @@ public:
         return stop_iteration(bool(_skip_stream));
     }
     std::vector<mutation> consume_end_of_stream() {
-        _end_of_stream = true;
         BOOST_REQUIRE(!_inside_partition);
         return std::move(_mutations);
-    }
-    void on_error() {
-        _error = true;
     }
 };
 
@@ -864,7 +818,6 @@ SEASTAR_THREAD_TEST_CASE(test_reverse_reader_memory_limit) {
         stop_iteration consume(range_tombstone_change&&) { return stop_iteration::no; }
         stop_iteration consume_end_of_partition() { return stop_iteration::no; }
         void consume_end_of_stream() { }
-        void on_error() { }
     };
 
     auto test_with_partition = [&] (bool with_static_row) {

@@ -818,7 +818,6 @@ public:
     stop_iteration consume(range_tombstone_change&& rtc) { return _builder.consume(std::move(rtc)); }
     stop_iteration consume_end_of_partition()  { return _builder.consume_end_of_partition(); }
     result_type consume_end_of_stream() { return _builder.consume_end_of_stream(); }
-    void on_error() { _builder.on_error(); }
 };
 
 class data_query_result_builder {
@@ -849,9 +848,6 @@ public:
             return _res_builder->build(_compaction_state.current_full_position());
         }
         return _res_builder->build();
-    }
-    void on_error() {
-        _builder.on_error();
     }
 };
 

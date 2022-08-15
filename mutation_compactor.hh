@@ -36,7 +36,6 @@ concept CompactedFragmentsConsumerV2 = requires(T obj, tombstone t, const dht::d
     { obj.consume(std::move(rtc)) } -> std::same_as<stop_iteration>;
     { obj.consume_end_of_partition() } -> std::same_as<stop_iteration>;
     obj.consume_end_of_stream();
-    obj.on_error();
 };
 
 struct detached_compaction_state {
@@ -54,7 +53,6 @@ public:
     stop_iteration consume(range_tombstone_change&& rtc) { return stop_iteration::no; }
     stop_iteration consume_end_of_partition() { return stop_iteration::no; }
     void consume_end_of_stream() {}
-    void on_error() {}
 };
 
 class mutation_compactor_garbage_collector : public compaction_garbage_collector {
@@ -476,13 +474,6 @@ public:
         }
     }
 
-    template <typename Consumer, typename GCConsumer>
-    requires CompactedFragmentsConsumerV2<Consumer> && CompactedFragmentsConsumerV2<GCConsumer>
-    void on_error(Consumer& consumer, GCConsumer& gc_consumer) {
-        gc_consumer.on_error();
-        return consumer.on_error();
-    }
-
     /// The decorated key of the partition the compaction is positioned in.
     /// Can be null if the compaction wasn't started yet.
     const dht::decorated_key* current_partition() const {
@@ -629,10 +620,6 @@ public:
 
     auto consume_end_of_stream() {
         return _state->consume_end_of_stream(_consumer, _gc_consumer);
-    }
-
-    void on_error() {
-        return _state->on_error();
     }
 
     lw_shared_ptr<compact_mutation_state<SSTableCompaction>> get_state() {

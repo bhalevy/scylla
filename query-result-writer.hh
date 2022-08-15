@@ -220,7 +220,6 @@ public:
     stop_iteration consume(clustering_row&& cr, row_tombstone current_tombstone);
     stop_iteration consume(range_tombstone_change&&) { return stop_iteration::no; }
     uint64_t consume_end_of_stream();
-    void on_error();
 };
 
 class query_result_builder {
@@ -239,5 +238,4 @@ public:
     stop_iteration consume(range_tombstone_change&& rtc);
     stop_iteration consume_end_of_partition();
     void consume_end_of_stream();
-    void on_error();
 };

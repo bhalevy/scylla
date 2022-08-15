@@ -335,14 +335,9 @@ public:
         // entirely and never reach the consumer.
         auto consume_in_thread(Consumer consumer, Filter filter) {
             auto adapter = consumer_adapter<Consumer>(*this, std::move(consumer));
-          try {
             consume_pausable_in_thread(std::ref(adapter), std::move(filter));
             filter.on_end_of_stream();
             return adapter._consumer.consume_end_of_stream();
-          } catch (...) {
-            filter.on_error();
-            throw;
-          }
         };
 
         /*
@@ -463,7 +458,6 @@ public:
         }
 
         void on_end_of_stream() const { }
-        void on_error() const { }
     };
 
     struct no_filter {
@@ -476,7 +470,6 @@ public:
         }
 
         void on_end_of_stream() const { }
-        void on_error() const { }
     };
 
     template<typename Consumer, typename Filter>
