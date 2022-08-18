@@ -82,7 +82,8 @@ namespace paxos {
     class prepare_summary;
     class proposal;
     class promise;
-    using prepare_response = std::variant<utils::UUID, promise>;
+    class ballot_id;
+    using prepare_response = std::variant<ballot_id, promise>;
 }
 
 class abstract_write_response_handler;

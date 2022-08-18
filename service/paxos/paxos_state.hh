@@ -71,7 +71,7 @@ private:
         return _paxos_table_lock.with_locked_key(key, timeout, std::move(func));
     }
 
-    utils::UUID _promised_ballot = utils::UUID_gen::min_time_UUID();
+    ballot_id _promised_ballot = ballot_id::create_min_time_id();
     std::optional<proposal> _accepted_proposal;
     std::optional<proposal> _most_recent_commit;
 
@@ -106,13 +106,13 @@ public:
 
     paxos_state() {}
 
-    paxos_state(utils::UUID promised, std::optional<proposal> accepted, std::optional<proposal> commit)
+    paxos_state(ballot_id promised, std::optional<proposal> accepted, std::optional<proposal> commit)
         : _promised_ballot(std::move(promised))
         , _accepted_proposal(std::move(accepted))
         , _most_recent_commit(std::move(commit)) {}
     // Replica RPC endpoint for Paxos "prepare" phase.
     static future<prepare_response> prepare(storage_proxy& sp, tracing::trace_state_ptr tr_state, schema_ptr schema,
-            const query::read_command& cmd, const partition_key& key, utils::UUID ballot,
+            const query::read_command& cmd, const partition_key& key, ballot_id ballot,
             bool only_digest, query::digest_algorithm da, clock_type::time_point timeout);
     // Replica RPC endpoint for Paxos "accept" phase.
     static future<bool> accept(storage_proxy& sp, tracing::trace_state_ptr tr_state, schema_ptr schema, dht::token token, const proposal& proposal,
@@ -120,7 +120,7 @@ public:
     // Replica RPC endpoint for Paxos "learn".
     static future<> learn(storage_proxy& sp, schema_ptr schema, proposal decision, clock_type::time_point timeout, tracing::trace_state_ptr tr_state);
     // Replica RPC endpoint for pruning Paxos table
-    static future<> prune(schema_ptr schema, const partition_key& key, utils::UUID ballot, clock_type::time_point timeout,
+    static future<> prune(schema_ptr schema, const partition_key& key, ballot_id ballot, clock_type::time_point timeout,
             tracing::trace_state_ptr tr_state);
 };
 

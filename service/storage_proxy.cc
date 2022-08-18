@@ -295,7 +295,7 @@ public:
 
     future<service::paxos::prepare_response> send_paxos_prepare(
             netw::msg_addr addr, storage_proxy::clock_type::time_point timeout, tracing::trace_state_ptr tr_state,
-            const query::read_command& cmd, const partition_key& key, utils::UUID ballot, bool only_digest, query::digest_algorithm da) {
+            const query::read_command& cmd, const partition_key& key, service::paxos::ballot_id ballot, bool only_digest, query::digest_algorithm da) {
         tracing::trace(tr_state, "prepare_ballot: sending prepare {} to {}", ballot, addr.addr);
         return ser::storage_proxy_rpc_verbs::send_paxos_prepare(
                 &_ms, addr, timeout, cmd, key, ballot, only_digest, da, tracing::make_trace_info(tr_state));
@@ -318,7 +318,7 @@ public:
 
     future<> send_paxos_prune(
             netw::msg_addr addr, storage_proxy::clock_type::time_point timeout, tracing::trace_state_ptr tr_state,
-            table_schema_version schema_id, const partition_key& key, utils::UUID ballot) {
+            table_schema_version schema_id, const partition_key& key, service::paxos::ballot_id ballot) {
         return ser::storage_proxy_rpc_verbs::send_paxos_prune(&_ms, addr, timeout, schema_id, key, ballot, tracing::make_trace_info(tr_state));
     }
 
@@ -707,7 +707,7 @@ private:
     future<foreign_ptr<std::unique_ptr<service::paxos::prepare_response>>>
     handle_paxos_prepare(
             const rpc::client_info& cinfo, rpc::opt_time_point timeout,
-            query::read_command cmd, partition_key key, utils::UUID ballot,
+            query::read_command cmd, partition_key key, service::paxos::ballot_id ballot,
             bool only_digest, query::digest_algorithm da, std::optional<tracing::trace_info> trace_info) {
         auto src_addr = netw::messaging_service::get_source(cinfo);
         auto src_ip = src_addr.addr;
@@ -774,7 +774,7 @@ private:
 
     future<rpc::no_wait_type> handle_paxos_prune(
             const rpc::client_info& cinfo, rpc::opt_time_point timeout,
-            table_schema_version schema_id, partition_key key, utils::UUID ballot, std::optional<tracing::trace_info> trace_info) {
+            table_schema_version schema_id, partition_key key, service::paxos::ballot_id ballot, std::optional<tracing::trace_info> trace_info) {
         static thread_local uint16_t pruning = 0;
         static constexpr uint16_t pruning_limit = 1000; // since PRUNE verb is one way replica side has its own queue limit
         auto src_addr = netw::messaging_service::get_source(cinfo);
@@ -1100,17 +1100,17 @@ public:
     // Result of PREPARE step, i.e. begin_and_repair_paxos().
     struct ballot_and_data {
         // Accepted ballot.
-        utils::UUID ballot;
+        service::paxos::ballot_id ballot;
         // Current value of the requested key or none.
         foreign_ptr<lw_shared_ptr<query::result>> data;
     };
 
     // Steps of the Paxos protocol
     future<ballot_and_data> begin_and_repair_paxos(client_state& cs, unsigned& contentions, bool is_write);
-    future<paxos::prepare_summary> prepare_ballot(utils::UUID ballot);
+    future<paxos::prepare_summary> prepare_ballot(service::paxos::ballot_id ballot);
     future<bool> accept_proposal(lw_shared_ptr<paxos::proposal> proposal, bool timeout_if_partially_accepted = true);
     future<> learn_decision(lw_shared_ptr<paxos::proposal> proposal, bool allow_hints = false);
-    void prune(utils::UUID ballot);
+    void prune(service::paxos::ballot_id ballot);
     uint64_t id() const {
         return _id;
     }
@@ -1702,7 +1702,7 @@ paxos_response_handler::begin_and_repair_paxos(client_state& cs, unsigned& conte
         // Note that ballotMicros is not guaranteed to be unique if two proposal are being handled
         // concurrently by the same coordinator. But we still need ballots to be unique for each
         // proposal so we have to use getRandomTimeUUIDFromMicros.
-        utils::UUID ballot = utils::UUID_gen::get_random_time_UUID_from_micros(std::chrono::microseconds{ballot_micros});
+        auto ballot = service::paxos::ballot_id{utils::UUID_gen::get_random_time_UUID_from_micros(std::chrono::microseconds{ballot_micros})};
 
         paxos::paxos_state::logger.debug("CAS[{}] Preparing {}", _id, ballot);
         tracing::trace(tr_state, "Preparing {}", ballot);
@@ -1717,7 +1717,7 @@ paxos_response_handler::begin_and_repair_paxos(client_state& cs, unsigned& conte
             continue;
         }
 
-        min_timestamp_micros_to_use = utils::UUID_gen::micros_timestamp(summary.most_recent_promised_ballot) + 1;
+        min_timestamp_micros_to_use = summary.most_recent_promised_ballot.as_micros_timestamp() + 1;
 
         std::optional<paxos::proposal> in_progress = std::move(summary.most_recent_proposal);
 
@@ -1763,7 +1763,7 @@ paxos_response_handler::begin_and_repair_paxos(client_state& cs, unsigned& conte
         // Since we waited for quorum nodes, if some of them haven't seen the last commit (which may
         // just be a timing issue, but may also mean we lost messages), we pro-actively "repair"
         // those nodes, and retry.
-        auto now_in_sec = utils::UUID_gen::unix_timestamp_in_sec(ballot);
+        auto now_in_sec = ballot.as_unix_timestamp_in_sec();
 
         inet_address_vector_replica_set missing_mrc = summary.replicas_missing_most_recent_commit(_schema, now_in_sec);
         if (missing_mrc.size() > 0) {
@@ -1795,7 +1795,7 @@ template<class T> struct dependent_false : std::false_type {};
 
 // This function implement prepare stage of Paxos protocol and collects metadata needed to repair
 // previously unfinished round (if there was one).
-future<paxos::prepare_summary> paxos_response_handler::prepare_ballot(utils::UUID ballot) {
+future<paxos::prepare_summary> paxos_response_handler::prepare_ballot(service::paxos::ballot_id ballot) {
     struct {
         size_t errors = 0;
         // Whether the value of the requested key received from participating replicas match.
@@ -1865,7 +1865,7 @@ future<paxos::prepare_summary> paxos_response_handler::prepare_ballot(utils::UUI
 
             auto on_prepare_response = [&] (auto&& response) {
                 using T = std::decay_t<decltype(response)>;
-                if constexpr (std::is_same_v<T, utils::UUID>) {
+                if constexpr (std::is_same_v<T, service::paxos::ballot_id>) {
                     tracing::trace(tr_state, "prepare_ballot: got more up to date ballot {} from /{}", response, peer);
                     paxos::paxos_state::logger.trace("CAS[{}] prepare_ballot: got more up to date ballot {} from {}", _id, response, peer);
                     // We got an UUID that prevented our proposal from succeeding
@@ -1874,7 +1874,7 @@ future<paxos::prepare_summary> paxos_response_handler::prepare_ballot(utils::UUI
                     request_tracker.set_value(std::move(summary));
                     return;
                 } else if constexpr (std::is_same_v<T, paxos::promise>) {
-                    utils::UUID mrc_ballot = utils::UUID_gen::min_time_UUID();
+                    auto mrc_ballot = paxos::ballot_id::create_min_time_id();
 
                     paxos::paxos_state::logger.trace("CAS[{}] prepare_ballot: got a response {} from {}", _id, response, peer);
                     tracing::trace(tr_state, "prepare_ballot: got a response {} from /{}", response, peer);
@@ -2136,7 +2136,7 @@ future<> paxos_response_handler::learn_decision(lw_shared_ptr<paxos::proposal> d
     return when_all_succeed(std::move(f_cdc), std::move(f_lwt)).discard_result();
 }
 
-void paxos_response_handler::prune(utils::UUID ballot) {
+void paxos_response_handler::prune(service::paxos::ballot_id ballot) {
     if ( _proxy->get_stats().cas_now_pruning >= pruning_limit) {
         _proxy->get_stats().cas_coordinator_dropped_prune++;
         return;
@@ -5876,7 +5876,7 @@ future<bool> storage_proxy::cas(schema_ptr schema, shared_ptr<cas_request> reque
                 qr = std::move(cqr.query_result);
             }
 
-            auto mutation = request->apply(std::move(qr), cmd->slice, utils::UUID_gen::micros_timestamp(ballot));
+            auto mutation = request->apply(std::move(qr), cmd->slice, ballot.as_micros_timestamp());
             condition_met = true;
             if (!mutation) {
                 if (write) {

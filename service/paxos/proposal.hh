@@ -14,6 +14,31 @@ namespace service {
 
 namespace paxos {
 
+struct ballot_id : public utils::tagged_uuid<ballot_id> {
+    ballot_id() = default;
+    ballot_id(const utils::UUID& uuid) noexcept : utils::tagged_uuid<ballot_id>(uuid) { }
+
+    static ballot_id create_min_time_id() noexcept {
+        return ballot_id{utils::UUID_gen::min_time_UUID()};
+    }
+
+    int64_t timestamp() const noexcept {
+        return uuid().timestamp();
+    }
+
+    int64_t as_micros_timestamp() const noexcept {
+        return utils::UUID_gen::micros_timestamp(uuid());
+    }
+
+    std::chrono::milliseconds as_unix_timestamp() const noexcept {
+        return utils::UUID_gen::unix_timestamp(uuid());
+    }
+
+    std::chrono::seconds as_unix_timestamp_in_sec() const noexcept {
+        return utils::UUID_gen::unix_timestamp_in_sec(uuid());
+    }
+};
+
 // Proposal represents replica's value associated with a given ballot. The origin uses the term
 // "commit" for this object, however, Scylla follows the terminology as set by Paxos Made Simple
 // paper.
@@ -25,11 +50,11 @@ namespace paxos {
 class proposal {
 public:
     // The ballot for the update.
-    utils::UUID ballot;
+    ballot_id ballot;
     // The mutation representing the update that is being applied.
     frozen_mutation update;
 
-    proposal(utils::UUID ballot_arg, frozen_mutation update_arg)
+    proposal(ballot_id ballot_arg, frozen_mutation update_arg)
         : ballot(ballot_arg)
         , update(std::move(update_arg)) {}
 };

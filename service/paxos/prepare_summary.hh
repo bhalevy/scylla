@@ -22,7 +22,7 @@ public:
     // Ballots of the most recent decisions, as seen by replicas. Before proceeding with its own
     // proposal, the coordinator must ensure all replicas are on the same page with the most recent
     // previous decision.
-    std::unordered_map<gms::inet_address, utils::UUID> committed_ballots_by_replica;
+    std::unordered_map<gms::inet_address, ballot_id> committed_ballots_by_replica;
     // Whether all replicas accepted the ballot or not. Even if there is only one reject, the
     // coordinator will not proceed, since it indicates there is a more recent ballot. It will
     // proceed, however, as soon as it receives a majority of responses.
@@ -30,7 +30,7 @@ public:
     // Most recent ballot, promised by any of the replicas that have responded. In case
     // a replica rejects a ballot, it responds with a newer ballot it promised, so that the proposer
     // can adjust its ballot accordingly and retry after a timeout.
-    utils::UUID most_recent_promised_ballot = utils::UUID_gen::min_time_UUID();
+    ballot_id most_recent_promised_ballot = ballot_id::create_min_time_id();
     // Most recent decision known to any of the replicas. The coordinator
     // will use it to repair lagging replicas (make sure they learn it), if necessary, before it
     // proceeds.
@@ -52,7 +52,7 @@ public:
 public:
     prepare_summary(size_t node_count);
     inet_address_vector_replica_set replicas_missing_most_recent_commit(schema_ptr s, std::chrono::seconds now_in_sec) const;
-    void update_most_recent_promised_ballot(utils::UUID ballot);
+    void update_most_recent_promised_ballot(ballot_id ballot);
 };
 
 } // end of namespace "paxos"

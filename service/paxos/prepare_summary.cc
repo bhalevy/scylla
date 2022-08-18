@@ -17,7 +17,7 @@ prepare_summary::prepare_summary(size_t node_count) {
     committed_ballots_by_replica.reserve(node_count);
 }
 
-void prepare_summary::update_most_recent_promised_ballot(utils::UUID ballot) {
+void prepare_summary::update_most_recent_promised_ballot(ballot_id ballot) {
     // In case of clock skew, another node could be proposing with ballot that are quite a bit
     // older than our own. In that case, we record the more recent commit we've received to make
     // sure we re-prepare on an older ballot.
@@ -40,7 +40,7 @@ prepare_summary::replicas_missing_most_recent_commit(schema_ptr s, std::chrono::
     // propagated to all nodes.
     const std::chrono::seconds paxos_ttl_sec(s->paxos_grace_seconds());
     if (!most_recent_commit ||
-            utils::UUID_gen::unix_timestamp_in_sec(most_recent_commit->ballot) + paxos_ttl_sec < now_in_sec) {
+            most_recent_commit->ballot.as_unix_timestamp_in_sec() + paxos_ttl_sec < now_in_sec) {
         return replicas;
     }
 

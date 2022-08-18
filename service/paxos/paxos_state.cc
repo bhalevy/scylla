@@ -44,7 +44,7 @@ future<paxos_state::guard> paxos_state::get_cas_lock(const dht::token& key, cloc
 }
 
 future<prepare_response> paxos_state::prepare(storage_proxy& sp, tracing::trace_state_ptr tr_state, schema_ptr schema,
-        const query::read_command& cmd, const partition_key& key, utils::UUID ballot,
+        const query::read_command& cmd, const partition_key& key, ballot_id ballot,
         bool only_digest, query::digest_algorithm da, clock_type::time_point timeout) {
     return utils::get_local_injector().inject("paxos_prepare_timeout", timeout, [&sp, &cmd, &key, ballot, tr_state, schema, only_digest, da, timeout] {
         dht::token token = dht::get_token(*schema, key);
@@ -56,7 +56,7 @@ future<prepare_response> paxos_state::prepare(storage_proxy& sp, tracing::trace_
             // on some replica and not others during a new proposal (in storage_proxy::begin_and_repair_paxos()), and no
             // amount of re-submit will fix this (because the node on which the commit has expired will have a
             // tombstone that hides any re-submit). See CASSANDRA-12043 for details.
-            auto now_in_sec = utils::UUID_gen::unix_timestamp_in_sec(ballot);
+            auto now_in_sec = ballot.as_unix_timestamp_in_sec();
 
             auto f = db::system_keyspace::load_paxos_state(key, schema, gc_clock::time_point(now_in_sec), timeout);
             return f.then([&sp, &cmd, token = std::move(token), &key, ballot, tr_state, schema, only_digest, da, timeout] (paxos_state state) {
@@ -129,7 +129,7 @@ future<bool> paxos_state::accept(storage_proxy& sp, tracing::trace_state_ptr tr_
         utils::latency_counter lc;
         lc.start();
         return with_locked_key(token, timeout, [&proposal, schema, tr_state, timeout] () mutable {
-            auto now_in_sec = utils::UUID_gen::unix_timestamp_in_sec(proposal.ballot);
+            auto now_in_sec = proposal.ballot.as_unix_timestamp_in_sec();
             auto f = db::system_keyspace::load_paxos_state(proposal.update.key(), schema, gc_clock::time_point(now_in_sec), timeout);
             return f.then([&proposal, tr_state, schema, timeout] (paxos_state state) {
                 // Accept the proposal if we promised to accept it or the proposal is newer than the one we promised.
@@ -186,7 +186,7 @@ future<> paxos_state::learn(storage_proxy& sp, schema_ptr schema, proposal decis
         //
         // The table may have been truncated since the proposal was initiated. In that case, we
         // don't want to perform the mutation and potentially resurrect truncated data.
-        if (utils::UUID_gen::unix_timestamp(decision.ballot) >= truncated_at) {
+        if (decision.ballot.as_unix_timestamp() >= truncated_at) {
             f = f.then([&sp, schema, &decision, timeout, tr_state] {
                 logger.debug("Committing decision {}", decision);
                 tracing::trace(tr_state, "Committing decision {}", decision);
@@ -226,7 +226,7 @@ future<> paxos_state::learn(storage_proxy& sp, schema_ptr schema, proposal decis
     });
 }
 
-future<> paxos_state::prune(schema_ptr schema, const partition_key& key, utils::UUID ballot, clock_type::time_point timeout,
+future<> paxos_state::prune(schema_ptr schema, const partition_key& key, ballot_id ballot, clock_type::time_point timeout,
         tracing::trace_state_ptr tr_state) {
     logger.debug("Delete paxos state for ballot {}", ballot);
     tracing::trace(tr_state, "Delete paxos state for ballot {}", ballot);

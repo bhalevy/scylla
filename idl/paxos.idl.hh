@@ -7,12 +7,17 @@
  */
 
 #include "idl/result.idl.hh"
+#include "idl/uuid.idl.hh"
 
 namespace service {
 namespace paxos {
 
+class ballot_id final {
+    utils::UUID uuid();
+};
+
 class proposal {
-    utils::UUID ballot;
+    service::paxos::ballot_id ballot;
     frozen_mutation update;
 };
 

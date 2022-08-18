@@ -3036,7 +3036,7 @@ future<service::paxos::paxos_state> system_keyspace::load_paxos_state(partition_
 
         std::optional<service::paxos::proposal> accepted;
         if (row.has("proposal")) {
-            accepted = service::paxos::proposal(row.get_as<utils::UUID>("proposal_ballot"),
+            accepted = service::paxos::proposal(service::paxos::ballot_id{row.get_as<utils::UUID>("proposal_ballot")},
                     ser::deserialize_from_buffer<>(row.get_blob("proposal"),  boost::type<frozen_mutation>(), 0));
         }
 
@@ -3062,13 +3062,13 @@ static int32_t paxos_ttl_sec(const schema& s) {
     return std::chrono::duration_cast<std::chrono::seconds>(s.paxos_grace_seconds()).count();
 }
 
-future<> system_keyspace::save_paxos_promise(const schema& s, const partition_key& key, const utils::UUID& ballot, db::timeout_clock::time_point timeout) {
+future<> system_keyspace::save_paxos_promise(const schema& s, const partition_key& key, const service::paxos::ballot_id& ballot, db::timeout_clock::time_point timeout) {
     static auto cql = format("UPDATE system.{} USING TIMESTAMP ? AND TTL ? SET promise = ? WHERE row_key = ? AND cf_id = ?", PAXOS);
     return qctx->execute_cql_with_timeout(cql,
             timeout,
-            utils::UUID_gen::micros_timestamp(ballot),
+            ballot.as_micros_timestamp(),
             paxos_ttl_sec(s),
-            ballot,
+            ballot.uuid(),
             to_legacy(*key.get_compound_type(s), key.representation()),
             s.id().uuid()
         ).discard_result();
@@ -3079,10 +3079,10 @@ future<> system_keyspace::save_paxos_proposal(const schema& s, const service::pa
     partition_key_view key = proposal.update.key();
     return qctx->execute_cql_with_timeout(cql,
             timeout,
-            utils::UUID_gen::micros_timestamp(proposal.ballot),
+            proposal.ballot.as_micros_timestamp(),
             paxos_ttl_sec(s),
-            proposal.ballot,
-            proposal.ballot,
+            proposal.ballot.uuid(),
+            proposal.ballot.uuid(),
             ser::serialize_to_buffer<bytes>(proposal.update),
             to_legacy(*key.get_compound_type(s), key.representation()),
             s.id().uuid()
@@ -3101,16 +3101,16 @@ future<> system_keyspace::save_paxos_decision(const schema& s, const service::pa
     partition_key_view key = decision.update.key();
     return qctx->execute_cql_with_timeout(cql,
             timeout,
-            utils::UUID_gen::micros_timestamp(decision.ballot),
+            decision.ballot.as_micros_timestamp(),
             paxos_ttl_sec(s),
-            decision.ballot,
+            decision.ballot.uuid(),
             ser::serialize_to_buffer<bytes>(decision.update),
             to_legacy(*key.get_compound_type(s), key.representation()),
             s.id().uuid()
         ).discard_result();
 }
 
-future<> system_keyspace::delete_paxos_decision(const schema& s, const partition_key& key, const utils::UUID& ballot, db::timeout_clock::time_point timeout) {
+future<> system_keyspace::delete_paxos_decision(const schema& s, const partition_key& key, const service::paxos::ballot_id& ballot, db::timeout_clock::time_point timeout) {
     // This should be called only if a learn stage succeeded on all replicas.
     // In this case we can remove learned paxos value using ballot's timestamp which
     // guarantees that if there is more recent round it will not be affected.
@@ -3118,7 +3118,7 @@ future<> system_keyspace::delete_paxos_decision(const schema& s, const partition
 
     return qctx->execute_cql_with_timeout(cql,
             timeout,
-            utils::UUID_gen::micros_timestamp(ballot),
+            ballot.as_micros_timestamp(),
             to_legacy(*key.get_compound_type(s), key.representation()),
             s.id().uuid()
         ).discard_result();

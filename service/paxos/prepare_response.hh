@@ -66,7 +66,7 @@ struct promise {
 // that the proposer can adjust its own ballot accordingly. Otherwise we return the previous
 // accepted proposal and/or committed decision, so that the proposer can either resume its own Paxos
 // round or repair the previous one.
-using prepare_response = std::variant<utils::UUID, promise>;
+using prepare_response = std::variant<ballot_id, promise>;
 
 std::ostream& operator<<(std::ostream& os, const promise& promise);
 
