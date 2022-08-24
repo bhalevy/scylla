@@ -23,31 +23,6 @@
 
 extern logging::logger dblog;
 
-// FIXME: move to compaction_manager methods to compaction_manager.cc
-
-seastar::lw_shared_ptr<repair_history_map> compaction_manager::get_or_create_repair_history_map_for_table(const table_id& id) {
-    auto it = _repair_history_maps.find(id);
-    if (it != _repair_history_maps.end()) {
-        return it->second;
-    } else {
-        _repair_history_maps[id] = seastar::make_lw_shared<repair_history_map>();
-        return _repair_history_maps[id];
-    }
-}
-
-seastar::lw_shared_ptr<repair_history_map> compaction_manager::get_repair_history_map_for_table(const table_id& id) const noexcept {
-    auto it = _repair_history_maps.find(id);
-    if (it != _repair_history_maps.end()) {
-        return it->second;
-    } else {
-        return {};
-    }
-}
-
-void compaction_manager::drop_repair_history_map_for_table(const table_id& id) {
-    _repair_history_maps.erase(id);
-}
-
 // This is useful for a sstable to query a gc_before for a range. The range is
 // defined by the first and last key in the sstable.
 //
@@ -155,11 +130,6 @@ gc_clock::time_point get_gc_before_for_key(schema_ptr s, compaction_manager_opt 
         return gc_before;
     }
     std::abort();
-}
-
-void compaction_manager::update_repair_time(table_id id, const dht::token_range& range, gc_clock::time_point repair_time) {
-    auto m = get_or_create_repair_history_map_for_table(id);
-    m->map += std::make_pair(locator::token_metadata::range_to_interval(range), repair_time);
 }
 
 static bool needs_repair_before_gc(const replica::database& db, sstring ks_name) {
