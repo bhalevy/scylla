@@ -1760,3 +1760,31 @@ compaction_backlog_manager::~compaction_backlog_manager() {
         tracker->_manager = nullptr;
     }
 }
+
+seastar::lw_shared_ptr<repair_history_map> compaction_manager::get_or_create_repair_history_map_for_table(const table_id& id) {
+    auto it = _repair_history_maps.find(id);
+    if (it != _repair_history_maps.end()) {
+        return it->second;
+    } else {
+        _repair_history_maps[id] = seastar::make_lw_shared<repair_history_map>();
+        return _repair_history_maps[id];
+    }
+}
+
+seastar::lw_shared_ptr<repair_history_map> compaction_manager::get_repair_history_map_for_table(const table_id& id) const noexcept {
+    auto it = _repair_history_maps.find(id);
+    if (it != _repair_history_maps.end()) {
+        return it->second;
+    } else {
+        return {};
+    }
+}
+
+void compaction_manager::drop_repair_history_map_for_table(const table_id& id) {
+    _repair_history_maps.erase(id);
+}
+
+void compaction_manager::update_repair_time(table_id id, const dht::token_range& range, gc_clock::time_point repair_time) {
+    auto m = get_or_create_repair_history_map_for_table(id);
+    m->map += std::make_pair(locator::token_metadata::range_to_interval(range), repair_time);
+}
