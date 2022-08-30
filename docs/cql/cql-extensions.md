@@ -54,7 +54,8 @@ like DELETE, that does not support USING TTL, or SELECT, that is read-only so it
 can be executed only USING TIMEOUT.
 
 The timeout parameter applies to the following data modification queries:
-INSERT, UPDATE, DELETE, PRUNE MATERIALIZED VIEW, BATCH.
+INSERT, UPDATE, DELETE, PRUNE MATERIALIZED VIEW, BATCH,
+and to the TRUNCATE data definition query.
 
 In order for this parameter to be effective for read operations as well,
 the USING TIMEOUT clause may be specified for SELECT statements.
@@ -65,6 +66,9 @@ Examples:
 ```
 ```cql
 	INSERT INTO t(a,b,c) VALUES (1,2,3) USING TIMESTAMP 42 AND TIMEOUT 50ms;
+```
+```cql
+	TRUNCATE TABLE t USING TIMEOUT 5m;
 ```
 
 Working with prepared statements works as usual - the timeout parameter can be
