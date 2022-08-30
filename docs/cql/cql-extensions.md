@@ -52,7 +52,8 @@ The parameter acts as part of the USING clause, and thus can be combined with ot
 parameters - like timestamps and time-to-live.
 
 The timeout parameter applies to the following data modification queries:
-INSERT, UPDATE, DELETE, PRUNE MATERIALIZED VIEW, BATCH.
+INSERT, UPDATE, DELETE, PRUNE MATERIALIZED VIEW, BATCH,
+and to the TRUNCATE data definition query.
 
 In order for this parameter to be effective for read operations as well, it's possible
 to attach USING clause to SELECT statements.
@@ -63,6 +64,9 @@ Examples:
 ```
 ```cql
 	INSERT INTO t(a,b,c) VALUES (1,2,3) USING TIMESTAMP 42 AND TIMEOUT 50ms;
+```
+```cql
+	TRUNCATE TABLE t USING TIMEOUT 5m;
 ```
 
 Working with prepared statements works as usual - the timeout parameter can be
