@@ -7,6 +7,7 @@
 from util import new_test_keyspace, unique_name, unique_key_int
 import pytest
 from cassandra.protocol import InvalidRequest, ReadTimeout, WriteTimeout
+from cassandra.cluster import NoHostAvailable
 from cassandra.util import Duration
 
 def r(regex):
@@ -152,3 +153,15 @@ def test_invalid_timeout(scylla_only, cql, table1):
     invalid(f"SELECT * FROM {table} USING TIMEOUT 60s AND TTL 10000")
     invalid(f"SELECT * FROM {table} USING TIMEOUT 60s AND TTL 123 AND TIMESTAMP 911")
     invalid (f"DELETE FROM {table} USING TIMEOUT 60s AND TTL 42 WHERE p = 42")
+
+def test_truncate_using_timeout(scylla_only, cql, table1):
+    table = table1
+    key = unique_key_int()
+    cql.execute(f"INSERT INTO {table} (p,c,v) VALUES ({key},1,1) USING TIMEOUT 60m AND TTL 1000000 AND TIMESTAMP 321")
+    res = list(cql.execute(f"SELECT ttl(v), writetime(v) FROM {table} WHERE p = {key} and c = 1"))
+    assert len(res) == 1 and res[0].ttl_v > 0 and res[0].writetime_v == 321
+    cql.execute(f"TRUNCATE TABLE {table} USING TIMEOUT 1000s")
+    res = list(cql.execute(f"SELECT ttl(v), writetime(v) FROM {table} WHERE p = {key} and c = 1"))
+    assert len(res) == 0
+    with pytest.raises(NoHostAvailable):
+        cql.execute(f"TRUNCATE TABLE {table} USING TIMEOUT 0s")
