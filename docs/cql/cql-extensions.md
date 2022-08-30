@@ -48,10 +48,16 @@ way as other options by using `WITH` clause:
 TIMEOUT extension allows specifying per-query timeouts. This parameter accepts a single
 duration and applies it as a timeout specific to a single particular query.
 The parameter is supported for prepared statements as well.
-The parameter acts as part of the USING clause, and thus can be combined with other
-parameters - like timestamps and time-to-live.
-In order for this parameter to be effective for read operations as well, it's possible
-to attach USING clause to SELECT statements.
+The parameter acts as part of the USING clause, and thus can usually be combined with other
+parameters - like timestamp and time-to-live, with some restrictions for particular queries
+like DELETE, that does not support USING TTL, or SELECT, that is read-only so it
+can be executed only USING TIMEOUT.
+
+The timeout parameter applies to the following data modification queries:
+INSERT, UPDATE, DELETE, PRUNE MATERIALIZED VIEW, BATCH.
+
+In order for this parameter to be effective for read operations as well,
+the USING TIMEOUT clause may be specified for SELECT statements.
 
 Examples:
 ```cql
