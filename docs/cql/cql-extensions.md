@@ -50,6 +50,10 @@ duration and applies it as a timeout specific to a single particular query.
 The parameter is supported for prepared statements as well.
 The parameter acts as part of the USING clause, and thus can be combined with other
 parameters - like timestamps and time-to-live.
+
+The timeout parameter applies to the following data modification queries:
+INSERT, UPDATE, DELETE, PRUNE MATERIALIZED VIEW, BATCH.
+
 In order for this parameter to be effective for read operations as well, it's possible
 to attach USING clause to SELECT statements.
 
