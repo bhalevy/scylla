@@ -1571,12 +1571,6 @@ parallelized_select_statement::do_execute(
 namespace raw {
 
 static void validate_attrs(const cql3::attributes::raw& attrs) {
-    if (attrs.timestamp) {
-        throw exceptions::invalid_request_exception("Specifying TIMESTAMP is not legal for SELECT statement");
-    }
-    if (attrs.time_to_live) {
-        throw exceptions::invalid_request_exception("Specifying TTL is not legal for SELECT statement");
-    }
     // Verify no other attributes are set.
     assert((attrs.get_set() & ~attributes::mask::timeout) == 0);
 }
