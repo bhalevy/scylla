@@ -149,4 +149,26 @@ lw_shared_ptr<column_specification> attributes::raw::timeout_receiver(const sstr
     return make_lw_shared<column_specification>(ks_name, cf_name, ::make_shared<column_identifier>("[timeout]", true), duration_type);
 }
 
+static unsigned make_bit_mask(bool timestamp, bool time_to_live, bool timeout) noexcept {
+    unsigned t = 0;
+    if (timestamp) {
+        t |= static_cast<unsigned>(attributes::mask::timestamp);
+    }
+    if (time_to_live) {
+        t |= static_cast<unsigned>(attributes::mask::time_to_live);
+    }
+    if (timeout) {
+        t |= static_cast<unsigned>(attributes::mask::timeout);
+    }
+    return t;
+}
+
+unsigned attributes::get_set() const noexcept {
+    return make_bit_mask(_timestamp.has_value(), _time_to_live.has_value(), _timeout.has_value());
+}
+
+unsigned attributes::raw::get_set() const noexcept {
+    return make_bit_mask(timestamp.has_value(), time_to_live.has_value(), timeout.has_value());
+}
+
 }

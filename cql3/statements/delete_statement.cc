@@ -102,6 +102,8 @@ delete_statement::delete_statement(cf_name name,
     if (_attrs->time_to_live) {
         throw exceptions::invalid_request_exception("TTL attribute is not allowed for deletes");
     }
+    // Verify no other attributes are set.
+    assert((_attrs->get_set() & ~(attributes::mask::timestamp | attributes::mask::timeout)) == 0);
 }
 
 }
