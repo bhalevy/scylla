@@ -30,6 +30,7 @@
 #include "compaction_backlog_manager.hh"
 #include "size_tiered_backlog_tracker.hh"
 #include "leveled_manifest.hh"
+#include "compaction/compaction_manager.hh"
 
 logging::logger date_tiered_manifest::logger = logging::logger("DateTieredCompactionStrategy");
 logging::logger leveled_manifest::logger("LeveledManifest");
@@ -61,7 +62,8 @@ bool compaction_strategy_impl::worth_dropping_tombstones(const shared_sstable& s
     if (db_clock::now()-_tombstone_compaction_interval < sst->data_file_write_time()) {
         return false;
     }
-    auto gc_before = sst->get_gc_before_for_drop_estimation(compaction_time);
+    auto null_gc_state = tombstone_gc_state(nullptr);
+    auto gc_before = sst->get_gc_before_for_drop_estimation(compaction_time, _compaction_manager ? _compaction_manager->get_tombstone_gc_state() : tombstone_gc_state(nullptr));
     return sst->estimate_droppable_tombstone_ratio(gc_before) >= _tombstone_threshold;
 }
 
@@ -99,6 +101,10 @@ compaction_strategy_impl::compaction_strategy_impl(compaction_manager& cm, const
     _tombstone_compaction_interval = db_clock::duration(std::chrono::seconds(interval));
 
     // FIXME: validate options.
+}
+
+const tombstone_gc_state& compaction_strategy_impl::get_tombstone_gc_state() const noexcept {
+    return _compaction_manager ? _compaction_manager->get_tombstone_gc_state() : null_gc_state;
 }
 
 } // namespace sstables
@@ -787,6 +793,10 @@ compaction_strategy make_compaction_strategy(compaction_strategy_type strategy, 
 
 compaction_manager_opt compaction_strategy::get_compaction_manager_opt() const noexcept {
     return _compaction_strategy_impl->get_compaction_manager_opt();
+}
+
+const tombstone_gc_state& compaction_strategy::get_tombstone_gc_state() const noexcept {
+    return _compaction_strategy_impl->get_tombstone_gc_state();
 }
 
 }

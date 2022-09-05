@@ -14,6 +14,7 @@
 #include "mutation_assertions.hh"
 #include "schema.hh"
 #include "test/lib/log.hh"
+#include "tombstone_gc.hh"
 
 inline bool trim_range_tombstone(const schema& s, range_tombstone& rt, const query::clustering_row_ranges& ck_ranges) {
     if (ck_ranges.empty()) {
@@ -36,7 +37,7 @@ static inline void match_compacted_mutation(const mutation_opt& mo, const mutati
     BOOST_REQUIRE(bool(mo));
     memory::scoped_critical_alloc_section dfg;
     mutation got = *mo;
-    got.partition().compact_for_compaction(*m.schema(), always_gc, got.decorated_key(), query_time);
+    got.partition().compact_for_compaction(*m.schema(), always_gc, got.decorated_key(), query_time, tombstone_gc_state(nullptr));
     assert_that(got).is_equal_to(m, ck_ranges);
 }
 

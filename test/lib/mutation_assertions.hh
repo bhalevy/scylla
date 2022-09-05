@@ -13,6 +13,7 @@
 #include "mutation.hh"
 #include "mutation_fragment_stream_validator.hh"
 #include "log.hh"
+#include "tombstone_gc.hh"
 
 extern logging::logger testlog;
 
@@ -23,7 +24,7 @@ private:
     static mutation_partition compacted(const schema& s, const mutation_partition& m) {
         mutation_partition res(s, m);
         auto key = dht::decorate_key(s, partition_key::make_empty());
-        res.compact_for_compaction(s, always_gc, key, gc_clock::time_point::min());
+        res.compact_for_compaction(s, always_gc, key, gc_clock::time_point::min(), tombstone_gc_state(nullptr));
         return res;
     }
 public:

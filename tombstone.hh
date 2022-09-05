@@ -14,6 +14,7 @@
 #include "timestamp.hh"
 #include "gc_clock.hh"
 #include "hashing.hh"
+#include "tombstone_gc.hh"
 
 /**
  * Represents deletion operation. Can be commuted with other tombstones via apply() method.
