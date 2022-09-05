@@ -132,6 +132,9 @@ public:
 
     // null_compation_strategy has no compaction_manager
     compaction_manager_opt get_compaction_manager_opt() const noexcept;
+
+    // null_compation_strategy has null tombstone_gc_state
+    const tombstone_gc_state& get_tombstone_gc_state() const noexcept;
 };
 
 // Creates a compaction_strategy object from one of the strategies available.

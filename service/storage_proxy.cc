@@ -15,6 +15,7 @@
 #include "db/consistency_level.hh"
 #include "db/commitlog/commitlog.hh"
 #include "storage_proxy.hh"
+#include "tombstone_gc.hh"
 #include "unimplemented.hh"
 #include "mutation.hh"
 #include "frozen_mutation.hh"
@@ -3744,6 +3745,7 @@ protected:
     timer<storage_proxy::clock_type> _timeout;
     schema_ptr _schema;
     size_t _failed = 0;
+    const tombstone_gc_state& _gc_state;
 
     virtual void on_failure(exceptions::coordinator_exception_container&& ex) = 0;
     virtual void on_timeout() = 0;
@@ -3757,10 +3759,11 @@ protected:
         on_failure(std::move(ex));
     }
 public:
-    abstract_read_resolver(schema_ptr schema, db::consistency_level cl, size_t target_count, storage_proxy::clock_type::time_point timeout)
+    abstract_read_resolver(schema_ptr schema, db::consistency_level cl, size_t target_count, storage_proxy::clock_type::time_point timeout, const tombstone_gc_state& gc_state)
         : _cl(cl)
         , _targets_count(target_count)
         , _schema(std::move(schema))
+        , _gc_state(gc_state)
     {
         _timeout.set_callback([this] {
             on_timeout();
@@ -3849,8 +3852,9 @@ private:
 public:
     digest_read_resolver(shared_ptr<storage_proxy> proxy,
             locator::effective_replication_map_ptr ermp,
-            schema_ptr schema, db::consistency_level cl, size_t block_for, size_t target_count_for_cl, storage_proxy::clock_type::time_point timeout)
-        : abstract_read_resolver(std::move(schema), cl, 0, timeout)
+            schema_ptr schema, db::consistency_level cl, size_t block_for, size_t target_count_for_cl, storage_proxy::clock_type::time_point timeout,
+            const tombstone_gc_state& gc_state)
+        : abstract_read_resolver(std::move(schema), cl, 0, timeout, gc_state)
         , _proxy(std::move(proxy))
         , _effective_replication_map_ptr(std::move(ermp))
         , _block_for(block_for)
@@ -4094,12 +4098,12 @@ private:
         return get_last_row(s, *last_partition, is_reversed);
     }
 
-    static primary_key get_last_reconciled_row(const schema& s, const mutation_and_live_row_count& m_a_rc, const query::read_command& cmd, uint64_t limit, bool is_reversed) {
+    static primary_key get_last_reconciled_row(const schema& s, const mutation_and_live_row_count& m_a_rc, const query::read_command& cmd, uint64_t limit, bool is_reversed, const tombstone_gc_state& gc_state) {
         const auto& m = m_a_rc.mut;
         auto mp = mutation_partition(s, m.partition());
         auto&& ranges = cmd.slice.row_ranges(s, m.key());
         bool always_return_static_content = cmd.slice.options.contains<query::partition_slice::option::always_return_static_content>();
-        mp.compact_for_query(s, m.decorated_key(), cmd.timestamp, ranges, always_return_static_content, is_reversed, limit);
+        mp.compact_for_query(s, m.decorated_key(), cmd.timestamp, ranges, always_return_static_content, is_reversed, limit, gc_state);
         return primary_key{m.decorated_key(), get_last_reconciled_row(s, mp, is_reversed)};
     }
 
@@ -4175,7 +4179,7 @@ private:
                     ranges.emplace_back(is_reversed ? query::clustering_range::make_starting_with(std::move(*shortest_read->clustering))
                                                     : query::clustering_range::make_ending_with(std::move(*shortest_read->clustering)));
                     it->live_row_count = it->mut.partition().compact_for_query(s, it->mut.decorated_key(), cmd.timestamp, ranges, always_return_static_content,
-                            is_reversed, query::partition_max_rows);
+                            is_reversed, query::partition_max_rows, _gc_state);
                 }
             }
 
@@ -4216,14 +4220,14 @@ private:
                 rows_left -= row_count;
                 partitions_left -= !!row_count;
                 if (original_per_partition_limit < query:: max_rows_if_set) {
-                    auto&& last_row = get_last_reconciled_row(s, m_a_rc, cmd, original_per_partition_limit, is_reversed);
+                    auto&& last_row = get_last_reconciled_row(s, m_a_rc, cmd, original_per_partition_limit, is_reversed, _gc_state);
                     if (got_incomplete_information_in_partition(s, last_row, *pv, is_reversed)) {
                         _increase_per_partition_limit = true;
                         return true;
                     }
                 }
             } else {
-                auto&& last_row = get_last_reconciled_row(s, m_a_rc, cmd, rows_left, is_reversed);
+                auto&& last_row = get_last_reconciled_row(s, m_a_rc, cmd, rows_left, is_reversed, _gc_state);
                 return got_incomplete_information_across_partitions(s, cmd, last_row, rp, versions, is_reversed);
             }
             ++pv;
@@ -4235,7 +4239,8 @@ private:
         return got_incomplete_information_across_partitions(s, cmd, last_row, rp, versions, is_reversed);
     }
 public:
-    data_read_resolver(schema_ptr schema, db::consistency_level cl, size_t targets_count, storage_proxy::clock_type::time_point timeout) : abstract_read_resolver(std::move(schema), cl, targets_count, timeout) {
+    data_read_resolver(schema_ptr schema, db::consistency_level cl, size_t targets_count, storage_proxy::clock_type::time_point timeout, const tombstone_gc_state& gc_state)
+            : abstract_read_resolver(std::move(schema), cl, targets_count, timeout, gc_state) {
         _data_results.reserve(targets_count);
     }
     void add_mutate_data(gms::inet_address from, foreign_ptr<lw_shared_ptr<reconcilable_result>> result) {
@@ -4473,6 +4478,7 @@ protected:
     bool _foreground = true;
     service_permit _permit; // holds admission permit until operation completes
     db::per_partition_rate_limit::info _rate_limit_info;
+    const tombstone_gc_state& _gc_state;
 
 private:
     void on_read_resolved() noexcept {
@@ -4489,11 +4495,12 @@ public:
     abstract_read_executor(schema_ptr s, lw_shared_ptr<replica::column_family> cf, shared_ptr<storage_proxy> proxy,
             locator::effective_replication_map_ptr ermp,
             lw_shared_ptr<query::read_command> cmd, dht::partition_range pr, db::consistency_level cl, size_t block_for,
-            inet_address_vector_replica_set targets, tracing::trace_state_ptr trace_state, service_permit permit, db::per_partition_rate_limit::info rate_limit_info) :
+            inet_address_vector_replica_set targets, tracing::trace_state_ptr trace_state, service_permit permit, db::per_partition_rate_limit::info rate_limit_info,
+            const tombstone_gc_state& gc_state) :
                            _schema(std::move(s)), _proxy(std::move(proxy))
                          , _effective_replication_map_ptr(std::move(ermp))
                          , _cmd(std::move(cmd)), _partition_range(std::move(pr)), _cl(cl), _block_for(block_for), _targets(std::move(targets)), _trace_state(std::move(trace_state)),
-                           _cf(std::move(cf)), _permit(std::move(permit)), _rate_limit_info(rate_limit_info) {
+                           _cf(std::move(cf)), _permit(std::move(permit)), _rate_limit_info(rate_limit_info), _gc_state(gc_state) {
         _proxy->get_stats().reads++;
         _proxy->get_stats().foreground_reads++;
     }
@@ -4642,7 +4649,7 @@ protected:
     virtual void adjust_targets_for_reconciliation() {}
     void reconcile(db::consistency_level cl, storage_proxy::clock_type::time_point timeout, lw_shared_ptr<query::read_command> cmd) {
         adjust_targets_for_reconciliation();
-        data_resolver_ptr data_resolver = ::make_shared<data_read_resolver>(_schema, cl, _targets.size(), timeout);
+        data_resolver_ptr data_resolver = ::make_shared<data_read_resolver>(_schema, cl, _targets.size(), timeout, _gc_state);
         auto exec = shared_from_this();
 
         // Waited on indirectly.
@@ -4757,7 +4764,7 @@ public:
             return make_ready_future<result<foreign_ptr<lw_shared_ptr<query::result>>>>(make_foreign(make_lw_shared(query::result())));
         }
         digest_resolver_ptr digest_resolver = ::make_shared<digest_read_resolver>(_proxy, _effective_replication_map_ptr, _schema, _cl, _block_for,
-                db::is_datacenter_local(_cl) ? _effective_replication_map_ptr->get_topology().count_local_endpoints(_targets): _targets.size(), timeout);
+                db::is_datacenter_local(_cl) ? _effective_replication_map_ptr->get_topology().count_local_endpoints(_targets): _targets.size(), timeout, _gc_state);
         auto exec = shared_from_this();
 
         make_requests(digest_resolver, timeout);
@@ -4859,8 +4866,9 @@ public:
     never_speculating_read_executor(schema_ptr s, lw_shared_ptr<replica::column_family> cf, shared_ptr<storage_proxy> proxy,
             locator::effective_replication_map_ptr ermp,
             lw_shared_ptr<query::read_command> cmd, dht::partition_range pr, db::consistency_level cl, inet_address_vector_replica_set targets, tracing::trace_state_ptr trace_state, service_permit permit,
-            db::per_partition_rate_limit::info rate_limit_info) :
-                                        abstract_read_executor(std::move(s), std::move(cf), std::move(proxy), std::move(ermp), std::move(cmd), std::move(pr), cl, 0, std::move(targets), std::move(trace_state), std::move(permit), rate_limit_info) {
+            db::per_partition_rate_limit::info rate_limit_info,
+            const tombstone_gc_state& gc_state) :
+                                        abstract_read_executor(std::move(s), std::move(cf), std::move(proxy), std::move(ermp), std::move(cmd), std::move(pr), cl, 0, std::move(targets), std::move(trace_state), std::move(permit), rate_limit_info, gc_state) {
         _block_for = _targets.size();
     }
 };
@@ -4955,7 +4963,8 @@ result<::shared_ptr<abstract_read_executor>> storage_proxy::get_read_executor(lw
         tracing::trace_state_ptr trace_state,
         const inet_address_vector_replica_set& preferred_endpoints,
         bool& is_read_non_local,
-        service_permit permit) {
+        service_permit permit,
+        const tombstone_gc_state& gc_state) {
     const dht::token& token = pr.start()->value().token();
     replica::keyspace& ks = _db.local().find_keyspace(schema->ks_name());
     auto erm = ks.get_effective_replication_map();
@@ -5009,14 +5018,14 @@ result<::shared_ptr<abstract_read_executor>> storage_proxy::get_read_executor(lw
     // Speculative retry is disabled *OR* there are simply no extra replicas to speculate.
     if (retry_type == speculative_retry::type::NONE || block_for == all_replicas.size()
             || (repair_decision == db::read_repair_decision::DC_LOCAL && is_datacenter_local(cl) && block_for == target_replicas.size())) {
-        return ::make_shared<never_speculating_read_executor>(schema, cf, p, std::move(erm), cmd, std::move(pr), cl, std::move(target_replicas), std::move(trace_state), std::move(permit), rate_limit_info);
+        return ::make_shared<never_speculating_read_executor>(schema, cf, p, std::move(erm), cmd, std::move(pr), cl, std::move(target_replicas), std::move(trace_state), std::move(permit), rate_limit_info, gc_state);
     }
 
     if (target_replicas.size() == all_replicas.size()) {
         // CL.ALL, RRD.GLOBAL or RRD.DC_LOCAL and a single-DC.
         // We are going to contact every node anyway, so ask for 2 full data requests instead of 1, for redundancy
         // (same amount of requests in total, but we turn 1 digest request into a full blown data request).
-        return ::make_shared<always_speculating_read_executor>(schema, cf, p, std::move(erm), cmd, std::move(pr), cl, block_for, std::move(target_replicas), std::move(trace_state), std::move(permit), rate_limit_info);
+        return ::make_shared<always_speculating_read_executor>(schema, cf, p, std::move(erm), cmd, std::move(pr), cl, block_for, std::move(target_replicas), std::move(trace_state), std::move(permit), rate_limit_info, gc_state);
     }
 
     // RRD.NONE or RRD.DC_LOCAL w/ multiple DCs.
@@ -5024,7 +5033,7 @@ result<::shared_ptr<abstract_read_executor>> storage_proxy::get_read_executor(lw
         auto local_dc_filter = erm->get_topology().get_local_dc_filter();
         if (is_datacenter_local(cl) && !local_dc_filter(extra_replica)) {
             slogger.trace("read executor no extra target to speculate");
-            return ::make_shared<never_speculating_read_executor>(schema, cf, p, std::move(erm), cmd, std::move(pr), cl, std::move(target_replicas), std::move(trace_state), std::move(permit), rate_limit_info);
+            return ::make_shared<never_speculating_read_executor>(schema, cf, p, std::move(erm), cmd, std::move(pr), cl, std::move(target_replicas), std::move(trace_state), std::move(permit), rate_limit_info, gc_state);
         } else {
             target_replicas.push_back(extra_replica);
             slogger.trace("creating read executor with extra target {}", extra_replica);
@@ -5032,9 +5041,9 @@ result<::shared_ptr<abstract_read_executor>> storage_proxy::get_read_executor(lw
     }
 
     if (retry_type == speculative_retry::type::ALWAYS) {
-        return ::make_shared<always_speculating_read_executor>(schema, cf, p, std::move(erm), cmd, std::move(pr), cl, block_for, std::move(target_replicas), std::move(trace_state), std::move(permit), rate_limit_info);
+        return ::make_shared<always_speculating_read_executor>(schema, cf, p, std::move(erm), cmd, std::move(pr), cl, block_for, std::move(target_replicas), std::move(trace_state), std::move(permit), rate_limit_info, gc_state);
     } else {// PERCENTILE or CUSTOM.
-        return ::make_shared<speculating_read_executor>(schema, cf, p, std::move(erm), cmd, std::move(pr), cl, block_for, std::move(target_replicas), std::move(trace_state), std::move(permit), rate_limit_info);
+        return ::make_shared<speculating_read_executor>(schema, cf, p, std::move(erm), cmd, std::move(pr), cl, block_for, std::move(target_replicas), std::move(trace_state), std::move(permit), rate_limit_info, gc_state);
     }
 }
 
@@ -5134,7 +5143,8 @@ storage_proxy::query_singular(lw_shared_ptr<query::read_command> cmd,
 
         auto r_read_executor = get_read_executor(cmd, schema, std::move(pr), cl, repair_decision,
                                                  query_options.trace_state, replicas, is_read_non_local,
-                                                 query_options.permit);
+                                                 query_options.permit,
+                                                 local_db().get_compaction_manager().get_tombstone_gc_state());
         if (!r_read_executor) {
             co_return std::move(r_read_executor).as_failure();
         }
@@ -5349,7 +5359,8 @@ storage_proxy::query_partition_key_range_concurrent(storage_proxy::clock_type::t
             throw;
         }
 
-        exec.push_back(::make_shared<never_speculating_read_executor>(schema, cf.shared_from_this(), p, erm, cmd, std::move(range), cl, std::move(filtered_endpoints), trace_state, permit, std::monostate()));
+        const auto& gc_state = local_db().get_compaction_manager().get_tombstone_gc_state();
+        exec.push_back(::make_shared<never_speculating_read_executor>(schema, cf.shared_from_this(), p, erm, cmd, std::move(range), cl, std::move(filtered_endpoints), trace_state, permit, std::monostate(), gc_state));
         ranges_per_exec.emplace(exec.back().get(), std::move(merged_ranges));
     }
 

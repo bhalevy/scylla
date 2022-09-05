@@ -11,6 +11,7 @@
 #include "gc_clock.hh"
 #include "readers/flat_mutation_reader_fwd.hh"
 #include "timestamp.hh"
+#include "tombstone_gc.hh"
 
 namespace dht {
 class decorated_key;
@@ -33,4 +34,5 @@ class decorated_key;
 /// if the source reader supports it
 flat_mutation_reader_v2 make_compacting_reader(flat_mutation_reader_v2 source, gc_clock::time_point compaction_time,
         std::function<api::timestamp_type(const dht::decorated_key&)> get_max_purgeable,
+        const tombstone_gc_state& gc_state,
         streamed_mutation::forwarding fwd = streamed_mutation::forwarding::no);
