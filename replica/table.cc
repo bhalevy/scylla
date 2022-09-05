@@ -1284,6 +1284,7 @@ table::sstables_as_snapshot_source() {
                 std::move(reader),
                 gc_clock::now(),
                 [](const dht::decorated_key&) { return api::min_timestamp; },
+                _compaction_manager.get_tombstone_gc_state(),
                 fwd);
         }, [this, sst_set] {
             return make_partition_presence_checker(sst_set);
@@ -2411,7 +2412,7 @@ public:
         return _t.maintenance_sstable_set();
     }
     std::unordered_set<sstables::shared_sstable> fully_expired_sstables(const std::vector<sstables::shared_sstable>& sstables, gc_clock::time_point query_time) const override {
-        return sstables::get_fully_expired_sstables(*this, sstables, query_time);
+        return sstables::get_fully_expired_sstables(_t._compaction_manager, *this, sstables, query_time);
     }
     const std::vector<sstables::shared_sstable>& compacted_undeleted_sstables() const noexcept override {
         return _t.compacted_undeleted_sstables();

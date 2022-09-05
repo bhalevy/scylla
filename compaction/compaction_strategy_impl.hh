@@ -40,6 +40,7 @@ protected:
     db_clock::duration _tombstone_compaction_interval = DEFAULT_TOMBSTONE_COMPACTION_INTERVAL();
     // null_compation_strategy has no compaction_manager
     compaction_manager_opt _compaction_manager = compaction_manager_nullopt;
+    tombstone_gc_state null_gc_state = tombstone_gc_state(nullptr);
 public:
     static std::optional<sstring> get_value(const std::map<sstring, sstring>& options, const sstring& name);
 protected:
@@ -87,5 +88,7 @@ public:
     compaction_manager_opt get_compaction_manager_opt() const noexcept {
         return _compaction_manager;
     }
+
+    const tombstone_gc_state& get_tombstone_gc_state() const noexcept;
 };
 }
