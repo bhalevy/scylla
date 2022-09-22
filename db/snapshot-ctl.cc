@@ -101,7 +101,8 @@ future<> snapshot_ctl::do_take_column_family_snapshot(sstring ks_name, std::vect
             throw std::invalid_argument("Do not take a snapshot of a materialized view or a secondary index by itself. Run snapshot on the base table instead.");
         }
     }
-    co_await replica::database::snapshot_tables_on_all_shards(_db, ks_name, std::move(tables), std::move(tag), bool(sf));
+    bool snap_views = (av == allow_view_snapshots::no);
+    co_await replica::database::snapshot_tables_on_all_shards(_db, ks_name, std::move(tables), std::move(tag), bool(sf), snap_views);
 }
 
 future<> snapshot_ctl::take_column_family_snapshot(sstring ks_name, sstring cf_name, sstring tag, skip_flush sf, allow_view_snapshots av) {
