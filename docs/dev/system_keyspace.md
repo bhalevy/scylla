@@ -99,6 +99,7 @@ CREATE TABLE system.large_cells (
     clustering_key text,
     column_name text,
     compaction_time timestamp,
+    collection_elements bigint,
     PRIMARY KEY ((keyspace_name, table_name), sstable_name, cell_size, partition_key, clustering_key, column_name)
 ) WITH CLUSTERING ORDER BY (sstable_name ASC, cell_size DESC, partition_key ASC, clustering_key ASC, column_name ASC)
 ~~~
@@ -245,7 +246,7 @@ Implemented by `snapshots_table` in `db/system_keyspace.cc`.
 ## system.runtime_info
 
 Runtime specific information, like memory stats, memtable stats, cache stats and more.
-Data is grouped so that related items stay together and are easily queried.
+Data is grouped so that related elements stay together and are easily queried.
 Roughly equivalent of the `nodetool info`, `nodetool gettraceprobability` and `nodetool statusgossup` commands.
 
 Schema:
