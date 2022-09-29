@@ -12,6 +12,7 @@
 #include "replica/memtable-sstable.hh"
 #include "dht/i_partitioner.hh"
 #include "dht/murmur3_partitioner.hh"
+#include "db/large_data_handler.hh"
 #include <boost/range/irange.hpp>
 #include <boost/range/adaptor/map.hpp>
 #include <boost/range/adaptor/reversed.hpp>
@@ -22,6 +23,8 @@
 #include <seastar/core/reactor.hh>
 #include <seastar/core/seastar.hh>
 #include <seastar/core/coroutine.hh>
+
+extern db::nop_large_data_handler nop_lp_handler;
 
 using namespace sstables;
 using namespace std::chrono_literals;
