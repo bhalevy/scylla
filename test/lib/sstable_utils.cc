@@ -26,6 +26,11 @@
 using namespace sstables;
 using namespace std::chrono_literals;
 
+test_env::impl::impl()
+    : mgr(nop_lp_handler, test_db_config, test_feature_service, cache_tracker, memory::stats().total_memory())
+    , semaphore(reader_concurrency_semaphore::no_limits{}, "sstables::test_env")
+{ }
+
 std::vector<sstring> do_make_keys(unsigned n, const schema_ptr& s, size_t min_key_size, std::optional<shard_id> shard) {
     std::vector<std::pair<sstring, dht::decorated_key>> p;
     p.reserve(n);
