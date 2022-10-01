@@ -129,6 +129,7 @@ guaranteed to be disjoint (non-overlapping) in their partition keys.
         row_size = be32(2)          // row size, in bytes
         cell_size = be32(3)         // cell size, in bytes
         rows_in_partition = be32(4) // number of rows in a partition
+        items_in_collection = be32(5) // number of items in a collection
     large_data_stats_entry = max_value threshold above_threshold
         max_value = be64
         threshold = be64

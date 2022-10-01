@@ -551,6 +551,7 @@ enum class large_data_type : uint32_t {
     row_size = 2,           // row size, in bytes
     cell_size = 3,          // cell size, in bytes
     rows_in_partition = 4,  // number of rows in a partition
+    items_in_collection = 5,// number of items in a collection
 };
 
 struct large_data_stats_entry {
