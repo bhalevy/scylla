@@ -95,7 +95,7 @@ future<> large_data_handler::maybe_delete_large_data_entries(sstables::shared_ss
         });
     }
     future<> large_cells = make_ready_future<>();
-    if (above_threshold(ldt::cell_size)) {
+    if (above_threshold(ldt::cell_size) || above_threshold(ldt::items_in_collection)) {
         large_cells = with_sem([schema, filename, this] () mutable {
             return delete_large_data_entries(*schema, std::move(filename), db::system_keyspace::LARGE_CELLS);
         });
