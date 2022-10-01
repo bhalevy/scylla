@@ -56,7 +56,7 @@ using ephemerally_full_prefix = seastar::bool_class<struct ephemerally_full_pref
 //          generates the next value, if possible;
 //          returns true if the next value has been evaluated, false otherwise
 //      explicit operator bool() const;
-//          tells whether the range can produce more items
+//          tells whether the range can produce more elements
 // TODO: turn description into a concept
 template <typename InputRange, typename ValueType>
 struct input_range_base {
@@ -775,6 +775,12 @@ public:
                     large_data_type::rows_in_partition,
                     large_data_stats_entry{
                         .threshold = _sst.get_large_data_handler().get_rows_count_threshold(),
+                    }
+                },
+                {
+                    large_data_type::elements_in_collection,
+                    large_data_stats_entry{
+                        .threshold = _sst.get_large_data_handler().get_collection_elements_count_threshold(),
                     }
                 },
             }})
