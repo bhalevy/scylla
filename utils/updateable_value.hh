@@ -14,6 +14,7 @@
 #include <vector>
 #include <functional>
 #include "observable.hh"
+#include "serialized_action.hh"
 #include "seastarx.hh"
 
 namespace utils {
@@ -209,5 +210,24 @@ updateable_value<T>::observe(std::function<void (const T&)> callback) const {
     auto* src = source();
     return src ? src->observe(std::move(callback)) : dummy_observer<T>();
 }
+
+template <typename ValueType, typename UpdateableValueType>
+class simple_value_updater {
+    ValueType& _value;
+    utils::updateable_value<UpdateableValueType> _updateable_value;
+    serialized_action _updater;
+    utils::observer<UpdateableValueType> _observer;
+
+public:
+    simple_value_updater(ValueType& value, utils::updateable_value<UpdateableValueType> updateable_value, ValueType factor = 1)
+        : _value(value)
+        , _updateable_value(std::move(updateable_value))
+        , _updater([this, factor] {
+                _value = _updateable_value() * factor;
+                return make_ready_future<>();
+          })
+        , _observer(_updateable_value.observe(_updater.make_observer()))
+    {}
+};
 
 }
