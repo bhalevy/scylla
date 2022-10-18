@@ -428,66 +428,69 @@ future<> distributed_loader::handle_sstables_pending_delete(sstring pending_dele
     co_await when_all_succeed(futures.begin(), futures.end()).discard_result();
 }
 
-// sstables_metadata is defined as a struct
-// to reduce the code churn in this transformation
-// TODO: make it a formal class, hiding its private members
-struct sstables_metadata {
-    distributed<replica::database>& db;
-    sstring ks;
-    sstring cf;
-    global_column_family_ptr global_table;
-    fs::path base_path;
-    std::unordered_map<sstring, lw_shared_ptr<sharded<sstables::sstable_directory>>> directories;
-    sstables::sstable::version_types highest_version;
-    sstables::generation_type highest_generation = sstables::generation_from_value(0);
+class sstables_metadata {
+    distributed<replica::database>& _db;
+    sstring _ks;
+    sstring _cf;
+    global_column_family_ptr _global_table;
+    std::unordered_map<sstring, lw_shared_ptr<sharded<sstables::sstable_directory>>> _directories;
+    sstables::sstable::version_types _highest_version;
+    sstables::generation_type _highest_generation = sstables::generation_from_value(0);
+    fs::path _base_path;
 
-    sstables_metadata(distributed<replica::database>& db_, sstring ks_, sstring cf_)
-        : db(db_)
-        , ks(std::move(ks_))
-        , cf(std::move(cf_))
-        , global_table(db, ks, cf)
-        , base_path(global_table->dir())
+public:
+    sstables_metadata(distributed<replica::database>& db, sstring ks, sstring cf)
+        : _db(db)
+        , _ks(std::move(ks))
+        , _cf(std::move(cf))
+        , _global_table(_db, _ks, _cf)
+        , _base_path(_global_table->dir())
     {}
 
     ~sstables_metadata() {
         // All directories must have been stopped
         // using sstables_metadata::stop()
-        assert(directories.empty());
+        assert(_directories.empty());
+    }
+
+    fs::path get_path(sstring subdir = "") const {
+        return subdir.empty() ? _base_path : _base_path / subdir;
     }
 
     future<> start() {
         assert(this_shard_id() == 0);
 
         for (auto subdir : { "", sstables::staging_dir, sstables::quarantine_dir }) {
-            sstring sstdir = (base_path / subdir).native();
+            auto sstpath = get_path(subdir);
+            sstring sstdir = sstpath.native();
             if (!co_await file_exists(sstdir)) {
                 continue;
             }
 
             // First pass, cleanup temporary sstable directories and sstables pending delete.
             co_await distributed_loader::cleanup_column_family_temp_sst_dirs(sstdir);
-            auto pending_delete_dir = sstdir + "/" + sstables::sstable::pending_delete_dir_basename();
+            auto pending_delete_dir = (sstpath / sstables::sstable::pending_delete_dir_basename()).native();
             if (co_await file_exists(pending_delete_dir)) {
                 co_await distributed_loader::handle_sstables_pending_delete(pending_delete_dir);
             }
 
             auto dptr = make_lw_shared<sharded<sstables::sstable_directory>>();
             auto& directory = *dptr;
-            auto& global_table = this->global_table;
+            auto& global_table = _global_table;
             co_await directory.start(fs::path(sstdir), default_priority_class(),
-                db.local().get_config().initial_sstable_loading_concurrency(), std::ref(db.local().get_sharded_sst_dir_semaphore()),
+                _db.local().get_config().initial_sstable_loading_concurrency(), std::ref(_db.local().get_sharded_sst_dir_semaphore()),
                 sstables::sstable_directory::need_mutate_level::no,
                 sstables::sstable_directory::lack_of_toc_fatal::yes,
-                sstables::sstable_directory::enable_dangerous_direct_import_of_cassandra_counters(db.local().get_config().enable_dangerous_direct_import_of_cassandra_counters()),
+                sstables::sstable_directory::enable_dangerous_direct_import_of_cassandra_counters(_db.local().get_config().enable_dangerous_direct_import_of_cassandra_counters()),
                 sstables::sstable_directory::allow_loading_materialized_view::yes,
                 [&global_table] (fs::path dir, sstables::generation_type gen, sstables::sstable_version_types v, sstables::sstable_format_types f) {
                     return global_table->make_sstable(dir.native(), gen, v, f);
             });
 
             // directory must be stopped using sstables_metadata::stop below
-            directories[subdir] = dptr;
+            _directories[subdir] = dptr;
 
-            co_await distributed_loader::lock_table(directory, db, ks, cf);
+            co_await distributed_loader::lock_table(directory, _db, _ks, _cf);
             co_await distributed_loader::process_sstable_dir(directory);
 
             // If we are resharding system tables before we can read them, we will not
@@ -499,45 +502,77 @@ struct sstables_metadata {
             auto sst_version = co_await highest_version_seen(directory, sys_format);
             auto generation = co_await highest_generation_seen(directory);
 
-            highest_version = std::max(sst_version, highest_version);
-            highest_generation = std::max(generation, highest_generation);
+            _highest_version = std::max(sst_version, _highest_version);
+            _highest_generation = std::max(generation, _highest_generation);
         }
 
         co_await smp::invoke_on_all([this] {
-            global_table->update_sstables_known_generation(highest_generation);
-            return global_table->disable_auto_compaction();
+            _global_table->update_sstables_known_generation(_highest_generation);
+            return _global_table->disable_auto_compaction();
         });
     }
 
     future<> stop() {
-        for (auto it = directories.begin(); it != directories.end(); it = directories.erase(it)) {
+        for (auto it = _directories.begin(); it != _directories.end(); it = _directories.erase(it)) {
             co_await it->second->stop();
         }
+    }
+
+    const distributed<replica::database>& db() const noexcept {
+        return _db;
+    };
+
+    distributed<replica::database>& db() noexcept {
+        return _db;
+    };
+
+    const sstring& ks() const noexcept {
+        return _ks;
+    }
+
+    const sstring& cf() const noexcept {
+        return _cf;
+    }
+
+    const global_column_family_ptr& global_table() const noexcept {
+        return _global_table;
+    }
+
+    const std::unordered_map<sstring, lw_shared_ptr<sharded<sstables::sstable_directory>>>& directories() const noexcept {
+        return _directories;
+    }
+
+    sstables::sstable::version_types highest_version() const noexcept {
+        return _highest_version;
+    }
+
+    sstables::generation_type highest_generation() const noexcept {
+        return _highest_generation;
     }
 };
 
 future<> distributed_loader::populate_column_family(sstables_metadata& metadata, sstring subdir, allow_offstrategy_compaction do_allow_offstrategy_compaction, must_exist dir_must_exist) {
-    auto sstdir = (metadata.base_path / subdir).native();
-    dblog.debug("Populating {}/{}/{} allow_offstrategy_compaction={} must_exist={}", metadata.ks, metadata.cf, sstdir, do_allow_offstrategy_compaction, dir_must_exist);
+    auto sstdir = metadata.get_path(subdir).native();
+    dblog.debug("Populating {}/{}/{} allow_offstrategy_compaction={} must_exist={}", metadata.ks(), metadata.cf(), sstdir, do_allow_offstrategy_compaction, dir_must_exist);
     return async([&metadata, subdir = std::move(subdir), sstdir = std::move(sstdir), do_allow_offstrategy_compaction, dir_must_exist] {
         assert(this_shard_id() == 0);
 
         if (!file_exists(sstdir).get0()) {
             if (dir_must_exist) {
-                throw std::runtime_error(format("Populating {}/{} failed: {} does not exist", metadata.ks, metadata.cf, sstdir));
+                throw std::runtime_error(format("Populating {}/{} failed: {} does not exist", metadata.ks(), metadata.cf(), sstdir));
             }
             return;
         }
 
-        auto& global_table = metadata.global_table;
-        if (!metadata.directories.contains(subdir)) {
-            dblog.error("Could not find sstables directory {}.{}/{}", metadata.ks, metadata.cf, subdir);
+        auto& global_table = metadata.global_table();
+        if (!metadata.directories().contains(subdir)) {
+            dblog.error("Could not find sstables directory {}.{}/{}", metadata.ks(), metadata.cf(), subdir);
         }
-        auto& directory = *metadata.directories.at(subdir);
-        auto& db = metadata.db;
-        const auto& ks = metadata.ks;
-        const auto& cf = metadata.cf;
-        auto sst_version = metadata.highest_version;
+        auto& directory = *metadata.directories().at(subdir);
+        auto& db = metadata.db();
+        const auto& ks = metadata.ks();
+        const auto& cf = metadata.cf();
+        auto sst_version = metadata.highest_version();
 
         reshard(directory, db, ks, cf, [&global_table, sstdir, sst_version] (shard_id shard) mutable {
             auto gen = smp::submit_to(shard, [&global_table] () {
