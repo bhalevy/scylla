@@ -3098,7 +3098,9 @@ delete_atomically(std::vector<shared_sstable> ssts) {
             } else {
                 // All sstables are assumed to be in the same column_family, hence
                 // sharing their base directory.
-                assert (sstdir == sst->get_dir());
+                if (sstdir != sst->get_dir()) {
+                    on_fatal_internal_error(sstlog, format("sstable directory of {} is different than the expected {}", sst->get_filename(), sstdir));
+                }
             }
         }
 
