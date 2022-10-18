@@ -1713,6 +1713,26 @@ public:
     }
 };
 
+// global_column_family_ptr provides a way to easily retrieve local instance of a given column family.
+class global_column_family_ptr {
+    distributed<replica::database>& _db;
+    table_id _id;
+private:
+    replica::column_family& get() const { return _db.local().find_column_family(_id); }
+public:
+    global_column_family_ptr(distributed<replica::database>& db, sstring ks_name, sstring cf_name)
+        : _db(db)
+        , _id(_db.local().find_column_family(ks_name, cf_name).schema()->id()) {
+    }
+
+    replica::column_family* operator->() const {
+        return &get();
+    }
+    replica::column_family& operator*() const {
+        return get();
+    }
+};
+
 } // namespace replica
 
 future<> start_large_data_handler(sharded<replica::database>& db);

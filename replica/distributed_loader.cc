@@ -80,26 +80,6 @@ io_error_handler error_handler_gen_for_upload_dir(disk_error_signal_type& dummy)
     return error_handler_for_upload_dir();
 }
 
-// global_column_family_ptr provides a way to easily retrieve local instance of a given column family.
-class global_column_family_ptr {
-    distributed<replica::database>& _db;
-    table_id _id;
-private:
-    replica::column_family& get() const { return _db.local().find_column_family(_id); }
-public:
-    global_column_family_ptr(distributed<replica::database>& db, sstring ks_name, sstring cf_name)
-        : _db(db)
-        , _id(_db.local().find_column_family(ks_name, cf_name).schema()->id()) {
-    }
-
-    replica::column_family* operator->() const {
-        return &get();
-    }
-    replica::column_family& operator*() const {
-        return get();
-    }
-};
-
 future<>
 distributed_loader::process_sstable_dir(sharded<sstables::sstable_directory>& dir, bool sort_sstables_according_to_owner) {
     co_await dir.invoke_on(0, [] (const sstables::sstable_directory& d) {
