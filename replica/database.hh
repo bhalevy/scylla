@@ -1720,7 +1720,7 @@ class global_column_family_ptr {
 private:
     replica::column_family& get() const { return _db.local().find_column_family(_id); }
 public:
-    global_column_family_ptr(distributed<replica::database>& db, sstring ks_name, sstring cf_name)
+    global_column_family_ptr(distributed<replica::database>& db, std::string_view ks_name, std::string_view cf_name)
         : _db(db)
         , _id(_db.local().find_column_family(ks_name, cf_name).schema()->id()) {
     }
