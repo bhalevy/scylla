@@ -58,7 +58,18 @@ void node_ops_info::check_abort() {
 }
 
 future<> node_ops_info::stop() noexcept {
-    return make_ready_future<>(); // for now
+    return std::exchange(_abort_done, make_ready_future<>());
+}
+
+void node_ops_info::set_repairs(std::vector<foreign_ptr<lw_shared_ptr<repair_info>>>&& repairs) noexcept {
+    assert(bool(as));
+    assert(repairs.size() == smp::count);
+    _repairs = std::move(repairs);
+    _abort_subscription = as->subscribe([this] () noexcept {
+        _abort_done = smp::invoke_on_all([this] {
+            _repairs[this_shard_id()]->abort();
+        });
+    });
 }
 
 node_ops_metrics::node_ops_metrics(tracker& tracker)
@@ -536,7 +547,6 @@ repair_info::repair_info(repair_service& repair,
     const std::vector<sstring>& hosts_,
     const std::unordered_set<gms::inet_address>& ignore_nodes_,
     streaming::stream_reason reason_,
-    shared_ptr<abort_source> as,
     bool hints_batchlog_flushed)
     : rs(repair)
     , db(repair.get_db())
@@ -559,9 +569,6 @@ repair_info::repair_info(repair_service& repair,
     , total_rf(db.local().find_keyspace(keyspace).get_effective_replication_map()->get_replication_factor())
     , nr_ranges_total(ranges.size())
     , _hints_batchlog_flushed(std::move(hints_batchlog_flushed)) {
-    if (as != nullptr) {
-        _abort_subscription = as->subscribe([this] () noexcept { abort(); });
-    }
 }
 
 void repair_info::check_failed_ranges() {
@@ -1195,7 +1202,7 @@ int repair_service::do_repair_start(sstring keyspace, std::unordered_map<sstring
                 local_repair.get_metrics().repair_total_ranges_sum += ranges.size();
                 auto ri = make_lw_shared<repair_info>(local_repair,
                         std::move(keyspace), std::move(ranges), std::move(table_ids),
-                        id, std::move(data_centers), std::move(hosts), std::move(ignore_nodes), streaming::stream_reason::repair, nullptr, hints_batchlog_flushed);
+                        id, std::move(data_centers), std::move(hosts), std::move(ignore_nodes), streaming::stream_reason::repair, hints_batchlog_flushed);
                 return repair_ranges(ri);
             });
             repair_results.push_back(std::move(f));
@@ -1293,19 +1300,29 @@ future<> repair_service::do_sync_data_using_repair(
         if (repair_tracker().is_aborted(id.uuid)) {
             throw std::runtime_error("aborted by user request");
         }
+        std::vector<foreign_ptr<lw_shared_ptr<repair_info>>> repairs;
+        repairs.reserve(smp::count);
         for (auto shard : boost::irange(unsigned(0), smp::count)) {
-            auto f = container().invoke_on(shard, [keyspace, table_ids, id, ranges, neighbors, reason, ops_info] (repair_service& local_repair) mutable {
+            repairs.emplace_back(container().invoke_on(shard, [keyspace, table_ids, id, ranges, neighbors, reason] (repair_service& local_repair) mutable {
                 auto data_centers = std::vector<sstring>();
                 auto hosts = std::vector<sstring>();
                 auto ignore_nodes = std::unordered_set<gms::inet_address>();
                 bool hints_batchlog_flushed = false;
                 auto ri = make_lw_shared<repair_info>(local_repair,
                         std::move(keyspace), std::move(ranges), std::move(table_ids),
-                        id, std::move(data_centers), std::move(hosts), std::move(ignore_nodes), reason, ops_info ? ops_info->as : nullptr, hints_batchlog_flushed);
+                        id, std::move(data_centers), std::move(hosts), std::move(ignore_nodes), reason, hints_batchlog_flushed);
                 ri->neighbors = std::move(neighbors);
-                return repair_ranges(ri);
+                return make_foreign<lw_shared_ptr<repair_info>>(std::move(ri));
+            }).get0());
+        }
+        for (auto shard : boost::irange(unsigned(0), smp::count)) {
+            auto f = smp::submit_to(shard, [&repairs] {
+                return repair_ranges(repairs[this_shard_id()]->shared_from_this());
             });
             repair_results.push_back(std::move(f));
+        }
+        if (ops_info && ops_info->as) {
+            ops_info->set_repairs(std::move(repairs));
         }
         when_all(repair_results.begin(), repair_results.end()).then([id, keyspace] (std::vector<future<>> results) mutable {
             std::vector<sstring> errors;

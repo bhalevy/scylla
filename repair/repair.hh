@@ -67,11 +67,20 @@ struct repair_uniq_id {
 };
 std::ostream& operator<<(std::ostream& os, const repair_uniq_id& x);
 
-struct node_ops_info {
+class repair_info;
+
+class node_ops_info {
+public:
     utils::UUID ops_uuid;
     shared_ptr<abort_source> as;
     std::list<gms::inet_address> ignore_nodes;
 
+private:
+    optimized_optional<abort_source::subscription> _abort_subscription;
+    std::vector<foreign_ptr<lw_shared_ptr<repair_info>>> _repairs;
+    future<> _abort_done = make_ready_future<>();
+
+public:
     node_ops_info(utils::UUID ops_uuid_, shared_ptr<abort_source> as_, std::list<gms::inet_address>&& ignore_nodes_) noexcept
         : ops_uuid(ops_uuid_)
         , as(std::move(as_))
@@ -84,6 +93,12 @@ struct node_ops_info {
     future<> stop() noexcept;
 
     void check_abort();
+
+    void set_repairs(std::vector<foreign_ptr<lw_shared_ptr<repair_info>>>&& repairs) noexcept;
+
+    const std::vector<foreign_ptr<lw_shared_ptr<repair_info>>>& repairs() const noexcept {
+        return _repairs;
+    }
 };
 
 // NOTE: repair_start() can be run on any node, but starts a node-global
@@ -150,7 +165,7 @@ public:
     }
 };
 
-class repair_info {
+class repair_info : public enable_lw_shared_from_this<repair_info> {
 public:
     repair_service& rs;
     seastar::sharded<replica::database>& db;
@@ -179,7 +194,6 @@ public:
     int ranges_index = 0;
     repair_stats _stats;
     std::unordered_set<sstring> dropped_tables;
-    optimized_optional<abort_source::subscription> _abort_subscription;
     bool _hints_batchlog_flushed = false;
 public:
     repair_info(repair_service& repair,
@@ -191,7 +205,6 @@ public:
             const std::vector<sstring>& hosts_,
             const std::unordered_set<gms::inet_address>& ingore_nodes_,
             streaming::stream_reason reason_,
-            shared_ptr<abort_source> as,
             bool hints_batchlog_flushed);
     void check_failed_ranges();
     void abort() noexcept;
