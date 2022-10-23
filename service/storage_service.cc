@@ -2534,6 +2534,7 @@ future<node_ops_cmd_response> storage_service::node_ops_cmd_handler(gms::inet_ad
                 });
             },
             [this, ops_uuid] () mutable { node_ops_singal_abort(ops_uuid); });
+            meta.start().get();
             _node_ops.emplace(ops_uuid, std::move(meta));
         } else if (req.cmd == node_ops_cmd::removenode_heartbeat) {
             slogger.debug("removenode[{}]: Updated heartbeat from coordinator={}", req.ops_uuid,  coordinator);
@@ -2582,6 +2583,7 @@ future<node_ops_cmd_response> storage_service::node_ops_cmd_handler(gms::inet_ad
                 });
             },
             [this, ops_uuid] () mutable { node_ops_singal_abort(ops_uuid); });
+            meta.start().get();
             _node_ops.emplace(ops_uuid, std::move(meta));
         } else if (req.cmd == node_ops_cmd::decommission_heartbeat) {
             slogger.debug("decommission[{}]: Updated heartbeat from coordinator={}", req.ops_uuid,  coordinator);
@@ -2626,6 +2628,7 @@ future<node_ops_cmd_response> storage_service::node_ops_cmd_handler(gms::inet_ad
                 });
             },
             [this, ops_uuid ] { node_ops_singal_abort(ops_uuid); });
+            meta.start().get();
             _node_ops.emplace(ops_uuid, std::move(meta));
         } else if (req.cmd == node_ops_cmd::replace_prepare_mark_alive) {
             // Wait for local node has marked replacing node as alive
@@ -2925,7 +2928,7 @@ future<> storage_service::removenode_with_stream(gms::inet_address leaving_node,
 future<> storage_service::restore_replica_count(inet_address endpoint, inet_address notify_endpoint) {
     if (is_repair_based_node_ops_enabled(streaming::stream_reason::removenode)) {
         auto ops_uuid = utils::make_random_uuid();
-        auto ops = seastar::make_shared<node_ops_info>(node_ops_info{ops_uuid, nullptr, std::list<gms::inet_address>()});
+        auto ops = seastar::make_shared<node_ops_info>(node_ops_info{ops_uuid, {}, std::list<gms::inet_address>()});
         return _repair.local().removenode_with_repair(get_token_metadata_ptr(), endpoint, ops).finally([this, notify_endpoint] () {
             return send_replication_notification(notify_endpoint);
         });
@@ -3656,11 +3659,36 @@ node_ops_meta_data::node_ops_meta_data(
     : _ops_uuid(std::move(ops_uuid))
     , _coordinator(std::move(coordinator))
     , _abort(std::move(abort_func))
-    , _abort_source(seastar::make_shared<abort_source>())
     , _signal(std::move(signal_func))
-    , _ops(seastar::make_shared<node_ops_info>({_ops_uuid, _abort_source, std::move(ignore_nodes)}))
+    , _ops(seastar::make_shared<node_ops_info>({_ops_uuid, {}, std::move(ignore_nodes)}))
     , _watchdog([sig = _signal] { sig(); }) {
     _watchdog.arm(_watchdog_interval);
+}
+
+future<> node_ops_meta_data::start() {
+    _sharded_abort_source.resize(smp::count);
+    _ops->sharded_abort_source.resize(smp::count);
+    return smp::invoke_on_all([this] {
+        auto as = make_shared<abort_source>();
+        _sharded_abort_source[this_shard_id()] = as;
+        _ops->sharded_abort_source[this_shard_id()] = as;
+    });
+}
+
+future<> node_ops_meta_data::stop() noexcept {
+    return smp::invoke_on_all([this] {
+        if (!_sharded_abort_source.empty()) {
+            _sharded_abort_source[this_shard_id()] = nullptr;
+        }
+        if (_ops && !_ops->sharded_abort_source.empty()) {
+            _ops->sharded_abort_source[this_shard_id()] = nullptr;
+        }
+    }).then([this] {
+        _sharded_abort_source.clear();
+        if (_ops) {
+            _ops->sharded_abort_source.clear();
+        }
+    });
 }
 
 future<> node_ops_meta_data::abort() {
@@ -3671,7 +3699,7 @@ future<> node_ops_meta_data::abort() {
 
 void node_ops_meta_data::update_watchdog() {
     slogger.debug("node_ops_meta_data: ops_uuid={} update_watchdog", _ops_uuid);
-    if (_abort_source->abort_requested()) {
+    if (_sharded_abort_source.empty() || _sharded_abort_source[this_shard_id()]->abort_requested()) {
         return;
     }
     _watchdog.cancel();
@@ -3688,7 +3716,7 @@ shared_ptr<node_ops_info> node_ops_meta_data::get_ops_info() {
 }
 
 shared_ptr<abort_source> node_ops_meta_data::get_abort_source() {
-    return _abort_source;
+    return _sharded_abort_source[this_shard_id()];
 }
 
 future<> storage_service::node_ops_update_heartbeat(utils::UUID ops_uuid) {
@@ -3708,6 +3736,7 @@ future<> storage_service::node_ops_done(utils::UUID ops_uuid) {
     if (it != _node_ops.end()) {
         node_ops_meta_data& meta = it->second;
         meta.cancel_watchdog();
+        co_await meta.stop();
         _node_ops.erase(it);
     }
 }
@@ -3719,10 +3748,13 @@ future<> storage_service::node_ops_abort(utils::UUID ops_uuid) {
     if (it != _node_ops.end()) {
         node_ops_meta_data& meta = it->second;
         co_await meta.abort();
-        auto as = meta.get_abort_source();
-        if (as && !as->abort_requested()) {
-            as->request_abort();
-        }
+        auto& sharded_as = meta.get_sharded_abort_source();
+        co_await smp::invoke_on_all([&sharded_as] {
+            auto& as = sharded_as[this_shard_id()];
+            if (!as->abort_requested()) {
+                as->request_abort();
+            }
+        });
         _node_ops.erase(it);
     }
 }

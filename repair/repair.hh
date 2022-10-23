@@ -69,7 +69,7 @@ std::ostream& operator<<(std::ostream& os, const repair_uniq_id& x);
 
 struct node_ops_info {
     utils::UUID ops_uuid;
-    shared_ptr<abort_source> as;
+    std::vector<shared_ptr<abort_source>> sharded_abort_source;
     std::list<gms::inet_address> ignore_nodes;
     void check_abort();
 };

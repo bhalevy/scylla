@@ -50,7 +50,7 @@
 logging::logger rlogger("repair");
 
 void node_ops_info::check_abort() {
-    if (as && as->abort_requested()) {
+    if (!sharded_abort_source.empty() && sharded_abort_source[this_shard_id()]->abort_requested()) {
         auto msg = format("Node operation with ops_uuid={} is aborted", ops_uuid);
         rlogger.warn("{}", msg);
         throw std::runtime_error(msg);
@@ -1290,14 +1290,16 @@ future<> repair_service::do_sync_data_using_repair(
             throw std::runtime_error("aborted by user request");
         }
         for (auto shard : boost::irange(unsigned(0), smp::count)) {
-            auto f = container().invoke_on(shard, [keyspace, table_ids, id, ranges, neighbors, reason, ops_info] (repair_service& local_repair) mutable {
+            const std::vector<shared_ptr<abort_source>>* sharded_abort_source = ops_info ? &ops_info->sharded_abort_source : nullptr;
+            auto f = container().invoke_on(shard, [keyspace, table_ids, id, ranges, neighbors, reason, sharded_abort_source] (repair_service& local_repair) mutable {
                 auto data_centers = std::vector<sstring>();
                 auto hosts = std::vector<sstring>();
                 auto ignore_nodes = std::unordered_set<gms::inet_address>();
                 bool hints_batchlog_flushed = false;
+                shared_ptr<abort_source> as = (sharded_abort_source && !sharded_abort_source->empty()) ? (*sharded_abort_source)[this_shard_id()] : nullptr;
                 auto ri = make_lw_shared<repair_info>(local_repair,
                         std::move(keyspace), std::move(ranges), std::move(table_ids),
-                        id, std::move(data_centers), std::move(hosts), std::move(ignore_nodes), reason, ops_info ? ops_info->as : nullptr, hints_batchlog_flushed);
+                        id, std::move(data_centers), std::move(hosts), std::move(ignore_nodes), reason, as, hints_batchlog_flushed);
                 ri->neighbors = std::move(neighbors);
                 return repair_ranges(ri);
             });

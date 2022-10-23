@@ -93,7 +93,7 @@ class node_ops_meta_data {
     utils::UUID _ops_uuid;
     gms::inet_address _coordinator;
     std::function<future<> ()> _abort;
-    shared_ptr<abort_source> _abort_source;
+    std::vector<shared_ptr<abort_source>> _sharded_abort_source;
     std::function<void ()> _signal;
     shared_ptr<node_ops_info> _ops;
     seastar::timer<lowres_clock> _watchdog;
@@ -105,8 +105,16 @@ public:
             std::list<gms::inet_address> ignore_nodes,
             std::function<future<> ()> abort_func,
             std::function<void ()> signal_func);
+    future<> start();
+    future<> stop() noexcept;
     shared_ptr<node_ops_info> get_ops_info();
     shared_ptr<abort_source> get_abort_source();
+    std::vector<shared_ptr<abort_source>>& get_sharded_abort_source() noexcept {
+        return _sharded_abort_source;
+    }
+    const std::vector<shared_ptr<abort_source>>& get_sharded_abort_source() const noexcept {
+        return _sharded_abort_source;
+    }
     future<> abort();
     void update_watchdog();
     void cancel_watchdog();
