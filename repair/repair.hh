@@ -22,6 +22,7 @@
 
 #include "replica/database_fwd.hh"
 #include "frozen_mutation.hh"
+#include "seastar/util/optimized_optional.hh"
 #include "utils/UUID.hh"
 #include "utils/hash.hh"
 #include "streaming/stream_reason.hh"
@@ -67,16 +68,32 @@ struct repair_uniq_id {
 };
 std::ostream& operator<<(std::ostream& os, const repair_uniq_id& x);
 
-struct node_ops_info {
+namespace seastar {
+class sharded_abort_source;
+}
+
+class node_ops_info {
+public:
     utils::UUID ops_uuid;
     shared_ptr<abort_source> as;
     std::list<gms::inet_address> ignore_nodes;
 
+private:
+    optimized_optional<abort_source::subscription> _abort_subscription;
+    shared_ptr<sharded_abort_source> _sas;
+    future<> _abort_done = make_ready_future<>();
+
+public:
     node_ops_info(utils::UUID ops_uuid_, shared_ptr<abort_source> as_, std::list<gms::inet_address>&& ignore_nodes_) noexcept;
     node_ops_info(const node_ops_info&) = delete;
     node_ops_info(node_ops_info&&) = default;
 
+    future<> start();
+    future<> stop() noexcept;
+
     void check_abort();
+
+    abort_source* local_abort_source();
 };
 
 // NOTE: repair_start() can be run on any node, but starts a node-global
@@ -172,6 +189,7 @@ public:
     int ranges_index = 0;
     repair_stats _stats;
     std::unordered_set<sstring> dropped_tables;
+    abort_source* _asp;
     optimized_optional<abort_source::subscription> _abort_subscription;
     bool _hints_batchlog_flushed = false;
 public:
@@ -184,7 +202,7 @@ public:
             const std::vector<sstring>& hosts_,
             const std::unordered_set<gms::inet_address>& ingore_nodes_,
             streaming::stream_reason reason_,
-            shared_ptr<abort_source> as,
+            abort_source* asp,
             bool hints_batchlog_flushed);
     void check_failed_ranges();
     void abort() noexcept;

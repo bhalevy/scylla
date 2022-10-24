@@ -46,6 +46,7 @@
 
 #include "idl/position_in_partition.dist.hh"
 #include "idl/partition_checksum.dist.hh"
+#include "utils/sharded_abort_source.hh"
 
 logging::logger rlogger("repair");
 
@@ -53,7 +54,14 @@ node_ops_info::node_ops_info(utils::UUID ops_uuid_, shared_ptr<abort_source> as_
     : ops_uuid(ops_uuid_)
     , as(std::move(as_))
     , ignore_nodes(std::move(ignore_nodes_))
-{}
+{
+    if (as) {
+        _sas = make_shared<sharded_abort_source>();
+        _abort_subscription = as->subscribe([this] () noexcept {
+            _abort_done = _sas->request_abort();
+        });
+    }
+}
 
 void node_ops_info::check_abort() {
     if (as && as->abort_requested()) {
@@ -61,6 +69,21 @@ void node_ops_info::check_abort() {
         rlogger.warn("{}", msg);
         throw std::runtime_error(msg);
     }
+}
+
+future<> node_ops_info::start() {
+    return _sas ? _sas->start() : make_ready_future<>();
+}
+
+future<> node_ops_info::stop() noexcept {
+    if (_sas) {
+        co_await std::exchange(_abort_done, make_ready_future<>());
+        co_await _sas->stop();
+    }
+}
+
+abort_source* node_ops_info::local_abort_source() {
+    return _sas ? &_sas->local() : nullptr;
 }
 
 node_ops_metrics::node_ops_metrics(tracker& tracker)
@@ -538,7 +561,7 @@ repair_info::repair_info(repair_service& repair,
     const std::vector<sstring>& hosts_,
     const std::unordered_set<gms::inet_address>& ignore_nodes_,
     streaming::stream_reason reason_,
-    shared_ptr<abort_source> as,
+    abort_source* asp,
     bool hints_batchlog_flushed)
     : rs(repair)
     , db(repair.get_db())
@@ -560,9 +583,10 @@ repair_info::repair_info(repair_service& repair,
     , reason(reason_)
     , total_rf(db.local().find_keyspace(keyspace).get_effective_replication_map()->get_replication_factor())
     , nr_ranges_total(ranges.size())
+    , _asp(asp)
     , _hints_batchlog_flushed(std::move(hints_batchlog_flushed)) {
-    if (as != nullptr) {
-        _abort_subscription = as->subscribe([this] () noexcept { abort(); });
+    if (_asp != nullptr) {
+        _abort_subscription = _asp->subscribe([this] () noexcept { abort(); });
     }
 }
 
@@ -1301,9 +1325,10 @@ future<> repair_service::do_sync_data_using_repair(
                 auto hosts = std::vector<sstring>();
                 auto ignore_nodes = std::unordered_set<gms::inet_address>();
                 bool hints_batchlog_flushed = false;
+                abort_source* asp = ops_info ? ops_info->local_abort_source() : nullptr;
                 auto ri = make_lw_shared<repair_info>(local_repair,
                         std::move(keyspace), std::move(ranges), std::move(table_ids),
-                        id, std::move(data_centers), std::move(hosts), std::move(ignore_nodes), reason, ops_info ? ops_info->as : nullptr, hints_batchlog_flushed);
+                        id, std::move(data_centers), std::move(hosts), std::move(ignore_nodes), reason, asp, hints_batchlog_flushed);
                 ri->neighbors = std::move(neighbors);
                 return repair_ranges(ri);
             });
