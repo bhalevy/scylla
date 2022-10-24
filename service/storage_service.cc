@@ -3669,6 +3669,10 @@ future<> node_ops_meta_data::abort() {
     return _abort();
 }
 
+future<> node_ops_meta_data::stop() noexcept {
+    return _ops ? _ops->stop() : make_ready_future<>();
+}
+
 void node_ops_meta_data::update_watchdog() {
     slogger.debug("node_ops_meta_data: ops_uuid={} update_watchdog", _ops_uuid);
     if (_abort_source->abort_requested()) {
@@ -3708,6 +3712,7 @@ future<> storage_service::node_ops_done(utils::UUID ops_uuid) {
     if (it != _node_ops.end()) {
         node_ops_meta_data& meta = it->second;
         meta.cancel_watchdog();
+        co_await meta.stop();
         _node_ops.erase(it);
     }
 }

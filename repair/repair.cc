@@ -57,6 +57,10 @@ void node_ops_info::check_abort() {
     }
 }
 
+future<> node_ops_info::stop() noexcept {
+    return make_ready_future<>(); // for now
+}
+
 node_ops_metrics::node_ops_metrics(tracker& tracker)
     : _tracker(tracker)
 {

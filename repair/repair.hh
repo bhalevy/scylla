@@ -81,6 +81,8 @@ struct node_ops_info {
     node_ops_info(const node_ops_info&) = delete;
     node_ops_info(node_ops_info&&) = default;
 
+    future<> stop() noexcept;
+
     void check_abort();
 };
 

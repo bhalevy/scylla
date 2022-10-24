@@ -108,6 +108,7 @@ public:
     shared_ptr<node_ops_info> get_ops_info();
     shared_ptr<abort_source> get_abort_source();
     future<> abort();
+    future<> stop() noexcept;
     void update_watchdog();
     void cancel_watchdog();
 };
