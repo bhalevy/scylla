@@ -1245,7 +1245,7 @@
                   },
                   {
                      "name":"ignore_nodes",
-                     "description":"List of dead nodes to ingore in removenode operation",
+                     "description":"Comma-separated list of dead nodes (host_ids or ip addresses) to ingore in removenode operation",
                      "required":false,
                      "allowMultiple":false,
                      "type":"string",

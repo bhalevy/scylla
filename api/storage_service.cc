@@ -717,15 +717,14 @@ void set_storage_service(http_context& ctx, routes& r, sharded<service::storage_
     ss::remove_node.set(r, [&ss](std::unique_ptr<request> req) {
         auto host_id = req->get_query_param("host_id");
         std::vector<sstring> ignore_nodes_strs= split(req->get_query_param("ignore_nodes"), ",");
-        auto ignore_nodes = std::list<gms::inet_address>();
+        auto ignore_nodes = std::list<sstring>();
         for (std::string n : ignore_nodes_strs) {
             try {
                 std::replace(n.begin(), n.end(), '\"', ' ');
                 std::replace(n.begin(), n.end(), '\'', ' ');
                 boost::trim_all(n);
                 if (!n.empty()) {
-                    auto node = gms::inet_address(n);
-                    ignore_nodes.push_back(node);
+                    ignore_nodes.push_back(n);
                 }
             } catch (...) {
                 throw std::runtime_error(format("Failed to parse ignore_nodes parameter: ignore_nodes={}, node={}", ignore_nodes_strs, n));
