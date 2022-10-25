@@ -53,19 +53,30 @@ public:
         return version() == 1;
     }
 
-    bool is_timestamp() const noexcept {
-        return is_timestamp_v1();
+    bool is_timestamp_v7() const noexcept {
+        return version() == 7;
     }
 
-    int64_t timestamp() const noexcept {
-        //if (version() != 1) {
-        //     throw new UnsupportedOperationException("Not a time-based UUID");
-        //}
-        assert(is_timestamp());
+    bool is_timestamp() const noexcept {
+        return is_timestamp_v1() || is_timestamp_v7();
+    }
 
+    // Return the uuid timestamp in decimicroseconds.
+    int64_t timestamp() const noexcept {
+      switch (version()) {
+      case 1:
         return ((most_sig_bits & 0xFFF) << 48) |
                (((most_sig_bits >> 16) & 0xFFFF) << 32) |
                (((uint64_t)most_sig_bits) >> 32);
+      case 7:
+        return (most_sig_bits >> 16) * 10000 +
+               (most_sig_bits & 0xfff);
+      default:
+        //if (version() != 1) {
+        //     throw new UnsupportedOperationException("Not a time-based UUID");
+        //}
+        not_a_time_uuid();
+      }
 
     }
 
@@ -115,6 +126,9 @@ public:
         serialize_int64(out, most_sig_bits);
         serialize_int64(out, least_sig_bits);
     }
+
+private:
+    [[noreturn]] void not_a_time_uuid() const;
 };
 
 // Convert the uuid to a uint32_t using xor.
@@ -126,6 +140,9 @@ inline constexpr UUID null_uuid() noexcept {
 }
 
 UUID make_random_uuid() noexcept;
+
+[[noreturn]] void not_a_time_uuid(UUID uuid);
+[[noreturn]] void not_a_time_uuid(bytes_view);
 
 template<typename Tag>
 struct tagged_uuid {
