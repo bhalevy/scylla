@@ -52,13 +52,39 @@ public:
         return version() == 1;
     }
 
-    int64_t timestamp() const noexcept {
-        SCYLLA_ASSERT(is_timestamp_v1());
+    bool is_timestamp_v7() const noexcept {
+        return version() == 7;
+    }
 
+    // Return the uuid timestamp in decimicroseconds.
+    int64_t timestamp() const noexcept {
+        switch (version()) {
+        case 1:
         return ((most_sig_bits & 0xFFF) << 48) |
                (((most_sig_bits >> 16) & 0xFFFF) << 32) |
                (((uint64_t)most_sig_bits) >> 32);
+        case 7:
+            // The UUIDv7 msb format as defined in https://datatracker.ietf.org/doc/html/rfc9562#name-uuid-version-7
+            // 48 bits - milliseconds since unix epoch of 1970-01-01 GMT (unsigned)
+            //  4 bits - version (7)
+            // 12 bits - sub-milliseconds (in ms/4096 units, unsigned)
+            return 10000 * ((uint64_t)most_sig_bits >> 16) +
+                  (10000 * (most_sig_bits & 0xfff)) / 0x1000;
+        default:
+            not_a_time_uuid();
+        }
+    }
 
+    // Return the uuid timestamp in milliseconds.
+    int64_t millis_timestamp() const noexcept {
+        switch (version()) {
+        case 1:
+            return timestamp() / 10000;
+        case 7:
+            return (uint64_t)most_sig_bits >> 16;
+        default:
+            not_a_time_uuid();
+        }
     }
 
     friend ::fmt::formatter<UUID>;
@@ -107,6 +133,9 @@ public:
         serialize_int64(out, most_sig_bits);
         serialize_int64(out, least_sig_bits);
     }
+
+private:
+    [[noreturn]] void not_a_time_uuid() const;
 };
 
 // Convert the uuid to a uint32_t using xor.
@@ -118,6 +147,9 @@ inline constexpr UUID null_uuid() noexcept {
 }
 
 UUID make_random_uuid() noexcept;
+
+[[noreturn]] void not_a_time_uuid(UUID uuid);
+[[noreturn]] void not_a_time_uuid(bytes_view);
 
 template<typename Tag>
 struct tagged_uuid {
