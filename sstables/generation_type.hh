@@ -43,7 +43,7 @@ public:
     // use zero as the timestamp to differentiate from the regular timeuuid,
     // and use the least_sig_bits to encode the value of generation identifier.
     explicit constexpr generation_type(int_t value) noexcept
-        : _value(utils::UUID_gen::create_time(std::chrono::milliseconds::zero()), value) {}
+        : _value(utils::UUID_gen::create_time_v1(std::chrono::milliseconds::zero()), value) {}
     explicit constexpr generation_type(utils::UUID value) noexcept
         : _value(value) {}
     constexpr utils::UUID as_uuid() const noexcept {
@@ -145,7 +145,7 @@ public:
     }
     generation_type operator()(uuid_identifiers use_uuid = uuid_identifiers::no) {
         if (use_uuid) {
-            return generation_type(utils::UUID_gen::get_time_UUID());
+            return generation_type(utils::UUID_gen::get_time_UUID_v1());
         }
         // each shard has its own "namespace" so we increment the generation id
         // by smp::count to avoid name confliction of sstables

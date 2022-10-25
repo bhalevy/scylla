@@ -1264,13 +1264,13 @@ bool locator::tablet_task_info::selected_by_filters(const tablet_replica& replic
 
 locator::tablet_task_info locator::tablet_task_info::make_auto_repair_request(std::unordered_set<locator::host_id> hosts_filter, std::unordered_set<sstring> dcs_filter) {
     long sched_nr = 0;
-    auto tablet_task_id = locator::tablet_task_id(utils::UUID_gen::get_time_UUID());
+    auto tablet_task_id = locator::tablet_task_id(utils::UUID_gen::get_time_UUID_v1());
     return locator::tablet_task_info{locator::tablet_task_type::auto_repair, tablet_task_id, db_clock::now(), sched_nr, db_clock::time_point(), hosts_filter, dcs_filter};
 }
 
 locator::tablet_task_info locator::tablet_task_info::make_user_repair_request(std::unordered_set<locator::host_id> hosts_filter, std::unordered_set<sstring> dcs_filter) {
     long sched_nr = 0;
-    auto tablet_task_id = locator::tablet_task_id(utils::UUID_gen::get_time_UUID());
+    auto tablet_task_id = locator::tablet_task_id(utils::UUID_gen::get_time_UUID_v1());
     return locator::tablet_task_info{locator::tablet_task_type::user_repair, tablet_task_id, db_clock::now(), sched_nr, db_clock::time_point(), hosts_filter, dcs_filter};
 }
 
@@ -1320,24 +1320,24 @@ std::unordered_set<sstring> locator::tablet_task_info::deserialize_repair_dcs_fi
 
 locator::tablet_task_info locator::tablet_task_info::make_migration_request() {
     long sched_nr = 0;
-    auto tablet_task_id = locator::tablet_task_id(utils::UUID_gen::get_time_UUID());
+    auto tablet_task_id = locator::tablet_task_id(utils::UUID_gen::get_time_UUID_v1());
     return locator::tablet_task_info{locator::tablet_task_type::migration, tablet_task_id, db_clock::now(), sched_nr, db_clock::time_point()};
 }
 
 locator::tablet_task_info locator::tablet_task_info::make_intranode_migration_request() {
     long sched_nr = 0;
-    auto tablet_task_id = locator::tablet_task_id(utils::UUID_gen::get_time_UUID());
+    auto tablet_task_id = locator::tablet_task_id(utils::UUID_gen::get_time_UUID_v1());
     return locator::tablet_task_info{locator::tablet_task_type::intranode_migration, tablet_task_id, db_clock::now(), sched_nr, db_clock::time_point()};
 }
 
 locator::tablet_task_info locator::tablet_task_info::make_split_request() {
     long sched_nr = 0;
-    auto tablet_task_id = locator::tablet_task_id(utils::UUID_gen::get_time_UUID());
+    auto tablet_task_id = locator::tablet_task_id(utils::UUID_gen::get_time_UUID_v1());
     return locator::tablet_task_info{locator::tablet_task_type::split, tablet_task_id, db_clock::now(), sched_nr, db_clock::time_point()};
 }
 
 locator::tablet_task_info locator::tablet_task_info::make_merge_request() {
     long sched_nr = 0;
-    auto tablet_task_id = locator::tablet_task_id(utils::UUID_gen::get_time_UUID());
+    auto tablet_task_id = locator::tablet_task_id(utils::UUID_gen::get_time_UUID_v1());
     return locator::tablet_task_info{locator::tablet_task_type::merge, tablet_task_id, db_clock::now(), sched_nr, db_clock::time_point()};
 }

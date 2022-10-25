@@ -48,15 +48,12 @@ public:
         return (most_sig_bits >> 12) & 0xf;
     }
 
-    bool is_timestamp() const noexcept {
+    bool is_timestamp_v1() const noexcept {
         return version() == 1;
     }
 
     int64_t timestamp() const noexcept {
-        //if (version() != 1) {
-        //     throw new UnsupportedOperationException("Not a time-based UUID");
-        //}
-        SCYLLA_ASSERT(is_timestamp());
+        SCYLLA_ASSERT(is_timestamp_v1());
 
         return ((most_sig_bits & 0xFFF) << 48) |
                (((most_sig_bits >> 16) & 0xFFFF) << 32) |

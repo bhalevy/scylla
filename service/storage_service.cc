@@ -1761,7 +1761,7 @@ future<> storage_service::join_topology(sharded<service::storage_proxy>& proxy,
         .shard_count = smp::count,
         .ignore_msb =  _db.local().get_config().murmur3_partitioner_ignore_msb_bits(),
         .supported_features = _feature_service.supported_feature_set() | std::ranges::to<std::vector<sstring>>(),
-        .request_id = utils::UUID_gen::get_time_UUID(),
+        .request_id = utils::UUID_gen::get_time_UUID_v1(),
     };
 
     if (raft_replace_info) {

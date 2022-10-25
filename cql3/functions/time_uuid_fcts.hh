@@ -25,7 +25,7 @@ shared_ptr<function>
 make_now_fct() {
     return make_native_scalar_function<false>("now", timeuuid_type, {},
             [] (std::span<const bytes_opt> values) -> bytes_opt {
-        return {to_bytes(utils::UUID_gen::get_time_UUID())};
+        return {to_bytes(utils::UUID_gen::get_time_UUID_v1())};
     });
 }
 
@@ -51,7 +51,7 @@ make_min_timeuuid_fct() {
         if (ts_obj.is_null()) {
             return {};
         }
-        auto uuid = utils::UUID_gen::min_time_UUID(get_valid_timestamp(ts_obj));
+        auto uuid = utils::UUID_gen::min_time_UUID_v1(get_valid_timestamp(ts_obj));
         return {timeuuid_type->decompose(uuid)};
     });
 }
@@ -69,17 +69,17 @@ make_max_timeuuid_fct() {
         if (ts_obj.is_null()) {
             return {};
         }
-        auto uuid = utils::UUID_gen::max_time_UUID(get_valid_timestamp(ts_obj));
+        auto uuid = utils::UUID_gen::max_time_UUID_v1(get_valid_timestamp(ts_obj));
         return {timeuuid_type->decompose(uuid)};
     });
 }
 
-inline utils::UUID get_valid_timeuuid(bytes raw) {
+inline utils::UUID get_valid_timeuuid_v1(bytes raw) {
     if (!utils::UUID_gen::is_valid_UUID(raw)) {
         throw exceptions::server_exception(format("invalid timeuuid: size={}", raw.size()));
     }
     auto uuid = utils::UUID_gen::get_UUID(raw);
-    if (!uuid.is_timestamp()) {
+    if (!uuid.is_timestamp_v1()) {
         throw exceptions::server_exception(format("{}: Not a timeuuid: version={}", uuid, uuid.version()));
     }
     return uuid;
@@ -95,7 +95,7 @@ make_date_of_fct() {
         if (!bb) {
             return {};
         }
-        auto ts = db_clock::time_point(db_clock::duration(UUID_gen::unix_timestamp(get_valid_timeuuid(*bb))));
+        auto ts = db_clock::time_point(db_clock::duration(UUID_gen::unix_timestamp(get_valid_timeuuid_v1(*bb))));
         return {timestamp_type->decompose(ts)};
     });
 }
@@ -110,7 +110,7 @@ make_unix_timestamp_of_fct() {
         if (!bb) {
             return {};
         }
-        return {long_type->decompose(UUID_gen::unix_timestamp(get_valid_timeuuid(*bb)).count())};
+        return {long_type->decompose(UUID_gen::unix_timestamp(get_valid_timeuuid_v1(*bb)).count())};
     });
 }
 
@@ -147,7 +147,7 @@ shared_ptr<function>
 make_currenttimeuuid_fct() {
     return make_native_scalar_function<false>("currenttimeuuid", timeuuid_type, {},
             [] (std::span<const bytes_opt> values) -> bytes_opt {
-        return {timeuuid_type->decompose(timeuuid_native_type{utils::UUID_gen::get_time_UUID()})};
+        return {timeuuid_type->decompose(timeuuid_native_type{utils::UUID_gen::get_time_UUID_v1()})};
     });
 }
 
@@ -161,7 +161,7 @@ make_timeuuidtodate_fct() {
         if (!bb) {
             return {};
         }
-        auto ts = db_clock::time_point(db_clock::duration(UUID_gen::unix_timestamp(get_valid_timeuuid(*bb))));
+        auto ts = db_clock::time_point(db_clock::duration(UUID_gen::unix_timestamp(get_valid_timeuuid_v1(*bb))));
         auto to_simple_date = get_castas_fctn(simple_date_type, timestamp_type);
         return {simple_date_type->decompose(to_simple_date(ts))};
     });
@@ -196,7 +196,7 @@ make_timeuuidtotimestamp_fct() {
         if (!bb) {
             return {};
         }
-        auto ts = db_clock::time_point(db_clock::duration(UUID_gen::unix_timestamp(get_valid_timeuuid(*bb))));
+        auto ts = db_clock::time_point(db_clock::duration(UUID_gen::unix_timestamp(get_valid_timeuuid_v1(*bb))));
         return {timestamp_type->decompose(ts)};
     });
 }
@@ -230,7 +230,7 @@ make_timeuuidtounixtimestamp_fct() {
         if (!bb) {
             return {};
         }
-        return {long_type->decompose(UUID_gen::unix_timestamp(get_valid_timeuuid(*bb)).count())};
+        return {long_type->decompose(UUID_gen::unix_timestamp(get_valid_timeuuid_v1(*bb)).count())};
     });
 }
 

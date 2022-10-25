@@ -536,7 +536,7 @@ future<rjson::value> encryption::kms_host::impl::post(std::string_view target, s
     if (!aws_assume_role_arn.empty()) {
         auto sts_host = make_aws_host(_options.aws_region, "sts");
         auto now = db_clock::now();
-        auto rs_id = utils::UUID_gen::get_time_UUID(std::chrono::system_clock::time_point(now.time_since_epoch()));
+        auto rs_id = utils::UUID_gen::get_time_UUID_v1(std::chrono::system_clock::time_point(now.time_since_epoch()));
         auto role_session = fmt::format("ScyllaDB-{}", rs_id);
 
         kms_log.debug("Assume role: {} (RoleSessionID={})", aws_assume_role_arn, role_session);
@@ -686,7 +686,7 @@ future<encryption::kms_host::impl::result_type> encryption::kms_host::impl::post
     static constexpr auto NEWLINE = '\n';
 
     auto now = db_clock::now();
-    auto req_id = utils::UUID_gen::get_time_UUID(std::chrono::system_clock::time_point(now.time_since_epoch()));
+    auto req_id = utils::UUID_gen::get_time_UUID_v1(std::chrono::system_clock::time_point(now.time_since_epoch()));
 
     kms_log.trace("Building request: {} ({}:{}) {}", query.target, query.host, query.port, req_id);
 

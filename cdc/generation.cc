@@ -478,7 +478,7 @@ static future<std::optional<cdc::topology_description>> retrieve_generation_data
         db::system_distributed_keyspace& sys_dist_ks) {
     auto cdc_gen = co_await sys_dist_ks.read_cdc_generation(id.id);
 
-    if (!cdc_gen && id.id.is_timestamp()) {
+    if (!cdc_gen && id.id.is_timestamp_v1()) {
         // If we entered legacy mode due to recovery, we (or some other node)
         // might gossip about a generation that was previously propagated
         // through raft. If that's the case, it will sit in

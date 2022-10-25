@@ -100,7 +100,7 @@ tasks::task_manager::task_group node_ops_virtual_task::get_group() const noexcep
 }
 
 future<std::optional<tasks::virtual_task_hint>> node_ops_virtual_task::contains(tasks::task_id task_id) const {
-    if (!task_id.uuid().is_timestamp()) {
+    if (!task_id.uuid().is_timestamp_v1()) {
         // Task id of node ops operation is always a timestamp.
         co_return std::nullopt;
     }

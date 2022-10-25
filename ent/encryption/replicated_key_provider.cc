@@ -321,7 +321,7 @@ future<std::tuple<UUID, key_ptr>> replicated_key_provider::get_key(const key_inf
 
     // otoh, if we don't need a specific key, we can just create a new one (writing a sstable)
     if (res->empty()) {
-        uuid = utils::UUID_gen::get_time_UUID();
+        uuid = utils::UUID_gen::get_time_UUID_v1();
 
         log.debug("No key found. Generating {}", uuid);
 

@@ -1873,7 +1873,7 @@ sstable::write_scylla_metadata(shard_id shard, struct run_identifier identifier,
     if (generation().is_uuid_based()) {
         sid = sstable_id(generation().as_uuid());
     } else {
-        sid = sstable_id(utils::UUID_gen::get_time_UUID());
+        sid = sstable_id(utils::UUID_gen::get_time_UUID_v1());
         sstlog.info("SSTable {} has numerical generation. SSTable identifier in scylla_metadata set to {}", get_filename(), sid);
     }
     _components->scylla_metadata->data.set<scylla_metadata_type::SSTableIdentifier>(scylla_metadata::sstable_identifier{sid});
@@ -3613,7 +3613,7 @@ generation_type::from_string(const std::string& s) {
         timestamp += std::chrono::seconds{decode_base36(match[2])};
         timestamp += ::utils::UUID_gen::decimicroseconds{decode_base36(match[3])};
         int64_t lsb = decode_base36(match[4]);
-        return generation_type{utils::UUID_gen::get_time_UUID_raw(timestamp, lsb)};
+        return generation_type{utils::UUID_gen::get_time_UUID_v1_raw(timestamp, lsb)};
     }
 }
 
