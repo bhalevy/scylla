@@ -20,7 +20,7 @@ private:
     static inline std::strong_ordering uint64_t_tri_compare(uint64_t a, uint64_t b) noexcept;
     static inline uint64_t timeuuid_v1_read_msb(const int8_t* b) noexcept;
     static inline uint64_t uuid_read_lsb(const int8_t* b) noexcept;
-    std::strong_ordering timestamp_tri_compare() noexcept;
+    std::strong_ordering unix_timestamp_tri_compare() noexcept;
 
 public:
     timeuuid_cmp(bytes_view o1, bytes_view o2) noexcept : _o1(o1), _o2(o2) {}
@@ -65,10 +65,14 @@ inline uint64_t timeuuid_cmp::uuid_read_lsb(const int8_t* b) noexcept {
            u64(b[14]) << 8  | u64(b[15]);
 }
 
-inline std::strong_ordering timeuuid_cmp::timestamp_tri_compare() noexcept {
-    auto res = int64_t_tri_compare(UUID_gen::get_UUID(_o1.begin()).timestamp(), UUID_gen::get_UUID(_o2.begin()).timestamp());
+inline std::strong_ordering timeuuid_cmp::unix_timestamp_tri_compare() noexcept {
+    auto t1 = UUID_gen::normalized_timestamp(UUID_gen::get_UUID(_o1.begin())).count();
+    auto t2 = UUID_gen::normalized_timestamp(UUID_gen::get_UUID(_o2.begin())).count();
+    auto res = int64_t_tri_compare(t1, t2);
     if (res == 0) {
-        res = uint64_t_tri_compare(uuid_read_lsb(_o1.begin()), uuid_read_lsb(_o2.begin()));
+        auto lsb1 = uuid_read_lsb(_o1.begin());
+        auto lsb2 = uuid_read_lsb(_o2.begin());
+        res = int64_t_tri_compare(lsb1, lsb2);
     }
     return res;
 }
@@ -98,11 +102,11 @@ inline std::strong_ordering timeuuid_cmp::tri_compare() noexcept {
     // For backward compatibility reasons,
     // only timeuuid v7 is special handled.
     switch (v1 + v2) {
-    case 7:  // 0/7
-    case 14: // 7/7
+    case 7:  // 7 vs. 0
+    case 14: // 7 vs. 7
         return o1 <=> o2;
-    case 8:  // 1/7
-        return timestamp_tri_compare();
+    case 8:  // 7 vs. 1
+        return unix_timestamp_tri_compare();
     }
     auto res = uint64_t_tri_compare(timeuuid_v1_read_msb(o1.begin()), timeuuid_v1_read_msb(o2.begin()));
     if (res == 0) {
@@ -129,9 +133,9 @@ inline std::strong_ordering timeuuid_cmp::uuid_tri_compare() noexcept {
     auto v1 = timeuuid_read_version(o1.begin());
     auto v2 = timeuuid_read_version(o2.begin());
     if (v1 != v2) {
-        // v1 vs. v7
+        // 7 vs. 1
         if (v1 + v2 == 8) {
-            return timestamp_tri_compare();
+            return unix_timestamp_tri_compare();
         }
         return o1 <=> o2;
     }
