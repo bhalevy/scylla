@@ -220,6 +220,10 @@ public:
     /** Return the end-point for a unique host ID */
     std::optional<inet_address> get_endpoint_for_host_id(locator::host_id host_id) const;
 
+    /// Parses the \c host_id_string either as ip address or host uuid and returns the mapping.
+    /// Throws std::invalid_argument on parse error or std::runtime_error if the host_id wasn't found.
+    std::pair<inet_address, host_id> parse_endpoint_and_host_id(const sstring& host_id_string) const;
+
     /** @return a copy of the endpoint-to-id map for read-only operations */
     const std::unordered_map<inet_address, host_id>& get_endpoint_to_host_id_map_for_reading() const;
 

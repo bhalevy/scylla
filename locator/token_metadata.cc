@@ -1087,6 +1087,27 @@ token_metadata::get_endpoint_for_host_id(host_id host_id) const {
     return _impl->get_endpoint_for_host_id(host_id);
 }
 
+std::pair<inet_address, host_id> token_metadata::parse_endpoint_and_host_id(const sstring& host_id_string) const {
+    inet_address endpoint;
+    host_id id;
+    try {
+        id = host_id(utils::UUID(host_id_string));
+        auto opt_ep = get_endpoint_for_host_id(id);
+        if (!opt_ep) {
+            throw std::runtime_error(format("Host ID {} not found in the cluster", host_id_string));
+        }
+        endpoint = *opt_ep;
+    } catch (const marshal_exception&) {
+        endpoint = gms::inet_address(host_id_string);
+        auto opt_id = get_host_id_if_known(endpoint);
+        if (!opt_id) {
+            throw std::runtime_error(format("Host ip address {} not found in the cluster", host_id_string));
+        }
+        id = *opt_id;
+    }
+    return std::make_pair(endpoint, id);
+}
+
 const std::unordered_map<inet_address, host_id>&
 token_metadata::get_endpoint_to_host_id_map_for_reading() const {
     return _impl->get_endpoint_to_host_id_map_for_reading();
