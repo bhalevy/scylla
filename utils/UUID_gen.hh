@@ -320,7 +320,7 @@ public:
      * @param uuid
      * @return decimicroseconds since Unix epoch
      */
-    static decimicroseconds unix_timestamp_decimicros(UUID uuid)
+    static decimicroseconds unix_timestamp_decimicros(const UUID& uuid)
     {
         return decimicroseconds(uuid.timestamp()) + START_EPOCH_V1;
     }
@@ -329,7 +329,7 @@ public:
      * @param uuid
      * @return microseconds since Unix epoch
      */
-    static microseconds unix_timestamp_micros(UUID uuid)
+    static microseconds unix_timestamp_micros(const UUID& uuid)
     {
         return duration_cast<microseconds>(unix_timestamp_decimicros(uuid));
     }
@@ -338,7 +338,7 @@ public:
      * @param uuid
      * @return milliseconds since Unix epoch
      */
-    static milliseconds unix_timestamp(UUID uuid)
+    static milliseconds unix_timestamp(const UUID& uuid)
     {
         return duration_cast<milliseconds>(unix_timestamp_decimicros(uuid));
     }
@@ -347,7 +347,7 @@ public:
      * @param uuid
      * @return seconds since Unix epoch
      */
-    static std::chrono::seconds unix_timestamp_in_sec(UUID uuid)
+    static std::chrono::seconds unix_timestamp_in_sec(const UUID& uuid)
     {
         using namespace std::chrono;
         return duration_cast<seconds>(static_cast<milliseconds>(unix_timestamp(uuid)));
@@ -357,7 +357,7 @@ public:
      * @param uuid
      * @return microseconds since Unix epoch
      */
-    static int64_t micros_timestamp(UUID uuid)
+    static int64_t micros_timestamp(const UUID& uuid)
     {
         return (uuid.timestamp() + START_EPOCH_V1.count())/10;
     }
