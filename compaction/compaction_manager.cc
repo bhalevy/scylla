@@ -1470,10 +1470,18 @@ private:
 bool needs_cleanup(const sstables::shared_sstable& sst,
                    const dht::token_range_vector& sorted_owned_ranges,
                    schema_ptr s) {
-    auto first = sst->get_first_partition_key();
-    auto last = sst->get_last_partition_key();
-    auto first_token = dht::get_token(*s, first);
-    auto last_token = dht::get_token(*s, last);
+    const auto& first = sst->get_first_decorated_key();
+    const auto& last = sst->get_last_decorated_key();
+    dht::token first_token;
+    dht::token last_token;
+    // avoid partitioner string compare if schema is the same
+    if (sst->get_schema() == s || sst->get_schema()->get_partitioner() == s->get_partitioner()) [[likely]] {
+        first_token = first.token();
+        last_token = last.token();
+    } else {
+        first_token = dht::get_token(*s, first.key());
+        last_token = dht::get_token(*s, last.key());
+    }
     dht::token_range sst_token_range = dht::token_range::make(first_token, last_token);
 
     auto r = std::lower_bound(sorted_owned_ranges.begin(), sorted_owned_ranges.end(), first_token,
