@@ -1212,18 +1212,57 @@ private:
         // optimize set of potentially overlapping ranges by deoverlapping them.
         non_owned_ranges = dht::partition_range::deoverlap(std::move(non_owned_ranges), dht::ring_position_comparator(*_schema));
 
-        // subtract *each* owned range from the partition range of *each* sstable*,
+        // subtract the owned ranges from the partition ranges of all sstables
         // such that we'll be left only with a set of non-owned ranges.
-        for (auto& owned_range : owned_ranges) {
-            dht::partition_range_vector new_non_owned_ranges;
-            for (auto& non_owned_range : non_owned_ranges) {
-                auto ret = non_owned_range.subtract(owned_range, dht::ring_position_comparator(*_schema));
-                new_non_owned_ranges.insert(new_non_owned_ranges.end(), ret.begin(), ret.end());
-                seastar::thread::maybe_yield();
+        auto cmp = dht::ring_position_comparator(*_schema);
+        dht::partition_range_vector new_non_owned_ranges;
+        new_non_owned_ranges.reserve(non_owned_ranges.size() * 2);
+        auto non_owned_range = non_owned_ranges.begin();
+        auto owned_range = owned_ranges.begin();
+        while (non_owned_range != non_owned_ranges.end()) {
+            if (owned_range == owned_ranges.end()) {
+                // We're done with owned_ranges
+                new_non_owned_ranges.emplace_back(std::move(*non_owned_range));
+                ++non_owned_range;
+                continue;
             }
-            non_owned_ranges = std::move(new_non_owned_ranges);
+
+            auto ret = non_owned_range->subtract(*owned_range, cmp);
+            auto size = ret.size();
+            switch (size) {
+            case 0:
+                // current non_owned_range is fully owned, done with it
+                ++non_owned_range;
+                break;
+            case 1:
+                // Does owned_range sort after or before non_owned_range?
+                if (owned_range->start() && (!non_owned_range->start() || cmp(owned_range->start()->value(), non_owned_range->start()->value()) > 0)) {
+                    // keep non_owned prefix
+                    new_non_owned_ranges.emplace_back(std::move(ret[0]));
+                    // done with current non_owned_range
+                    ++non_owned_range;
+                } else {
+                    // set the current non_owned_range to the remaining suffix
+                    *non_owned_range = std::move(ret[0]);
+                    // done with current owned_range
+                    ++owned_range;
+                }
+                break;
+            case 2:
+                // keep non_owned prefix
+                new_non_owned_ranges.emplace_back(std::move(ret[0]));
+                // set the current non_owned_range to the remaining suffix
+                *non_owned_range = std::move(ret[1]);
+                // done with current owned_range
+                ++owned_range;
+                break;
+            default:
+                assert(size <= 2);
+            }
+            seastar::thread::maybe_yield();
         }
-        return non_owned_ranges;
+
+        return new_non_owned_ranges;
     }
 protected:
     virtual compaction_completion_desc
