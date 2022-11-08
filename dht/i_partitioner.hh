@@ -26,6 +26,8 @@
 #include "dht/token-sharding.hh"
 #include "utils/maybe_yield.hh"
 
+class mutation_fragment_v2;
+
 namespace sstables {
 
 class key_view;
@@ -647,6 +649,47 @@ split_range_to_shards(dht::partition_range pr, const schema& s);
 future<utils::chunked_vector<partition_range>> split_range_to_single_shard(const schema& s, const dht::partition_range& pr, shard_id shard);
 
 std::unique_ptr<dht::i_partitioner> make_partitioner(sstring name);
+
+// Filter owned tokens using token_range_vector.
+// Conforms to FlattenedConsumerFilterV2 so it can be used
+// with flat_mutation_reader_v2::consume_in_thread.
+class tokens_filter {
+    token_range_vector _sorted_owned_ranges;
+    token_range_vector::iterator _current;
+    token_range_vector::iterator _end;
+    std::optional<token> _prev_token;
+public:
+    // sorted_owned_ranges must be deoverlapped and
+    // sorted by ascending token order.
+    tokens_filter(token_range_vector sorted_owned_ranges)
+        : _sorted_owned_ranges(std::move(sorted_owned_ranges))
+        , _current(_sorted_owned_ranges.begin())
+        , _end(_sorted_owned_ranges.end())
+    {}
+
+    bool operator()(const decorated_key& dk) {
+        const auto& token = dk.token();
+        // Assumes that this call operator is called
+        // by a sorted stream, in sorted token order.
+        assert(!_prev_token || dht::tri_compare(token, *_prev_token) >= 0);
+        _prev_token = token;
+        for (; _current != _end; ++_current) {
+            if (_current->start() && dht::tri_compare(token, _current->start()->value()) < 0) {
+                return false;
+            }
+            if (!_current->end() || dht::tri_compare(token, _current->end()->value()) <= 0) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    bool operator()(const mutation_fragment_v2& mf) const {
+        return true;
+    }
+
+    void on_end_of_stream() const {}
+};
 
 } // dht
 
