@@ -969,10 +969,12 @@ future<> storage_service::handle_state_normal(inet_address endpoint) {
     }
 
     bool is_member = tmptr->is_member(endpoint);
+    bool do_notify_joined = !is_member && !endpoints_to_remove.contains(endpoint);
+
     // Update pending ranges after update of normal tokens immediately to avoid
     // a race where natural endpoint was updated to contain node A, but A was
     // not yet removed from pending endpoints
-    if (!is_member) {
+    if (do_notify_joined) {
         tmptr->update_topology(endpoint, get_dc_rack_for(endpoint));
     }
     co_await tmptr->update_normal_tokens(owned_tokens, endpoint);
@@ -994,7 +996,7 @@ future<> storage_service::handle_state_normal(inet_address endpoint) {
     }
 
     // Send joined notification only when this node was not a member prior to this
-    if (!is_member) {
+    if (do_notify_joined) {
         co_await notify_joined(endpoint);
     }
 
