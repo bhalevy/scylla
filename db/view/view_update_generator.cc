@@ -158,7 +158,8 @@ future<> view_update_generator::start() {
                             ::mutation_reader::forwarding::no);
 
                     inject_failure("view_update_generator_consume_staging_sstable");
-                    auto result = staging_sstable_reader.consume_in_thread(view_updating_consumer(s, std::move(permit), *t, sstables, _as, staging_sstable_reader_handle));
+                    auto result = staging_sstable_reader.consume_in_thread(view_updating_consumer(s, std::move(permit), *t, sstables, _as, staging_sstable_reader_handle),
+                        dht::tokens_filter(_db.get_keyspace_local_ranges(s->ks_name())));
                     staging_sstable_reader.close().get();
                     if (result == stop_iteration::yes) {
                         break;
