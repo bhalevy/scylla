@@ -10,7 +10,10 @@
 
 #pragma once
 
+#include <boost/intrusive/list.hpp>
+
 #include <seastar/core/sstring.hh>
+#include <seastar/util/bool_class.hh>
 
 #include "gms/inet_address.hh"
 #include "locator/host_id.hh"
@@ -20,6 +23,9 @@ using namespace seastar;
 namespace locator {
 
 using inet_address = gms::inet_address;
+
+class shared_token_metadata;
+class node;
 
 // Endpoint Data Center and Rack names
 struct endpoint_dc_rack {
@@ -33,5 +39,22 @@ struct endpoint_dc_rack {
 };
 
 using dc_rack_fn = seastar::noncopyable_function<endpoint_dc_rack(inet_address)>;
+
+} // namespace locator
+
+// Customize deleter so that lw_shared_ptr can work with an incomplete node class
+namespace seastar {
+
+template <>
+struct lw_shared_ptr_deleter<locator::node> {
+    static void dispose(locator::node* node);
+};
+
+} // namespace seastar
+
+namespace locator {
+
+using node_ptr = lw_shared_ptr<const node>;
+using mutable_node_ptr = lw_shared_ptr<node>;
 
 } // namespace locator
