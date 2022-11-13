@@ -55,6 +55,8 @@ public:
      */
     bool has_endpoint(inet_address, pending with_pending = pending::no) const;
 
+    size_t num_datacenters() const noexcept;
+
     const std::unordered_set<inet_address>&
     get_datacenter_endpoints(const sstring& dc) const;
 

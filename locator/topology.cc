@@ -128,6 +128,10 @@ const endpoint_dc_rack& topology::get_location(const inet_address& ep) const {
     on_internal_error(tlogger, format("Node {} is not in topology", ep));
 }
 
+size_t topology::num_datacenters() const noexcept {
+    return _dc_endpoints.size();
+}
+
 const std::unordered_set<inet_address>&
 topology::get_datacenter_endpoints(const sstring& dc) const {
     return _dc_endpoints.at(dc);
