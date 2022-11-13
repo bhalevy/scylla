@@ -128,6 +128,11 @@ const endpoint_dc_rack& topology::get_location(const inet_address& ep) const {
     on_internal_error(tlogger, format("Node {} is not in topology", ep));
 }
 
+const std::unordered_set<inet_address>&
+topology::get_datacenter_endpoints(const sstring& dc) const {
+    return _dc_endpoints.at(dc);
+}
+
 std::unordered_set<sstring> topology::get_datacenters() const {
     std::unordered_set<sstring> ret;
     ret.reserve(_dc_endpoints.size());
@@ -135,6 +140,11 @@ std::unordered_set<sstring> topology::get_datacenters() const {
         ret.insert(dc);
     }
     return ret;
+}
+
+const std::unordered_map<sstring, std::unordered_set<inet_address>>&
+topology::get_datacenter_rack_endpoints(const sstring& dc) const {
+    return _dc_racks.at(dc);
 }
 
 // FIXME -- both methods below should rather return data from the

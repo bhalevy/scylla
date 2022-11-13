@@ -3466,7 +3466,7 @@ storage_proxy::mutate_atomically_result(std::vector<mutation> mutations, db::con
                             auto local_addr = utils::fb_utilities::get_broadcast_address();
                             auto& topology = _tmptr->get_topology();
                             auto local_dc = topology.get_datacenter();
-                            auto& local_endpoints = topology.get_datacenter_racks().at(local_dc);
+                            auto local_endpoints = topology.get_datacenter_rack_endpoints(local_dc);
                             auto local_rack = topology.get_rack();
                             auto& gossiper = _p._remote->gossiper();
                             auto chosen_endpoints = endpoint_filter(gossiper, local_rack, local_endpoints);

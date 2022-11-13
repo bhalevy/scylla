@@ -55,11 +55,17 @@ public:
      */
     bool has_endpoint(inet_address, pending with_pending = pending::no) const;
 
+    const std::unordered_set<inet_address>&
+    get_datacenter_endpoints(const sstring& dc) const;
+
     const std::unordered_map<sstring,
                            std::unordered_set<inet_address>>&
     get_datacenter_endpoints() const {
         return _dc_endpoints;
     }
+
+    const std::unordered_map<sstring, std::unordered_set<inet_address>>&
+    get_datacenter_rack_endpoints(const sstring& dc) const;
 
     const std::unordered_map<sstring,
                        std::unordered_map<sstring,
