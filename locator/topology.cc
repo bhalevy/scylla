@@ -128,6 +128,15 @@ const endpoint_dc_rack& topology::get_location(const inet_address& ep) const {
     on_internal_error(tlogger, format("Node {} is not in topology", ep));
 }
 
+std::unordered_set<sstring> topology::get_datacenters() const {
+    std::unordered_set<sstring> ret;
+    ret.reserve(_dc_endpoints.size());
+    for (const auto& [dc, _] : _dc_endpoints) {
+        ret.insert(dc);
+    }
+    return ret;
+}
+
 // FIXME -- both methods below should rather return data from the
 // get_location() result, but to make it work two things are to be fixed:
 // - topology should be aware of internal-ip conversions

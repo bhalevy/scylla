@@ -74,6 +74,8 @@ public:
     sstring get_datacenter() const;
     sstring get_datacenter(inet_address ep) const;
 
+    std::unordered_set<sstring> get_datacenters() const;
+
     auto get_local_dc_filter() const noexcept {
         return [ this, local_dc = get_datacenter() ] (inet_address ep) {
             return get_datacenter(ep) == local_dc;
