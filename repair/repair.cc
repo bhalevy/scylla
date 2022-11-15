@@ -7,10 +7,12 @@
  */
 
 #include "repair.hh"
+#include "locator/abstract_replication_strategy.hh"
 #include "repair/row_level.hh"
 
 #include "atomic_cell_hash.hh"
 #include "dht/sharder.hh"
+#include "seastar/core/smp.hh"
 #include "streaming/stream_reason.hh"
 #include "gms/inet_address.hh"
 #include "utils/fb_utilities.hh"
@@ -544,6 +546,7 @@ get_sharder_for_tables(seastar::sharded<replica::database>& db, const sstring& k
 
 repair_info::repair_info(repair_service& repair,
     const sstring& keyspace_,
+    locator::effective_replication_map_ptr erm_,
     const dht::token_range_vector& ranges_,
     std::vector<table_id> table_ids_,
     repair_uniq_id id_,
@@ -562,7 +565,7 @@ repair_info::repair_info(repair_service& repair,
     , gossiper(repair.get_gossiper())
     , sharder(get_sharder_for_tables(db, keyspace_, table_ids_))
     , keyspace(keyspace_)
-    , erm(db.local().find_keyspace(keyspace).get_effective_replication_map())
+    , erm(std::move(erm_))
     , ranges(ranges_)
     , cfs(get_table_names(db.local(), table_ids_))
     , table_ids(std::move(table_ids_))
@@ -1097,7 +1100,7 @@ int repair_service::do_repair_start(sstring keyspace, std::unordered_map<sstring
     }
 
     // Do it in the background.
-    (void)get_repair_module().run(id, [this, &db, id, keyspace = std::move(keyspace),
+    (void)get_repair_module().run(id, [this, &db, id, keyspace = std::move(keyspace), erm = std::move(erm),
             cfs = std::move(cfs), ranges = std::move(ranges), options = std::move(options), ignore_nodes = std::move(ignore_nodes)] () mutable {
         auto uuid = id.uuid();
 
@@ -1191,12 +1194,18 @@ int repair_service::do_repair_start(sstring keyspace, std::unordered_map<sstring
             throw std::runtime_error("aborted by user request");
         }
 
+        auto ring_version = erm->get_token_metadata().get_ring_version();
         for (auto shard : boost::irange(unsigned(0), smp::count)) {
             auto f = container().invoke_on(shard, [keyspace, table_ids, id, ranges, hints_batchlog_flushed,
-                    data_centers = options.data_centers, hosts = options.hosts, ignore_nodes] (repair_service& local_repair) mutable {
+                    data_centers = options.data_centers, hosts = options.hosts, ignore_nodes, ring_version] (repair_service& local_repair) mutable {
+                auto erm = local_repair.get_db().local().find_keyspace(keyspace).get_effective_replication_map();
+                auto local_ring_version = erm->get_token_metadata().get_ring_version();
+                if (local_ring_version != ring_version) {
+                    return make_exception_future<>(std::runtime_error("Ring version changed"));
+                }
                 local_repair.get_metrics().repair_total_ranges_sum += ranges.size();
                 auto ri = make_lw_shared<repair_info>(local_repair,
-                        std::move(keyspace), std::move(ranges), std::move(table_ids),
+                        std::move(keyspace), std::move(erm), std::move(ranges), std::move(table_ids),
                         id, std::move(data_centers), std::move(hosts), std::move(ignore_nodes), streaming::stream_reason::repair, nullptr, hints_batchlog_flushed);
                 return repair_ranges(ri);
             });
@@ -1260,10 +1269,12 @@ future<> repair_service::abort_all() {
 
 future<> repair_service::sync_data_using_repair(
         sstring keyspace,
+        locator::effective_replication_map_ptr erm,
         dht::token_range_vector ranges,
         std::unordered_map<dht::token_range, repair_neighbors> neighbors,
         streaming::stream_reason reason,
         shared_ptr<node_ops_info> ops_info) {
+    assert(this_shard_id() == 0);
     if (ranges.empty()) {
         return make_ready_future<>();
     }
@@ -1273,7 +1284,7 @@ future<> repair_service::sync_data_using_repair(
 
     repair_uniq_id id = get_repair_module().new_repair_uniq_id();
     rlogger.info("repair[{}]: sync data for keyspace={}, status=started", id.uuid(), keyspace);
-    return get_repair_module().run(id, [this, id, &db, keyspace, ranges = std::move(ranges), neighbors = std::move(neighbors), reason, ops_info] () mutable {
+    return get_repair_module().run(id, [this, id, &db, keyspace, erm = std::move(erm), ranges = std::move(ranges), neighbors = std::move(neighbors), reason, ops_info] () mutable {
         auto cfs = list_column_families(db, keyspace);
         if (cfs.empty()) {
             rlogger.warn("repair[{}]: sync data for keyspace={}, no table in this keyspace", id.uuid(), keyspace);
@@ -1285,15 +1296,21 @@ future<> repair_service::sync_data_using_repair(
         if (get_repair_module().is_aborted(id.uuid())) {
             throw std::runtime_error("aborted by user request");
         }
+        auto ring_version = erm->get_token_metadata().get_ring_version();
         for (auto shard : boost::irange(unsigned(0), smp::count)) {
-            auto f = container().invoke_on(shard, [keyspace, table_ids, id, ranges, neighbors, reason, ops_info] (repair_service& local_repair) mutable {
+            auto f = container().invoke_on(shard, [keyspace, table_ids, id, ranges, neighbors, reason, ops_info, ring_version] (repair_service& local_repair) mutable {
+                auto erm = local_repair.get_db().local().find_keyspace(keyspace).get_effective_replication_map();
+                auto local_ring_version = erm->get_token_metadata().get_ring_version();
+                if (local_ring_version != ring_version) {
+                    return make_exception_future<>(std::runtime_error("Ring version changed"));
+                }
                 auto data_centers = std::vector<sstring>();
                 auto hosts = std::vector<sstring>();
                 auto ignore_nodes = std::unordered_set<gms::inet_address>();
                 bool hints_batchlog_flushed = false;
                 abort_source* asp = ops_info ? ops_info->local_abort_source() : nullptr;
                 auto ri = make_lw_shared<repair_info>(local_repair,
-                        std::move(keyspace), std::move(ranges), std::move(table_ids),
+                        std::move(keyspace), erm, std::move(ranges), std::move(table_ids),
                         id, std::move(data_centers), std::move(hosts), std::move(ignore_nodes), reason, asp, hints_batchlog_flushed);
                 ri->neighbors = std::move(neighbors);
                 return repair_ranges(ri);
@@ -1494,7 +1511,7 @@ future<> repair_service::bootstrap_with_repair(locator::token_metadata_ptr tmptr
                 }
             }
             auto nr_ranges = desired_ranges.size();
-            sync_data_using_repair(keyspace_name, std::move(desired_ranges), std::move(range_sources), reason, nullptr).get();
+            sync_data_using_repair(keyspace_name, erm, std::move(desired_ranges), std::move(range_sources), reason, nullptr).get();
             rlogger.info("bootstrap_with_repair: finished with keyspace={}, nr_ranges={}", keyspace_name, nr_ranges);
         }
         rlogger.info("bootstrap_with_repair: finished with keyspaces={}", ks_erms | boost::adaptors::map_keys);
@@ -1686,7 +1703,7 @@ future<> repair_service::do_decommission_removenode_with_repair(locator::token_m
                 ranges.swap(ranges_for_removenode);
             }
             auto nr_ranges_synced = ranges.size();
-            sync_data_using_repair(keyspace_name, std::move(ranges), std::move(range_sources), reason, ops).get();
+            sync_data_using_repair(keyspace_name, erm, std::move(ranges), std::move(range_sources), reason, ops).get();
             rlogger.info("{}: finished with keyspace={}, leaving_node={}, nr_ranges={}, nr_ranges_synced={}, nr_ranges_skipped={}",
                 op, keyspace_name, leaving_node, nr_ranges_total, nr_ranges_synced, nr_ranges_skipped);
         }
@@ -1789,7 +1806,7 @@ future<> repair_service::do_rebuild_replace_with_repair(locator::token_metadata_
                 }).get();
             }
             auto nr_ranges = ranges.size();
-            sync_data_using_repair(keyspace_name, std::move(ranges), std::move(range_sources), reason, nullptr).get();
+            sync_data_using_repair(keyspace_name, erm, std::move(ranges), std::move(range_sources), reason, nullptr).get();
             rlogger.info("{}: finished with keyspace={}, source_dc={}, nr_ranges={}", op, keyspace_name, source_dc, nr_ranges);
         }
         rlogger.info("{}: finished with keyspaces={}, source_dc={}", op, ks_erms | boost::adaptors::map_keys, source_dc);
