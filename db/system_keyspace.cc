@@ -1690,8 +1690,8 @@ future<> system_keyspace::remove_endpoint(gms::inet_address ep) {
 
 future<> system_keyspace::quarantine_host(locator::host_id host_id, gms::inet_address ep, std::string_view dc, std::string_view rack) {
     assert(host_id);
-    auto req = format("INSERT into system.{} (host_id, endpoint, data_center, rack) VALUES (?, ?, ?, ?, ?) USING TTL 2592000", QUARANTINED_HOSTS);
-    slogger.debug("INSERT into system.{} (host_id, endpoint, data_center, rack) VALUES ({}, {}, '{}', '{}', {}) USING TTL 2592000", QUARANTINED_HOSTS, host_id, ep, dc, rack);
+    auto req = format("INSERT into system.{} (host_id, endpoint, data_center, rack) VALUES (?, ?, ?, ?) USING TTL 2592000", QUARANTINED_HOSTS);
+    slogger.debug("INSERT into system.{} (host_id, endpoint, data_center, rack) VALUES ({}, {}, '{}', '{}') USING TTL 2592000", QUARANTINED_HOSTS, host_id, ep, dc, rack);
     co_await execute_cql(req, host_id.uuid(), ep.addr(), dc, rack).discard_result();
     co_await force_blocking_flush(QUARANTINED_HOSTS);
 }

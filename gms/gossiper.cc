@@ -563,8 +563,14 @@ future<> gossiper::do_apply_state_locally(gms::inet_address node, const endpoint
     // If state does not exist just add it. If it does then add it if the remote generation is greater.
     // If there is a generation tie, attempt to break it by heartbeat version.
 
-    // FIXME: check if the remote node is quarantine in system.quarantined_hosts.
-    // This will be possible when the replacing node will stop inheriting the replacee's host_id.
+    const auto* host_id_ptr = remote_state.get_application_state_ptr(application_state::HOST_ID);
+    if (host_id_ptr) {
+        auto host_id = locator::host_id(utils::UUID(host_id_ptr->value));
+        if (co_await _sys_ks.local().is_quarantined(host_id)) {
+            logger.info("Host {}/{} is quarantined. Ignoring remote state", host_id, node);
+            co_return;
+        }
+    }
 
     auto permit = co_await this->lock_endpoint(node);
     auto es = this->get_endpoint_state_for_endpoint_ptr(node);
