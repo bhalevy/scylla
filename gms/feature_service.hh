@@ -112,6 +112,7 @@ public:
     gms::feature aggregate_storage_options { *this, "AGGREGATE_STORAGE_OPTIONS"sv };
     gms::feature collection_indexing { *this, "COLLECTION_INDEXING"sv };
     gms::feature large_collection_detection { *this, "LARGE_COLLECTION_DETECTION"sv };
+    gms::feature quarantined_hosts { *this, "QUARANTINED_HOSTS"sv };
 
 public:
 
