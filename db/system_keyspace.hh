@@ -96,6 +96,7 @@ class system_keyspace : public seastar::peering_sharded_service<system_keyspace>
     static schema_ptr raft_config();
     static schema_ptr local();
     static schema_ptr peers();
+    static schema_ptr quarantined_hosts();
     static schema_ptr peer_events();
     static schema_ptr range_xfers();
     static schema_ptr compactions_in_progress();
@@ -140,6 +141,7 @@ public:
     static constexpr auto GROUP0_HISTORY = "group0_history";
     static constexpr auto DISCOVERY = "discovery";
     static constexpr auto BROADCAST_KV_STORE = "broadcast_kv_store";
+    static constexpr auto QUARANTINED_HOSTS = "quarantined_hosts";
 
     struct v3 {
         static constexpr auto BATCHES = "batches";
