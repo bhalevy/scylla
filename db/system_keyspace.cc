@@ -389,6 +389,29 @@ schema_ptr system_keyspace::built_indexes() {
     return peers;
 }
 
+/*static*/ schema_ptr system_keyspace::quarantined_hosts() {
+    static thread_local auto quarantined_hosts = [] {
+        schema_builder builder(generate_legacy_id(NAME, QUARANTINED_HOSTS), NAME, QUARANTINED_HOSTS,
+        // partition key
+        {{"key", utf8_type}},
+        // clustering key
+        {{"host_id", uuid_type}},
+        // regular columns
+        {},
+        // static columns
+        {},
+        // regular column name type
+        utf8_type,
+        // comment
+        "information about quarantined hosts in the cluster"
+       );
+       builder.set_gc_grace_seconds(0);
+       builder.with_version(generate_schema_version(builder.uuid()));
+       return builder.build(schema_builder::compact_storage::no);
+    }();
+    return quarantined_hosts;
+}
+
 /*static*/ schema_ptr system_keyspace::peer_events() {
     static thread_local auto peer_events = [] {
         schema_builder builder(generate_legacy_id(NAME, PEER_EVENTS), NAME, PEER_EVENTS,
@@ -1661,6 +1684,28 @@ future<> system_keyspace::remove_endpoint(gms::inet_address ep) {
     co_await force_blocking_flush(PEERS);
 }
 
+future<> system_keyspace::quarantine_host(locator::host_id host_id) {
+    if (!host_id) {
+        on_internal_error(slogger, "Cannot quarantine null host_id");
+    }
+    auto req = format("INSERT into {}.{} (key, host_id) VALUES (?, ?) USING TTL 2592000", NAME, QUARANTINED_HOSTS);
+    slogger.debug("INSERT into {}.{} (key, host_id) VALUES ({}, {}) USING TTL 2592000", NAME, QUARANTINED_HOSTS, QUARANTINED_HOSTS, host_id);
+    co_await execute_cql(req, QUARANTINED_HOSTS, host_id.uuid()).discard_result();
+    co_await force_blocking_flush(QUARANTINED_HOSTS);
+}
+
+future<std::unordered_set<locator::host_id>> system_keyspace::load_quarantined_hosts() {
+    std::unordered_set<locator::host_id> ret;
+    sstring req = format("SELECT * FROM {}.{} WHERE key = ?", NAME, QUARANTINED_HOSTS);
+    auto cql_result = co_await execute_cql(req, QUARANTINED_HOSTS);
+    ret.reserve(cql_result->size());
+    for (const auto& row : *cql_result) {
+        ret.insert(locator::host_id(row.get_as<utils::UUID>("host_id")));
+    }
+    slogger.debug("Loaded quarantined hosts: {}", ret);
+    co_return ret;
+}
+
 future<> system_keyspace::update_tokens(const std::unordered_set<dht::token>& tokens) {
     if (tokens.empty()) {
         return make_exception_future<>(std::invalid_argument("remove_endpoint should be used instead"));
@@ -2687,6 +2732,7 @@ std::vector<schema_ptr> system_keyspace::all_tables(const db::config& cfg) {
                     v3::scylla_views_builds_in_progress(),
                     v3::truncated(),
                     v3::cdc_local(),
+                    quarantined_hosts(),
     });
     if (cfg.check_experimental(db::experimental_features_t::feature::RAFT)) {
         r.insert(r.end(), {raft(), raft_snapshots(), raft_config(), group0_history(), discovery()});
