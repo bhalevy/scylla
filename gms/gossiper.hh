@@ -305,6 +305,8 @@ public:
         return _quarantined_hosts;
     }
 
+    void add_quarantined_host(locator::host_id host_id, const locator::host_info& info);
+
 private:
     /**
      * Removes the endpoint from gossip completely

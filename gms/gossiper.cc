@@ -1102,6 +1102,25 @@ void gossiper::quarantine_endpoint(inet_address endpoint, clk::time_point quaran
     _just_removed_endpoints[endpoint] = quarantine_start;
 }
 
+void gossiper::add_quarantined_host(locator::host_id host_id, const locator::host_info& info) {
+    if (!host_id) {
+        on_internal_error(logger, format("Cannot add quarantined host {}/{} location={}/{}", host_id, info.endpoint, info.dc_rack.dc, info.dc_rack.rack));
+    }
+    quarantine_endpoint(info.endpoint);
+    _quarantined_hosts[host_id] = info;
+    auto& local_state = get_endpoint_state(get_broadcast_address());
+    auto* app_state_ptr = local_state.get_application_state_ptr(gms::application_state::QUARANTINED_HOSTS);
+    locator::hosts_map hosts_info;
+    if (app_state_ptr) {
+        hosts_info = versioned_value::host_infos_from_string(app_state_ptr->value);
+    }
+    if (!hosts_info.contains(host_id)) {
+        hosts_info.emplace(host_id, info);
+        local_state.add_application_state(gms::application_state::QUARANTINED_HOSTS, versioned_value::host_infos(hosts_info));
+    }
+    logger.debug("Added quarantined host {}/{}", host_id, info.endpoint);
+}
+
 void gossiper::make_random_gossip_digest(utils::chunked_vector<gossip_digest>& g_digests) {
     int generation = 0;
     int max_version = 0;
