@@ -389,6 +389,29 @@ schema_ptr system_keyspace::built_indexes() {
     return peers;
 }
 
+schema_ptr system_keyspace::quarantined_hosts() {
+    static thread_local auto quarantined_hosts = [] {
+        schema_builder builder(generate_legacy_id(NAME, QUARANTINED_HOSTS), NAME, QUARANTINED_HOSTS,
+        // partition key
+        {{"key", utf8_type}},
+        // clustering key
+        {{"host_id", uuid_type}},
+        // regular columns
+        {{"quarantined_at", timestamp_type}},
+        // static columns
+        {},
+        // regular column name type
+        utf8_type,
+        // comment
+        "information about quarantined hosts in the cluster"
+       );
+       builder.set_gc_grace_seconds(0);
+       builder.with_version(generate_schema_version(builder.uuid()));
+       return builder.build(schema_builder::compact_storage::no);
+    }();
+    return quarantined_hosts;
+}
+
 /*static*/ schema_ptr system_keyspace::peer_events() {
     static thread_local auto peer_events = [] {
         schema_builder builder(generate_legacy_id(NAME, PEER_EVENTS), NAME, PEER_EVENTS,
@@ -2696,6 +2719,7 @@ std::vector<schema_ptr> system_keyspace::all_tables(const db::config& cfg) {
                     v3::scylla_views_builds_in_progress(),
                     v3::truncated(),
                     v3::cdc_local(),
+                    quarantined_hosts(),
     });
     if (cfg.check_experimental(db::experimental_features_t::feature::RAFT)) {
         r.insert(r.end(), {raft(), raft_snapshots(), raft_config(), group0_history(), discovery()});
