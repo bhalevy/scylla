@@ -389,6 +389,33 @@ schema_ptr system_keyspace::built_indexes() {
     return peers;
 }
 
+/*static*/ schema_ptr system_keyspace::quarantined_hosts() {
+    static thread_local auto quarantined_hosts = [] {
+        schema_builder builder(generate_legacy_id(NAME, QUARANTINED_HOSTS), NAME, QUARANTINED_HOSTS,
+        // partition key
+        {{"host_id", uuid_type}},
+        // clustering key
+        {},
+        // regular columns
+        {},
+        // static columns
+        {
+                {"endpoint", inet_addr_type},
+                {"data_center", utf8_type},
+                {"rack", utf8_type},
+        },
+        // regular column name type
+        utf8_type,
+        // comment
+        "information about quarantined hosts in the cluster"
+       );
+       builder.set_gc_grace_seconds(0);
+       builder.with_version(generate_schema_version(builder.uuid()));
+       return builder.build(schema_builder::compact_storage::no);
+    }();
+    return quarantined_hosts;
+}
+
 /*static*/ schema_ptr system_keyspace::peer_events() {
     static thread_local auto peer_events = [] {
         schema_builder builder(generate_legacy_id(NAME, PEER_EVENTS), NAME, PEER_EVENTS,
@@ -1661,6 +1688,50 @@ future<> system_keyspace::remove_endpoint(gms::inet_address ep) {
     co_await force_blocking_flush(PEERS);
 }
 
+future<> system_keyspace::quarantine_host(locator::host_id host_id, const locator::host_info& info) {
+    if (!host_id) {
+        on_internal_error(slogger, format("Cannot quarantine host {}/{} location={}/{}", host_id, info.endpoint, info.dc_rack.dc, info.dc_rack.rack));
+    }
+    if (!info.dc_rack.dc.empty()) {
+        auto req = format("INSERT into {}.{} (host_id, endpoint, data_center, rack) VALUES (?, ?, ?, ?) USING TTL 2592000", NAME, QUARANTINED_HOSTS);
+        slogger.debug("INSERT into {}.{} (host_id, endpoint, data_center, rack) VALUES ({}, {}, '{}', '{}') USING TTL 2592000", NAME, QUARANTINED_HOSTS,
+                host_id, info.endpoint, info.dc_rack.dc, info.dc_rack.rack);
+        co_await execute_cql(req, host_id.uuid(), info.endpoint.addr(), info.dc_rack.dc, info.dc_rack.rack).discard_result();
+    } else {
+        auto req = format("INSERT into {}.{} (host_id, endpoint) VALUES (?, ?) USING TTL 2592000", NAME, QUARANTINED_HOSTS);
+        slogger.debug("INSERT into {}.{} (host_id, endpoint) VALUES ({}, {}) USING TTL 2592000", NAME, QUARANTINED_HOSTS,
+                host_id, info.endpoint);
+        co_await execute_cql(req, host_id.uuid(), info.endpoint.addr()).discard_result();
+    }
+    co_await force_blocking_flush(QUARANTINED_HOSTS);
+}
+
+future<bool> system_keyspace::is_quarantined(locator::host_id host_id) {
+    sstring req = format("SELECT * FROM {}.{} WHERE host_id = ?", NAME, QUARANTINED_HOSTS);
+    auto res = co_await execute_cql(req, host_id.uuid());
+    co_return !res->empty();
+}
+
+future<locator::hosts_map> system_keyspace::load_quarantined_hosts() {
+    locator::hosts_map ret;
+    sstring req = format("SELECT * FROM {}.{}", NAME, QUARANTINED_HOSTS);
+    auto cql_result = co_await execute_cql(req);
+    for (const auto& row : *cql_result) {
+        auto host_id = locator::host_id(row.get_as<utils::UUID>("host_id"));
+        locator::host_info info;
+        info.endpoint = gms::inet_address(row.get_as<net::inet_address>("endpoint"));
+        auto opt_dc = row.get_opt<sstring>("data_center");
+        if (opt_dc) {
+            info.dc_rack.dc = *opt_dc;
+            info.dc_rack.rack = row.get_as<sstring>("rack");;
+        }
+        slogger.debug("Loaded quarantined host: host_id={} endpoint={} dc={} rack={}",
+                host_id, info.endpoint, info.dc_rack.dc, info.dc_rack.rack);
+        ret.emplace(host_id, std::move(info));
+    }
+    co_return ret;
+}
+
 future<> system_keyspace::update_tokens(const std::unordered_set<dht::token>& tokens) {
     if (tokens.empty()) {
         return make_exception_future<>(std::invalid_argument("remove_endpoint should be used instead"));
@@ -2687,6 +2758,7 @@ std::vector<schema_ptr> system_keyspace::all_tables(const db::config& cfg) {
                     v3::scylla_views_builds_in_progress(),
                     v3::truncated(),
                     v3::cdc_local(),
+                    quarantined_hosts(),
     });
     if (cfg.check_experimental(db::experimental_features_t::feature::RAFT)) {
         r.insert(r.end(), {raft(), raft_snapshots(), raft_config(), group0_history(), discovery()});

@@ -24,7 +24,7 @@
 #include <map>
 #include <seastar/core/distributed.hh>
 #include "cdc/generation_id.hh"
-#include "locator/host_id.hh"
+#include "locator/types.hh"
 #include "service/raft/group0_fwd.hh"
 #include "tasks/task_manager.hh"
 
@@ -96,6 +96,7 @@ class system_keyspace : public seastar::peering_sharded_service<system_keyspace>
     static schema_ptr raft_config();
     static schema_ptr local();
     static schema_ptr peers();
+    static schema_ptr quarantined_hosts();
     static schema_ptr peer_events();
     static schema_ptr range_xfers();
     static schema_ptr compactions_in_progress();
@@ -140,6 +141,7 @@ public:
     static constexpr auto GROUP0_HISTORY = "group0_history";
     static constexpr auto DISCOVERY = "discovery";
     static constexpr auto BROADCAST_KV_STORE = "broadcast_kv_store";
+    static constexpr auto QUARANTINED_HOSTS = "quarantined_hosts";
 
     struct v3 {
         static constexpr auto BATCHES = "batches";
@@ -248,6 +250,10 @@ public:
     future<> update_peer_info(gms::inet_address ep, sstring column_name, Value value);
 
     future<> remove_endpoint(gms::inet_address ep);
+
+    future<> quarantine_host(locator::host_id host_id, const locator::host_info& info);
+    future<bool> is_quarantined(locator::host_id host_id);
+    future<locator::hosts_map> load_quarantined_hosts();
 
     static future<> set_scylla_local_param(const sstring& key, const sstring& value);
     static future<std::optional<sstring>> get_scylla_local_param(const sstring& key);
