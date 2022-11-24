@@ -562,6 +562,10 @@ future<> gossiper::send_gossip(gossip_digest_syn message, std::set<inet_address>
 future<> gossiper::do_apply_state_locally(gms::inet_address node, const endpoint_state& remote_state, bool listener_notification) {
     // If state does not exist just add it. If it does then add it if the remote generation is greater.
     // If there is a generation tie, attempt to break it by heartbeat version.
+
+    // FIXME: check if the remote node is quarantine in system.quarantined_hosts.
+    // This will be possible when the replacing node will stop inheriting the replacee's host_id.
+
     auto permit = co_await this->lock_endpoint(node);
     auto es = this->get_endpoint_state_for_endpoint_ptr(node);
     if (es) {

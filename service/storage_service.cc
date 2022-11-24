@@ -729,6 +729,7 @@ future<> storage_service::bootstrap(cdc::generation_service& cdc_gen_service, st
             auto replace_addr = get_replace_address();
             assert(replace_addr);
 
+            quarantine_host(get_token_metadata_ptr(), *replace_addr).get();
             slogger.debug("Removing replaced endpoint {} from system.peers", *replace_addr);
             _sys_ks.local().remove_endpoint(*replace_addr).get();
 
@@ -898,11 +899,17 @@ future<> storage_service::handle_state_normal(inet_address endpoint) {
     if (tmptr->is_normal_token_owner(endpoint)) {
         slogger.info("Node {} state jump to normal", endpoint);
     }
-    std::unordered_set<inet_address> endpoints_to_remove;
+    std::unordered_map<gms::inet_address, host_info> hosts_to_remove;
+
+    auto add_host_to_remove = [&] (gms::inet_address node) {
+        if (!hosts_to_remove.contains(node)) {
+            hosts_to_remove.emplace(node, get_host_info(*tmptr, node));
+        }
+    };
 
     auto do_remove_node = [&] (gms::inet_address node) {
+        add_host_to_remove(node);
         tmptr->remove_endpoint(node);
-        endpoints_to_remove.insert(node);
     };
     // Order Matters, TM.updateHostID() should be called before TM.updateNormalToken(), (see CASSANDRA-4300).
     if (_gossiper.uses_host_id(endpoint)) {
@@ -965,7 +972,7 @@ future<> storage_service::handle_state_normal(inet_address endpoint) {
             }
             if (!ep_to_token_copy.contains(*current_owner)) {
                 slogger.info("handle_state_normal: endpoints_to_remove endpoint={}", *current_owner);
-                endpoints_to_remove.insert(*current_owner);
+                add_host_to_remove(*current_owner);
             }
             slogger.info("handle_state_normal: Nodes {} and {} have the same token {}. {} is the new owner", endpoint, *current_owner, t, endpoint);
         } else {
@@ -976,7 +983,7 @@ future<> storage_service::handle_state_normal(inet_address endpoint) {
     bool is_normal_token_owner = tmptr->is_normal_token_owner(endpoint);
     bool do_notify_joined = false;
 
-    if (endpoints_to_remove.contains(endpoint)) [[unlikely]] {
+    if (hosts_to_remove.contains(endpoint)) [[unlikely]] {
         if (!owned_tokens.empty()) {
             on_fatal_internal_error(slogger, format("endpoint={} is marked for removal but still owns {} tokens", endpoint, owned_tokens.size()));
         }
@@ -1001,11 +1008,12 @@ future<> storage_service::handle_state_normal(inet_address endpoint) {
     co_await replicate_to_all_cores(std::move(tmptr));
     tmlock.reset();
 
-    for (auto ep : endpoints_to_remove) {
-        co_await remove_endpoint(ep);
+    for (const auto& [ep, host] : hosts_to_remove) {
+        co_await remove_endpoint(host);
     }
-    slogger.debug("handle_state_normal: endpoint={} is_normal_token_owner={} endpoint_to_remove={} owned_tokens={}", endpoint, is_normal_token_owner, endpoints_to_remove.contains(endpoint), owned_tokens);
-    if (!owned_tokens.empty() && !endpoints_to_remove.count(endpoint)) {
+
+    slogger.debug("handle_state_normal: endpoint={} is_normal_token_owner={} endpoint_to_remove={} owned_tokens={}", endpoint, is_normal_token_owner, hosts_to_remove.contains(endpoint), owned_tokens);
+    if (!owned_tokens.empty() && !hosts_to_remove.contains(endpoint)) {
         co_await update_peer_info(endpoint);
         try {
             co_await _sys_ks.local().update_tokens(endpoint, owned_tokens);
@@ -1073,8 +1081,8 @@ future<> storage_service::handle_state_left(inet_address endpoint, std::vector<s
     }
     auto tokens = get_tokens_for(endpoint);
     slogger.debug("Node {} state left, tokens {}", endpoint, tokens);
+    auto eps = _gossiper.get_endpoint_state_for_endpoint_ptr(endpoint);
     if (tokens.empty()) {
-        auto eps = _gossiper.get_endpoint_state_for_endpoint_ptr(endpoint);
         if (eps) {
             slogger.warn("handle_state_left: Tokens for node={} are empty, endpoint_state={}", endpoint, *eps);
         } else {
@@ -1107,9 +1115,10 @@ future<> storage_service::handle_state_removing(inet_address endpoint, std::vect
         }
         co_return;
     }
-    if (get_token_metadata().is_normal_token_owner(endpoint)) {
+    auto pre_remove_tmptr = get_token_metadata_ptr();
+    if (pre_remove_tmptr->is_normal_token_owner(endpoint)) {
         auto state = pieces[0];
-        auto remove_tokens = get_token_metadata().get_tokens(endpoint);
+        auto remove_tokens = pre_remove_tmptr->get_tokens(endpoint);
         if (sstring(gms::versioned_value::REMOVED_TOKEN) == state) {
             std::unordered_set<token> tmp(remove_tokens.begin(), remove_tokens.end());
             co_await excise(std::move(tmp), endpoint, extract_expire_time(pieces));
@@ -1159,7 +1168,7 @@ future<> storage_service::handle_state_removing(inet_address endpoint, std::vect
         if (sstring(gms::versioned_value::REMOVED_TOKEN) == pieces[0]) {
             add_expire_time_if_found(endpoint, extract_expire_time(pieces));
         }
-        co_await remove_endpoint(endpoint);
+        co_await remove_endpoint(std::move(pre_remove_tmptr), endpoint);
     }
 }
 
@@ -1641,12 +1650,51 @@ future<> storage_service::check_for_endpoint_collision(std::unordered_set<gms::i
     });
 }
 
-future<> storage_service::remove_endpoint(inet_address endpoint) {
-    co_await _gossiper.remove_endpoint(endpoint);
+storage_service::host_info storage_service::get_host_info(const locator::token_metadata& tm, gms::inet_address endpoint) const noexcept {
+    auto host = host_info{ .endpoint = endpoint };
     try {
-        co_await _sys_ks.local().remove_endpoint(endpoint);
+        host.host_id = tm.get_host_id(endpoint);
     } catch (...) {
-        slogger.error("fail to remove endpoint={}: {}", endpoint, std::current_exception());
+        slogger.warn("{}", std::current_exception());
+    }
+    const auto& topo = tm.get_topology();
+    if (topo.has_endpoint(endpoint, locator::topology::pending::yes)) {
+        host.dc_rack =  topo.get_location(endpoint);
+    }
+    return host;
+}
+
+future<> storage_service::remove_endpoint(locator::token_metadata_ptr tmptr, gms::inet_address endpoint) {
+    return remove_endpoint(get_host_info(*tmptr, endpoint));
+}
+
+future<> storage_service::remove_endpoint(host_info host) {
+    const auto& endpoint = host.endpoint;
+    co_await quarantine_host(host);
+    slogger.info("Removing endpoint {}/{}", host.host_id, host.endpoint);
+    co_await _gossiper.remove_endpoint(endpoint);
+    co_await _sys_ks.local().remove_endpoint(endpoint);
+}
+
+future<> storage_service::quarantine_host(locator::token_metadata_ptr tmptr, gms::inet_address endpoint) {
+    return quarantine_host(get_host_info(*tmptr, endpoint));
+}
+
+future<> storage_service::quarantine_host(host_info host) {
+    if (!_feature_service.quarantined_hosts) {
+        // No topology changes are expected during upgrade.
+        slogger.warn("Not adding host {}/{} location={}/{} to quarantined_hosts: feature is disabled", host.host_id, host.endpoint, host.dc_rack.dc, host.dc_rack.rack);
+        co_return;
+    }
+    if (!host.host_id) {
+        slogger.warn("Not adding host {}/{} location={}/{} to quarantined_hosts: host_id is unavailable", host.host_id, host.endpoint, host.dc_rack.dc, host.dc_rack.rack);
+        co_return;
+    }
+    try {
+        co_await _sys_ks.local().quarantine_host(host.host_id, host.endpoint, host.dc_rack.dc, host.dc_rack.rack);
+        slogger.info("Quarantined host {}/{} location={}/{}", host.host_id, host.endpoint, host.dc_rack.dc, host.dc_rack.rack);
+    } catch (...) {
+        slogger.warn("Failed to quarantine host {}/{} location={}/{}: {}", host.host_id, host.endpoint, host.dc_rack.dc, host.dc_rack.rack, std::current_exception());
     }
 }
 
@@ -3030,12 +3078,12 @@ future<> storage_service::restore_replica_count(inet_address endpoint, inet_addr
   });
 }
 
-future<> storage_service::excise(std::unordered_set<token> tokens, inet_address endpoint) {
+future<> storage_service::excise(std::unordered_set<token> tokens, gms::inet_address endpoint) {
     slogger.info("Removing tokens {} for {}", tokens, endpoint);
-    // FIXME: HintedHandOffManager.instance.deleteHintsForEndpoint(endpoint);
-    co_await remove_endpoint(endpoint);
     auto tmlock = std::make_optional(co_await get_token_metadata_lock());
     auto tmptr = co_await get_mutable_token_metadata_ptr();
+    // FIXME: HintedHandOffManager.instance.deleteHintsForEndpoint(endpoint);
+    co_await remove_endpoint(tmptr, endpoint);
     tmptr->remove_endpoint(endpoint);
     tmptr->remove_bootstrap_tokens(tokens);
 
@@ -3046,7 +3094,7 @@ future<> storage_service::excise(std::unordered_set<token> tokens, inet_address 
     co_await notify_left(endpoint);
 }
 
-future<> storage_service::excise(std::unordered_set<token> tokens, inet_address endpoint, int64_t expire_time) {
+future<> storage_service::excise(std::unordered_set<token> tokens, gms::inet_address endpoint, int64_t expire_time) {
     add_expire_time_if_found(endpoint, expire_time);
     return excise(tokens, endpoint);
 }

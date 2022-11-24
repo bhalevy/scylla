@@ -12,6 +12,7 @@
 #pragma once
 
 #include "gms/i_endpoint_state_change_subscriber.hh"
+#include "locator/token_metadata.hh"
 #include "service/endpoint_lifecycle_subscriber.hh"
 #include "locator/abstract_replication_strategy.hh"
 #include "inet_address_vectors.hh"
@@ -41,6 +42,7 @@
 #include <seastar/core/lowres_clock.hh>
 #include "locator/snitch_base.hh"
 #include "cdc/generation_id.hh"
+#include "raft/raft.hh"
 
 class node_ops_cmd_request;
 class node_ops_cmd_response;
@@ -556,11 +558,23 @@ private:
     handle_state_replacing_update_pending_ranges(mutable_token_metadata_ptr tmptr, inet_address replacing_node);
 
 private:
-    future<> excise(std::unordered_set<token> tokens, inet_address endpoint);
-    future<> excise(std::unordered_set<token> tokens, inet_address endpoint, long expire_time);
+    struct host_info {
+        gms::inet_address endpoint;
+        locator::host_id host_id;
+        locator::endpoint_dc_rack dc_rack;
+    };
+
+    host_info get_host_info(const locator::token_metadata& tm, gms::inet_address endpoint) const noexcept;
+
+    future<> excise(std::unordered_set<token> tokens, gms::inet_address endpoint);
+    future<> excise(std::unordered_set<token> tokens, gms::inet_address endpoint, long expire_time);
 
     /** unlike excise we just need this endpoint gone without going through any notifications **/
-    future<> remove_endpoint(inet_address endpoint);
+    future<> remove_endpoint(locator::token_metadata_ptr tmptr, gms::inet_address endpoint);
+    future<> remove_endpoint(host_info host);
+
+    future<> quarantine_host(locator::token_metadata_ptr tmptr, gms::inet_address endpoint);
+    future<> quarantine_host(host_info host);
 
     void add_expire_time_if_found(inet_address endpoint, int64_t expire_time);
 
