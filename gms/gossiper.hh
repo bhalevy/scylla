@@ -40,6 +40,7 @@
 #include <seastar/core/abort_source.hh>
 #include <seastar/core/scheduling.hh>
 #include "locator/token_metadata.hh"
+#include "locator/types.hh"
 
 namespace db {
 class config;
@@ -242,6 +243,7 @@ private:
 
     std::unordered_map<inet_address, clk::time_point> _shadow_unreachable_endpoints;
     utils::chunked_vector<inet_address> _shadow_live_endpoints;
+    locator::hosts_map _quarantined_hosts;
 
     void run();
     // Replicates given endpoint_state to all other shards.
@@ -299,6 +301,9 @@ public:
      */
     int get_max_endpoint_state_version(endpoint_state state) const noexcept;
 
+    const locator::hosts_map& get_quarantined_hosts() const noexcept {
+        return _quarantined_hosts;
+    }
 
 private:
     /**
@@ -543,6 +548,12 @@ public:
      * Intentionally overenginered to avoid very rare string copies.
      */
     future<> add_local_application_state(std::initializer_list<std::pair<application_state, utils::in<versioned_value>>>);
+
+    /**
+     * Incorporate quarantined_hosts state from all other nodes
+     * into the local state.
+     */
+    future<> update_quarantined_hosts();
 
     future<> start();
     future<> shutdown();

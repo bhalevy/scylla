@@ -117,4 +117,42 @@ std::optional<cdc::generation_id> versioned_value::cdc_generation_id_from_string
     }
 }
 
+sstring versioned_value::make_host_infos_string(const locator::hosts_map& host_infos) {
+    std::ostringstream os;
+    const char* delim = "";
+    for (const auto& [host_id, info] : host_infos) {
+        os << delim << host_id << ',' << info.endpoint << ',' << info.dc_rack.dc << ',' << info.dc_rack.rack;
+        delim = ";";
+    }
+    return std::move(os).str();
+}
+
+locator::hosts_map versioned_value::host_infos_from_string(const sstring& value_str) {
+    if (value_str.empty()) {
+        return {}; // boost::split produces one element for empty string
+    }
+    std::vector<sstring> values;
+    boost::split(values, value_str, boost::is_any_of(";"));
+    locator::hosts_map ret;
+    for (const auto& v : values) {
+        if (v.empty()) {
+            continue;
+        }
+        std::vector<sstring> fields;
+        boost::split(fields, v, boost::is_any_of(","));
+        if (fields.size() < 2) {
+            throw std::runtime_error(format("Invalid value of quarantined_host string: '{}': Should be 'host_id,endpoint,dc,rack[;...]'", value_str));
+        }
+        auto host_id = locator::host_id(utils::UUID(fields[0]));
+        locator::host_info info;
+        info.endpoint = gms::inet_address(fields[1]);
+        if (fields.size() >= 4) {
+            info.dc_rack.dc = std::move(fields[2]);
+            info.dc_rack.rack = std::move(fields[3]);
+        }
+        ret.emplace(host_id, std::move(info));
+    }
+    return ret;
+}
+
 }
