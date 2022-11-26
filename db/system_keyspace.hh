@@ -251,6 +251,9 @@ public:
 
     future<> remove_endpoint(gms::inet_address ep);
 
+    future<> store_quarantined_hosts(std::unordered_set<locator::host_id> host_ids);
+    future<std::unordered_set<locator::host_id>> load_quarantined_hosts();
+
     static future<> set_scylla_local_param(const sstring& key, const sstring& value);
     static future<std::optional<sstring>> get_scylla_local_param(const sstring& key);
 

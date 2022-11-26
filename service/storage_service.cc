@@ -275,6 +275,57 @@ future<> storage_service::wait_for_ring_to_settle(std::chrono::milliseconds dela
     slogger.info("Checking bootstrapping/leaving nodes: ok");
 }
 
+future<> storage_service::update_quarantined_hosts() {
+    auto ep_states = _gossiper.get_endpoint_states();
+
+    std::unordered_set<locator::host_id> added_host_ids;
+    for (const auto& [ep, eps] : ep_states) {
+        auto asp = eps.get_application_state_ptr(gms::application_state::QUARANTINED_HOSTS);
+        if (asp) {
+            auto hosts_ids = versioned_value::host_ids_from_string(asp->value);
+            slogger.trace("update_quarantined_hosts: {} -> {}", ep, asp->value);
+            for (const auto& host_id : hosts_ids) {
+                if (!host_id) {
+                    on_internal_error(slogger, "Null quarantined host");
+                }
+                auto [_, inserted] = _quarantined_hosts.insert(host_id);
+                if (inserted) {
+                    slogger.info("Quarantined host {}", host_id);
+                    added_host_ids.insert(host_id);
+                }
+            }
+        }
+    }
+    if (!added_host_ids.empty()) {
+        co_await _sys_ks.local().store_quarantined_hosts(std::move(added_host_ids));
+        co_await _gossiper.add_local_application_state(gms::application_state::QUARANTINED_HOSTS, versioned_value::host_ids(_quarantined_hosts));
+    }
+}
+
+future<> storage_service::add_quarantined_hosts(const std::unordered_set<locator::host_id>& host_ids, bool add_local_application_state) {
+    slogger.debug("add_quarantined_hosts: {}", host_ids);
+    std::unordered_set<locator::host_id> added_host_ids;
+    for (const auto& host_id : host_ids) {
+        if (!host_id) {
+            on_internal_error(slogger, "Null quarantine host_id");
+        }
+        auto [_, inserted] = _quarantined_hosts.insert(host_id);
+        if (inserted) {
+            slogger.info("Quarantined host {}", host_id);
+            added_host_ids.insert(host_id);
+        }
+    }
+
+    if (added_host_ids.empty()) {
+        co_return;
+    }
+
+    co_await _sys_ks.local().store_quarantined_hosts(std::move(added_host_ids));
+    if (add_local_application_state) {
+        co_await _gossiper.add_local_application_state(gms::application_state::QUARANTINED_HOSTS, versioned_value::host_ids(_quarantined_hosts));
+    }
+}
+
 future<> storage_service::join_token_ring(cdc::generation_service& cdc_gen_service,
         sharded<db::system_distributed_keyspace>& sys_dist_ks,
         sharded<service::storage_proxy>& proxy,
@@ -336,6 +387,7 @@ future<> storage_service::join_token_ring(cdc::generation_service& cdc_gen_servi
         auto local_features = _feature_service.supported_feature_set();
         slogger.info("Checking remote features with gossip, initial_contact_nodes={}", initial_contact_nodes);
         co_await _gossiper.do_shadow_round(initial_contact_nodes);
+        co_await update_quarantined_hosts();
         _gossiper.check_knows_remote_features(local_features, loaded_peer_features);
         _gossiper.check_snitch_name_matches(_snitch.local()->get_name());
         // Check if the node is already removed from the cluster
@@ -434,6 +486,13 @@ future<> storage_service::join_token_ring(cdc::generation_service& cdc_gen_servi
         app_states.emplace(s.first, std::move(s.second));
     }
 
+    _quarantined_hosts = co_await _sys_ks.local().load_quarantined_hosts();
+    if (!_quarantined_hosts.empty()) {
+        auto v = versioned_value::host_ids(_quarantined_hosts);
+        slogger.debug("Adding application_state: QUARANTINED_HOSTS={}", v);
+        app_states.emplace(gms::application_state::QUARANTINED_HOSTS, std::move(v));
+    }
+
     slogger.info("Starting up server gossip");
 
     auto generation_number = co_await db::system_keyspace::increment_and_get_generation();
@@ -448,6 +507,7 @@ future<> storage_service::join_token_ring(cdc::generation_service& cdc_gen_servi
     });
     _listeners.emplace_back(make_lw_shared(std::move(schema_change_announce)));
     co_await _gossiper.wait_for_gossip_to_settle();
+    // Note: any quarantined hosts would be updated via on_change calls
 
     set_mode(mode::JOINING);
 
@@ -1265,6 +1325,8 @@ future<> storage_service::on_change(inet_address endpoint, application_state sta
                 co_await notify_cql_change(endpoint, ep_state->is_cql_ready());
             } else if (state == application_state::INTERNAL_IP) {
                 co_await maybe_reconnect_to_preferred_ip(endpoint, inet_address(value.value));
+            } else if (state == application_state::QUARANTINED_HOSTS) {
+                co_await add_quarantined_hosts(versioned_value::host_ids_from_string(value.value), endpoint != get_broadcast_address());
             }
         }
     }

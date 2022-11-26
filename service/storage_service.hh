@@ -498,6 +498,7 @@ private:
     sharded<db::system_keyspace>& _sys_ks;
     locator::snitch_signal_slot_t _snitch_reconfigure;
     std::unordered_set<gms::inet_address> _replacing_nodes_pending_ranges_updater;
+    std::unordered_set<locator::host_id> _quarantined_hosts;
 private:
     /**
      * Handle node bootstrap
@@ -554,6 +555,9 @@ private:
 
     future<>
     handle_state_replacing_update_pending_ranges(mutable_token_metadata_ptr tmptr, inet_address replacing_node);
+
+    future<> update_quarantined_hosts();
+    future<> add_quarantined_hosts(const std::unordered_set<locator::host_id>& host_ids, bool add_local_application_state);
 
 private:
     future<> excise(std::unordered_set<token> tokens, inet_address endpoint);

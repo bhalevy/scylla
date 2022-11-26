@@ -1888,7 +1888,8 @@ future<> gossiper::do_shadow_round(std::unordered_set<gms::inet_address> nodes) 
             gms::application_state::DC,
             gms::application_state::RACK,
             gms::application_state::SUPPORTED_FEATURES,
-            gms::application_state::SNITCH_NAME}};
+            gms::application_state::SNITCH_NAME,
+            gms::application_state::QUARANTINED_HOSTS}};
         logger.info("Gossip shadow round started with nodes={}", nodes);
         std::unordered_set<gms::inet_address> nodes_talked;
         size_t nodes_down = 0;
@@ -2016,7 +2017,6 @@ future<> gossiper::add_local_application_state(std::initializer_list<std::pair<a
         return out_pair_type(p.first, p.second.move());
     })));
 }
-
 
 // Depends on:
 // - before_change callbacks

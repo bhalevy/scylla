@@ -12,7 +12,7 @@
 
 #include <seastar/core/sstring.hh>
 #include "utils/serialization.hh"
-#include "locator/host_id.hh"
+#include "locator/types.hh"
 #include "version_generator.hh"
 #include "gms/inet_address.hh"
 #include "dht/i_partitioner.hh"
@@ -235,6 +235,14 @@ public:
     static versioned_value cql_ready(bool value) {
         return versioned_value(to_sstring(int(value)));
     };
+
+    static sstring make_host_ids_string(const std::unordered_set<locator::host_id>& host_ids);
+
+    static versioned_value host_ids(const std::unordered_set<locator::host_id>& host_ids) {
+        return versioned_value(make_host_ids_string(host_ids));
+    }
+
+    static std::unordered_set<locator::host_id> host_ids_from_string(const sstring&);
 }; // class versioned_value
 
 } // namespace gms

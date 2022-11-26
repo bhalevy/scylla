@@ -1684,6 +1684,30 @@ future<> system_keyspace::remove_endpoint(gms::inet_address ep) {
     co_await force_blocking_flush(PEERS);
 }
 
+future<> system_keyspace::store_quarantined_hosts(std::unordered_set<locator::host_id> host_ids) {
+    static sstring req = format("INSERT into {}.{} (key, host_id) VALUES ('{}', ?) USING TTL 2592000", NAME, QUARANTINED_HOSTS, QUARANTINED_HOSTS);
+    for (const locator::host_id& host_id : host_ids) {
+        if (!host_id) {
+            on_internal_error(slogger, "Cannot quarantine null host_id");
+        }
+        slogger.debug("INSERT into {}.{} (key, host_id) VALUES ('{}', {}) USING TTL 2592000", NAME, QUARANTINED_HOSTS, QUARANTINED_HOSTS, host_id);
+        co_await execute_cql(req, host_id.uuid()).discard_result();
+    }
+    co_await force_blocking_flush(QUARANTINED_HOSTS);
+}
+
+future<std::unordered_set<locator::host_id>> system_keyspace::load_quarantined_hosts() {
+    std::unordered_set<locator::host_id> ret;
+    static sstring req = format("SELECT * FROM {}.{} WHERE key = '{}'", NAME, QUARANTINED_HOSTS, QUARANTINED_HOSTS);
+    auto cql_result = co_await execute_cql(req);
+    ret.reserve(cql_result->size());
+    for (const auto& row : *cql_result) {
+        ret.insert(locator::host_id(row.get_as<utils::UUID>("host_id")));
+    }
+    slogger.debug("Loaded quarantined hosts: {}", ret);
+    co_return ret;
+}
+
 future<> system_keyspace::update_tokens(const std::unordered_set<dht::token>& tokens) {
     if (tokens.empty()) {
         return make_exception_future<>(std::invalid_argument("remove_endpoint should be used instead"));

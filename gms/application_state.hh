@@ -43,6 +43,9 @@ enum class application_state {
     // unique: any new node gets a new RAFT ID, while may keep
     // its existing HOST ID, e.g. if it's replacing an existing node.
     RAFT_SERVER_ID,
+    // Hosts that were removed or replaced
+    // and are disallowed to rejoin the ring
+    QUARANTINED_HOSTS,
 };
 
 std::ostream& operator<<(std::ostream& os, const application_state& m);
