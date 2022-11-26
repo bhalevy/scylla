@@ -39,6 +39,7 @@ static const std::map<application_state, sstring> application_state_names = {
     {application_state::IGNORE_MSB_BITS,        "IGNOR_MSB_BITS"},
     {application_state::CDC_GENERATION_ID,      "CDC_STREAMS_TIMESTAMP"}, /* not named "CDC_GENERATION_ID" for backward compatibility */
     {application_state::SNITCH_NAME,            "SNITCH_NAME"},
+    {application_state::QUARANTINED_HOSTS,      "QUARANTINED_HOSTS"},
 };
 
 std::ostream& operator<<(std::ostream& os, const application_state& m) {

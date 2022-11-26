@@ -117,4 +117,30 @@ std::optional<cdc::generation_id> versioned_value::cdc_generation_id_from_string
     }
 }
 
+sstring versioned_value::make_quarantined_hosts_string(const std::unordered_map<locator::host_id, db_clock::time_point>& hosts) {
+    return ::join(";", hosts | boost::adaptors::transformed([] (const auto& x) {
+        assert(x.first);
+        return format("{},{}", x.first, x.second.time_since_epoch().count());
+    }));
+}
+
+std::unordered_map<locator::host_id, db_clock::time_point> versioned_value::quarantined_hosts_from_string(const sstring& value_str) {
+    if (value_str.empty()) {
+        return {}; // boost::split produces one element for empty string
+    }
+    std::vector<sstring> values;
+    boost::split(values, value_str, boost::is_any_of(";"));
+    std::unordered_map<locator::host_id, db_clock::time_point> ret;
+    ret.reserve(values.size());
+    for (const auto& v : values) {
+        std::vector<sstring> fields;
+        boost::split(fields, v, boost::is_any_of(","));
+        assert(fields.size() >= 2);
+        auto host_id = locator::host_id(utils::UUID(fields[0]));
+        auto quarantined_at = db_clock::time_point(db_clock::duration(std::strtoll(fields[1].c_str(), nullptr, 10)));
+        ret.emplace(host_id, quarantined_at);
+    }
+    return ret;
+}
+
 }

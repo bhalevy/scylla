@@ -12,7 +12,7 @@
 
 #include <seastar/core/sstring.hh>
 #include "utils/serialization.hh"
-#include "locator/host_id.hh"
+#include "locator/types.hh"
 #include "version_generator.hh"
 #include "gms/inet_address.hh"
 #include "dht/i_partitioner.hh"
@@ -235,6 +235,14 @@ public:
     static versioned_value cql_ready(bool value) {
         return versioned_value(to_sstring(int(value)));
     };
+
+    static sstring make_quarantined_hosts_string(const std::unordered_map<locator::host_id, db_clock::time_point>& hosts);
+
+    static versioned_value quarantined_hosts(const std::unordered_map<locator::host_id, db_clock::time_point>& hosts) {
+        return versioned_value(make_quarantined_hosts_string(hosts));
+    }
+
+    static std::unordered_map<locator::host_id, db_clock::time_point> quarantined_hosts_from_string(const sstring&);
 }; // class versioned_value
 
 } // namespace gms
