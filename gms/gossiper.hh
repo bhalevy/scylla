@@ -40,6 +40,7 @@
 #include <seastar/core/abort_source.hh>
 #include <seastar/core/scheduling.hh>
 #include "locator/token_metadata.hh"
+#include "locator/types.hh"
 
 namespace db {
 class config;
@@ -280,7 +281,6 @@ public:
      * @return
      */
     int get_max_endpoint_state_version(endpoint_state state) const noexcept;
-
 
 private:
     /**
