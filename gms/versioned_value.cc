@@ -117,4 +117,31 @@ std::optional<cdc::generation_id> versioned_value::cdc_generation_id_from_string
     }
 }
 
+sstring versioned_value::make_host_ids_string(const std::unordered_set<locator::host_id>& host_ids) {
+    std::ostringstream os;
+    const char* delim = "";
+    for (const auto& host_id : host_ids) {
+        os << delim << host_id;
+        delim = ",";
+    }
+    return std::move(os).str();
+}
+
+std::unordered_set<locator::host_id> versioned_value::host_ids_from_string(const sstring& value_str) {
+    if (value_str.empty()) {
+        return {}; // boost::split produces one element for empty string
+    }
+    std::vector<sstring> values;
+    boost::split(values, value_str, boost::is_any_of(","));
+    std::unordered_set<locator::host_id> ret;
+    ret.reserve(values.size());
+    for (const auto& v : values) {
+        if (v.empty()) {
+            continue;
+        }
+        ret.insert(locator::host_id(utils::UUID(v)));
+    }
+    return ret;
+}
+
 }

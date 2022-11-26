@@ -336,6 +336,7 @@ future<> storage_service::join_token_ring(cdc::generation_service& cdc_gen_servi
         auto local_features = _feature_service.supported_feature_set();
         slogger.info("Checking remote features with gossip, initial_contact_nodes={}", initial_contact_nodes);
         co_await _gossiper.do_shadow_round(initial_contact_nodes);
+        co_await _gossiper.update_quarantined_hosts();
         _gossiper.check_knows_remote_features(local_features, loaded_peer_features);
         _gossiper.check_snitch_name_matches(_snitch.local()->get_name());
         // Check if the node is already removed from the cluster
@@ -434,6 +435,13 @@ future<> storage_service::join_token_ring(cdc::generation_service& cdc_gen_servi
         app_states.emplace(s.first, std::move(s.second));
     }
 
+    auto quarantined_hosts = co_await _sys_ks.local().load_quarantined_hosts();
+    if (!quarantined_hosts.empty()) {
+        auto v = versioned_value::host_ids(quarantined_hosts);
+        slogger.debug("Adding application_state: QUARANTINED_HOSTS={}", v);
+        app_states.emplace(gms::application_state::QUARANTINED_HOSTS, std::move(v));
+    }
+
     slogger.info("Starting up server gossip");
 
     auto generation_number = co_await db::system_keyspace::increment_and_get_generation();
@@ -448,6 +456,7 @@ future<> storage_service::join_token_ring(cdc::generation_service& cdc_gen_servi
     });
     _listeners.emplace_back(make_lw_shared(std::move(schema_change_announce)));
     co_await _gossiper.wait_for_gossip_to_settle();
+    co_await _gossiper.update_quarantined_hosts();
 
     set_mode(mode::JOINING);
 
@@ -1243,6 +1252,8 @@ future<> storage_service::on_change(inet_address endpoint, application_state sta
                 co_await notify_cql_change(endpoint, ep_state->is_cql_ready());
             } else if (state == application_state::INTERNAL_IP) {
                 co_await maybe_reconnect_to_preferred_ip(endpoint, inet_address(value.value));
+            } else if (state == application_state::QUARANTINED_HOSTS) {
+                co_await _gossiper.update_quarantined_hosts();
             }
         }
     }

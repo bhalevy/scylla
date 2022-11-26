@@ -1888,7 +1888,8 @@ future<> gossiper::do_shadow_round(std::unordered_set<gms::inet_address> nodes) 
             gms::application_state::DC,
             gms::application_state::RACK,
             gms::application_state::SUPPORTED_FEATURES,
-            gms::application_state::SNITCH_NAME}};
+            gms::application_state::SNITCH_NAME,
+            gms::application_state::QUARANTINED_HOSTS}};
         logger.info("Gossip shadow round started with nodes={}", nodes);
         std::unordered_set<gms::inet_address> nodes_talked;
         size_t nodes_down = 0;
@@ -2017,6 +2018,31 @@ future<> gossiper::add_local_application_state(std::initializer_list<std::pair<a
     })));
 }
 
+future<> gossiper::update_quarantined_hosts() {
+    bool changed = false;
+    for (const auto& [ep, eps] : _endpoint_state_map) {
+        auto asp = eps.get_application_state_ptr(gms::application_state::QUARANTINED_HOSTS);
+        if (asp) {
+            auto hosts_ids = versioned_value::host_ids_from_string(asp->value);
+            logger.debug("update_quarantined_hosts: {} -> {}", ep, asp->value);
+            for (const auto& host_id : hosts_ids) {
+                if (!host_id) {
+                    on_internal_error(logger, "Null quarantine host");
+                }
+                auto [_, inserted] = _quarantined_hosts.insert(host_id);
+                if (inserted) {
+                    changed = true;
+                    logger.debug("update_quarantined_hosts: {}", host_id);
+                    co_await _sys_ks.local().quarantine_host(host_id);
+                }
+            }
+        }
+    }
+    if (changed) {
+        auto& local_state = get_endpoint_state(get_broadcast_address());
+        local_state.add_application_state(gms::application_state::QUARANTINED_HOSTS, versioned_value::host_ids(_quarantined_hosts));
+    }
+}
 
 // Depends on:
 // - before_change callbacks
