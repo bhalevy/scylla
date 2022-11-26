@@ -500,6 +500,7 @@ private:
     sharded<db::system_keyspace>& _sys_ks;
     locator::snitch_signal_slot_t _snitch_reconfigure;
     std::unordered_set<gms::inet_address> _replacing_nodes_pending_ranges_updater;
+    std::unordered_map<locator::host_id, db_clock::time_point> _quarantined_hosts;
 private:
     /**
      * Handle node bootstrap
@@ -556,6 +557,20 @@ private:
 
     future<>
     handle_state_replacing_update_pending_ranges(mutable_token_metadata_ptr tmptr, inet_address replacing_node);
+
+    /**
+     * Update the _quarantined_hosts member from gossip application state of all nodes in NORMAL status.
+     * Newly discovered quarantined hosts are stored in system.quarantined_hosts and
+     * in the local gossip application state.
+     */
+    future<> update_quarantined_hosts_from_gossip();
+
+    /**
+     * Merge hosts into the _quarantined_hosts member.
+     * Newly quarantined hosts are stored in system.quarantined_hosts and
+     * in the local gossip application state, if the respective flag is set.
+     */
+    future<> update_quarantined_hosts(std::unordered_map<locator::host_id, db_clock::time_point> hosts, bool add_local_app_state);
 
 private:
     future<> excise(std::unordered_set<token> tokens, inet_address endpoint);

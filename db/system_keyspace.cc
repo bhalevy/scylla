@@ -1693,6 +1693,41 @@ future<> system_keyspace::remove_endpoint(gms::inet_address ep) {
     co_await force_blocking_flush(PEERS);
 }
 
+future<> system_keyspace::store_quarantined_hosts(const std::unordered_map<locator::host_id, db_clock::time_point>& hosts) {
+    static sstring req = format("INSERT into {}.{} (key, host_id, quarantined_at) VALUES ('{}', ?, ?) USING TTL ?", NAME, QUARANTINED_HOSTS, QUARANTINED_HOSTS);
+    for (auto& [host_id, quarantined_at] : hosts) {
+        if (!host_id || quarantined_at == db_clock::time_point()) {
+            on_internal_error(slogger, format("Cannot quarantine host wit invalid host_id={} quarantined_at={}", host_id, quarantined_at));
+        }
+        // Calculate a ttl of 30 days since `quarantined_at`
+        auto delta = db_clock::now() - quarantined_at;
+        int64_t ttl = 2592000 - std::chrono::duration_cast<std::chrono::seconds>(delta).count();
+        if (ttl <= 0) {
+            slogger.debug("30 days TTL for host {} quarantined_at {} has already passed, not storing in {}.{}",
+                    host_id, quarantined_at, NAME, QUARANTINED_HOSTS);
+            continue;
+        }
+        slogger.debug("INSERT into {}.{} (key, host_id, quarantined_at) VALUES ('{}', {}, {}) USING TTL {}", NAME, QUARANTINED_HOSTS, QUARANTINED_HOSTS,
+                host_id, quarantined_at.time_since_epoch().count(), ttl);
+        co_await execute_cql(req, host_id.uuid(), quarantined_at, ttl).discard_result();
+    }
+    co_await force_blocking_flush(QUARANTINED_HOSTS);
+}
+
+future<std::unordered_map<locator::host_id, db_clock::time_point>> system_keyspace::load_quarantined_hosts() {
+    std::unordered_map<locator::host_id, db_clock::time_point> ret;
+    static sstring req = format("SELECT * FROM {}.{} WHERE key = '{}'", NAME, QUARANTINED_HOSTS, QUARANTINED_HOSTS);
+    auto cql_result = co_await execute_cql(req);
+    ret.reserve(cql_result->size());
+    for (const auto& row : *cql_result) {
+        auto host_id = locator::host_id(row.get_as<utils::UUID>("host_id"));
+        auto quarantined_at = row.get_as<db_clock::time_point>("quarantined_at");
+        ret.emplace(host_id, quarantined_at);
+    }
+    slogger.debug("Loaded quarantined hosts: {}", ret);
+    co_return ret;
+}
+
 future<> system_keyspace::update_tokens(const std::unordered_set<dht::token>& tokens) {
     if (tokens.empty()) {
         return make_exception_future<>(std::invalid_argument("remove_endpoint should be used instead"));
