@@ -342,6 +342,10 @@ future<> storage_service::join_token_ring(cdc::generation_service& cdc_gen_servi
         // Check if the node is already removed from the cluster
         auto local_host_id = _db.local().get_config().host_id;
         auto my_ip = get_broadcast_address();
+        if (_gossiper.is_quarantined(local_host_id)) {
+            throw std::runtime_error(fmt::format("The node {} with host_id {} is quarantined. Can not restart the removed node to join the cluster again!",
+                    my_ip, local_host_id));
+        }
         if (!_gossiper.is_safe_for_restart(my_ip, local_host_id)) {
             throw std::runtime_error(fmt::format("The node {} with host_id {} is removed from the cluster. Can not restart the removed node to join the cluster again!",
                     my_ip, local_host_id));
@@ -464,6 +468,11 @@ future<> storage_service::join_token_ring(cdc::generation_service& cdc_gen_servi
     _listeners.emplace_back(make_lw_shared(std::move(schema_change_announce)));
     co_await _gossiper.wait_for_gossip_to_settle();
     co_await _gossiper.update_quarantined_hosts();
+
+    if (_gossiper.is_quarantined(local_host_id)) {
+        throw std::runtime_error(fmt::format("The node {} with host_id {} is quarantined. Will not join the ring",
+                get_broadcast_address(), local_host_id));
+    }
 
     set_mode(mode::JOINING);
 
