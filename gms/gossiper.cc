@@ -1114,6 +1114,10 @@ void gossiper::add_quarantined_host(locator::host_id host_id) {
     logger.debug("Added quarantined host {}", host_id);
 }
 
+bool gossiper::is_quarantined(locator::host_id host_id) const noexcept {
+    return _quarantined_hosts.contains(host_id);
+}
+
 void gossiper::make_random_gossip_digest(utils::chunked_vector<gossip_digest>& g_digests) {
     int generation = 0;
     int max_version = 0;

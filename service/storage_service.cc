@@ -921,6 +921,11 @@ future<> storage_service::handle_state_normal(inet_address endpoint) {
     // Order Matters, TM.updateHostID() should be called before TM.updateNormalToken(), (see CASSANDRA-4300).
     if (_gossiper.uses_host_id(endpoint)) {
         auto host_id = _gossiper.get_host_id(endpoint);
+        if (_gossiper.is_quarantined(host_id)) {
+            slogger.info("Host {}/{} is quarantined. Ignoring normal state", host_id, endpoint);
+            co_return;
+        }
+
         auto existing = tmptr->get_endpoint_for_host_id(host_id);
         if (existing && *existing != endpoint) {
             if (*existing == get_broadcast_address()) {
