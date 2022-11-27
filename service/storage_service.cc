@@ -331,6 +331,10 @@ future<> storage_service::update_quarantined_hosts(std::unordered_map<locator::h
     }
 }
 
+bool storage_service::is_quarantined(locator::host_id host_id) const noexcept {
+    return _quarantined_hosts.contains(host_id);
+}
+
 future<> storage_service::join_token_ring(cdc::generation_service& cdc_gen_service,
         sharded<db::system_distributed_keyspace>& sys_dist_ks,
         sharded<service::storage_proxy>& proxy,
@@ -981,6 +985,11 @@ future<> storage_service::handle_state_normal(inet_address endpoint) {
     // Order Matters, TM.updateHostID() should be called before TM.updateNormalToken(), (see CASSANDRA-4300).
     if (_gossiper.uses_host_id(endpoint)) {
         auto host_id = _gossiper.get_host_id(endpoint);
+        if (is_quarantined(host_id)) {
+            slogger.info("Host {}/{} is quarantined. Ignoring normal state", host_id, endpoint);
+            co_return;
+        }
+
         auto existing = tmptr->get_endpoint_for_host_id(host_id);
         if (existing && *existing != endpoint) {
             if (*existing == get_broadcast_address()) {
