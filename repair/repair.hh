@@ -347,6 +347,11 @@ enum class node_ops_cmd : uint32_t {
 
 std::ostream& operator<<(std::ostream& out, node_ops_cmd cmd);
 
+struct host_to_quarantine {
+    locator::host_id id;
+    gms::inet_address endpoint;
+};
+
 // The cmd and ops_uuid are mandatory for each request.
 // The ignore_nodes and leaving_node are optional.
 struct node_ops_cmd_request {
@@ -364,21 +369,24 @@ struct node_ops_cmd_request {
     std::unordered_map<gms::inet_address, std::list<dht::token>> bootstrap_nodes;
     // Optional field, list uuids of tables being repaired, set by repair cmd
     std::list<table_id> repair_tables;
+    std::list<host_to_quarantine> hosts_to_quarantine;
     node_ops_cmd_request(node_ops_cmd command,
             utils::UUID uuid,
             std::list<gms::inet_address> ignore = {},
             std::list<gms::inet_address> leaving = {},
             std::unordered_map<gms::inet_address, gms::inet_address> replace = {},
             std::unordered_map<gms::inet_address, std::list<dht::token>> bootstrap = {},
-            std::list<table_id> tables = {})
+            std::list<table_id> tables = {},
+            std::list<host_to_quarantine> hosts = {})
         : cmd(command)
         , ops_uuid(std::move(uuid))
         , ignore_nodes(std::move(ignore))
         , leaving_nodes(std::move(leaving))
         , replace_nodes(std::move(replace))
         , bootstrap_nodes(std::move(bootstrap))
-        , repair_tables(std::move(tables)) {
-    }
+        , repair_tables(std::move(tables))
+        , hosts_to_quarantine(std::move(hosts))
+    {}
 };
 
 struct node_ops_cmd_response {

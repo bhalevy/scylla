@@ -754,7 +754,7 @@ future<> storage_service::bootstrap(cdc::generation_service& cdc_gen_service, st
             auto replace_addr = get_replace_address();
             assert(replace_addr);
 
-            quarantine_host(get_token_metadata_ptr(), *replace_addr).get();
+            //quarantine_host(get_token_metadata_ptr(), *replace_addr).get();
             slogger.debug("Removing replaced endpoint {} from system.peers", *replace_addr);
             _sys_ks.local().remove_endpoint(*replace_addr).get();
 
@@ -924,17 +924,11 @@ future<> storage_service::handle_state_normal(inet_address endpoint) {
     if (tmptr->is_normal_token_owner(endpoint)) {
         slogger.info("Node {} state jump to normal", endpoint);
     }
-    std::unordered_map<gms::inet_address, host_info> hosts_to_remove;
-
-    auto add_host_to_remove = [&] (gms::inet_address node) {
-        if (!hosts_to_remove.contains(node)) {
-            hosts_to_remove.emplace(node, get_host_info(*tmptr, node));
-        }
-    };
+    std::unordered_set<inet_address> endpoints_to_remove;
 
     auto do_remove_node = [&] (gms::inet_address node) {
-        add_host_to_remove(node);
         tmptr->remove_endpoint(node);
+        endpoints_to_remove.insert(node);
     };
     // Order Matters, TM.updateHostID() should be called before TM.updateNormalToken(), (see CASSANDRA-4300).
     if (_gossiper.uses_host_id(endpoint)) {
@@ -1025,13 +1019,13 @@ future<> storage_service::handle_state_normal(inet_address endpoint) {
 
     for (const auto& ep : candidates_for_removal) {
         slogger.info("handle_state_normal: endpoints_to_remove endpoint={}", ep);
-        add_host_to_remove(ep);
+        endpoints_to_remove.insert(ep);
     }
 
     bool is_normal_token_owner = tmptr->is_normal_token_owner(endpoint);
     bool do_notify_joined = false;
 
-    if (hosts_to_remove.contains(endpoint)) [[unlikely]] {
+    if (endpoints_to_remove.contains(endpoint)) [[unlikely]] {
         if (!owned_tokens.empty()) {
             on_fatal_internal_error(slogger, format("endpoint={} is marked for removal but still owns {} tokens", endpoint, owned_tokens.size()));
         }
@@ -1056,12 +1050,12 @@ future<> storage_service::handle_state_normal(inet_address endpoint) {
     co_await replicate_to_all_cores(std::move(tmptr));
     tmlock.reset();
 
-    for (const auto& [ep, host] : hosts_to_remove) {
-        co_await remove_endpoint(host);
+    for (auto ep : endpoints_to_remove) {
+        co_await remove_endpoint(ep);
     }
 
-    slogger.debug("handle_state_normal: endpoint={} is_normal_token_owner={} endpoint_to_remove={} owned_tokens={}", endpoint, is_normal_token_owner, hosts_to_remove.contains(endpoint), owned_tokens);
-    if (!owned_tokens.empty() && !hosts_to_remove.contains(endpoint)) {
+    slogger.debug("handle_state_normal: endpoint={} is_normal_token_owner={} endpoint_to_remove={} owned_tokens={}", endpoint, is_normal_token_owner, endpoints_to_remove.contains(endpoint), owned_tokens);
+    if (!owned_tokens.empty() && !endpoints_to_remove.contains(endpoint)) {
         co_await update_peer_info(endpoint);
         try {
             co_await _sys_ks.local().update_tokens(endpoint, owned_tokens);
@@ -1216,7 +1210,7 @@ future<> storage_service::handle_state_removing(inet_address endpoint, std::vect
         if (sstring(gms::versioned_value::REMOVED_TOKEN) == pieces[0]) {
             add_expire_time_if_found(endpoint, extract_expire_time(pieces));
         }
-        co_await remove_endpoint(std::move(pre_remove_tmptr), endpoint);
+        co_await remove_endpoint(endpoint);
     }
 }
 
@@ -1700,6 +1694,7 @@ future<> storage_service::check_for_endpoint_collision(std::unordered_set<gms::i
     });
 }
 
+#if 0
 storage_service::host_info storage_service::get_host_info(const locator::token_metadata& tm, gms::inet_address endpoint) const noexcept {
     auto host = host_info{ .info = { .endpoint = endpoint } };
     try {
@@ -1713,7 +1708,18 @@ storage_service::host_info storage_service::get_host_info(const locator::token_m
     }
     return host;
 }
+#endif
 
+future<> storage_service::remove_endpoint(inet_address endpoint) {
+    co_await _gossiper.remove_endpoint(endpoint);
+    try {
+        co_await _sys_ks.local().remove_endpoint(endpoint);
+    } catch (...) {
+        slogger.error("fail to remove endpoint={}: {}", endpoint, std::current_exception());
+    }
+}
+
+#if 0
 future<> storage_service::remove_endpoint(locator::token_metadata_ptr tmptr, gms::inet_address endpoint) {
     return remove_endpoint(get_host_info(*tmptr, endpoint));
 }
@@ -1729,27 +1735,29 @@ future<> storage_service::remove_endpoint(host_info host) {
 future<> storage_service::quarantine_host(locator::token_metadata_ptr tmptr, gms::inet_address endpoint) {
     return quarantine_host(get_host_info(*tmptr, endpoint));
 }
+#endif
 
-future<> storage_service::quarantine_host(host_info host) {
-    if (!host.id) {
+future<> storage_service::quarantine_host(locator::host_id host_id, gms::inet_address endpoint) {
+    locator::host_info host_info = { .endpoint = endpoint };
+    if (!host_id) {
         slogger.warn("Not adding host {}/{} location={}/{} to quarantined_hosts: host_id is unavailable",
-                host.id, host.info.endpoint, host.info.dc_rack.dc, host.info.dc_rack.rack);
+                host_id, host_info.endpoint, host_info.dc_rack.dc, host_info.dc_rack.rack);
         co_return;
     }
     if (!_feature_service.quarantined_hosts) {
         // No topology changes are expected during upgrade.
         slogger.warn("Not adding host {}/{} location={}/{} to quarantined_hosts: feature is disabled",
-                host.id, host.info.endpoint, host.info.dc_rack.dc, host.info.dc_rack.rack);
+                host_id, host_info.endpoint, host_info.dc_rack.dc, host_info.dc_rack.rack);
         co_return;
     }
-    _gossiper.add_quarantined_host(host.id, host.info);
+    _gossiper.add_quarantined_host(host_id, host_info);
     try {
-        co_await _sys_ks.local().quarantine_host(host.id, host.info);
+        co_await _sys_ks.local().quarantine_host(host_id, host_info);
         slogger.info("Quarantined host {}/{} location={}/{}",
-                host.id, host.info.endpoint, host.info.dc_rack.dc, host.info.dc_rack.rack);
+                host_id, host_info.endpoint, host_info.dc_rack.dc, host_info.dc_rack.rack);
     } catch (...) {
         slogger.warn("Failed to quarantine host {}/{} location={}/{}: {}",
-                host.id, host.info.endpoint, host.info.dc_rack.dc, host.info.dc_rack.rack,
+                host_id, host_info.endpoint, host_info.dc_rack.dc, host_info.dc_rack.rack,
                 std::current_exception());
     }
 }
@@ -2162,6 +2170,9 @@ future<> storage_service::decommission() {
 
                 // Step 6: Finish
                 req.cmd = node_ops_cmd::decommission_done;
+                if (ss._feature_service.quarantined_hosts) {
+                    req.hosts_to_quarantine.emplace_back(host_to_quarantine{ss._db.local().get_config().host_id, endpoint});
+                }
                 parallel_for_each(nodes, [&ss, &req, uuid] (const gms::inet_address& node) {
                     return ss._messaging.local().send_node_ops_cmd(netw::msg_addr(node), req).then([uuid, node] (node_ops_cmd_response resp) {
                         slogger.debug("decommission[{}]: Got done response from node={}", uuid, node);
@@ -2339,12 +2350,18 @@ void storage_service::run_replace_ops(std::unordered_set<token>& bootstrap_token
     std::list<gms::inet_address> ignore_nodes = get_ignore_dead_nodes_for_replace(*tmptr);
     // Step 1: Decide who needs to sync data for replace operation
     std::list<gms::inet_address> sync_nodes;
+    locator::host_id local_host_id = _db.local().get_config().host_id;
+    locator::host_id replace_host_id;
     for (const auto& x :_gossiper.get_endpoint_states()) {
         seastar::thread::maybe_yield();
         const auto& node = x.first;
         slogger.debug("replace[{}]: Check node={}, status={}", uuid, node, _gossiper.get_gossip_status(node));
-        if (node != get_broadcast_address() &&
-                node != replace_address &&
+        if (node == replace_address) {
+            auto* host_id_ptr = x.second.get_application_state_ptr(application_state::HOST_ID);
+            if (host_id_ptr) {
+                replace_host_id = locator::host_id(utils::UUID(host_id_ptr->value));
+            }
+        } else if (node != get_broadcast_address() &&
                 _gossiper.is_normal_ring_member(node) &&
                 std::find(ignore_nodes.begin(), ignore_nodes.end(), x.first) == ignore_nodes.end()) {
             sync_nodes.push_back(node);
@@ -2430,6 +2447,10 @@ void storage_service::run_replace_ops(std::unordered_set<token>& bootstrap_token
 
         // Step 8: Finish
         req.cmd = node_ops_cmd::replace_done;
+        if (_feature_service.quarantined_hosts && local_host_id && replace_host_id && local_host_id != replace_host_id) {
+            req.hosts_to_quarantine.emplace_back(host_to_quarantine{replace_host_id, replace_address});
+            quarantine_host(replace_host_id, replace_address).get();
+        }
         parallel_for_each(sync_nodes, [this, &req, &nodes_aborted, uuid] (const gms::inet_address& node) {
             return _messaging.local().send_node_ops_cmd(netw::msg_addr(node), req).then([&nodes_aborted, uuid, node] (node_ops_cmd_response resp) {
                 nodes_aborted.emplace(node);
@@ -2557,6 +2578,9 @@ future<> storage_service::removenode(locator::host_id host_id, std::list<locator
 
                 // Step 6: Finish
                 req.cmd = node_ops_cmd::removenode_done;
+                if (ss._feature_service.quarantined_hosts) {
+                    req.hosts_to_quarantine.emplace_back(host_to_quarantine{host_id, endpoint});
+                }
                 parallel_for_each(nodes, [&ss, &req, uuid] (const gms::inet_address& node) {
                     return ss._messaging.local().send_node_ops_cmd(netw::msg_addr(node), req).then([uuid, node] (node_ops_cmd_response resp) {
                         slogger.debug("removenode[{}]: Got done response from node={}", uuid, node);
@@ -2676,6 +2700,9 @@ future<node_ops_cmd_response> storage_service::node_ops_cmd_handler(gms::inet_ad
             slogger.debug("removenode[{}]: Updated heartbeat from coordinator={}", req.ops_uuid,  coordinator);
             node_ops_update_heartbeat(ops_uuid).get();
         } else if (req.cmd == node_ops_cmd::removenode_done) {
+            for (auto& h : req.hosts_to_quarantine) {
+                quarantine_host(h.id, h.endpoint).get();
+            }
             slogger.info("removenode[{}]: Marked ops done from coordinator={}", req.ops_uuid, coordinator);
             node_ops_done(ops_uuid).get();
         } else if (req.cmd == node_ops_cmd::removenode_sync_data) {
@@ -2788,6 +2815,9 @@ future<node_ops_cmd_response> storage_service::node_ops_cmd_handler(gms::inet_ad
             slogger.debug("replace[{}]: Updated heartbeat from coordinator={}", req.ops_uuid, coordinator);
             node_ops_update_heartbeat(ops_uuid).get();
         } else if (req.cmd == node_ops_cmd::replace_done) {
+            for (auto& h : req.hosts_to_quarantine) {
+                quarantine_host(h.id, h.endpoint).get();
+            }
             slogger.info("replace[{}]: Marked ops done from coordinator={}", req.ops_uuid, coordinator);
             node_ops_done(ops_uuid).get();
         } else if (req.cmd == node_ops_cmd::replace_abort) {
@@ -3137,7 +3167,7 @@ future<> storage_service::excise(std::unordered_set<token> tokens, gms::inet_add
     auto tmlock = std::make_optional(co_await get_token_metadata_lock());
     auto tmptr = co_await get_mutable_token_metadata_ptr();
     // FIXME: HintedHandOffManager.instance.deleteHintsForEndpoint(endpoint);
-    co_await remove_endpoint(tmptr, endpoint);
+    co_await remove_endpoint(endpoint);
     tmptr->remove_endpoint(endpoint);
     tmptr->remove_bootstrap_tokens(tokens);
 

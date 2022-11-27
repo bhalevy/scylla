@@ -558,22 +558,20 @@ private:
     handle_state_replacing_update_pending_ranges(mutable_token_metadata_ptr tmptr, inet_address replacing_node);
 
 private:
-    struct host_info {
-        locator::host_id id;
-        locator::host_info info;
-    };
-
-    host_info get_host_info(const locator::token_metadata& tm, gms::inet_address endpoint) const noexcept;
+    //host_info get_host_info(const locator::token_metadata& tm, gms::inet_address endpoint) const noexcept;
 
     future<> excise(std::unordered_set<token> tokens, gms::inet_address endpoint);
     future<> excise(std::unordered_set<token> tokens, gms::inet_address endpoint, long expire_time);
 
     /** unlike excise we just need this endpoint gone without going through any notifications **/
+    future<> remove_endpoint(gms::inet_address endpoint);
+#if 0
     future<> remove_endpoint(locator::token_metadata_ptr tmptr, gms::inet_address endpoint);
     future<> remove_endpoint(host_info host);
+#endif
 
-    future<> quarantine_host(locator::token_metadata_ptr tmptr, gms::inet_address endpoint);
-    future<> quarantine_host(host_info host);
+    //future<> quarantine_host(locator::token_metadata_ptr tmptr, gms::inet_address endpoint);
+    future<> quarantine_host(locator::host_id host_id, gms::inet_address endpoint);
 
     void add_expire_time_if_found(inet_address endpoint, int64_t expire_time);
 

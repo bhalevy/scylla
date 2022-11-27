@@ -95,6 +95,11 @@ enum class node_ops_cmd : uint32_t {
      repair_updater,
 };
 
+struct host_to_quarantine {
+    locator::host_id id;
+    gms::inet_address endpoint;
+};
+
 struct node_ops_cmd_request {
     // Mandatory field, set by all cmds
     node_ops_cmd cmd;
@@ -110,6 +115,8 @@ struct node_ops_cmd_request {
     std::unordered_map<gms::inet_address, std::list<dht::token>> bootstrap_nodes;
     // Optional field, list uuids of tables being repaired, set by repair cmd
     std::list<table_id> repair_tables;
+    // Optional field, list of hosts to quarantine when done
+    std::list<host_to_quarantine> hosts_to_quarantine;
 };
 
 struct node_ops_cmd_response {
