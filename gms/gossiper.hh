@@ -307,6 +307,8 @@ public:
 
     void add_quarantined_host(locator::host_id host_id, const locator::host_info& info);
 
+    bool is_quarantined(locator::host_id host_id) const noexcept;
+
 private:
     /**
      * Removes the endpoint from gossip completely
