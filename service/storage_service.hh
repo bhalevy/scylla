@@ -570,6 +570,8 @@ private:
      */
     future<> update_quarantined_hosts(std::unordered_map<locator::host_id, db_clock::time_point> hosts, bool add_local_app_state);
 
+    bool is_quarantined(locator::host_id host_id) const noexcept;
+
 private:
     future<> excise(std::unordered_set<token> tokens, inet_address endpoint);
     future<> excise(std::unordered_set<token> tokens, inet_address endpoint, long expire_time);
