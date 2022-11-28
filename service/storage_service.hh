@@ -562,6 +562,8 @@ private:
     /** unlike excise we just need this endpoint gone without going through any notifications **/
     future<> remove_endpoint(inet_address endpoint);
 
+    future<> quarantine_host(locator::host_id host_id);
+
     void add_expire_time_if_found(inet_address endpoint, int64_t expire_time);
 
     int64_t extract_expire_time(const std::vector<sstring>& pieces) const {
