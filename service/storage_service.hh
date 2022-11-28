@@ -558,6 +558,7 @@ private:
 
     future<> update_quarantined_hosts();
     future<> add_quarantined_hosts(const std::unordered_set<locator::host_id>& host_ids, bool add_local_application_state);
+    future<> quarantine_hosts(const std::unordered_set<locator::host_id>& host_ids);
 
 private:
     future<> excise(std::unordered_set<token> tokens, inet_address endpoint);
