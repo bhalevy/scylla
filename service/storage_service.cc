@@ -2388,12 +2388,8 @@ void storage_service::run_replace_ops(std::unordered_set<token>& bootstrap_token
         // Step 8: Finish
         req.cmd = node_ops_cmd::replace_done;
         if (_feature_service.quarantined_hosts && local_host_id && replace_host_id && local_host_id != replace_host_id) {
-// FIXME: not yet, until the replacing node will stop inheriting
-// the replaced node's host_id.
-#if 0
             req.hosts_to_quarantine.insert(replace_host_id);
             quarantine_host(replace_host_id).get();
-#endif
         }
         parallel_for_each(sync_nodes, [this, &req, &nodes_aborted, uuid] (const gms::inet_address& node) {
             return _messaging.local().send_node_ops_cmd(netw::msg_addr(node), req).then([&nodes_aborted, uuid, node] (node_ops_cmd_response resp) {
