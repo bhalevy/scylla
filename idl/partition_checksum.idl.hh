@@ -110,6 +110,8 @@ struct node_ops_cmd_request {
     std::unordered_map<gms::inet_address, std::list<dht::token>> bootstrap_nodes;
     // Optional field, list uuids of tables being repaired, set by repair cmd
     std::list<table_id> repair_tables;
+    // Optional field, list of hosts to quarantine when done
+    std::unordered_map<locator::host_id, db_clock::time_point> hosts_to_quarantine [[version 5.2]];
 };
 
 struct node_ops_cmd_response {
