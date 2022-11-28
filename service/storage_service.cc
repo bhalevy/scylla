@@ -2347,12 +2347,18 @@ void storage_service::run_replace_ops(std::unordered_set<token>& bootstrap_token
     std::list<gms::inet_address> ignore_nodes = get_ignore_dead_nodes_for_replace(*tmptr);
     // Step 1: Decide who needs to sync data for replace operation
     std::list<gms::inet_address> sync_nodes;
+    locator::host_id local_host_id = _db.local().get_config().host_id;
+    locator::host_id replace_host_id;
     for (const auto& x :_gossiper.get_endpoint_states()) {
         seastar::thread::maybe_yield();
         const auto& node = x.first;
         slogger.debug("replace[{}]: Check node={}, status={}", uuid, node, _gossiper.get_gossip_status(node));
-        if (node != get_broadcast_address() &&
-                node != replace_address &&
+        if (node == replace_address) {
+            auto* host_id_ptr = x.second.get_application_state_ptr(application_state::HOST_ID);
+            if (host_id_ptr) {
+                replace_host_id = locator::host_id(utils::UUID(host_id_ptr->value));
+            }
+        } else if (node != get_broadcast_address() &&
                 _gossiper.is_normal_ring_member(node) &&
                 std::find(ignore_nodes.begin(), ignore_nodes.end(), x.first) == ignore_nodes.end()) {
             sync_nodes.push_back(node);
@@ -2438,6 +2444,12 @@ void storage_service::run_replace_ops(std::unordered_set<token>& bootstrap_token
 
         // Step 8: Finish
         req.cmd = node_ops_cmd::replace_done;
+        if (_feature_service.quarantined_hosts && local_host_id && replace_host_id && local_host_id != replace_host_id) {
+            req.hosts_to_quarantine.emplace(replace_host_id, db_clock::now());
+            // Update quarantined hosts locally since this is the replcing nde
+            // and it doesn't send `replace_done` to itself.
+            update_quarantined_hosts(req.hosts_to_quarantine, true).get();
+        }
         parallel_for_each(sync_nodes, [this, &req, &nodes_aborted, uuid] (const gms::inet_address& node) {
             return _messaging.local().send_node_ops_cmd(netw::msg_addr(node), req).then([&nodes_aborted, uuid, node] (node_ops_cmd_response resp) {
                 nodes_aborted.emplace(node);
@@ -2801,6 +2813,7 @@ future<node_ops_cmd_response> storage_service::node_ops_cmd_handler(gms::inet_ad
             slogger.debug("replace[{}]: Updated heartbeat from coordinator={}", req.ops_uuid, coordinator);
             node_ops_update_heartbeat(ops_uuid).get();
         } else if (req.cmd == node_ops_cmd::replace_done) {
+            update_quarantined_hosts(std::move(req.hosts_to_quarantine), true).get();
             slogger.info("replace[{}]: Marked ops done from coordinator={}", req.ops_uuid, coordinator);
             node_ops_done(ops_uuid).get();
         } else if (req.cmd == node_ops_cmd::replace_abort) {
