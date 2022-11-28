@@ -2164,6 +2164,9 @@ future<> storage_service::decommission() {
 
                 // Step 6: Finish
                 req.cmd = node_ops_cmd::decommission_done;
+                if (ss._feature_service.quarantined_hosts) {
+                    req.hosts_to_quarantine.emplace(ss._db.local().get_config().host_id, db_clock::now());
+                }
                 parallel_for_each(nodes, [&ss, &req, uuid] (const gms::inet_address& node) {
                     return ss._messaging.local().send_node_ops_cmd(netw::msg_addr(node), req).then([uuid, node] (node_ops_cmd_response resp) {
                         slogger.debug("decommission[{}]: Got done response from node={}", uuid, node);
@@ -2559,6 +2562,9 @@ future<> storage_service::removenode(locator::host_id host_id, std::list<locator
 
                 // Step 6: Finish
                 req.cmd = node_ops_cmd::removenode_done;
+                if (ss._feature_service.quarantined_hosts) {
+                    req.hosts_to_quarantine.emplace(host_id, db_clock::now());
+                }
                 parallel_for_each(nodes, [&ss, &req, uuid] (const gms::inet_address& node) {
                     return ss._messaging.local().send_node_ops_cmd(netw::msg_addr(node), req).then([uuid, node] (node_ops_cmd_response resp) {
                         slogger.debug("removenode[{}]: Got done response from node={}", uuid, node);
@@ -2678,6 +2684,7 @@ future<node_ops_cmd_response> storage_service::node_ops_cmd_handler(gms::inet_ad
             slogger.debug("removenode[{}]: Updated heartbeat from coordinator={}", req.ops_uuid,  coordinator);
             node_ops_update_heartbeat(ops_uuid).get();
         } else if (req.cmd == node_ops_cmd::removenode_done) {
+            update_quarantined_hosts(std::move(req.hosts_to_quarantine), true).get();
             slogger.info("removenode[{}]: Marked ops done from coordinator={}", req.ops_uuid, coordinator);
             node_ops_done(ops_uuid).get();
         } else if (req.cmd == node_ops_cmd::removenode_sync_data) {
@@ -2729,6 +2736,7 @@ future<node_ops_cmd_response> storage_service::node_ops_cmd_handler(gms::inet_ad
             slogger.debug("decommission[{}]: Updated heartbeat from coordinator={}", req.ops_uuid,  coordinator);
             node_ops_update_heartbeat(ops_uuid).get();
         } else if (req.cmd == node_ops_cmd::decommission_done) {
+            update_quarantined_hosts(std::move(req.hosts_to_quarantine), true).get();
             slogger.info("decommission[{}]: Marked ops done from coordinator={}", req.ops_uuid, coordinator);
             slogger.debug("Triggering off-strategy compaction for all non-system tables on decommission completion");
             _db.invoke_on_all([](replica::database &db) {
