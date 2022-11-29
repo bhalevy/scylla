@@ -149,6 +149,51 @@ merge the data in the legacy store with data the `truncated` table. Until the wh
 cluster agrees on the feature `TRUNCATION_TABLE` truncation will write both new and 
 legacy records. When the feature is agreed upon the legacy map is removed.
 
+## system.quarantined_hosts
+
+Holds a list of host identifiers of nodes that were removed from the cluster and are not allowed to join back.
+
+Node operations like remove node, replace node, or decommissioned reassign token ownership of the target node.
+After such operations, the removed host must not rejoin the cluster as it might hold stale data, causing data resurrection.
+
+Schema:
+~~~
+CREATE TABLE system.quarantined_hosts (
+    key text,
+    host_id uuid,
+    quarantined_at timestamp,
+    PRIMARY KEY (key, host_id)
+) WITH CLUSTERING ORDER BY (host_id ASC)
+~~~
+
+The table consists of a single partition (where `key = 'QUARANTINED_HOSTS'`)
+and each quarantined host is stored in a row, with the `host_id` as the clustering key.
+The time when the host was quarantined is stored in `quarantined_at`.
+
+When node operations like `removenode`, `replace`, or `decommission` complete,
+the target hosts are quarantined from the token ring.
+Their `host_id` is inserted to `system.quarantined_hosts` and the `QUARANTINED_HOSTS` application state is updated and gossiped to all other nodes
+(as done on startup when gossip loads `system.quarantined_hosts` to initialize said application state).
+
+Note that the quarantine is restricted at this stage only to attempts to re-join the ring after a restart.
+If the said nodes are running all this time behind a network partition
+and the network partition heals after the nodes were removed or replaced (using a different ip address),
+quarantining using this mechanism will have no effect.
+The nodes may still use RPC to communicate with other nodes in the cluster.
+
+Insertion calculates a TTL of 2592000 seconds (30 days) after `quarantined_at` so not to accumulate quarantined hosts forever.
+It is the responsibility of the system administrator to make sure the host is destroyed or wiped out,
+within those 30 days, following `removenode`, `replace`, or `decommission`,
+so it never tries to rejoin the cluster with the same `host_id`.
+
+If a quarantined host does try to join the ring, two things happen:
+First, after the first (shadow) round of gossip, the host should find itself in `QUARANTINED_HOSTS` and abort the start up process.
+If, for some reason, it does try to join the ring, other nodes' storage service instances will find it as quarantined and will ignore its attempt to join the ring.
+
+Note that quarantining is enabled only after the whole cluster agrees on the feature `QUARANTINED_HOSTS`.
+Until then, nothing is added to the `node_ops_cmd_request` rpc message,
+and nothing is written to the `system.quarantined_hosts` table.
+
 # Virtual tables in the system keyspace
 
 Virtual tables behave just like a regular table from the user's point of view.
