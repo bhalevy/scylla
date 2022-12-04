@@ -170,8 +170,27 @@ row_locker::unlock(const dht::decorated_key* pk, bool partition_exclusive,
             lock.read_unlock();
         }
         if (!lock.locked()) {
+            auto& row_locks = pli->second._row_locks;
+            // We can erase the partition entry only if all its rows are unlocked.
+            // We don't expect any locked rows since the lock_holder is supposed
+            // to clean up any locked row by calling this function in its dtor.
+            // However, some unlocked rows may remain if lock_holder::lock_row
+            // failed to acquire the row after the row was created.
+            if (!row_locks.empty()) {
+                for (auto it = row_locks.begin(); it != row_locks.end(); ) {
+                    if (it->second.locked()) {
+                        mylog.warn("Encounered a locked row {} when unlocking partition {}", it->first, *pk);
+                        ++it;
+                    } else {
+                        it = row_locks.erase(it);
+                    }
+                }
+            }
+            if (row_locks.empty()) {
+            // FIXME: indentation
             mylog.debug("Erasing lock object for partition {}", *pk);
             _two_level_locks.erase(pli);
+            }
         }
      }
 }
