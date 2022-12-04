@@ -34,6 +34,7 @@
 
 class row_locker {
 public:
+    using lock_type = basic_rwlock<db::timeout_clock>;
     struct single_lock_stats {
         uint64_t lock_acquisitions = 0;
         uint64_t operations_currently_waiting_for_lock = 0;
@@ -69,17 +70,17 @@ public:
         const clustering_key_prefix* _row;
         bool _row_exclusive;
     public:
-        lock_holder();
-        lock_holder(row_locker* locker, const dht::decorated_key* pk, bool exclusive);
-        lock_holder(row_locker* locker, const dht::decorated_key* pk, const clustering_key_prefix* cpk, bool exclusive);
+        lock_holder(row_locker* locker = nullptr);
         ~lock_holder();
         // Allow move (noexcept) but disallow copy
         lock_holder(lock_holder&&) noexcept;
         lock_holder& operator=(lock_holder&&) noexcept;
+
+        future<> lock_partition(const dht::decorated_key* pk, lock_type& partition_lock, bool exclusive) noexcept;
+        future<> lock_row(const clustering_key_prefix* cpk, lock_type& row_lock, bool exclusive) noexcept;
     };
 private:
     schema_ptr _schema;
-    using lock_type = basic_rwlock<db::timeout_clock>;
     struct two_level_lock {
         lock_type _partition_lock;
         struct clustering_key_prefix_less {

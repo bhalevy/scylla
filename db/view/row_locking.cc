@@ -28,28 +28,28 @@ void row_locker::upgrade(schema_ptr new_schema) {
     _schema = new_schema;
 }
 
-row_locker::lock_holder::lock_holder()
-    : _locker(nullptr)
+row_locker::lock_holder::lock_holder(row_locker* locker)
+    : _locker(locker)
     , _partition(nullptr)
     , _partition_exclusive(true)
     , _row(nullptr)
     , _row_exclusive(true) {
 }
 
-row_locker::lock_holder::lock_holder(row_locker* locker, const dht::decorated_key* pk, bool exclusive)
-    : _locker(locker)
-    , _partition(pk)
-    , _partition_exclusive(exclusive)
-    , _row(nullptr)
-    , _row_exclusive(true) {
+future<> row_locker::lock_holder::lock_partition(const dht::decorated_key* pk, lock_type& partition_lock, bool exclusive) noexcept {
+    auto f = exclusive ? partition_lock.write_lock() : partition_lock.read_lock();
+    return f.then([this, pk, exclusive] {
+        _partition = pk;
+        _partition_exclusive = exclusive;
+    });
 }
 
-row_locker::lock_holder::lock_holder(row_locker* locker, const dht::decorated_key* pk, const clustering_key_prefix* cpk, bool exclusive)
-    : _locker(locker)
-    , _partition(pk)
-    , _partition_exclusive(false)
-    , _row(cpk)
-    , _row_exclusive(exclusive) {
+future<> row_locker::lock_holder::lock_row(const clustering_key_prefix* cpk, lock_type& row_lock, bool exclusive) noexcept {
+    auto f = exclusive ? row_lock.write_lock() : row_lock.read_lock();
+    return f.then([this, cpk, exclusive] {
+        _row = cpk;
+        _row_exclusive = exclusive;
+    });
 }
 
 row_locker::latency_stats_tracker::latency_stats_tracker(row_locker::single_lock_stats& stats)
@@ -73,32 +73,31 @@ future<row_locker::lock_holder>
 row_locker::lock_pk(const dht::decorated_key& pk, bool exclusive, db::timeout_clock::time_point timeout, stats& stats) {
     mylog.debug("taking {} lock on entire partition {}", (exclusive ? "exclusive" : "shared"), pk);
     auto tracker = latency_stats_tracker(exclusive ? stats.exclusive_partition : stats.shared_partition);
+    auto holder = lock_holder(this);
     auto i = _two_level_locks.try_emplace(pk, this).first;
-    auto f = exclusive ? i->second._partition_lock.write_lock(timeout) : i->second._partition_lock.read_lock(timeout);
-    co_await std::move(f);
+    co_await holder.lock_partition(&i->first, i->second._partition_lock, exclusive);
     // Note: we rely on the fact that &i->first, the pointer to a key, never
     // becomes invalid (as long as the item is actually in the hash table),
     // even in the case of rehashing.
     tracker.lock_acquired();
-    co_return lock_holder(this, &i->first, exclusive);
+    co_return holder;
 }
 
 future<row_locker::lock_holder>
 row_locker::lock_ck(const dht::decorated_key& pk, const clustering_key_prefix& cpk, bool exclusive, db::timeout_clock::time_point timeout, stats& stats) {
     mylog.debug("taking shared lock on partition {}, and {} lock on row {} in it", pk, (exclusive ? "exclusive" : "shared"), cpk);
     auto tracker = latency_stats_tracker(exclusive ? stats.exclusive_row : stats.shared_row);
+    auto holder = lock_holder(this);
     auto i = _two_level_locks.try_emplace(pk, this).first;
-    auto partition_lock_holder = co_await i->second._partition_lock.hold_read_lock(timeout);
+    co_await holder.lock_partition(&i->first, i->second._partition_lock, false);
     auto j = i->second._row_locks.find(cpk);
     if (j == i->second._row_locks.end()) {
         // Not yet locked, need to create the lock. This makes a copy of cpk.
         j = i->second._row_locks.emplace(cpk, lock_type()).first;
     }
-    auto row_lock_holder = co_await (exclusive ? j->second.hold_write_lock(timeout) : j->second.hold_read_lock(timeout));
+    co_await holder.lock_row(&j->first, j->second, exclusive);
     tracker.lock_acquired();
-    partition_lock_holder.release();
-    row_lock_holder.release();
-    co_return lock_holder(this, &i->first, &j->first, exclusive);
+    co_return holder;
 }
 
 row_locker::lock_holder::lock_holder(row_locker::lock_holder&& old) noexcept
