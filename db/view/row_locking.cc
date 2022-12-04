@@ -92,8 +92,7 @@ row_locker::lock_ck(const dht::decorated_key& pk, const clustering_key_prefix& c
     auto j = i->second._row_locks.find(cpk);
     if (j == i->second._row_locks.end()) {
         // Not yet locked, need to create the lock. This makes a copy of cpk.
-        // FIXME: indentation
-            j = i->second._row_locks.emplace(cpk, lock_type()).first;
+        j = i->second._row_locks.emplace(cpk, lock_type()).first;
     }
     auto row_lock_holder = co_await (exclusive ? j->second.hold_write_lock(timeout) : j->second.hold_read_lock(timeout));
     tracker.lock_acquired();
