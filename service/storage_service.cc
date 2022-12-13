@@ -171,19 +171,10 @@ void storage_service::register_metrics() {
 }
 
 std::optional<gms::inet_address> storage_service::get_replace_address() {
-    auto& cfg = _db.local().get_config();
-    sstring replace_address = cfg.replace_address();
-    sstring replace_address_first_boot = cfg.replace_address_first_boot();
-    try {
-        if (!replace_address.empty()) {
-            return gms::inet_address(replace_address);
-        } else if (!replace_address_first_boot.empty()) {
-            return gms::inet_address(replace_address_first_boot);
-        }
-        return std::nullopt;
-    } catch (...) {
-        return std::nullopt;
+    if (!_replacement_info) {
+        on_internal_error(slogger, "replacement_info is unset");
     }
+    return _replacement_info->replace_address;
 }
 
 bool storage_service::is_replacing() {
