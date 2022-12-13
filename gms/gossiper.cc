@@ -762,16 +762,28 @@ future<> gossiper::failure_detector_loop_for_node(gms::inet_address node, int64_
     auto diff = gossiper::clk::duration(0);
     auto echo_interval = std::chrono::milliseconds(2000);
     auto max_duration = echo_interval + std::chrono::milliseconds(_failure_detector_timeout_ms());
+    abort_source as;
+    auto tmr = timer([&as] {
+        as.request_abort_ex(timed_out_error());
+    });
+    auto sub = _abort_source.subscribe([&] () noexcept {
+        tmr.cancel();
+        as.request_abort_ex(abort_requested_exception());
+    });
     while (is_enabled()) {
         bool failed = false;
         try {
             logger.debug("failure_detector_loop: Send echo to node {}, status = started", node);
-            co_await _messaging.send_gossip_echo(netw::msg_addr(node), gossip_generation, max_duration);
+            tmr.arm(max_duration);
+            co_await _messaging.send_gossip_echo(netw::msg_addr(node), gossip_generation, as);
             logger.debug("failure_detector_loop: Send echo to node {}, status = ok", node);
+        } catch (const abort_requested_exception&) {
+            co_return;
         } catch (...) {
             failed = true;
             logger.warn("failure_detector_loop: Send echo to node {}, status = failed: {}", node, std::current_exception());
         }
+        tmr.cancel();
         auto now = gossiper::clk::now();
         diff = now - last;
         if (!failed) {
