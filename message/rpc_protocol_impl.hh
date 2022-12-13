@@ -180,24 +180,30 @@ auto send_message_cancellable(messaging_service* ms, messaging_verb verb, msg_ad
     auto rpc_client_ptr = ms->get_rpc_client(verb, id);
     auto& rpc_client = *rpc_client_ptr;
 
-    auto c = std::make_unique<seastar::rpc::cancellable>();
-    auto& c_ref = *c;
-    auto sub = as.subscribe([c = std::move(c)] () noexcept {
-        c->cancel();
+    struct state {
+        seastar::rpc::cancellable c;
+        std::exception_ptr ex;
+        optimized_optional<abort_source::subscription> sub;
+    };
+    auto st = make_lw_shared<state>();
+    auto& c_ref = st->c;
+    st->sub = as.subscribe([st] (const std::optional<std::exception_ptr>& opt_ex) noexcept {
+        st->c.cancel();
+        st->ex = opt_ex.value_or(std::make_exception_ptr(abort_requested_exception{}));
     });
-    if (!sub) {
+    if (!st->sub) {
         return futurator::make_exception_future(abort_requested_exception{});
     }
 
-    return rpc_handler(rpc_client, c_ref, std::forward<MsgOut>(msg)...).handle_exception([ms = ms->shared_from_this(), id, verb, rpc_client_ptr = std::move(rpc_client_ptr), sub = std::move(sub)] (std::exception_ptr&& eptr) {
+    return rpc_handler(rpc_client, c_ref, std::forward<MsgOut>(msg)...).handle_exception([ms = ms->shared_from_this(), id, verb, rpc_client_ptr = std::move(rpc_client_ptr), st = std::move(st)] (std::exception_ptr&& eptr) {
         ms->increment_dropped_messages(verb);
         if (try_catch<rpc::closed_error>(eptr)) {
             // This is a transport error
             ms->remove_error_rpc_client(verb, id);
             return futurator::make_exception_future(std::move(eptr));
         } else if (try_catch<rpc::canceled_error>(eptr)) {
-            // Translate low-level canceled_error into high-level abort_requested_exception.
-            return futurator::make_exception_future(abort_requested_exception{});
+            // Translate low-level canceled_error into high-level (typically abort_requested_exception).
+            return futurator::make_exception_future(std::move(st->ex));
         } else {
             // This is expected to be a rpc server error, e.g., the rpc handler throws a std::runtime_error.
             return futurator::make_exception_future(std::move(eptr));
