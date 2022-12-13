@@ -525,6 +525,7 @@ class ScyllaCluster:
             assert replaced_id in self.servers, \
                 f"add_server: replaced id {replaced_id} not found in existing servers"
 
+            # FIXME: use replace_node_first_boot
             replaced_srv = self.servers[replaced_id]
             extra_config['replace_address_first_boot'] = replaced_srv.ip_addr
 

@@ -171,28 +171,32 @@ void storage_service::register_metrics() {
 }
 
 std::optional<gms::inet_address> storage_service::get_replace_address() {
-    auto& cfg = _db.local().get_config();
-    sstring replace_address = cfg.replace_address();
-    sstring replace_address_first_boot = cfg.replace_address_first_boot();
-    try {
-        if (!replace_address.empty()) {
-            return gms::inet_address(replace_address);
-        } else if (!replace_address_first_boot.empty()) {
-            return gms::inet_address(replace_address_first_boot);
-        }
-        return std::nullopt;
-    } catch (...) {
+    if (!_replacement_info) {
+        on_internal_error(slogger, "replacement_info is unset");
         return std::nullopt;
     }
+    return _replacement_info->replace_address;
 }
 
 bool storage_service::is_replacing() {
-    sstring replace_address_first_boot = _db.local().get_config().replace_address_first_boot();
-    if (!replace_address_first_boot.empty() && _sys_ks.local().bootstrap_complete()) {
-        slogger.info("Replace address on first boot requested; this node is already bootstrapped");
-        return false;
+    const auto& cfg = _db.local().get_config();
+    if (!cfg.replace_node_first_boot().empty()) {
+        if (_sys_ks.local().bootstrap_complete()) {
+            slogger.info("Replace node on first boot requested; this node is already bootstrapped");
+            return false;
+        }
+        return true;
     }
-    return bool(get_replace_address());
+
+    if (!cfg.replace_address_first_boot().empty() || !cfg.replace_address().empty()) {
+        if (_sys_ks.local().bootstrap_complete()) {
+            slogger.info("Replace address on first boot requested; this node is already bootstrapped");
+            return false;
+        }
+        return true;
+    }
+
+    return false;
 }
 
 bool storage_service::is_first_node() {
@@ -322,20 +326,20 @@ future<> storage_service::join_token_ring(cdc::generation_service& cdc_gen_servi
         if (_sys_ks.local().bootstrap_complete()) {
             throw std::runtime_error("Cannot replace address with a node that is already bootstrapped");
         }
-        auto ri = co_await prepare_replacement_info(initial_contact_nodes, loaded_peer_features);
+        co_await prepare_replacement_info(initial_contact_nodes, loaded_peer_features);
+        auto& ri = *_replacement_info;
         bootstrap_tokens = std::move(ri.tokens);
-        auto replace_address = get_replace_address();
-        replacing_a_node_with_same_ip = *replace_address == get_broadcast_address();
-        replacing_a_node_with_diff_ip = *replace_address != get_broadcast_address();
+        replacing_a_node_with_same_ip = ri.replace_address == get_broadcast_address();
+        replacing_a_node_with_diff_ip = ri.replace_address != get_broadcast_address();
 
         slogger.info("Replacing a node with {} IP address, my address={}, node being replaced={}",
-            get_broadcast_address() == *replace_address ? "the same" : "a different",
-            get_broadcast_address(), *replace_address);
-        tmptr->update_topology(*replace_address, std::move(ri.dc_rack));
-        co_await tmptr->update_normal_tokens(bootstrap_tokens, *replace_address);
+            get_broadcast_address() == ri.replace_address ? "the same" : "a different",
+            get_broadcast_address(), ri.replace_address);
+        tmptr->update_topology(ri.replace_address, std::move(ri.dc_rack));
+        co_await tmptr->update_normal_tokens(bootstrap_tokens, ri.replace_address);
         replaced_host_id = ri.host_id;
         raft_replace_info = raft_group0::replace_info {
-            .ip_addr = *replace_address,
+            .ip_addr = ri.replace_address,
             .raft_id = raft::server_id{ri.host_id.uuid()},
         };
     } else if (should_bootstrap()) {
@@ -1639,16 +1643,26 @@ future<> storage_service::remove_endpoint(inet_address endpoint) {
     }
 }
 
-future<storage_service::replacement_info>
+future<>
 storage_service::prepare_replacement_info(std::unordered_set<gms::inet_address> initial_contact_nodes, const std::unordered_map<gms::inet_address, sstring>& loaded_peer_features) {
-    if (!get_replace_address()) {
-        throw std::runtime_error(format("replace_address is empty"));
-    }
-    auto replace_address = get_replace_address().value();
-    slogger.info("Gathering node replacement information for {}", replace_address);
+    locator::host_id replace_host_id;
+    gms::inet_address replace_address;
 
-    // if (!MessagingService.instance().isListening())
-    //     MessagingService.instance().listen(FBUtilities.getLocalAddress());
+    auto& cfg = _db.local().get_config();
+    if (!cfg.replace_node_first_boot().empty()) {
+        replace_host_id = locator::host_id(utils::UUID(cfg.replace_node_first_boot()));
+    } else if (!cfg.replace_address_first_boot().empty()) {
+        replace_address = gms::inet_address(cfg.replace_address_first_boot());
+        slogger.warn("The replace_address_first_boot={} option is deprecated. Please use the replace_node_first_boot option", replace_address);
+    } else if (!cfg.replace_address().empty()) {
+        replace_address = gms::inet_address(cfg.replace_address());
+        slogger.warn("The replace_address={} option is deprecated. Please use the replace_node_first_boot option", replace_address);
+    } else {
+        throw std::runtime_error(format("No replace node or replace address configuration options found"));
+    }
+
+    slogger.info("Gathering node replacement information for {}/{}", replace_host_id, replace_address);
+
     auto seeds = _gossiper.get_seeds();
     if (seeds.size() == 1 && seeds.contains(replace_address)) {
         throw std::runtime_error(format("Cannot replace_address {} because no seed node is up", replace_address));
@@ -1661,6 +1675,17 @@ storage_service::prepare_replacement_info(std::unordered_set<gms::inet_address> 
     _gossiper.check_knows_remote_features(local_features, loaded_peer_features);
 
     // now that we've gossiped at least once, we should be able to find the node we're replacing
+    if (replace_host_id) {
+        auto nodes = _gossiper.get_nodes_with_host_id(replace_host_id);
+        if (nodes.empty()) {
+            throw std::runtime_error(format("Replaced node with Host ID {} not found", replace_host_id));
+        }
+        if (nodes.size() > 1) {
+            throw std::runtime_error(format("Found multiple nodes with Host ID {}: {}", replace_host_id, nodes));
+        }
+        replace_address = *nodes.begin();
+    }
+
     auto* state = _gossiper.get_endpoint_state_for_endpoint_ptr(replace_address);
     if (!state) {
         throw std::runtime_error(format("Cannot replace_address {} because it doesn't exist in gossip", replace_address));
@@ -1679,11 +1704,17 @@ storage_service::prepare_replacement_info(std::unordered_set<gms::inet_address> 
 
     auto dc_rack = get_dc_rack_for(replace_address);
 
-    auto replace_host_id = _gossiper.get_host_id(replace_address);
+    if (!replace_host_id) {
+        replace_host_id = _gossiper.get_host_id(replace_address);
+    } else if (replace_host_id != _gossiper.get_host_id(replace_address)) {
+        on_internal_error(slogger, format("replace_host_id mismatch: expected {}, but gossip has {}", replace_host_id, _gossiper.get_host_id(replace_address)));
+    }
     slogger.info("Host {}/{} is replacing {}/{}", _db.local().get_config().host_id, get_broadcast_address(), replace_host_id, replace_address);
     co_await _gossiper.reset_endpoint_state_map();
 
-    co_return replacement_info {
+    _replacement_info = replacement_info {
+        .replace_host_id = replace_host_id,
+        .replace_address = replace_address,
         .tokens = std::move(tokens),
         .dc_rack = std::move(dc_rack),
         .host_id = std::move(replace_host_id),

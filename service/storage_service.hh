@@ -291,12 +291,17 @@ private:
     future<> shutdown_protocol_servers();
 
     struct replacement_info {
+        locator::host_id replace_host_id;
+        gms::inet_address replace_address;
+
         std::unordered_set<token> tokens;
         locator::endpoint_dc_rack dc_rack;
         locator::host_id host_id;
     };
-    future<replacement_info> prepare_replacement_info(std::unordered_set<gms::inet_address> initial_contact_nodes,
+    future<> prepare_replacement_info(std::unordered_set<gms::inet_address> initial_contact_nodes,
             const std::unordered_map<gms::inet_address, sstring>& loaded_peer_features);
+
+    std::optional<replacement_info> _replacement_info;
 
     void run_replace_ops(std::unordered_set<token>& bootstrap_tokens);
     void run_bootstrap_ops(std::unordered_set<token>& bootstrap_tokens);
@@ -346,6 +351,7 @@ public:
 
 private:
     bool should_bootstrap();
+    // Must be called after prepare_replacement_info prepares _replacement_info
     std::optional<gms::inet_address> get_replace_address();
     bool is_replacing();
     bool is_first_node();

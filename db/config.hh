@@ -298,6 +298,7 @@ public:
     named_value<bool> load_ring_state;
     named_value<sstring> replace_address;
     named_value<sstring> replace_address_first_boot;
+    named_value<sstring> replace_node_first_boot;
     named_value<sstring> ignore_dead_nodes_for_replace;
     named_value<bool> override_decommission;
     named_value<bool> enable_repair_based_node_ops;
