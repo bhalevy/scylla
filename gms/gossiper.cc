@@ -762,16 +762,38 @@ future<> gossiper::failure_detector_loop_for_node(gms::inet_address node, int64_
     auto diff = gossiper::clk::duration(0);
     auto echo_interval = std::chrono::milliseconds(2000);
     auto max_duration = echo_interval + std::chrono::milliseconds(_failure_detector_timeout_ms());
+    // We're using an abort_source*
+    // so we can use a new one on each iteration
+    abort_source* asp = nullptr;
+    auto tmr = timer([&asp] {
+        // asp must be engaged when the timer is armed
+        asp->request_abort_ex(timed_out_error());
+    });
+    auto sub = _abort_source.subscribe([&tmr, &asp] () noexcept {
+        tmr.cancel();
+        // The timer may have already fired
+        // so protect against double abort
+        if (asp && !asp->abort_requested()) {
+            asp->request_abort_ex(abort_requested_exception());
+        }
+    });
     while (is_enabled()) {
+        abort_source as;
+        asp = &as;
         bool failed = false;
         try {
             logger.debug("failure_detector_loop: Send echo to node {}, status = started", node);
-            co_await _messaging.send_gossip_echo(netw::msg_addr(node), gossip_generation, max_duration);
+            tmr.arm(max_duration);
+            co_await _messaging.send_gossip_echo(netw::msg_addr(node), gossip_generation, as);
             logger.debug("failure_detector_loop: Send echo to node {}, status = ok", node);
+        } catch (const abort_requested_exception&) {
+            co_return;
         } catch (...) {
             failed = true;
             logger.warn("failure_detector_loop: Send echo to node {}, status = failed: {}", node, std::current_exception());
         }
+        tmr.cancel();
+        asp = nullptr;
         auto now = gossiper::clk::now();
         diff = now - last;
         if (!failed) {
