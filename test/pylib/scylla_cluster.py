@@ -43,6 +43,7 @@ from cassandra.policies import WhiteListRoundRobinPolicy  # type: ignore
 class ReplaceConfig(NamedTuple):
     replaced_id: ServerNum
     reuse_ip_addr: bool
+    use_host_id: bool
 
 
 def make_scylla_conf(workdir: pathlib.Path, host_addr: str, seed_addrs: List[str], cluster_name: str) -> dict[str, object]:
@@ -525,9 +526,11 @@ class ScyllaCluster:
             assert replaced_id in self.servers, \
                 f"add_server: replaced id {replaced_id} not found in existing servers"
 
-            # FIXME: use replace_node_first_boot
             replaced_srv = self.servers[replaced_id]
-            extra_config['replace_address_first_boot'] = replaced_srv.ip_addr
+            if replace_cfg.use_host_id:
+                extra_config['replace_node_first_boot'] = replaced_srv.host_id
+            else:
+                extra_config['replace_address_first_boot'] = replaced_srv.ip_addr
 
             assert replaced_id not in self.removed, \
                 f"add_server: cannot replace removed server {replaced_srv}"
