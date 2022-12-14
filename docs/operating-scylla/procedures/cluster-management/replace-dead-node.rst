@@ -68,11 +68,11 @@ Procedure
 
     - **rpc_address** - Address for client connection (Thrift, CQL)
 
-#. Add the ``replace_address_first_boot`` parameter to the ``scylla.yaml`` config file on the new node. This line can be added to any place in the config file. After a successful node replacement, there is no need to remove it from the ``scylla.yaml`` file. (Note: The obsolete parameter "replace_address" is not supported and should not be used). The value of the ``replace_address_first_boot`` parameter should be the IP address of the node to be replaced.
+#. Add the ``replace_node_first_boot`` parameter to the ``scylla.yaml`` config file on the new node. This line can be added to any place in the config file. After a successful node replacement, there is no need to remove it from the ``scylla.yaml`` file. (Note: The obsolete parameters "replace_address" and "replace_address_first_boot" are not supported and should not be used). The value of the ``replace_node_first_boot`` parameter should be the Host ID of the node to be replaced.
 
     For example (using the address of the failed node from above):
 
-    ``replace_address_first_boot: 192.168.1.203``   
+    ``replace_node_first_boot: 87a2b646-c968-4108-a38b-f8468b8b7360``
 
 #. Start Scylla node.
 
@@ -189,11 +189,11 @@ In this case, the node's data will be cleaned after restart. To remedy this, you
 
       sudo sed -e '/auto_bootstrap:.*/s/False/True/g' -i /etc/scylla/scylla.yaml
 
-#. Run the following command, replacing 172.30.0.186 with the listen_address / rpc_address of the node that you are restarting:
+#. Run the following command to replace the node known by the previous Host ID of the node you are restarting, 87a2b646-c968-4108-a38b-f8468b8b7360, by the restarted instance, that will be assigned a new, random, Host ID:
 
    .. code-block:: none
 
-      echo 'replace_address_first_boot: 172.30.0.186' | sudo tee --append /etc/scylla/scylla.yaml
+      echo 'replace_node_first_boot: 87a2b646-c968-4108-a38b-f8468b8b7360' | sudo tee --append /etc/scylla/scylla.yaml
 
 #. Run the following command to re-setup RAID
 
