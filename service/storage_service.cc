@@ -170,7 +170,7 @@ void storage_service::register_metrics() {
     });
 }
 
-std::optional<gms::inet_address> storage_service::get_replace_address() {
+gms::inet_address storage_service::get_replace_address() {
     if (!_replacement_info) {
         on_internal_error(slogger, "replacement_info is missing");
     }
@@ -506,11 +506,10 @@ future<> storage_service::join_token_ring(cdc::generation_service& cdc_gen_servi
             }
         } else {
             auto replace_addr = get_replace_address();
-            assert(replace_addr);
-            if (*replace_addr != get_broadcast_address()) {
+            if (replace_addr != get_broadcast_address()) {
                 // Sleep additionally to make sure that the server actually is not alive
                 // and giving it more time to gossip if alive.
-                slogger.info("Sleeping before replacing {}...", *replace_addr);
+                slogger.info("Sleeping before replacing {}...", replace_addr);
                 co_await sleep_abortable(2 * get_ring_delay(), _abort_source);
 
                 // check for operator errors...
@@ -527,7 +526,7 @@ future<> storage_service::join_token_ring(cdc::generation_service& cdc_gen_servi
                     }
                 }
             } else {
-                slogger.info("Sleeping before replacing {}...", *replace_addr);
+                slogger.info("Sleeping before replacing {}...", replace_addr);
                 co_await sleep_abortable(get_ring_delay(), _abort_source);
             }
             slogger.info("Replacing a node with token(s): {}", bootstrap_tokens);
@@ -741,14 +740,13 @@ future<> storage_service::bootstrap(cdc::generation_service& cdc_gen_service, st
             }
         } else {
             auto replace_addr = get_replace_address();
-            assert(replace_addr);
 
-            slogger.debug("Removing replaced endpoint {} from system.peers", *replace_addr);
-            _sys_ks.local().remove_endpoint(*replace_addr).get();
+            slogger.debug("Removing replaced endpoint {} from system.peers", replace_addr);
+            _sys_ks.local().remove_endpoint(replace_addr).get();
 
             assert(replaced_host_id);
             auto raft_id = raft::server_id{replaced_host_id->uuid()};
-            slogger.info("Replace: removing {}/{} from group 0...", *replace_addr, raft_id);
+            slogger.info("Replace: removing {}/{} from group 0...", replace_addr, raft_id);
             assert(_group0);
             _group0->remove_from_group0(raft_id).get();
 
@@ -814,7 +812,7 @@ future<> storage_service::handle_state_replacing(inet_address replacing_node) {
     auto tmptr = co_await get_mutable_token_metadata_ptr();
     auto existing_node_opt = tmptr->get_endpoint_for_host_id(host_id);
     auto replace_addr = get_replace_address();
-    if (replacing_node == get_broadcast_address() && replace_addr && *replace_addr == get_broadcast_address()) {
+    if (replacing_node == get_broadcast_address() && replace_addr == get_broadcast_address()) {
         existing_node_opt = replacing_node;
     }
     if (!existing_node_opt) {
@@ -2250,7 +2248,7 @@ void storage_service::run_bootstrap_ops(std::unordered_set<token>& bootstrap_tok
 
 // Runs inside seastar::async context
 void storage_service::run_replace_ops(std::unordered_set<token>& bootstrap_tokens) {
-    auto replace_address = get_replace_address().value();
+    auto replace_address = get_replace_address();
     auto uuid = utils::make_random_uuid();
     auto tmptr = get_token_metadata_ptr();
     std::list<gms::inet_address> ignore_nodes = get_ignore_dead_nodes_for_replace(*tmptr);
