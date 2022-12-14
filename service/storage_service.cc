@@ -499,12 +499,10 @@ future<> storage_service::join_token_ring(cdc::generation_service& cdc_gen_servi
                 bootstrap_tokens = boot_strapper::get_bootstrap_tokens(tmptr, _db.local().get_config(), dht::check_token_endpoint::yes);
             }
         } else {
-            auto replace_addr = get_replace_address();
-            assert(replace_addr);
-            if (*replace_addr != get_broadcast_address()) {
+            if (*replace_address != get_broadcast_address()) {
                 // Sleep additionally to make sure that the server actually is not alive
                 // and giving it more time to gossip if alive.
-                slogger.info("Sleeping before replacing {}...", *replace_addr);
+                slogger.info("Sleeping before replacing {}...", *replace_address);
                 co_await sleep_abortable(2 * get_ring_delay(), _abort_source);
 
                 // check for operator errors...
@@ -521,7 +519,7 @@ future<> storage_service::join_token_ring(cdc::generation_service& cdc_gen_servi
                     }
                 }
             } else {
-                slogger.info("Sleeping before replacing {}...", *replace_addr);
+                slogger.info("Sleeping before replacing {}...", *replace_address);
                 co_await sleep_abortable(get_ring_delay(), _abort_source);
             }
             slogger.info("Replacing a node with token(s): {}", bootstrap_tokens);
