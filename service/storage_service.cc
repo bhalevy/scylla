@@ -325,18 +325,17 @@ future<> storage_service::join_token_ring(cdc::generation_service& cdc_gen_servi
         co_await prepare_replacement_info(initial_contact_nodes, loaded_peer_features);
         auto& ri = *_replacement_info;
         bootstrap_tokens = std::move(ri.tokens);
-        auto replace_address = get_replace_address();
-        replacing_a_node_with_same_ip = *replace_address == get_broadcast_address();
-        replacing_a_node_with_diff_ip = *replace_address != get_broadcast_address();
+        replacing_a_node_with_same_ip = ri.replace_address == get_broadcast_address();
+        replacing_a_node_with_diff_ip = ri.replace_address != get_broadcast_address();
 
         slogger.info("Replacing a node with {} IP address, my address={}, node being replaced={}",
-            get_broadcast_address() == *replace_address ? "the same" : "a different",
-            get_broadcast_address(), *replace_address);
-        tmptr->update_topology(*replace_address, std::move(ri.dc_rack));
-        co_await tmptr->update_normal_tokens(bootstrap_tokens, *replace_address);
+            get_broadcast_address() == ri.replace_address ? "the same" : "a different",
+            get_broadcast_address(), ri.replace_address);
+        tmptr->update_topology(ri.replace_address, std::move(ri.dc_rack));
+        co_await tmptr->update_normal_tokens(bootstrap_tokens, ri.replace_address);
         replaced_host_id = ri.host_id;
         raft_replace_info = raft_group0::replace_info {
-            .ip_addr = *replace_address,
+            .ip_addr = ri.replace_address,
             .raft_id = raft::server_id{ri.host_id.uuid()},
         };
     } else if (should_bootstrap()) {
