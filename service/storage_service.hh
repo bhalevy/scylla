@@ -295,8 +295,10 @@ private:
         locator::endpoint_dc_rack dc_rack;
         locator::host_id host_id;
     };
-    future<replacement_info> prepare_replacement_info(std::unordered_set<gms::inet_address> initial_contact_nodes,
+    future<> prepare_replacement_info(std::unordered_set<gms::inet_address> initial_contact_nodes,
             const std::unordered_map<gms::inet_address, sstring>& loaded_peer_features);
+
+    std::optional<replacement_info> _replacement_info;
 
     void run_replace_ops(std::unordered_set<token>& bootstrap_tokens);
     void run_bootstrap_ops(std::unordered_set<token>& bootstrap_tokens);
