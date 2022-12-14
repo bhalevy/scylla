@@ -322,7 +322,8 @@ future<> storage_service::join_token_ring(cdc::generation_service& cdc_gen_servi
         if (_sys_ks.local().bootstrap_complete()) {
             throw std::runtime_error("Cannot replace address with a node that is already bootstrapped");
         }
-        auto ri = co_await prepare_replacement_info(initial_contact_nodes, loaded_peer_features);
+        co_await prepare_replacement_info(initial_contact_nodes, loaded_peer_features);
+        auto& ri = *_replacement_info;
         bootstrap_tokens = std::move(ri.tokens);
         auto replace_address = get_replace_address();
         replacing_a_node_with_same_ip = *replace_address == get_broadcast_address();
@@ -1639,7 +1640,7 @@ future<> storage_service::remove_endpoint(inet_address endpoint) {
     }
 }
 
-future<storage_service::replacement_info>
+future<>
 storage_service::prepare_replacement_info(std::unordered_set<gms::inet_address> initial_contact_nodes, const std::unordered_map<gms::inet_address, sstring>& loaded_peer_features) {
     if (!get_replace_address()) {
         throw std::runtime_error(format("replace_address is empty"));
@@ -1683,7 +1684,7 @@ storage_service::prepare_replacement_info(std::unordered_set<gms::inet_address> 
     slogger.info("Host {}/{} is replacing {}/{}", _db.local().get_config().host_id, get_broadcast_address(), replace_host_id, replace_address);
     co_await _gossiper.reset_endpoint_state_map();
 
-    co_return replacement_info {
+    _replacement_info = replacement_info {
         .tokens = std::move(tokens),
         .dc_rack = std::move(dc_rack),
         .host_id = std::move(replace_host_id),
