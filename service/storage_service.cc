@@ -187,12 +187,24 @@ std::optional<gms::inet_address> storage_service::get_replace_address() {
 }
 
 bool storage_service::is_replacing() {
-    sstring replace_address_first_boot = _db.local().get_config().replace_address_first_boot();
-    if (!replace_address_first_boot.empty() && _sys_ks.local().bootstrap_complete()) {
-        slogger.info("Replace address on first boot requested; this node is already bootstrapped");
-        return false;
+    const auto& cfg = _db.local().get_config();
+    if (!cfg.replace_node_first_boot().empty()) {
+        if (_sys_ks.local().bootstrap_complete()) {
+            slogger.info("Replace node on first boot requested; this node is already bootstrapped");
+            return false;
+        }
+        return true;
     }
-    return bool(get_replace_address());
+
+    if (!cfg.replace_address_first_boot().empty() || !cfg.replace_address().empty()) {
+        if (_sys_ks.local().bootstrap_complete()) {
+            slogger.info("Replace address on first boot requested; this node is already bootstrapped");
+            return false;
+        }
+        return true;
+    }
+
+    return false;
 }
 
 bool storage_service::is_first_node() {
