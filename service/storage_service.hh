@@ -291,6 +291,9 @@ private:
     future<> shutdown_protocol_servers();
 
     struct replacement_info {
+        locator::host_id replace_host_id;
+        gms::inet_address replace_address;
+
         std::unordered_set<token> tokens;
         locator::endpoint_dc_rack dc_rack;
         locator::host_id host_id;
