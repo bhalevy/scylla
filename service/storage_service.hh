@@ -352,7 +352,7 @@ public:
 private:
     bool should_bootstrap();
     // Must be called after prepare_replacement_info prepares _replacement_info
-    std::optional<gms::inet_address> get_replace_address();
+    gms::inet_address get_replace_address();
     bool is_replacing();
     bool is_first_node();
     future<> join_token_ring(cdc::generation_service& cdc_gen_service,
