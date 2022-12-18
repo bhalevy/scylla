@@ -214,15 +214,15 @@ void range_streamer::add_rx_ranges(const sstring& keyspace_name, std::unordered_
 }
 
 // TODO: This is the legacy range_streamer interface, it is add_rx_ranges which adds rx ranges.
-future<> range_streamer::add_ranges(const sstring& keyspace_name, locator::effective_replication_map_ptr erm, dht::token_range_vector ranges, gms::gossiper& gossiper, bool is_replacing) {
+future<> range_streamer::add_ranges(const sstring& keyspace_name, locator::effective_replication_map_ptr erm, dht::token_range_vector&& ranges, gms::gossiper& gossiper, bool is_replacing) {
   return seastar::async([this, keyspace_name, erm = std::move(erm), ranges= std::move(ranges), &gossiper, is_replacing] () mutable {
     if (_nr_tx_added) {
         throw std::runtime_error("Mixed sending and receiving is not supported");
     }
     _nr_rx_added++;
     auto ranges_for_keyspace = !is_replacing && use_strict_sources_for_ranges(keyspace_name, erm)
-        ? get_all_ranges_with_strict_sources_for(keyspace_name, erm, ranges, gossiper)
-        : get_all_ranges_with_sources_for(keyspace_name, erm, ranges);
+        ? get_all_ranges_with_strict_sources_for(keyspace_name, erm, std::move(ranges), gossiper)
+        : get_all_ranges_with_sources_for(keyspace_name, erm, std::move(ranges));
 
     if (logger.is_enabled(logging::log_level::debug)) {
         for (auto& x : ranges_for_keyspace) {
