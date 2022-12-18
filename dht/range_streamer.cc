@@ -287,9 +287,8 @@ future<> range_streamer::stream_async() {
                 };
                 try {
                     dht::token_range_vector ranges_to_stream;
-                    for (auto it = range_vec.begin(); it < range_vec.end();) {
-                        ranges_to_stream.push_back(*it);
-                        it = range_vec.erase(it);
+                    for (const auto& r : range_vec) {
+                        ranges_to_stream.push_back(r);
                         if (ranges_to_stream.size() < nr_ranges_per_stream_plan) {
                             continue;
                         } else {
@@ -299,6 +298,7 @@ future<> range_streamer::stream_async() {
                     if (ranges_to_stream.size() > 0) {
                         do_streaming(std::move(ranges_to_stream));
                     }
+                    range_vec.resize(0);
                 } catch (...) {
                     auto t = std::chrono::duration_cast<std::chrono::duration<float>>(lowres_clock::now() - start_time).count();
                     logger.warn("{} with {} for keyspace={} failed, took {} seconds: {}", description, source, keyspace, t, std::current_exception());
