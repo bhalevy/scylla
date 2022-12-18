@@ -3103,12 +3103,16 @@ storage_service::stream_ranges(std::unordered_map<sstring, std::unordered_multim
         }
         streamer->add_tx_ranges(keyspace, std::move(ranges_per_endpoint));
     }
-    return streamer->stream_async().then([streamer] {
+    std::exception_ptr ep;
+    try {
+        co_await streamer->stream_async();
         slogger.info("stream_ranges successful");
-    }).handle_exception([] (auto ep) {
+        co_return;
+    } catch (...) {
+        ep = std::current_exception();
         slogger.warn("stream_ranges failed: {}", ep);
-        return make_exception_future<>(std::move(ep));
-    });
+    }
+    co_await coroutine::return_exception_ptr(std::move(ep));
 }
 
 future<> storage_service::start_leaving() {
