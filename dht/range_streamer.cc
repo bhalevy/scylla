@@ -264,8 +264,7 @@ future<> range_streamer::stream_async() {
                 unsigned nr_ranges_streamed = 0;
                 size_t nr_ranges_total = range_vec.size();
                 size_t nr_ranges_per_stream_plan = nr_ranges_total / 10;
-                dht::token_range_vector ranges_to_stream;
-                auto do_streaming = [&] {
+                auto do_streaming = [&] (dht::token_range_vector&& ranges_to_stream) {
                     auto sp = stream_plan(_stream_manager.local(), format("{}-{}-index-{:d}", description, keyspace, sp_index++), _reason);
                     auto abort_listener = _abort_source.subscribe([&] () noexcept { sp.abort(); });
                     _abort_source.check();
@@ -279,7 +278,6 @@ future<> range_streamer::stream_async() {
                         sp.transfer_ranges(source, keyspace, std::move(ranges_to_stream));
                     }
                     sp.execute().discard_result().get();
-                    ranges_to_stream.clear();
                     // Update finished percentage
                     auto remaining = nr_ranges_to_stream();
                     float percentage = _nr_total_ranges == 0 ? 1 : (_nr_total_ranges - remaining) / (float)_nr_total_ranges;
@@ -287,6 +285,7 @@ future<> range_streamer::stream_async() {
                     logger.info("Finished {} out of {} ranges for {}, finished percentage={}",
                             _nr_total_ranges - remaining, _nr_total_ranges, _reason, percentage);
                 };
+                dht::token_range_vector ranges_to_stream;
                 try {
                     for (auto it = range_vec.begin(); it < range_vec.end();) {
                         ranges_to_stream.push_back(*it);
@@ -294,12 +293,12 @@ future<> range_streamer::stream_async() {
                         if (ranges_to_stream.size() < nr_ranges_per_stream_plan) {
                             continue;
                         } else {
-                            do_streaming();
+                            do_streaming(std::exchange(ranges_to_stream, {}));
                             it = range_vec.erase(range_vec.begin(), it);
                         }
                     }
                     if (ranges_to_stream.size() > 0) {
-                        do_streaming();
+                        do_streaming(std::exchange(ranges_to_stream, {}));
                         range_vec.clear();
                     }
                 } catch (...) {
