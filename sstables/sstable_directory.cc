@@ -405,7 +405,8 @@ future<uint64_t> sstable_directory::reshape(compaction_manager& cm, replica::tab
 
 future<>
 sstable_directory::reshard(sstable_info_vector shared_info, compaction_manager& cm, replica::table& table,
-                           unsigned max_sstables_per_job, sstables::compaction_sstable_creator_fn creator)
+                           unsigned max_sstables_per_job, sstables::compaction_sstable_creator_fn creator,
+                           compaction::owned_ranges_ptr owned_ranges_ptr)
 {
     // Resharding doesn't like empty sstable sets, so bail early. There is nothing
     // to reshard in this shard.
@@ -439,6 +440,7 @@ sstable_directory::reshard(sstable_info_vector shared_info, compaction_manager& 
             sstables::compaction_descriptor desc(sstlist, _io_priority);
             desc.options = sstables::compaction_type_options::make_reshard();
             desc.creator = creator;
+            desc.owned_ranges = owned_ranges_ptr;
 
             auto result = co_await sstables::compact_sstables(std::move(desc), info, t);
             // input sstables are moved, to guarantee their resources are released once we're done
