@@ -1615,14 +1615,14 @@ public:
 
     // Use reader that makes sure no non-local mutation will not be filtered out.
     flat_mutation_reader_v2 make_sstable_reader() const override {
-        return _compacting->make_range_sstable_reader(_schema,
+        return make_compaction_sstable_reader(_compacting->make_range_sstable_reader(_schema,
                 _permit,
                 query::full_partition_range,
                 _schema->full_slice(),
                 _io_priority,
                 nullptr,
                 ::streamed_mutation::forwarding::no,
-                ::mutation_reader::forwarding::no);
+                ::mutation_reader::forwarding::no));
 
     }
 
