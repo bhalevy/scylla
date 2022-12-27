@@ -477,6 +477,7 @@ protected:
     std::unordered_set<shared_sstable> _compacting_for_max_purgeable_func;
     // optional owned_ranges vector for cleanup;
     owned_ranges_ptr _owned_ranges = {};
+    mutable std::optional<dht::incremental_owned_ranges_checker> _owned_ranges_checker;
     // Garbage collected sstables that are sealed but were not added to SSTable set yet.
     std::vector<shared_sstable> _unused_garbage_collected_sstables;
     // Garbage collected sstables that were added to SSTable set and should be eventually removed from it.
@@ -514,6 +515,9 @@ protected:
         _contains_multi_fragment_runs = std::any_of(_sstables.begin(), _sstables.end(), [&ssts_run_ids] (shared_sstable& sst) {
             return !ssts_run_ids.insert(sst->run_identifier()).second;
         });
+        if (_owned_ranges) {
+            _owned_ranges_checker.emplace(*_owned_ranges);
+        }
     }
 
     virtual uint64_t partitions_per_sstable() const {
@@ -624,6 +628,21 @@ protected:
     bool enable_garbage_collected_sstable_writer() const noexcept {
         return _contains_multi_fragment_runs && _max_sstable_size != std::numeric_limits<uint64_t>::max();
     }
+
+    flat_mutation_reader_v2::filter make_partition_filter() const {
+        return [this] (const dht::decorated_key& dk) {
+#ifdef SEASTAR_DEBUG
+            // sstables should never be shared with other shards at this point.
+            assert(dht::shard_of(*_schema, dk.token()) == this_shard_id());
+#endif
+
+            if (!_owned_ranges_checker->belongs_to_current_node(dk.token())) {
+                log_trace("Token {} does not belong to this node, skipping", dk.token());
+                return false;
+            }
+            return true;
+        };
+    }
 public:
     compaction& operator=(const compaction&) = delete;
     compaction(const compaction&) = delete;
@@ -632,6 +651,13 @@ public:
     compaction& operator=(compaction&& other) = delete;
 
     virtual ~compaction() {
+    }
+protected:
+    flat_mutation_reader_v2 maybe_filter_sstable_reader(flat_mutation_reader_v2&& reader) const {
+        if (!_owned_ranges) {
+            return std::move(reader);
+        }
+        return make_filtering_reader(std::move(reader), make_partition_filter());
     }
 private:
     // Default range sstable reader that will only return mutation that belongs to current shard.
@@ -1057,7 +1083,7 @@ public:
     }
 
     flat_mutation_reader_v2 make_sstable_reader() const override {
-        return _compacting->make_local_shard_sstable_reader(_schema,
+        return maybe_filter_sstable_reader(_compacting->make_local_shard_sstable_reader(_schema,
                 _permit,
                 query::full_partition_range,
                 _schema->full_slice(),
@@ -1065,7 +1091,7 @@ public:
                 tracing::trace_state_ptr(),
                 ::streamed_mutation::forwarding::no,
                 ::mutation_reader::forwarding::no,
-                _monitor_generator);
+                _monitor_generator));
     }
 
     std::string_view report_start_desc() const override {
@@ -1178,7 +1204,6 @@ private:
 };
 
 class cleanup_compaction final : public regular_compaction {
-    mutable dht::incremental_owned_ranges_checker _owned_ranges_checker;
 private:
     // Called in a seastar thread
     dht::partition_range_vector
@@ -1204,12 +1229,7 @@ protected:
 public:
     cleanup_compaction(table_state& table_s, compaction_descriptor descriptor, compaction_data& cdata)
         : regular_compaction(table_s, std::move(descriptor), cdata)
-        , _owned_ranges_checker(*_owned_ranges)
     {
-    }
-
-    flat_mutation_reader_v2 make_sstable_reader() const override {
-        return make_filtering_reader(regular_compaction::make_sstable_reader(), make_partition_filter());
     }
 
     std::string_view report_start_desc() const override {
@@ -1218,21 +1238,6 @@ public:
 
     std::string_view report_finish_desc() const override {
         return "Cleaned";
-    }
-
-    flat_mutation_reader_v2::filter make_partition_filter() const {
-        return [this] (const dht::decorated_key& dk) {
-#ifdef SEASTAR_DEBUG
-            // sstables should never be shared with other shards at this point.
-            assert(dht::shard_of(*_schema, dk.token()) == this_shard_id());
-#endif
-
-            if (!_owned_ranges_checker.belongs_to_current_node(dk.token())) {
-                log_trace("Token {} does not belong to this node, skipping", dk.token());
-                return false;
-            }
-            return true;
-        };
     }
 };
 
