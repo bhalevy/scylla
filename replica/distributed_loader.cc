@@ -196,7 +196,8 @@ distribute_reshard_jobs(sstables::sstable_directory::sstable_info_vector source)
 }
 
 future<> run_resharding_jobs(sharded<sstables::sstable_directory>& dir, std::vector<reshard_shard_descriptor> reshard_jobs,
-                             sharded<replica::database>& db, sstring ks_name, sstring table_name, sstables::compaction_sstable_creator_fn creator) {
+                             sharded<replica::database>& db, sstring ks_name, sstring table_name, sstables::compaction_sstable_creator_fn creator,
+                             compaction::owned_ranges_ptr owned_ranges_ptr) {
 
     uint64_t total_size = boost::accumulate(reshard_jobs | boost::adaptors::transformed(std::mem_fn(&reshard_shard_descriptor::size)), uint64_t(0));
     if (total_size == 0) {
@@ -211,7 +212,14 @@ future<> run_resharding_jobs(sharded<sstables::sstable_directory>& dir, std::vec
         auto info_vec = std::move(reshard_jobs[this_shard_id()].info_vec);
         auto& cm = db.local().get_compaction_manager();
         auto max_threshold = table.schema()->max_compaction_threshold();
-        co_await d.reshard(std::move(info_vec), cm, table, max_threshold, creator);
+        auto local_owned_ranges_ptr = [&owned_ranges_ptr] () -> compaction::owned_ranges_ptr {
+            if (!owned_ranges_ptr) {
+                return nullptr;
+            }
+            auto owned_ranges = *owned_ranges_ptr;
+            return compaction::make_owned_ranges_ptr(std::move(owned_ranges));
+        };
+        co_await d.reshard(std::move(info_vec), cm, table, max_threshold, creator, local_owned_ranges_ptr());
         co_await d.move_foreign_sstables(dir);
     }));
 
@@ -225,10 +233,11 @@ future<> run_resharding_jobs(sharded<sstables::sstable_directory>& dir, std::vec
 //  - The second part calls each shard's distributed object to reshard the SSTables they were
 //    assigned.
 future<>
-distributed_loader::reshard(sharded<sstables::sstable_directory>& dir, sharded<replica::database>& db, sstring ks_name, sstring table_name, sstables::compaction_sstable_creator_fn creator) {
+distributed_loader::reshard(sharded<sstables::sstable_directory>& dir, sharded<replica::database>& db, sstring ks_name, sstring table_name,
+        sstables::compaction_sstable_creator_fn creator, compaction::owned_ranges_ptr owned_ranges_ptr) {
     auto all_jobs = co_await collect_all_shared_sstables(dir);
     auto destinations = co_await distribute_reshard_jobs(std::move(all_jobs));
-    co_await run_resharding_jobs(dir, std::move(destinations), db, ks_name, table_name, std::move(creator));
+    co_await run_resharding_jobs(dir, std::move(destinations), db, ks_name, table_name, std::move(creator), std::move(owned_ranges_ptr));
 }
 
 future<sstables::generation_type>
@@ -338,6 +347,7 @@ distributed_loader::process_upload_dir(distributed<replica::database>& db, distr
             shard_gen[s].store(shard_generation_base * smp::count + s, std::memory_order_relaxed);
         }
 
+        auto owned_ranges_ptr = compaction::make_owned_ranges_ptr(db.local().get_keyspace_local_ranges(ks));
         reshard(directory, db, ks, cf, [&global_table, upload, &shard_gen] (shard_id shard) mutable {
             // we need generation calculated by instance of cf at requested shard
             auto gen = shard_gen[shard].fetch_add(smp::count, std::memory_order_relaxed);
@@ -345,7 +355,7 @@ distributed_loader::process_upload_dir(distributed<replica::database>& db, distr
             return global_table->make_sstable(upload.native(), sstables::generation_from_value(gen),
                     global_table->get_sstables_manager().get_highest_supported_format(),
                     sstables::sstable::format_types::big, &error_handler_gen_for_upload_dir);
-        }).get();
+        }, std::move(owned_ranges_ptr)).get();
 
         reshape(directory, db, sstables::reshape_mode::strict, ks, cf, [global_table, upload, &shard_gen] (shard_id shard) {
             auto gen = shard_gen[shard].fetch_add(smp::count, std::memory_order_relaxed);
