@@ -79,6 +79,7 @@ public:
         _cm.deregister_compacting_sstables(sstables.begin(), sstables.end());
         for (const auto& sst : sstables) {
             _compacting.erase(sst);
+            _t.cleanup_sstable_set().erase(sst);
         }
     }
 };
@@ -1505,20 +1506,24 @@ future<> compaction_manager::perform_cleanup(owned_ranges_ptr sorted_owned_range
             t.schema()->ks_name(), t.schema()->cf_name()));
     }
 
-    if (sorted_owned_ranges->empty()) {
-        throw std::runtime_error("cleanup request failed: sorted_owned_ranges is empty");
-    }
-
+    // Called with compaction_disabled
     auto get_sstables = [this, &t, sorted_owned_ranges] () -> future<std::vector<sstables::shared_sstable>> {
         return seastar::async([this, &t, sorted_owned_ranges = std::move(sorted_owned_ranges)] {
             auto schema = t.schema();
-            auto sstables = std::vector<sstables::shared_sstable>{};
-            const auto candidates = get_candidates(t);
-            std::copy_if(candidates.begin(), candidates.end(), std::back_inserter(sstables), [&sorted_owned_ranges, schema] (const sstables::shared_sstable& sst) {
-                seastar::thread::maybe_yield();
-                return sst->mark_for_cleanup(*sorted_owned_ranges, schema);
-            });
-            return sstables;
+            auto filter_candidates = [&t, &sorted_owned_ranges, schema] (const lw_shared_ptr<sstables::sstable_list>& candidates) {
+                for (const auto& sst : *candidates) {
+                    if (sst->mark_for_cleanup(*sorted_owned_ranges, schema)) {
+                        t.cleanup_sstable_set().insert(sst);
+                    }
+                    seastar::thread::maybe_yield();
+                };
+            };
+            filter_candidates(t.main_sstable_set().all());
+            filter_candidates(t.maintenance_sstable_set().all());
+            // Some sstables may remain in cleanup_sstable_set
+            // for later processing if they can't be cleaned up right now.
+            // They are erased from cleanup_sstable_set by compacting.release_compacting
+            return get_candidates(t, t.cleanup_sstable_set());
         });
     };
 

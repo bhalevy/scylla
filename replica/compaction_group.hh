@@ -43,6 +43,8 @@ class compaction_group {
     // have not been deleted yet, so must not GC any tombstones in other sstables
     // that may delete data in these sstables:
     std::vector<sstables::shared_sstable> _sstables_compacted_but_not_deleted;
+    // sstables that require cleanup
+    std::unordered_set<sstables::shared_sstable> _cleanup_sstables_set;
 private:
     // Adds new sstable to the set of sstables
     // Doesn't update the cache. The cache must be synchronized in order for reads to see
@@ -93,6 +95,13 @@ public:
 
     const lw_shared_ptr<sstables::sstable_set>& maintenance_sstables() const noexcept;
     void set_maintenance_sstables(lw_shared_ptr<sstables::sstable_set> new_maintenance_sstables);
+
+    const std::unordered_set<sstables::shared_sstable>& cleanup_sstables_set() const noexcept {
+        return _cleanup_sstables_set;
+    };
+    std::unordered_set<sstables::shared_sstable>& cleanup_sstables_set() noexcept {
+        return _cleanup_sstables_set;
+    };
 
     // Makes a compound set, which includes main and maintenance sets
     lw_shared_ptr<sstables::sstable_set> make_compound_sstable_set();

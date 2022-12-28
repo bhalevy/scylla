@@ -2641,6 +2641,12 @@ public:
     const sstables::sstable_set& maintenance_sstable_set() const override {
         return *_cg.maintenance_sstables();
     }
+    const std::unordered_set<sstables::shared_sstable>& cleanup_sstable_set() const override {
+        return _cg.cleanup_sstables_set();
+    }
+    std::unordered_set<sstables::shared_sstable>& cleanup_sstable_set() override {
+        return _cg.cleanup_sstables_set();
+    }
     std::unordered_set<sstables::shared_sstable> fully_expired_sstables(const std::vector<sstables::shared_sstable>& sstables, gc_clock::time_point query_time) const override {
         return sstables::get_fully_expired_sstables(*this, sstables, query_time);
     }

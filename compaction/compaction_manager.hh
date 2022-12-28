@@ -22,6 +22,7 @@
 #include <seastar/core/abort_source.hh>
 #include <seastar/core/condition-variable.hh>
 #include "log.hh"
+#include "sstables/shared_sstable.hh"
 #include "utils/exponential_backoff_retry.hh"
 #include "utils/updateable_value.hh"
 #include "utils/serialized_action.hh"
