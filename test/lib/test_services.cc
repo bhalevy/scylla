@@ -54,6 +54,7 @@ class table_for_tests::table_state : public compaction::table_state {
     std::vector<sstables::shared_sstable> _compacted_undeleted;
     tombstone_gc_state _tombstone_gc_state;
     mutable compaction_backlog_tracker _backlog_tracker;
+    std::unordered_set<sstables::shared_sstable> _cleanup_sstable_set;
 private:
     replica::table& table() const noexcept {
         return *_data.cf;
