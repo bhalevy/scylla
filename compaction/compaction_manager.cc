@@ -31,14 +31,16 @@ using namespace std::chrono_literals;
 
 class compacting_sstable_registration {
     compaction_manager& _cm;
+    compaction::table_state& _t;
     std::unordered_set<sstables::shared_sstable> _compacting;
 public:
-    explicit compacting_sstable_registration(compaction_manager& cm) noexcept
+    explicit compacting_sstable_registration(compaction_manager& cm, compaction::table_state& t) noexcept
         : _cm(cm)
+        , _t(t)
     { }
 
-    compacting_sstable_registration(compaction_manager& cm, std::vector<sstables::shared_sstable> compacting)
-        : compacting_sstable_registration(cm)
+    compacting_sstable_registration(compaction_manager& cm, compaction::table_state& t, std::vector<sstables::shared_sstable> compacting)
+        : compacting_sstable_registration(cm, t)
     {
         register_compacting(compacting);
     }
@@ -56,6 +58,7 @@ public:
 
     compacting_sstable_registration(compacting_sstable_registration&& other) noexcept
         : _cm(other._cm)
+        , _t(other._t)
         , _compacting(std::move(other._compacting))
     { }
 
@@ -395,7 +398,7 @@ protected:
         compaction::table_state* t = _compacting_table;
         sstables::compaction_strategy cs = t->get_compaction_strategy();
         sstables::compaction_descriptor descriptor = cs.get_major_compaction_job(*t, _cm.get_candidates(*t));
-        auto compacting = compacting_sstable_registration(_cm, descriptor.sstables);
+        auto compacting = compacting_sstable_registration(_cm, *t, descriptor.sstables);
         auto release_exhausted = [&compacting] (const std::vector<sstables::shared_sstable>& exhausted_sstables) {
             compacting.release_compacting(exhausted_sstables);
         };
@@ -989,7 +992,7 @@ protected:
                 _cm.postpone_compaction_for_table(&t);
                 co_return std::nullopt;
             }
-            auto compacting = compacting_sstable_registration(_cm, descriptor.sstables);
+            auto compacting = compacting_sstable_registration(_cm, t, descriptor.sstables);
             auto weight_r = compaction_weight_registration(&_cm, weight);
             auto release_exhausted = [&compacting] (const std::vector<sstables::shared_sstable>& exhausted_sstables) {
                 compacting.release_compacting(exhausted_sstables);
@@ -1327,7 +1330,7 @@ future<compaction_manager::compaction_stats_opt> compaction_manager::perform_tas
     // in the re-write, we need to barrier out any previously running
     // compaction.
     std::vector<sstables::shared_sstable> sstables;
-    compacting_sstable_registration compacting(*this);
+    compacting_sstable_registration compacting(*this, t);
     co_await run_with_compaction_disabled(t, [this, &sstables, &compacting, get_func = std::move(get_func)] () -> future<> {
         // Getting sstables and registering them as compacting must be atomic, to avoid a race condition where
         // regular compaction runs in between and picks the same files.
