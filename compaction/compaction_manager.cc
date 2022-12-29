@@ -1504,7 +1504,7 @@ future<> compaction_manager::perform_cleanup(owned_ranges_ptr sorted_owned_range
             const auto candidates = get_candidates(t);
             std::copy_if(candidates.begin(), candidates.end(), std::back_inserter(sstables), [&sorted_owned_ranges, schema] (const sstables::shared_sstable& sst) {
                 seastar::thread::maybe_yield();
-                return sst->needs_cleanup(*sorted_owned_ranges, schema);
+                return sst->mark_for_cleanup(*sorted_owned_ranges, schema);
             });
             return sstables;
         });

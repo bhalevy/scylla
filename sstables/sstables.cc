@@ -3385,6 +3385,10 @@ bool sstable::needs_cleanup(const dht::token_range_vector& sorted_owned_ranges, 
     return true;
 }
 
+bool sstable::mark_for_cleanup(const dht::token_range_vector& sorted_owned_ranges, schema_ptr s) {
+    return _requires_cleanup = needs_cleanup(sorted_owned_ranges, std::move(s));
+}
+
 } // namespace sstables
 
 namespace seastar {
