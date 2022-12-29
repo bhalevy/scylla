@@ -1511,6 +1511,11 @@ bool compaction_manager::update_sstable_cleanup_state(compaction::table_state& t
     }
 }
 
+bool compaction_manager::requires_cleanup(compaction::table_state& t, const sstables::shared_sstable& sst) const {
+    const auto& cs = get_compaction_state(&t);
+    return cs.sstables_requiring_cleanup.contains(sst);
+}
+
 future<> compaction_manager::perform_cleanup(owned_ranges_ptr sorted_owned_ranges, compaction::table_state& t) {
     auto check_for_cleanup = [this, &t] {
         return boost::algorithm::any_of(_tasks, [&t] (auto& task) {
