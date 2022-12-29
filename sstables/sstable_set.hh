@@ -71,6 +71,8 @@ public:
     stop_iteration for_each_sstable_until(std::function<stop_iteration(const shared_sstable&)> func) const;
     void insert(shared_sstable sst);
     void erase(shared_sstable sst);
+    // Returns true if any of the sstables requries cleanup.
+    bool requires_cleanup() const;
 
     // Used to incrementally select sstables from sstable set using ring-position.
     // sstable set must be alive during the lifetime of the selector.
