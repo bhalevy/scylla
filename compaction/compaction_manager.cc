@@ -81,6 +81,9 @@ public:
             _compacting.erase(sst);
             _cs.sstables_requiring_cleanup.erase(sst);
         }
+        if (_cs.sstables_requiring_cleanup.empty()) {
+            _cs.owned_ranges_ptr = nullptr;
+        }
     }
 };
 
@@ -1533,7 +1536,7 @@ future<> compaction_manager::perform_cleanup(owned_ranges_ptr sorted_owned_range
 
     // Called with compaction_disabled
     auto get_sstables = [this, &t, sorted_owned_ranges] () -> future<std::vector<sstables::shared_sstable>> {
-        return seastar::async([this, &t, sorted_owned_ranges = std::move(sorted_owned_ranges)] {
+        return seastar::async([this, &t, sorted_owned_ranges = std::move(sorted_owned_ranges)] () mutable {
             auto& cs = get_compaction_state(&t);
             auto filter_candidates = [&cs, &sorted_owned_ranges] (const lw_shared_ptr<sstables::sstable_list>& candidates) {
                 for (const auto& sst : *candidates) {
@@ -1545,7 +1548,12 @@ future<> compaction_manager::perform_cleanup(owned_ranges_ptr sorted_owned_range
             };
             filter_candidates(t.main_sstable_set().all());
             filter_candidates(t.maintenance_sstable_set().all());
-            // Some sstables may remain in sstables_requiring_cleanup
+
+            if (!cs.sstables_requiring_cleanup.empty()) {
+                cs.owned_ranges_ptr = std::move(sorted_owned_ranges);
+            }
+
+            // Some sstables may remain in cleanup_sstable_set
             // for later processing if they can't be cleaned up right now.
             // They are erased from sstables_requiring_cleanup by compacting.release_compacting
             return get_candidates(t, cs.sstables_requiring_cleanup);
