@@ -301,6 +301,10 @@ public:
         return _marked_for_deletion == mark_for_deletion::marked;
     }
 
+    // Check if the sstable may contain a token that falls outside the owned ranges,
+    // indicating that the sstable needs cleanup.
+    bool needs_cleanup(const dht::token_range_vector& sorted_owned_ranges, schema_ptr s) const;
+
     const std::set<generation_type>& compaction_ancestors() const {
         return _compaction_ancestors;
     }

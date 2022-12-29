@@ -3365,6 +3365,26 @@ future<> remove_table_directory_if_has_no_snapshots(fs::path table_dir) {
     }
 }
 
+bool sstable::needs_cleanup(const dht::token_range_vector& sorted_owned_ranges, schema_ptr s) const {
+    auto first_token = get_first_decorated_key().token();
+    auto last_token = get_last_decorated_key().token();
+    dht::token_range sst_token_range = dht::token_range::make(first_token, last_token);
+
+    auto r = std::lower_bound(sorted_owned_ranges.begin(), sorted_owned_ranges.end(), first_token,
+            [] (const range<dht::token>& a, const dht::token& b) {
+        // check that range a is before token b.
+        return a.after(b, dht::token_comparator());
+    });
+
+    // return true iff sst partition range isn't fully contained in any of the owned ranges.
+    if (r != sorted_owned_ranges.end()) {
+        if (r->contains(sst_token_range, dht::token_comparator())) {
+            return false;
+        }
+    }
+    return true;
+}
+
 } // namespace sstables
 
 namespace seastar {

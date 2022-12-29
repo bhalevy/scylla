@@ -3666,23 +3666,23 @@ SEASTAR_TEST_CASE(sstable_needs_cleanup_test) {
     {
         auto local_ranges = { token_range(0, 9) };
         auto sst = sst_gen(key_from_token(0), key_from_token(9));
-        BOOST_REQUIRE(!needs_cleanup(sst, local_ranges, s));
+        BOOST_REQUIRE(!sst->needs_cleanup(local_ranges, s));
     }
 
     {
         auto local_ranges = { token_range(0, 1), token_range(3, 4), token_range(5, 6) };
 
         auto sst = sst_gen(key_from_token(0), key_from_token(1));
-        BOOST_REQUIRE(!needs_cleanup(sst, local_ranges, s));
+        BOOST_REQUIRE(!sst->needs_cleanup(local_ranges, s));
 
         auto sst2 = sst_gen(key_from_token(2), key_from_token(2));
-        BOOST_REQUIRE(needs_cleanup(sst2, local_ranges, s));
+        BOOST_REQUIRE(sst2->needs_cleanup(local_ranges, s));
 
         auto sst3 = sst_gen(key_from_token(0), key_from_token(6));
-        BOOST_REQUIRE(needs_cleanup(sst3, local_ranges, s));
+        BOOST_REQUIRE(sst3->needs_cleanup(local_ranges, s));
 
         auto sst5 = sst_gen(key_from_token(7), key_from_token(7));
-        BOOST_REQUIRE(needs_cleanup(sst5, local_ranges, s));
+        BOOST_REQUIRE(sst5->needs_cleanup(local_ranges, s));
     }
 
     return make_ready_future<>();

@@ -1477,28 +1477,6 @@ private:
     }
 };
 
-bool needs_cleanup(const sstables::shared_sstable& sst,
-                   const dht::token_range_vector& sorted_owned_ranges,
-                   schema_ptr s) {
-    auto first_token = sst->get_first_decorated_key().token();
-    auto last_token = sst->get_last_decorated_key().token();
-    dht::token_range sst_token_range = dht::token_range::make(first_token, last_token);
-
-    auto r = std::lower_bound(sorted_owned_ranges.begin(), sorted_owned_ranges.end(), first_token,
-            [] (const range<dht::token>& a, const dht::token& b) {
-        // check that range a is before token b.
-        return a.after(b, dht::token_comparator());
-    });
-
-    // return true iff sst partition range isn't fully contained in any of the owned ranges.
-    if (r != sorted_owned_ranges.end()) {
-        if (r->contains(sst_token_range, dht::token_comparator())) {
-            return false;
-        }
-    }
-    return true;
-}
-
 future<> compaction_manager::perform_cleanup(owned_ranges_ptr sorted_owned_ranges, compaction::table_state& t) {
     auto check_for_cleanup = [this, &t] {
         return boost::algorithm::any_of(_tasks, [&t] (auto& task) {
@@ -1517,7 +1495,7 @@ future<> compaction_manager::perform_cleanup(owned_ranges_ptr sorted_owned_range
             const auto candidates = get_candidates(t);
             std::copy_if(candidates.begin(), candidates.end(), std::back_inserter(sstables), [&sorted_owned_ranges, schema] (const sstables::shared_sstable& sst) {
                 seastar::thread::maybe_yield();
-                return sorted_owned_ranges->empty() || needs_cleanup(sst, *sorted_owned_ranges, schema);
+                return sorted_owned_ranges->empty() || sst->needs_cleanup(*sorted_owned_ranges, schema);
             });
             return sstables;
         });
