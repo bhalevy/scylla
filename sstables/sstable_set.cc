@@ -182,6 +182,13 @@ sstable_set::erase(shared_sstable sst) {
     _impl->erase(sst);
 }
 
+bool
+sstable_set::requires_cleanup() const {
+    return bool(for_each_sstable_until([] (const shared_sstable &sst) {
+        return stop_iteration(sst->requires_cleanup());
+    }));
+}
+
 sstable_set::~sstable_set() = default;
 
 sstable_set::incremental_selector::incremental_selector(std::unique_ptr<incremental_selector_impl> impl, const schema& s)
