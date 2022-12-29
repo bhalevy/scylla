@@ -1503,6 +1503,10 @@ bool needs_cleanup(const sstables::shared_sstable& sst,
     return true;
 }
 
+bool update_sstable_cleanup_state(const sstables::shared_sstable& sst, const dht::token_range_vector& sorted_owned_ranges) {
+    return sst->set_requires_cleanup(needs_cleanup(sst, sorted_owned_ranges));
+}
+
 future<> compaction_manager::perform_cleanup(owned_ranges_ptr sorted_owned_ranges, compaction::table_state& t) {
     auto check_for_cleanup = [this, &t] {
         return boost::algorithm::any_of(_tasks, [&t] (auto& task) {
@@ -1524,7 +1528,7 @@ future<> compaction_manager::perform_cleanup(owned_ranges_ptr sorted_owned_range
             const auto candidates = get_candidates(t);
             std::copy_if(candidates.begin(), candidates.end(), std::back_inserter(sstables), [&sorted_owned_ranges] (const sstables::shared_sstable& sst) {
                 seastar::thread::maybe_yield();
-                return needs_cleanup(sst, *sorted_owned_ranges);
+                return update_sstable_cleanup_state(sst, *sorted_owned_ranges);
             });
             return sstables;
         });

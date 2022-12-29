@@ -301,6 +301,14 @@ public:
         return _marked_for_deletion == mark_for_deletion::marked;
     }
 
+    bool set_requires_cleanup(bool requires_cleanup) noexcept {
+        return _requires_cleanup = requires_cleanup;
+    }
+
+    bool requires_cleanup() const noexcept {
+        return _requires_cleanup;
+    }
+
     const std::set<generation_type>& compaction_ancestors() const {
         return _compaction_ancestors;
     }
@@ -564,6 +572,7 @@ private:
         marked = 1
     } _marked_for_deletion = mark_for_deletion::none;
     bool _active = true;
+    bool _requires_cleanup = false;
 
     gc_clock::time_point _now;
 
