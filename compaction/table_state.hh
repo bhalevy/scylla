@@ -25,6 +25,7 @@ struct sstable_writer_config;
 namespace compaction {
 
 class table_state {
+    compaction::owned_ranges_ptr _owned_ranges_ptr;
 public:
     virtual ~table_state() {}
     virtual const schema_ptr& schema() const noexcept = 0;
@@ -47,6 +48,13 @@ public:
     virtual bool is_auto_compaction_disabled_by_user() const noexcept = 0;
     virtual const tombstone_gc_state& get_tombstone_gc_state() const noexcept = 0;
     virtual compaction_backlog_tracker& get_backlog_tracker() = 0;
+
+    const compaction::owned_ranges_ptr& get_owned_ranges_ptr() const noexcept {
+        return _owned_ranges_ptr;
+    }
+    void set_owned_ranges_ptr(compaction::owned_ranges_ptr p) noexcept {
+        _owned_ranges_ptr = std::move(p);
+    }
 };
 
 }

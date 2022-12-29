@@ -81,6 +81,9 @@ public:
             _compacting.erase(sst);
             _t.cleanup_sstable_set().erase(sst);
         }
+        if (_t.cleanup_sstable_set().empty()) {
+            _t.set_owned_ranges_ptr(nullptr);
+        }
     }
 };
 
@@ -993,6 +996,7 @@ protected:
                 _cm.postpone_compaction_for_table(&t);
                 co_return std::nullopt;
             }
+
             auto compacting = compacting_sstable_registration(_cm, t, descriptor.sstables);
             auto weight_r = compaction_weight_registration(&_cm, weight);
             auto release_exhausted = [&compacting] (const std::vector<sstables::shared_sstable>& exhausted_sstables) {
@@ -1520,6 +1524,11 @@ future<> compaction_manager::perform_cleanup(owned_ranges_ptr sorted_owned_range
             };
             filter_candidates(t.main_sstable_set().all());
             filter_candidates(t.maintenance_sstable_set().all());
+
+            if (!t.cleanup_sstable_set().empty()) {
+                t.set_owned_ranges_ptr(sorted_owned_ranges);
+            }
+
             // Some sstables may remain in cleanup_sstable_set
             // for later processing if they can't be cleaned up right now.
             // They are erased from cleanup_sstable_set by compacting.release_compacting
