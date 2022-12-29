@@ -653,8 +653,8 @@ public:
     virtual ~compaction() {
     }
 protected:
-    flat_mutation_reader_v2 maybe_filter_sstable_reader(flat_mutation_reader_v2&& reader) const {
-        if (!_owned_ranges) {
+    flat_mutation_reader_v2 maybe_filter_sstable_reader(flat_mutation_reader_v2&& reader, bool requires_cleanup) const {
+        if (!_owned_ranges || !requires_cleanup) {
             return std::move(reader);
         }
         return make_filtering_reader(std::move(reader), make_partition_filter());
@@ -1083,6 +1083,7 @@ public:
     }
 
     flat_mutation_reader_v2 make_sstable_reader() const override {
+        bool requires_cleanup = _compacting->requires_cleanup();
         return maybe_filter_sstable_reader(_compacting->make_local_shard_sstable_reader(_schema,
                 _permit,
                 query::full_partition_range,
@@ -1091,7 +1092,7 @@ public:
                 tracing::trace_state_ptr(),
                 ::streamed_mutation::forwarding::no,
                 ::mutation_reader::forwarding::no,
-                _monitor_generator));
+                _monitor_generator), requires_cleanup);
     }
 
     std::string_view report_start_desc() const override {
@@ -1616,6 +1617,7 @@ public:
 
     // Use reader that makes sure no non-local mutation will not be filtered out.
     flat_mutation_reader_v2 make_sstable_reader() const override {
+        bool requires_cleanup = _compacting->requires_cleanup();
         return maybe_filter_sstable_reader(_compacting->make_range_sstable_reader(_schema,
                 _permit,
                 query::full_partition_range,
@@ -1623,7 +1625,7 @@ public:
                 _io_priority,
                 nullptr,
                 ::streamed_mutation::forwarding::no,
-                ::mutation_reader::forwarding::no));
+                ::mutation_reader::forwarding::no), requires_cleanup);
 
     }
 
