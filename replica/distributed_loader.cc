@@ -214,13 +214,15 @@ future<> reshard(sstables::sstable_directory& dir, sstables::sstable_directory::
         co_return;
     }
 
-    // We want to reshard many SSTables at a time for efficiency. However if we have to many we may
+    // We want to reshard many SSTables at a time for efficiency. However if we have too many we may
     // be risking OOM.
     auto max_sstables_per_job = table.schema()->max_compaction_threshold();
     auto num_jobs = (shared_info.size() + max_sstables_per_job - 1) / max_sstables_per_job;
     auto sstables_per_job = shared_info.size() / num_jobs;
 
-    std::vector<std::vector<sstables::shared_sstable>> buckets(1);
+    std::vector<std::vector<sstables::shared_sstable>> buckets;
+    buckets.reserve(num_jobs);
+    buckets.emplace_back();
     co_await coroutine::parallel_for_each(shared_info, [&dir, sstables_per_job, num_jobs, &buckets] (sstables::foreign_sstable_open_info& info) -> future<> {
         auto sst = co_await dir.load_foreign_sstable(info);
         // Last bucket gets leftover SSTables
