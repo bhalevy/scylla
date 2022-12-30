@@ -1900,4 +1900,16 @@ uint64_t compaction_descriptor::sstables_size() const {
     return boost::accumulate(sstables | boost::adaptors::transformed(std::mem_fn(&sstables::sstable::data_size)), uint64_t(0));
 }
 
+void compaction_descriptor::retrieve_owned_ranges_if_required(table_state& t) {
+    for (const auto& sst : sstables) {
+        if (sst->requires_cleanup()) {
+            if (!t.get_owned_ranges_ptr()) {
+                on_internal_error_noexcept(clogger, format("SSTable {} requires cleanup, but table state has null owned ranges", sst->get_filename()));
+            }
+            owned_ranges = t.get_owned_ranges_ptr();
+            break;
+        }
+    }
+}
+
 }

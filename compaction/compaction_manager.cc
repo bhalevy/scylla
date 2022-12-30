@@ -360,6 +360,7 @@ future<sstables::compaction_result> compaction_manager::task::compact_sstables(s
             release_exhausted(old_sstables);
         }
     };
+    descriptor.retrieve_owned_ranges_if_required(t);
 
     co_return co_await sstables::compact_sstables(std::move(descriptor), cdata, t);
 }

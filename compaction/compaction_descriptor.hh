@@ -22,6 +22,8 @@
 
 namespace compaction {
 
+class table_state;
+
 using owned_ranges_ptr = lw_shared_ptr<const dht::token_range_vector>;
 
 inline owned_ranges_ptr make_owned_ranges_ptr(dht::token_range_vector&& ranges) {
@@ -208,6 +210,8 @@ struct compaction_descriptor {
     void enable_garbage_collection(sstables::sstable_set snapshot) { all_sstables_snapshot = std::move(snapshot); }
     // Returns total size of all sstables contained in this descriptor
     uint64_t sstables_size() const;
+
+    void retrieve_owned_ranges_if_required(compaction::table_state& t);
 };
 
 }
