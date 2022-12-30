@@ -19,7 +19,7 @@
 #include "utils/UUID.hh"
 #include "dht/i_partitioner.hh"
 #include "compaction_weight_registration.hh"
-#include "compaction_fwd.hh"
+#include "compaction/compaction_fwd.hh"
 
 namespace sstables {
 
@@ -199,6 +199,8 @@ struct compaction_descriptor {
     void enable_garbage_collection(sstables::sstable_set snapshot) { all_sstables_snapshot = std::move(snapshot); }
     // Returns total size of all sstables contained in this descriptor
     uint64_t sstables_size() const;
+
+    void retrieve_owned_ranges_if_required(compaction::compaction_state& cs);
 };
 
 }
