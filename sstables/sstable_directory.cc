@@ -433,11 +433,11 @@ sstable_directory::reshard(sstable_info_vector shared_info, compaction_manager& 
     // There is a semaphore inside the compaction manager in run_resharding_jobs. So we
     // parallel_for_each so the statistics about pending jobs are updated to reflect all
     // jobs. But only one will run in parallel at a time
-    co_await coroutine::parallel_for_each(buckets, [this, &cm, &table, creator = std::move(creator)] (std::vector<sstables::shared_sstable>& sstlist) mutable {
-        return cm.run_custom_job(table.as_table_state(), compaction_type::Reshard, "Reshard compaction", [this, &cm, &table, creator, &sstlist] (sstables::compaction_data& info) -> future<> {
+    co_await coroutine::parallel_for_each(buckets, [&] (std::vector<sstables::shared_sstable>& sstlist) {
+        return cm.run_custom_job(table.as_table_state(), compaction_type::Reshard, "Reshard compaction", [&] (sstables::compaction_data& info) -> future<> {
             sstables::compaction_descriptor desc(sstlist, _io_priority);
             desc.options = sstables::compaction_type_options::make_reshard();
-            desc.creator = std::move(creator);
+            desc.creator = creator;
 
             auto result = co_await sstables::compact_sstables(std::move(desc), info, table.as_table_state());
             // input sstables are moved, to guarantee their resources are released once we're done
