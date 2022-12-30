@@ -35,6 +35,7 @@
 #include "sstables/sstables_manager.hh"
 #include "compaction.hh"
 #include "compaction_manager.hh"
+#include "compaction/compaction_state.hh"
 #include "schema.hh"
 #include "db/system_keyspace.hh"
 #include "service/priority_manager.hh"
@@ -1898,6 +1899,18 @@ unsigned compaction_descriptor::fan_in() const {
 
 uint64_t compaction_descriptor::sstables_size() const {
     return boost::accumulate(sstables | boost::adaptors::transformed(std::mem_fn(&sstables::sstable::data_size)), uint64_t(0));
+}
+
+void compaction_descriptor::retrieve_owned_ranges_if_required(::compaction::compaction_state& cs) {
+    for (const auto& sst : sstables) {
+        if (sst->requires_cleanup()) {
+            if (!cs.owned_ranges_ptr) {
+                on_internal_error_noexcept(clogger, format("SSTable {} requires cleanup, but table state has null owned ranges", sst->get_filename()));
+            }
+            owned_ranges = cs.owned_ranges_ptr;
+            break;
+        }
+    }
 }
 
 }
