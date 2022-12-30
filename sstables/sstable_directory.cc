@@ -413,12 +413,14 @@ sstable_directory::reshard(sstable_info_vector shared_info, compaction_manager& 
         co_return;
     }
 
-    // We want to reshard many SSTables at a time for efficiency. However if we have to many we may
+    // We want to reshard many SSTables at a time for efficiency. However if we have too many we may
     // be risking OOM.
     auto num_jobs = (shared_info.size() + max_sstables_per_job - 1) / max_sstables_per_job;
     auto sstables_per_job = shared_info.size() / num_jobs;
 
-    std::vector<std::vector<sstables::shared_sstable>> buckets(1);
+    std::vector<std::vector<sstables::shared_sstable>> buckets;
+    buckets.reserve(num_jobs);
+    buckets.emplace_back();
     co_await coroutine::parallel_for_each(shared_info, [this, sstables_per_job, num_jobs, &buckets] (sstables::foreign_sstable_open_info& info) -> future<> {
         auto sst = _manager.make_sstable(_schema, _sstable_dir.native(), info.generation, info.version, info.format, gc_clock::now(), _error_handler_gen);
         co_await sst->load(std::move(info));
