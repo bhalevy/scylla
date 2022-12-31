@@ -422,9 +422,12 @@ sstable_directory::reshard(sstable_info_vector shared_info, compaction_manager& 
     std::vector<std::vector<sstables::shared_sstable>> buckets;
     buckets.reserve(num_jobs);
     buckets.emplace_back();
-    co_await coroutine::parallel_for_each(shared_info, [this, sstables_per_job, num_jobs, &buckets] (sstables::foreign_sstable_open_info& info) -> future<> {
+    co_await coroutine::parallel_for_each(shared_info, [this, sstables_per_job, num_jobs, &buckets, &owned_ranges_ptr] (sstables::foreign_sstable_open_info& info) -> future<> {
         auto sst = _manager.make_sstable(_schema, _sstable_dir.native(), info.generation, info.version, info.format, gc_clock::now(), _error_handler_gen);
         co_await sst->load(std::move(info));
+        if (owned_ranges_ptr) {
+            update_sstable_cleanup_state(sst, *owned_ranges_ptr);
+        }
         // Last bucket gets leftover SSTables
         if ((buckets.back().size() >= sstables_per_job) && (buckets.size() < num_jobs)) {
             buckets.emplace_back();
