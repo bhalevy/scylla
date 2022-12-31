@@ -165,6 +165,10 @@ void sstable_set::for_each_sstable(std::function<void(const shared_sstable&)> fu
     return _impl->for_each_sstable(std::move(func));
 }
 
+stop_iteration sstable_set::for_each_sstable_until(std::function<stop_iteration(const shared_sstable&)> func) const {
+    return _impl->for_each_sstable_until(std::move(func));
+}
+
 void
 sstable_set::insert(shared_sstable sst) {
     _impl->insert(sst);
@@ -316,6 +320,15 @@ void partitioned_sstable_set::for_each_sstable(std::function<void(const shared_s
     }
 }
 
+stop_iteration partitioned_sstable_set::for_each_sstable_until(std::function<stop_iteration(const shared_sstable&)> func) const {
+    for (auto& sst : *_all) {
+        if (func(sst)) {
+            return stop_iteration::yes;
+        }
+    }
+    return stop_iteration::no;
+}
+
 void partitioned_sstable_set::insert(shared_sstable sst) {
     _all->insert(sst);
     auto undo_all_insert = defer([&] () { _all->erase(sst); });
@@ -440,6 +453,15 @@ void time_series_sstable_set::for_each_sstable(std::function<void(const shared_s
     for (auto& entry : *_sstables) {
         func(entry.second);
     }
+}
+
+stop_iteration time_series_sstable_set::for_each_sstable_until(std::function<stop_iteration(const shared_sstable&)> func) const {
+    for (auto& entry : *_sstables) {
+        if (func(entry.second)) {
+            return stop_iteration::yes;
+        }
+    }
+    return stop_iteration::no;
 }
 
 // O(log n)
@@ -1013,6 +1035,15 @@ void compound_sstable_set::for_each_sstable(std::function<void(const shared_ssta
             func(sst);
         });
     }
+}
+
+stop_iteration compound_sstable_set::for_each_sstable_until(std::function<stop_iteration(const shared_sstable&)> func) const {
+    for (auto& set : _sets) {
+        if (set->for_each_sstable_until([&func] (const shared_sstable& sst) { return func(sst); })) {
+            return stop_iteration::yes;
+        }
+    }
+    return stop_iteration::no;
 }
 
 void compound_sstable_set::insert(shared_sstable sst) {
