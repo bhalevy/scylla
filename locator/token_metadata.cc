@@ -102,10 +102,6 @@ public:
         return _bootstrap_tokens;
     }
 
-    void update_topology(inet_address ep, endpoint_dc_rack dr) {
-        _topology.update_endpoint(ep, std::move(dr));
-    }
-
     /**
      * Creates an iterable range of the sorted tokens starting at the token next
      * after the given one.
@@ -861,7 +857,7 @@ void token_metadata_impl::calculate_pending_ranges_for_bootstrap(
     for (auto& x : tmp) {
         auto& endpoint = x.first;
         auto& tokens = x.second;
-        all_left_metadata->update_topology(endpoint, get_dc_rack(endpoint));
+        all_left_metadata->get_topology().update_endpoint(endpoint, get_dc_rack(endpoint));
         all_left_metadata->update_normal_tokens(tokens, endpoint).get();
         for (auto& x : strategy.get_address_ranges(*all_left_metadata, endpoint).get0()) {
             new_pending_ranges.emplace(x.second, endpoint);
@@ -1030,11 +1026,6 @@ token_metadata::get_leaving_endpoints() const {
 const std::unordered_map<token, inet_address>&
 token_metadata::get_bootstrap_tokens() const {
     return _impl->get_bootstrap_tokens();
-}
-
-void
-token_metadata::update_topology(inet_address ep, endpoint_dc_rack dr) {
-    _impl->update_topology(ep, std::move(dr));
 }
 
 boost::iterator_range<token_metadata::tokens_iterator>
