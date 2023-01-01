@@ -47,7 +47,6 @@ private:
      * Each Token is associated with exactly one Address, but each Address may have
      * multiple tokens.  Hence, the BiMultiValMap collection.
      */
-    // FIXME: have to be BiMultiValMap
     std::unordered_map<token, inet_address> _token_to_endpoint_map;
 
     // Track the unique set of nodes in _token_to_endpoint_map
