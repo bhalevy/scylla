@@ -44,9 +44,9 @@ using can_yield = utils::can_yield;
 
 using replication_strategy_config_options = std::map<sstring, sstring>;
 
-using replication_map = std::unordered_map<token, inet_address_vector_replica_set>;
+using replication_map = std::unordered_map<token, topology::node_ptr_replica_set>;
 
-using endpoint_set = utils::basic_sequenced_set<inet_address, inet_address_vector_replica_set>;
+using node_set = utils::basic_sequenced_set<node_ptr, inet_address_vector_replica_set>;
 
 class effective_replication_map;
 class effective_replication_map_factory;
@@ -118,8 +118,8 @@ public:
     future<dht::token_range_vector> get_ranges(inet_address ep, token_metadata_ptr tmptr) const;
 
 public:
-    future<std::unordered_multimap<inet_address, dht::token_range>> get_address_ranges(const token_metadata& tm) const;
-    future<std::unordered_multimap<inet_address, dht::token_range>> get_address_ranges(const token_metadata& tm, inet_address endpoint) const;
+    future<std::unordered_multimap<topology::node_ptr, dht::token_range>> get_address_ranges(const token_metadata& tm) const;
+    future<std::unordered_multimap<topology::node_ptr, dht::token_range>> get_address_ranges(const token_metadata& tm, inet_address endpoint) const;
 
     // Caller must ensure that token_metadata will not change throughout the call.
     future<std::unordered_map<dht::token_range, inet_address_vector_replica_set>> get_range_addresses(const token_metadata& tm) const;

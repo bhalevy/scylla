@@ -75,6 +75,7 @@ public:
         topology::config topo_cfg;
     };
     using inet_address = gms::inet_address;
+    using node_ptr = topology::node_ptr;
 private:
     class tokens_iterator {
     public:
@@ -104,19 +105,19 @@ public:
     token_metadata& operator=(token_metadata&&) noexcept;
     ~token_metadata();
     const std::vector<token>& sorted_tokens() const;
-    // Update token->endpoint mappings for a given \c endpoint.
-    // \c tokens are all the tokens that are now owned by \c endpoint.
+    // Update token->endpoint mappings for a given \c node.
+    // \c tokens are all the tokens that are now owned by \c node.
     //
     // Note: the function is not exception safe!
     // It must be called only on a temporary copy of the token_metadata
-    future<> update_normal_tokens(std::unordered_set<token> tokens, inet_address endpoint);
+    future<> update_normal_tokens(std::unordered_set<token> tokens, node_ptr node);
     const token& first_token(const token& start) const;
     size_t first_token_index(const token& start) const;
-    std::optional<inet_address> get_endpoint(const token& token) const;
-    std::vector<token> get_tokens(const inet_address& addr) const;
-    const std::unordered_map<token, inet_address>& get_token_to_endpoint() const;
-    const std::unordered_set<inet_address>& get_leaving_endpoints() const;
-    const std::unordered_map<token, inet_address>& get_bootstrap_tokens() const;
+    node_ptr get_node(const token& token) const;
+    std::vector<token> get_tokens(const node_ptr& node) const;
+    const std::unordered_map<token, node_ptr>& get_token_to_node() const;
+    const std::unordered_set<node_ptr>& get_leaving_nodes() const;
+    const std::unordered_map<token, node_ptr>& get_bootstrap_tokens() const;
 
     /**
      * Creates an iterable range of the sorted tokens starting at the token next
@@ -159,32 +160,32 @@ public:
     /** @return a copy of the endpoint-to-id map for read-only operations */
     const std::unordered_map<inet_address, host_id>& get_endpoint_to_host_id_map_for_reading() const;
 
-    void add_bootstrap_token(token t, inet_address endpoint);
+    void add_bootstrap_token(token t, const node_ptr& node);
 
-    void add_bootstrap_tokens(std::unordered_set<token> tokens, inet_address endpoint);
+    void add_bootstrap_tokens(std::unordered_set<token> tokens, const node_ptr& node);
 
     void remove_bootstrap_tokens(std::unordered_set<token> tokens);
 
-    void add_leaving_endpoint(inet_address endpoint);
-    void del_leaving_endpoint(inet_address endpoint);
+    void add_leaving_node(const node_ptr& node);
+    void del_leaving_node(const node_ptr& node);
 
-    void remove_endpoint(inet_address endpoint);
+    void remove_node(const node_ptr& node);
 
     // Checks if the node is part of the token ring. If yes, the node is one of
     // the nodes that owns the tokens and inside the set _normal_token_owners.
-    bool is_normal_token_owner(inet_address endpoint) const;
+    bool is_normal_token_owner(const node_ptr& node) const;
 
-    bool is_leaving(inet_address endpoint) const;
+    bool is_leaving(const node_ptr& node) const;
 
     // Is this node being replaced by another node
-    bool is_being_replaced(inet_address endpoint) const;
+    bool is_being_replaced(const node_ptr& node) const;
 
     // Is any node being replaced by another node
     bool is_any_node_being_replaced() const;
 
-    void add_replacing_endpoint(inet_address existing_node, inet_address replacing_node);
+    void add_replacing_endpoint(const node_ptr& existing_node, const node_ptr& replacing_node);
 
-    void del_replacing_endpoint(inet_address existing_node);
+    void del_replacing_endpoint(const node_ptr& existing_node);
 
     /**
      * Create a full copy of token_metadata using asynchronous continuations.
@@ -228,7 +229,7 @@ public:
     static boost::icl::interval<token>::interval_type range_to_interval(range<dht::token> r);
     static range<dht::token> interval_to_range(boost::icl::interval<token>::interval_type i);
 
-    bool has_pending_ranges(sstring keyspace_name, inet_address endpoint) const;
+    bool has_pending_ranges(sstring keyspace_name, const node_ptr& node) const;
      /**
      * Calculate pending ranges according to bootsrapping and leaving nodes. Reasoning is:
      *
@@ -256,7 +257,7 @@ public:
 
     token get_predecessor(token t) const;
 
-    const std::unordered_set<inet_address>& get_all_endpoints() const;
+    const std::unordered_set<node_ptr>& get_all_nodes() const;
 
     /* Returns the number of different endpoints that own tokens in the ring.
      * Bootstrapping tokens are not taken into account. */

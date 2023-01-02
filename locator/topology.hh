@@ -85,6 +85,8 @@ public:
 
 public:
     using node_ptr = lw_shared_ptr<const node>;
+    using node_ptr_replica_set = utils::small_vector<node_ptr, 3>;
+    using node_ptr_topology_change = utils::small_vector<node_ptr, 1>;
 
     node_ptr local_node() const noexcept {
         return _local_node;

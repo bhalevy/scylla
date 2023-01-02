@@ -10,6 +10,7 @@
 
 #include "gms/inet_address.hh"
 #include "utils/small_vector.hh"
+#include "locator/topology.hh"
 
 using inet_address_vector_replica_set = utils::small_vector<gms::inet_address, 3>;
 

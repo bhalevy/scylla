@@ -210,7 +210,7 @@ effective_replication_map::get_primary_ranges_within_dc(inet_address ep) const {
     });
 }
 
-future<std::unordered_multimap<inet_address, dht::token_range>>
+future<std::unordered_multimap<topology::node_ptr, dht::token_range>>
 abstract_replication_strategy::get_address_ranges(const token_metadata& tm) const {
     std::unordered_multimap<inet_address, dht::token_range> ret;
     for (auto& t : tm.sorted_tokens()) {
@@ -226,7 +226,7 @@ abstract_replication_strategy::get_address_ranges(const token_metadata& tm) cons
     co_return ret;
 }
 
-future<std::unordered_multimap<inet_address, dht::token_range>>
+future<std::unordered_multimap<topology::node_ptr, dht::token_range>>
 abstract_replication_strategy::get_address_ranges(const token_metadata& tm, inet_address endpoint) const {
     std::unordered_multimap<inet_address, dht::token_range> ret;
     if (!tm.is_normal_token_owner(endpoint)) {
