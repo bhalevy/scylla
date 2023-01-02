@@ -2960,11 +2960,11 @@ future<> storage_service::restore_replica_count(inet_address endpoint, inet_addr
     if (is_repair_based_node_ops_enabled(streaming::stream_reason::removenode)) {
         auto ops_uuid = node_ops_id::create_random_id();
         auto ops = seastar::make_shared<node_ops_info>(ops_uuid, nullptr, std::list<gms::inet_address>());
-        return _repair.local().removenode_with_repair(get_token_metadata_ptr(), endpoint, ops).finally([this, notify_endpoint] () {
+        co_return co_await _repair.local().removenode_with_repair(get_token_metadata_ptr(), endpoint, ops).finally([this, notify_endpoint] () {
             return send_replication_notification(notify_endpoint);
         });
     }
-  return seastar::async([this, endpoint, notify_endpoint] {
+  co_return co_await seastar::async([this, endpoint, notify_endpoint] {
     auto tmptr = get_token_metadata_ptr();
     abort_source as;
     auto sub = _abort_source.subscribe([&as] () noexcept {
