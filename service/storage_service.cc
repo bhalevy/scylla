@@ -2928,21 +2928,23 @@ future<> storage_service::removenode_with_stream(gms::inet_address leaving_node,
 }
 
 future<> storage_service::restore_replica_count(inet_address endpoint, inet_address notify_endpoint) {
+    _abort_source.check();
+    auto sas = make_shared<abort_source>();
+    auto sub = _abort_source.subscribe([sas] () noexcept {
+        if (!sas->abort_requested()) {
+            sas->request_abort();
+        }
+    });
     if (is_repair_based_node_ops_enabled(streaming::stream_reason::removenode)) {
         auto ops_uuid = node_ops_id::create_random_id();
-        auto ops = seastar::make_shared<node_ops_info>(ops_uuid, nullptr, std::list<gms::inet_address>());
+        auto ops = seastar::make_shared<node_ops_info>(ops_uuid, sas, std::list<gms::inet_address>());
         auto f = co_await coroutine::as_future(_repair.local().removenode_with_repair(get_token_metadata_ptr(), endpoint, ops));
         co_await send_replication_notification(notify_endpoint);
         co_return co_await std::move(f);
     }
 
     auto tmptr = get_token_metadata_ptr();
-    abort_source as;
-    auto sub = _abort_source.subscribe([&as] () noexcept {
-        if (!as.abort_requested()) {
-            as.request_abort();
-        }
-    });
+    auto& as = *sas;
     auto streamer = make_lw_shared<dht::range_streamer>(_db, _stream_manager, tmptr, as, get_broadcast_address(), _sys_ks.local().local_dc_rack(), "Restore_replica_count", streaming::stream_reason::removenode);
     removenode_add_ranges(streamer, endpoint).get();
     slogger.info("restore_replica_count: Starting status checker for removing node {}", endpoint);
