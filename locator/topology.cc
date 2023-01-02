@@ -108,14 +108,14 @@ future<topology> topology::clone_gently() const {
     co_return ret;
 }
 
-void topology::add_node(host_id id, const inet_address& ep, const endpoint_dc_rack& dr) {
+topology::node_ptr topology::add_node(host_id id, const inet_address& ep, const endpoint_dc_rack& dr) {
     if (dr.dc.empty()) {
         on_internal_error(tlogger, "Node must have a valid dc");
     }
-    add_node(make_lw_shared<node>(id, ep, dr, node::local(ep == utils::fb_utilities::get_broadcast_address())));
+    return add_node(make_lw_shared<node>(id, ep, dr, node::local(ep == utils::fb_utilities::get_broadcast_address())));
 }
 
-void topology::add_node(lw_shared_ptr<node> node) {
+topology::node_ptr topology::add_node(lw_shared_ptr<node> node) {
     tlogger.debug("topology[{}]: add_node: node={} host_id={} endpoint={} dc={} rack={} local={}, at {}", fmt::ptr(this), fmt::ptr(node.get()),
             node->host_id(), node->endpoint(), node->dc_rack().dc, node->dc_rack().rack, node->is_local(), current_backtrace());
     if (node->endpoint() == inet_address{}) {
@@ -126,8 +126,8 @@ void topology::add_node(lw_shared_ptr<node> node) {
                 node->host_id(), node->endpoint(), node->dc_rack().dc, node->dc_rack().rack,
                 _local_node->host_id(), _local_node->endpoint()));
     }
-    if (_all_nodes.contains(node)) {
-        return;
+    if (auto it = _all_nodes.find(node); it != _all_nodes.end()) {
+        return *it;
     }
     try {
         // FIXME: for now we allow adding nodes with null host_id
@@ -164,14 +164,15 @@ void topology::add_node(lw_shared_ptr<node> node) {
         if (node->is_local()) {
             _local_node = node;
         }
-        _all_nodes.emplace(std::move(node));
+        auto [it, inserted] = _all_nodes.emplace(std::move(node));
+        return *it;
     } catch (...) {
         remove_node(node);
         throw;
     }
 }
 
-void topology::update_node(lw_shared_ptr<node> node, std::optional<host_id> opt_id, std::optional<inet_address> opt_ep, std::optional<endpoint_dc_rack> opt_dr) {
+topology::node_ptr topology::update_node(lw_shared_ptr<node> node, std::optional<host_id> opt_id, std::optional<inet_address> opt_ep, std::optional<endpoint_dc_rack> opt_dr) {
     tlogger.debug("topology[{}]: update_node: node={} host_id={} endpoint={} dc={} rack={}, at {}", fmt::ptr(this), fmt::ptr(node.get()),
             opt_id.value_or(host_id::create_null_id()), opt_ep.value_or(inet_address{}), opt_dr.value_or(endpoint_dc_rack{}).dc, opt_dr.value_or(endpoint_dc_rack{}).rack,
             current_backtrace());
@@ -221,7 +222,7 @@ void topology::update_node(lw_shared_ptr<node> node, std::optional<host_id> opt_
     }
 
     if (!changed) {
-        return;
+        return node;
     }
 
     remove_node(node);
@@ -234,7 +235,7 @@ void topology::update_node(lw_shared_ptr<node> node, std::optional<host_id> opt_
     if (opt_dr) {
         node->_dc_rack = std::move(*opt_dr);
     }
-    add_node(node);
+    return add_node(node);
 }
 
 void topology::remove_node(host_id id, must_exist require_exist) {
@@ -320,18 +321,18 @@ topology::node_ptr topology::find_node(const inet_address& ep, must_exist must_e
     return nullptr;
 }
 
-void topology::update_endpoint(inet_address ep, std::optional<host_id> opt_id, std::optional<endpoint_dc_rack> opt_dr)
+topology::node_ptr topology::update_endpoint(inet_address ep, std::optional<host_id> opt_id, std::optional<endpoint_dc_rack> opt_dr)
 {
     tlogger.trace("topology[{}]: update_endpoint: ep={} host_id={} dc={} rack={}, at {}", fmt::ptr(this),
             ep, opt_id.value_or(host_id::create_null_id()), opt_dr.value_or(endpoint_dc_rack{}).dc, opt_dr.value_or(endpoint_dc_rack{}).rack,
             current_backtrace());
     node_ptr n = find_node(ep);
     if (n) {
-        update_node(const_cast<node*>(n.get())->shared_from_this(), opt_id, std::nullopt, std::move(opt_dr));
+        return update_node(const_cast<node*>(n.get())->shared_from_this(), opt_id, std::nullopt, std::move(opt_dr));
     } else if (opt_id && (n = find_node(*opt_id))) {
-        update_node(const_cast<node*>(n.get())->shared_from_this(), std::nullopt, ep, std::move(opt_dr));
+        return update_node(const_cast<node*>(n.get())->shared_from_this(), std::nullopt, ep, std::move(opt_dr));
     } else {
-        add_node(opt_id.value_or(host_id::create_null_id()), ep, opt_dr.value_or(endpoint_dc_rack::default_location));
+        return add_node(opt_id.value_or(host_id::create_null_id()), ep, opt_dr.value_or(endpoint_dc_rack::default_location));
     }
 }
 
