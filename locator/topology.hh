@@ -12,6 +12,7 @@
 
 #include <unordered_set>
 #include <unordered_map>
+#include <iostream>
 
 #include <boost/intrusive/list.hpp>
 
@@ -285,3 +286,11 @@ private:
 };
 
 } // namespace locator
+
+namespace std {
+
+inline std::ostream& operator<<(std::ostream& out, const locator::topology::node_ptr& node) {
+    return out << node->host_id() << '/' << node->endpoint();
+}
+
+} // namespace std
