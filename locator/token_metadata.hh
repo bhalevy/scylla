@@ -120,18 +120,24 @@ public:
     token_metadata& operator=(token_metadata&&) noexcept;
     ~token_metadata();
     const std::vector<token>& sorted_tokens() const;
+
     // Update token->endpoint mappings for a given \c endpoint.
     // \c tokens are all the tokens that are now owned by \c endpoint.
     //
     // Note: the function is not exception safe!
     // It must be called only on a temporary copy of the token_metadata
+    future<> update_normal_tokens(std::unordered_set<token> tokens, locator::host_id node);
+    [[deprecated("Use update_normal_tokens(tokens, host_id) instead")]]
     future<> update_normal_tokens(std::unordered_set<token> tokens, inet_address endpoint);
+
     const token& first_token(const token& start) const;
     size_t first_token_index(const token& start) const;
     std::optional<inet_address> get_endpoint(const token& token) const;
     std::vector<token> get_tokens(const inet_address& addr) const;
     const std::unordered_map<token, inet_address>& get_token_to_endpoint() const;
-    const std::unordered_set<inet_address>& get_leaving_endpoints() const;
+    const std::unordered_set<locator::host_id>& get_leaving_nodes() const;
+    [[deprecated("Use get_leaving_nodes instead")]]
+    std::unordered_set<inet_address> get_leaving_endpoints() const;
     const std::unordered_map<token, inet_address>& get_bootstrap_tokens() const;
 
     /**
@@ -181,15 +187,27 @@ public:
 
     void remove_bootstrap_tokens(std::unordered_set<token> tokens);
 
+    void add_leaving_node(locator::host_id node);
+    [[deprecated("Use add_leaving_node instead")]]
     void add_leaving_endpoint(inet_address endpoint);
+
+    void del_leaving_node(locator::host_id node);
+    [[deprecated("Use del_leaving_node instead")]]
     void del_leaving_endpoint(inet_address endpoint);
 
+    void remove_node(locator::host_id node);
+    [[deprecated("Use remove_node instead")]]
     void remove_endpoint(inet_address endpoint);
 
     // Checks if the node is part of the token ring. If yes, the node is one of
     // the nodes that owns the tokens and inside the set _normal_token_owners.
+    bool is_normal_token_owner(locator::host_id node) const;
+    [[deprecated("Use is_normal_token_owner(locator::host_id) instead")]]
     bool is_normal_token_owner(inet_address endpoint) const;
 
+    // Is this node being decommissioned
+    bool is_leaving(locator::host_id node) const;
+    [[deprecated("Use is_leaving(locator::host_id) instead")]]
     bool is_leaving(inet_address endpoint) const;
 
     // Is this node being replaced by another node
@@ -272,7 +290,10 @@ public:
 
     token get_predecessor(token t) const;
 
-    const std::unordered_set<inet_address>& get_all_endpoints() const;
+    const std::unordered_set<locator::host_id>& get_normal_token_owners() const;
+
+    [[deprecated("Use get_normal_token_owners() instead")]]
+    std::unordered_set<inet_address> get_all_endpoints() const;
 
     /* Returns the number of different endpoints that own tokens in the ring.
      * Bootstrapping tokens are not taken into account. */
