@@ -93,10 +93,10 @@ public:
     }
 
     // Adds a node with given host_id, endpoint, and DC/rack.
-    void add_node(host_id id, const inet_address& ep, const endpoint_dc_rack& dr);
+    node_ptr add_node(host_id id, const inet_address& ep, const endpoint_dc_rack& dr);
 
     // Optionally updates node's current host_id, endpoint, or DC/rack.
-    void update_node(lw_shared_ptr<node> node, std::optional<host_id> opt_id, std::optional<inet_address> opt_ep, std::optional<endpoint_dc_rack> opt_dr);
+    node_ptr update_node(mutable_node_ptr node, std::optional<host_id> opt_id, std::optional<inet_address> opt_ep, std::optional<endpoint_dc_rack> opt_dr);
 
     using must_exist = bool_class<struct must_exist_tag>;
 
@@ -129,14 +129,14 @@ public:
      *
      * Adds or updates a node with given endpoint
      */
-    void update_endpoint(inet_address ep, std::optional<host_id> opt_id, std::optional<endpoint_dc_rack> opt_dr);
+    node_ptr update_endpoint(inet_address ep, std::optional<host_id> opt_id, std::optional<endpoint_dc_rack> opt_dr);
 
     // Legacy entry point from token_metadata::update_topology
-    void update_endpoint(inet_address ep, endpoint_dc_rack dr) {
-        update_endpoint(ep, std::nullopt, std::move(dr));
+    node_ptr update_endpoint(inet_address ep, endpoint_dc_rack dr) {
+        return update_endpoint(ep, std::nullopt, std::move(dr));
     }
-    void update_endpoint(inet_address ep, host_id id) {
-        update_endpoint(ep, id, std::nullopt);
+    node_ptr update_endpoint(inet_address ep, host_id id) {
+        return update_endpoint(ep, id, std::nullopt);
     }
 
     /**
@@ -228,10 +228,10 @@ private:
         return *_local_node;
     }
 
-    void add_node(lw_shared_ptr<node> node);
+    node_ptr add_node(mutable_node_ptr node);
     void remove_node(node* np);
     void remove_node(node_ptr node);
-    void do_remove_node(lw_shared_ptr<node> node);
+    void do_remove_node(mutable_node_ptr node);
 
     /**
      * compares two endpoints in relation to the target endpoint, returning as
@@ -239,8 +239,8 @@ private:
      */
     int compare_endpoints(const inet_address& address, const inet_address& a1, const inet_address& a2) const;
 
-    std::unordered_set<lw_shared_ptr<node>> _all_nodes;
-    lw_shared_ptr<node> _local_node;
+    std::unordered_set<mutable_node_ptr> _all_nodes;
+    mutable_node_ptr _local_node;
     std::unordered_map<host_id, node*> _nodes_by_host_id;
     std::unordered_map<inet_address, node*> _nodes_by_endpoint;
 
