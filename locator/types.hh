@@ -10,8 +10,6 @@
 
 #pragma once
 
-#include <unordered_set>
-
 #include <boost/intrusive/list.hpp>
 
 #include <seastar/core/sstring.hh>
@@ -58,6 +56,5 @@ namespace locator {
 
 using node_ptr = lw_shared_ptr<const node>;
 using mutable_node_ptr = lw_shared_ptr<node>;
-using node_set = std::unordered_set<node_ptr>;
 
 } // namespace locator
