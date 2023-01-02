@@ -289,8 +289,8 @@ future<dht::token_range_vector>
 abstract_replication_strategy::get_pending_address_ranges(const token_metadata_ptr tmptr, std::unordered_set<token> pending_tokens, inet_address pending_address, locator::endpoint_dc_rack dr) const {
     dht::token_range_vector ret;
     token_metadata temp = co_await tmptr->clone_only_token_map();
-    temp.get_topology().update_endpoint(pending_address, std::move(dr));
-    co_await temp.update_normal_tokens(pending_tokens, pending_address);
+    auto node = temp.get_topology().update_endpoint(pending_address, std::move(dr));
+    co_await temp.update_normal_tokens(pending_tokens, node->host_id());
     for (const auto& t : temp.sorted_tokens()) {
         auto eps = co_await calculate_natural_endpoints(t, temp);
         if (eps.contains(pending_address)) {
