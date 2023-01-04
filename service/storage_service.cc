@@ -2978,17 +2978,14 @@ future<> storage_service::restore_replica_count(inet_address endpoint, inet_addr
         slogger.info("restore_replica_count: Finished to stop status checker for removing node {}", endpoint);
     });
 
-    streamer->stream_async().then_wrapped([this, streamer, notify_endpoint] (auto&& f) {
-        try {
-            f.get();
-            return this->send_replication_notification(notify_endpoint);
-        } catch (...) {
+    try {
+        streamer->stream_async().get();
+    } catch (...) {
+        // FIXME: indentation
             slogger.warn("Streaming to restore replica count failed: {}", std::current_exception());
             // We still want to send the notification
-            return this->send_replication_notification(notify_endpoint);
-        }
-        return make_ready_future<>();
-    }).get();
+    }
+    this->send_replication_notification(notify_endpoint).get();
   });
 }
 
