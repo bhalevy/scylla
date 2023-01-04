@@ -2975,20 +2975,19 @@ future<> storage_service::restore_replica_count(inet_address endpoint, inet_addr
         slogger.warn("Sending replication notification to {} failed: {}", notify_endpoint, std::current_exception());
         // We still want to stop the status checker
     }
-        // FIXME: indentation
-        try {
-            slogger.info("restore_replica_count: Started to stop status checker for removing node {}", endpoint);
-            if (!as.abort_requested()) {
-                as.request_abort();
-            }
-            status_checker.get();
-        } catch (const seastar::sleep_aborted& ignored) {
-            slogger.debug("restore_replica_count: Got sleep_abort to stop status checker for removing node {}: {}", endpoint, ignored);
-        } catch (...) {
-            slogger.warn("restore_replica_count: Found error in status checker for removing node {}: {}",
-                    endpoint, std::current_exception());
+    try {
+        slogger.info("restore_replica_count: Started to stop status checker for removing node {}", endpoint);
+        if (!as.abort_requested()) {
+            as.request_abort();
         }
-        slogger.info("restore_replica_count: Finished to stop status checker for removing node {}", endpoint);
+        status_checker.get();
+    } catch (const seastar::sleep_aborted& ignored) {
+        slogger.debug("restore_replica_count: Got sleep_abort to stop status checker for removing node {}: {}", endpoint, ignored);
+    } catch (...) {
+        slogger.warn("restore_replica_count: Found error in status checker for removing node {}: {}",
+                endpoint, std::current_exception());
+    }
+    slogger.info("restore_replica_count: Finished to stop status checker for removing node {}", endpoint);
   });
 }
 
