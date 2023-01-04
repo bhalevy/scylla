@@ -659,6 +659,7 @@ void token_metadata_impl::remove_node(locator::host_id host_id) {
     del_replacing_endpoint(endpoint);
     _endpoint_to_host_id_map.erase(endpoint);
     invalidate_cached_rings();
+    tlogger.info("remaining normal_token_owners: {}", _normal_token_owners);
 }
 
 token token_metadata_impl::get_predecessor(token t) const {
@@ -1175,6 +1176,8 @@ void
 token_metadata::remove_endpoint(inet_address endpoint) {
     if (auto node = get_topology().find_node(endpoint)) {
         remove_node(node->host_id());
+    } else {
+        tlogger.info("remove_endpoint: {}: already removed", endpoint);
     }
 }
 
