@@ -333,8 +333,8 @@ future<> storage_service::join_token_ring(cdc::generation_service& cdc_gen_servi
         slogger.info("Replacing a node with {} IP address, my address={}, node being replaced={}",
             get_broadcast_address() == *replace_address ? "the same" : "a different",
             get_broadcast_address(), *replace_address);
-        tmptr->get_topology().update_endpoint(*replace_address, std::move(ri.dc_rack));
-        co_await tmptr->update_normal_tokens(bootstrap_tokens, *replace_address);
+        tmptr->get_topology().update_endpoint(*replace_address, ri.host_id, std::move(ri.dc_rack));
+        co_await tmptr->update_normal_tokens(bootstrap_tokens, ri.host_id);
         replaced_host_id = ri.host_id;
         raft_replace_info = raft_group0::replace_info {
             .ip_addr = *replace_address,
@@ -1427,11 +1427,8 @@ future<> storage_service::join_cluster(cdc::generation_service& cdc_gen_service,
                     // entry has been mistakenly added, delete it
                     _sys_ks.local().remove_endpoint(ep).get();
                 } else {
-                    tmptr->get_topology().update_endpoint(ep, get_dc_rack(ep));
-                    tmptr->update_normal_tokens(tokens, ep).get();
-                    if (loaded_host_ids.contains(ep)) {
-                        tmptr->update_host_id(loaded_host_ids.at(ep), ep);
-                    }
+                    auto node = tmptr->get_topology().update_endpoint(ep, loaded_host_ids.at(ep), get_dc_rack(ep));
+                    tmptr->update_normal_tokens(tokens, node->host_id()).get();
                     loaded_endpoints.insert(ep);
                     _gossiper.add_saved_endpoint(ep).get();
                 }
