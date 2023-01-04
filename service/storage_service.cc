@@ -2985,7 +2985,12 @@ future<> storage_service::restore_replica_count(inet_address endpoint, inet_addr
             slogger.warn("Streaming to restore replica count failed: {}", std::current_exception());
             // We still want to send the notification
     }
-    this->send_replication_notification(notify_endpoint).get();
+    try {
+        this->send_replication_notification(notify_endpoint).get();
+    } catch (...) {
+        slogger.warn("Sending replication notification to {} failed: {}", notify_endpoint, std::current_exception());
+        // We still want to stop the status checker
+    }
   });
 }
 
