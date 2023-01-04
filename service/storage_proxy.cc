@@ -331,7 +331,7 @@ public:
         slogger.debug("Starting a blocking truncate operation on keyspace {}, CF {}", keyspace, cfname);
 
         if (!_gossiper.get_unreachable_token_owners().empty()) {
-            slogger.info("Cannot perform truncate, some hosts are down");
+            slogger.info("Cannot perform truncate, some hosts are down: {}", _gossiper.get_unreachable_token_owners());
             // Since the truncate operation is so aggressive and is typically only
             // invoked by an admin, for simplicity we require that all nodes are up
             // to perform the operation.

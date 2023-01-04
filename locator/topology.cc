@@ -179,10 +179,6 @@ node_ptr topology::update_node(lw_shared_ptr<node> node, std::optional<host_id> 
     bool changed = false;
     if (opt_id) {
         if (*opt_id != node->host_id()) {
-            if (node->host_id()) {
-                on_internal_error(tlogger, format("Updating non-null node host_id is disallowed: host_id={} endpoint={}: new host_id={}",
-                        node->host_id(), node->endpoint(), *opt_id));
-            }
             if (!*opt_id) {
                 on_internal_error(tlogger, format("Updating node host_id to null is disallowed: host_id={} endpoint={}: new host_id={}",
                         node->host_id(), node->endpoint(), *opt_id));
@@ -191,6 +187,12 @@ node_ptr topology::update_node(lw_shared_ptr<node> node, std::optional<host_id> 
                 on_internal_error(tlogger, format("Cannot update node host_id: new host_id={} already exists: endpoint={}: ",
                         *opt_id, node->endpoint()));
             }
+            // FIXME: for now, allow updating existing host_id since
+            // this is still requried by replace_node using the same ip address
+            //if (node->host_id()) {
+            //    on_internal_error(tlogger, format("Updating non-null node host_id is disallowed: host_id={} endpoint={}: new host_id={}",
+            //            node->host_id(), node->endpoint(), *opt_id));
+            //}
             changed = true;
         } else {
             opt_id.reset();
