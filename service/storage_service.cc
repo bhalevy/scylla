@@ -2944,9 +2944,9 @@ future<> storage_service::restore_replica_count(inet_address endpoint, inet_addr
     });
     auto streamer = make_lw_shared<dht::range_streamer>(_db, _stream_manager, tmptr, as, get_broadcast_address(), _sys_ks.local().local_dc_rack(), "Restore_replica_count", streaming::stream_reason::removenode);
     removenode_add_ranges(streamer, endpoint).get();
-    auto status_checker = seastar::async([this, endpoint, &as] {
-        slogger.info("restore_replica_count: Started status checker for removing node {}", endpoint);
-        while (!as.abort_requested()) {
+    slogger.info("restore_replica_count: Starting status checker for removing node {}", endpoint);
+    auto status_checker = do_until([&as] { return as.abort_requested(); }, [this, endpoint, &as] {
+            // FIXME: indentation
             auto status = _gossiper.get_gossip_status(endpoint);
             // If the node to be removed is already in removed status, it has
             // probably been removed forcely with `nodetool removenode force`.
@@ -2958,11 +2958,10 @@ future<> storage_service::restore_replica_count(inet_address endpoint, inet_addr
                 if (!as.abort_requested()) {
                     as.request_abort();
                 }
-                return;
+                return make_ready_future<>();
             }
             slogger.debug("restore_replica_count: Sleep and detect removing node {}, status={}", endpoint, status);
-            sleep_abortable(std::chrono::seconds(10), as).get();
-        }
+            return sleep_abortable(std::chrono::seconds(10), as);
     });
     auto stop_status_checker = defer([endpoint, &status_checker, &as] () mutable {
         try {
