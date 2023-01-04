@@ -2946,22 +2946,21 @@ future<> storage_service::restore_replica_count(inet_address endpoint, inet_addr
     removenode_add_ranges(streamer, endpoint).get();
     slogger.info("restore_replica_count: Starting status checker for removing node {}", endpoint);
     auto status_checker = do_until([&as] { return as.abort_requested(); }, [this, endpoint, &as] {
-            // FIXME: indentation
-            auto status = _gossiper.get_gossip_status(endpoint);
-            // If the node to be removed is already in removed status, it has
-            // probably been removed forcely with `nodetool removenode force`.
-            // Abort the restore_replica_count in such case to avoid streaming
-            // attempt since the user has removed the node forcely.
-            if (status == sstring(versioned_value::REMOVED_TOKEN)) {
-                slogger.info("restore_replica_count: Detected node {} has left the cluster, status={}, abort restore_replica_count for removing node {}",
-                        endpoint, status, endpoint);
-                if (!as.abort_requested()) {
-                    as.request_abort();
-                }
-                return make_ready_future<>();
+        auto status = _gossiper.get_gossip_status(endpoint);
+        // If the node to be removed is already in removed status, it has
+        // probably been removed forcely with `nodetool removenode force`.
+        // Abort the restore_replica_count in such case to avoid streaming
+        // attempt since the user has removed the node forcely.
+        if (status == sstring(versioned_value::REMOVED_TOKEN)) {
+            slogger.info("restore_replica_count: Detected node {} has left the cluster, status={}, abort restore_replica_count for removing node {}",
+                    endpoint, status, endpoint);
+            if (!as.abort_requested()) {
+                as.request_abort();
             }
-            slogger.debug("restore_replica_count: Sleep and detect removing node {}, status={}", endpoint, status);
-            return sleep_abortable(std::chrono::seconds(10), as);
+            return make_ready_future<>();
+        }
+        slogger.debug("restore_replica_count: Sleep and detect removing node {}, status={}", endpoint, status);
+        return sleep_abortable(std::chrono::seconds(10), as);
     });
     auto stop_status_checker = defer([endpoint, &status_checker, &as] () mutable {
         try {
