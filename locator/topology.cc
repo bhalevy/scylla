@@ -315,6 +315,9 @@ node_ptr topology::find_node(host_id id, must_exist must_exist) const noexcept {
 node_ptr topology::find_node(const inet_address& ep, must_exist must_exist) const noexcept {
     auto it = _nodes_by_endpoint.find(ep);
     if (it != _nodes_by_endpoint.end()) {
+        if (must_exist && !it->second->host_id()) {
+            on_internal_error(tlogger, format("find_node: endpoint={} has no host_id", ep));
+        }
         return it->second->shared_from_this();
     }
     if (must_exist) {
