@@ -641,8 +641,8 @@ std::list<gms::inet_address> storage_service::get_ignore_dead_nodes_for_replace(
             std::replace(n.begin(), n.end(), '\'', ' ');
             boost::trim_all(n);
             if (!n.empty()) {
-                auto ep_and_id = tm.parse_host_id_and_endpoint(n);
-                ignore_nodes.push_back(ep_and_id.endpoint);
+                auto node = tm.parse_host_id_and_endpoint(n);
+                ignore_nodes.push_back(node->endpoint());
             }
         } catch (...) {
             throw std::runtime_error(format("Failed to parse --ignore-dead-nodes-for-replace parameter: ignore_nodes={}, node={}: {}", ignore_nodes_strs, n, std::current_exception()));
@@ -2329,8 +2329,8 @@ future<> storage_service::removenode(locator::host_id host_id, std::list<locator
             auto leaving_nodes = std::list<gms::inet_address>{endpoint};
             std::list<gms::inet_address> ignore_nodes;
             for (auto& hoep : ignore_nodes_params) {
-                hoep.resolve(*tmptr);
-                ignore_nodes.push_back(hoep.endpoint);
+                auto node = hoep.resolve(*tmptr);
+                ignore_nodes.push_back(node->endpoint());
             }
 
             // Step 1: Decide who needs to sync data

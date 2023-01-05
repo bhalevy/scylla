@@ -20,6 +20,7 @@
 #include <seastar/coroutine/maybe_yield.hh>
 #include <boost/range/adaptors.hpp>
 #include "seastar/core/smp.hh"
+#include "utils/overloaded_functor.hh"
 #include "utils/stall_free.hh"
 #include "utils/fb_utilities.hh"
 
@@ -1076,10 +1077,9 @@ token_metadata::get_endpoint_for_host_id(host_id host_id) const {
     return _impl->get_endpoint_for_host_id(host_id);
 }
 
-host_id_or_endpoint token_metadata::parse_host_id_and_endpoint(const sstring& host_id_string) const {
+node_ptr token_metadata::parse_host_id_and_endpoint(const sstring& host_id_string) const {
     auto res = host_id_or_endpoint(host_id_string);
-    res.resolve(*this);
-    return res;
+    return res.resolve(*this);
 }
 
 const std::unordered_map<inet_address, host_id>&
@@ -1288,24 +1288,24 @@ host_id_or_endpoint::host_id_or_endpoint(const sstring& s, param_type restrict) 
     switch (restrict) {
     case param_type::host_id:
         try {
-            id = host_id(utils::UUID(s));
+            data = host_id(utils::UUID(s));
         } catch (const marshal_exception& e) {
             throw std::invalid_argument(format("Invalid host_id {}: {}", s, e.what()));
         }
         break;
     case param_type::endpoint:
         try {
-            endpoint = gms::inet_address(s);
+            data = gms::inet_address(s);
         } catch (std::invalid_argument& e) {
             throw std::invalid_argument(format("Invalid inet_address {}: {}", s, e.what()));
         }
         break;
     case param_type::auto_detect:
         try {
-            id = host_id(utils::UUID(s));
+            data = host_id(utils::UUID(s));
         } catch (const marshal_exception& e) {
             try {
-                endpoint = gms::inet_address(s);
+                data = gms::inet_address(s);
             } catch (std::invalid_argument& e) {
                 throw std::invalid_argument(format("Invalid host_id or inet_address {}", s));
             }
@@ -1313,20 +1313,14 @@ host_id_or_endpoint::host_id_or_endpoint(const sstring& s, param_type restrict) 
     }
 }
 
-void host_id_or_endpoint::resolve(const token_metadata& tm) {
-    if (id) {
-        auto endpoint_opt = tm.get_endpoint_for_host_id(id);
-        if (!endpoint_opt) {
-            throw std::runtime_error(format("Host ID {} not found in the cluster", id));
-        }
-        endpoint = *endpoint_opt;
-    } else {
-        auto opt_id = tm.get_host_id_if_known(endpoint);
-        if (!opt_id) {
-            throw std::runtime_error(format("Host inet address {} not found in the cluster", endpoint));
-        }
-        id = *opt_id;
-    }
+node_ptr host_id_or_endpoint::resolve(const token_metadata& tm) {
+    const auto& topo = tm.get_topology();
+    node_ptr node;
+    std::visit(overloaded_functor {
+        [&] (const host_id& id) { node = topo.find_node(id, topology::must_exist::yes); },
+        [&] (const gms::inet_address& endpoint) { node = topo.find_node(endpoint, topology::must_exist::yes); }
+    }, data);
+    return node;
 }
 
 } // namespace locator
