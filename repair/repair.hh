@@ -21,6 +21,7 @@
 #include <seastar/core/gate.hh>
 
 #include "locator/abstract_replication_strategy.hh"
+#include "locator/topology.hh"
 #include "replica/database_fwd.hh"
 #include "frozen_mutation.hh"
 #include "utils/UUID.hh"
@@ -290,20 +291,28 @@ struct node_ops_cmd_request {
     std::unordered_map<gms::inet_address, std::list<dht::token>> bootstrap_nodes;
     // Optional field, list uuids of tables being repaired, set by repair cmd
     std::list<table_id> repair_tables;
+    // Optional field, list hosts to ignore, set by all cmds, overrides ignore_nodes
+    std::unordered_set<locator::host_id> ignore_host_ids;
+    std::unordered_set<locator::host_id> leaving_host_ids;
     node_ops_cmd_request(node_ops_cmd command,
             node_ops_id uuid,
-            std::list<gms::inet_address> ignore = {},
-            std::list<gms::inet_address> leaving = {},
+            std::list<gms::inet_address> ignore_eps = {},
+            std::list<gms::inet_address> leaving_eps = {},
             std::unordered_map<gms::inet_address, gms::inet_address> replace = {},
             std::unordered_map<gms::inet_address, std::list<dht::token>> bootstrap = {},
-            std::list<table_id> tables = {})
+            std::list<table_id> tables = {},
+            std::unordered_set<locator::host_id> ignore_host_ids_ = {},
+            std::unordered_set<locator::host_id> leaving_host_ids_ = {})
         : cmd(command)
         , ops_uuid(std::move(uuid))
-        , ignore_nodes(std::move(ignore))
-        , leaving_nodes(std::move(leaving))
+        , ignore_nodes(std::move(ignore_eps))
+        , leaving_nodes(std::move(leaving_eps))
         , replace_nodes(std::move(replace))
         , bootstrap_nodes(std::move(bootstrap))
-        , repair_tables(std::move(tables)) {
+        , repair_tables(std::move(tables))
+        , ignore_host_ids(std::move(ignore_host_ids_))
+        , leaving_host_ids(std::move(leaving_host_ids_))
+    {
     }
 
     static node_ops_cmd_request make_node_ops_cmd_request(node_ops_cmd cmd,

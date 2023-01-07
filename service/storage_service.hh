@@ -697,7 +697,10 @@ public:
     future<node_ops_cmd_response> node_ops_cmd_handler(gms::inet_address coordinator, node_ops_cmd_request req);
     void node_ops_cmd_check(gms::inet_address coordinator, const node_ops_cmd_request& req);
     future<> node_ops_cmd_heartbeat_updater(node_ops_cmd cmd, node_ops_id uuid, std::unordered_set<locator::node_ptr> nodes, lw_shared_ptr<bool> heartbeat_updater_done);
+<<<<<<< HEAD
     future<> node_ops_cmd_heartbeat_updater(node_ops_cmd cmd, node_ops_id uuid, std::list<gms::inet_address> nodes, lw_shared_ptr<bool> heartbeat_updater_done);
+=======
+>>>>>>> 355a381bfb (WIP storage_service: remove_node: use node_ptr)
 
     future<mode> get_operation_mode();
 
