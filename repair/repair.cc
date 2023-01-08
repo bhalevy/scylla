@@ -33,6 +33,7 @@
 #include <boost/range/algorithm.hpp>
 #include <boost/range/algorithm_ext.hpp>
 #include <boost/range/adaptor/map.hpp>
+#include <boost/range/adaptor/transformed.hpp>
 
 #include <seastar/core/gate.hh>
 #include <seastar/util/defer.hh>
@@ -61,6 +62,37 @@ void node_ops_info::check_abort() {
         rlogger.warn("{}", msg);
         throw std::runtime_error(msg);
     }
+}
+
+node_ops_cmd_request node_ops_cmd_request::make_node_ops_cmd_request(node_ops_cmd cmd,
+        node_ops_id uuid,
+        std::unordered_set<locator::node_ptr> ignore_nodes,
+        locator::node_ptr leaving_node,
+        std::unordered_map<locator::node_ptr, locator::node_ptr> replace_nodes,
+        std::unordered_map<locator::node_ptr, std::list<dht::token>> bootstrap_tokens,
+        std::list<table_id> tables) {
+    auto ignore_nodes_eps = boost::copy_range<std::list<gms::inet_address>>(ignore_nodes
+            | boost::adaptors::transformed([] (const locator::node_ptr& node) { return node->endpoint(); }));
+    std::list<gms::inet_address> leaving_nodes_eps;
+    if (leaving_node) {
+        leaving_nodes_eps.push_back(leaving_node->endpoint());
+    }
+    std::unordered_map<gms::inet_address, gms::inet_address> replace_nodes_eps;
+    for (const auto& [replaced_node, replacing_node] : replace_nodes) {
+        replace_nodes_eps.emplace(replaced_node->endpoint(), replacing_node->endpoint());
+    }
+    std::unordered_map<gms::inet_address, std::list<dht::token>> bootstrap_eps_tokens;
+    for (auto& [node, tokens] : bootstrap_tokens) {
+        bootstrap_eps_tokens.emplace(node->endpoint(), std::move(tokens));
+    }
+
+    return node_ops_cmd_request(cmd, uuid,
+            std::move(ignore_nodes_eps),
+            std::move(leaving_nodes_eps),
+            std::move(replace_nodes_eps),
+            std::move(bootstrap_eps_tokens),
+            std::move(tables)
+    );
 }
 
 node_ops_metrics::node_ops_metrics(shared_ptr<repair_module> module)
