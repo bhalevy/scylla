@@ -21,6 +21,7 @@
 #include "tracing/tracing.hh"
 #include "schema_fwd.hh"
 #include "streaming/stream_fwd.hh"
+#include "locator/types.hh"
 
 #include <list>
 #include <vector>
@@ -49,10 +50,6 @@ class config;
 
 namespace db::view {
 class update_backlog;
-}
-
-namespace locator {
-class shared_token_metadata;
 }
 
 class frozen_mutation;
@@ -437,6 +434,7 @@ public:
     void register_node_ops_cmd(std::function<future<node_ops_cmd_response> (const rpc::client_info& cinfo, node_ops_cmd_request)>&& func);
     future<> unregister_node_ops_cmd();
     future<node_ops_cmd_response> send_node_ops_cmd(msg_addr id, node_ops_cmd_request);
+    future<node_ops_cmd_response> send_node_ops_cmd(const locator::node_ptr& node, node_ops_cmd_request req);
 
     // Wrapper for GOSSIP_ECHO verb
     void register_gossip_echo(std::function<future<> (const rpc::client_info& cinfo, rpc::optional<int64_t> generation_number)>&& func);

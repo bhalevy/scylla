@@ -1298,5 +1298,8 @@ future<> messaging_service::unregister_node_ops_cmd() {
 future<node_ops_cmd_response> messaging_service::send_node_ops_cmd(msg_addr id, node_ops_cmd_request req) {
     return send_message<future<node_ops_cmd_response>>(this, messaging_verb::NODE_OPS_CMD, std::move(id), std::move(req));
 }
+future<node_ops_cmd_response> messaging_service::send_node_ops_cmd(const locator::node_ptr& node, node_ops_cmd_request req) {
+    return send_node_ops_cmd(netw::msg_addr(node->endpoint()), std::move(req));
+}
 
 } // namespace net
