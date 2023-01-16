@@ -383,9 +383,11 @@ messaging_service::messaging_service(config cfg, scheduling_config scfg, std::sh
 }
 
 netw::msg_addr messaging_service::get_source(const rpc::client_info& cinfo) {
+    auto host_id_opt = cinfo.retrieve_auxiliary_opt<locator::host_id>("host_id");
     return netw::msg_addr{
         cinfo.retrieve_auxiliary<gms::inet_address>("baddr"),
-        cinfo.retrieve_auxiliary<uint32_t>("src_cpu_id")
+        cinfo.retrieve_auxiliary<uint32_t>("src_cpu_id"),
+        host_id_opt ? std::make_optional<locator::host_id>(*host_id_opt) : std::nullopt
     };
 }
 
