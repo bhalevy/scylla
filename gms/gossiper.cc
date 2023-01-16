@@ -54,7 +54,7 @@ constexpr std::chrono::hours gossiper::A_VERY_LONG_TIME;
 constexpr int64_t gossiper::MAX_GENERATION_DIFFERENCE;
 
 netw::msg_addr gossiper::get_msg_addr(inet_address to) const noexcept {
-    return msg_addr{to, _default_cpuid};
+    return netw::msg_addr{to, _default_cpuid};
 }
 
 const sstring& gossiper::get_cluster_name() const noexcept {
@@ -174,7 +174,7 @@ void gossiper::do_sort(utils::chunked_vector<gossip_digest>& g_digest_list) {
 
 // Depends on
 // - no external dependency
-future<> gossiper::handle_syn_msg(msg_addr from, gossip_digest_syn syn_msg) {
+future<> gossiper::handle_syn_msg(netw::msg_addr from, gossip_digest_syn syn_msg) {
     logger.trace("handle_syn_msg():from={},cluster_name:peer={},local={},partitioner_name:peer={},local={}",
         from, syn_msg.cluster_id(), get_cluster_name(), syn_msg.partioner(), get_partitioner_name());
     if (!this->is_enabled()) {
@@ -239,7 +239,7 @@ future<> gossiper::handle_syn_msg(msg_addr from, gossip_digest_syn syn_msg) {
     }
 }
 
-future<> gossiper::do_send_ack_msg(msg_addr from, gossip_digest_syn syn_msg) {
+future<> gossiper::do_send_ack_msg(netw::msg_addr from, gossip_digest_syn syn_msg) {
     return futurize_invoke([this, from, syn_msg = std::move(syn_msg)] () mutable {
         auto g_digest_list = syn_msg.get_gossip_digests();
         do_sort(g_digest_list);
@@ -277,7 +277,7 @@ static bool should_count_as_msg_processing(const std::map<inet_address, endpoint
 // - on_restart callbacks
 // - on_join callbacks
 // - on_alive
-future<> gossiper::handle_ack_msg(msg_addr id, gossip_digest_ack ack_msg) {
+future<> gossiper::handle_ack_msg(netw::msg_addr id, gossip_digest_ack ack_msg) {
     logger.trace("handle_ack_msg():from={},msg={}", id, ack_msg);
 
     if (!this->is_enabled() && !this->is_in_shadow_round()) {
@@ -358,7 +358,7 @@ future<> gossiper::handle_ack_msg(msg_addr id, gossip_digest_ack ack_msg) {
     });
 }
 
-future<> gossiper::do_send_ack2_msg(msg_addr from, utils::chunked_vector<gossip_digest> ack_msg_digest) {
+future<> gossiper::do_send_ack2_msg(netw::msg_addr from, utils::chunked_vector<gossip_digest> ack_msg_digest) {
     return futurize_invoke([this, from, ack_msg_digest = std::move(ack_msg_digest)] () mutable {
         /* Get the state required to send to this gossipee - construct GossipDigestAck2Message */
         std::map<inet_address, endpoint_state> delta_ep_state_map;
@@ -381,7 +381,7 @@ future<> gossiper::do_send_ack2_msg(msg_addr from, utils::chunked_vector<gossip_
 // - on_restart callbacks
 // - on_join callbacks
 // - on_alive callbacks
-future<> gossiper::handle_ack2_msg(msg_addr from, gossip_digest_ack2 msg) {
+future<> gossiper::handle_ack2_msg(netw::msg_addr from, gossip_digest_ack2 msg) {
     logger.trace("handle_ack2_msg():msg={}", msg);
     if (!is_enabled()) {
         return make_ready_future<>();
@@ -1516,7 +1516,7 @@ void gossiper::mark_alive(inet_address addr, endpoint_state& local_state) {
     }
 
     local_state.mark_dead();
-    msg_addr id = get_msg_addr(addr);
+    netw::msg_addr id = get_msg_addr(addr);
     int64_t generation = _endpoint_state_map[get_broadcast_address()].get_heart_beat_state().get_generation();
     logger.debug("Sending a EchoMessage to {}, with generation_number={}", id, generation);
     // Do it in the background.
@@ -1926,7 +1926,7 @@ future<> gossiper::do_shadow_round(std::unordered_set<gms::inet_address> nodes) 
         for (;;) {
             parallel_for_each(nodes.begin(), nodes.end(), [this, &request, &responses, &nodes_talked, &nodes_down, &fall_back_to_syn_msg] (gms::inet_address node) {
                 logger.debug("Sent get_endpoint_states request to {}, request={}", node, request.application_states);
-                return _messaging.send_gossip_get_endpoint_states(msg_addr(node), std::chrono::milliseconds(5000), request).then(
+                return _messaging.send_gossip_get_endpoint_states(netw::msg_addr(node), std::chrono::milliseconds(5000), request).then(
                         [node, &nodes_talked, &responses] (gms::gossip_get_endpoint_states_response response) {
                     logger.debug("Got get_endpoint_states response from {}, response={}", node, response.endpoint_state_map);
                     responses.push_back(std::move(response));
@@ -2132,7 +2132,7 @@ future<> gossiper::do_stop_gossiping() {
             add_local_application_state(application_state::STATUS, versioned_value::shutdown(true)).get();
             auto live_endpoints = _live_endpoints;
             for (inet_address addr : live_endpoints) {
-                msg_addr id = get_msg_addr(addr);
+                netw::msg_addr id = get_msg_addr(addr);
                 logger.info("Sending a GossipShutdown to {} with generation {}", id.addr, local_generation);
                 _messaging.send_gossip_shutdown(id, get_broadcast_address(), local_generation).then_wrapped([id] (auto&&f) {
                     try {

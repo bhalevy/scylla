@@ -101,20 +101,19 @@ public:
 private:
     using messaging_verb = netw::messaging_verb;
     using messaging_service = netw::messaging_service;
-    using msg_addr = netw::msg_addr;
 
     void init_messaging_service_handler();
     future<> uninit_messaging_service_handler();
-    future<> handle_syn_msg(msg_addr from, gossip_digest_syn syn_msg);
-    future<> handle_ack_msg(msg_addr from, gossip_digest_ack ack_msg);
-    future<> handle_ack2_msg(msg_addr from, gossip_digest_ack2 msg);
+    future<> handle_syn_msg(netw::msg_addr from, gossip_digest_syn syn_msg);
+    future<> handle_ack_msg(netw::msg_addr from, gossip_digest_ack ack_msg);
+    future<> handle_ack2_msg(netw::msg_addr from, gossip_digest_ack2 msg);
     future<> handle_echo_msg(inet_address from, std::optional<int64_t> generation_number_opt);
     future<> handle_shutdown_msg(inet_address from, std::optional<int64_t> generation_number_opt);
-    future<> do_send_ack_msg(msg_addr from, gossip_digest_syn syn_msg);
-    future<> do_send_ack2_msg(msg_addr from, utils::chunked_vector<gossip_digest> ack_msg_digest);
+    future<> do_send_ack_msg(netw::msg_addr from, gossip_digest_syn syn_msg);
+    future<> do_send_ack2_msg(netw::msg_addr from, utils::chunked_vector<gossip_digest> ack_msg_digest);
     future<gossip_get_endpoint_states_response> handle_get_endpoint_states_msg(gossip_get_endpoint_states_request request);
     static constexpr uint32_t _default_cpuid = 0;
-    msg_addr get_msg_addr(inet_address to) const noexcept;
+    netw::msg_addr get_msg_addr(inet_address to) const noexcept;
     void do_sort(utils::chunked_vector<gossip_digest>& g_digest_list);
     timer<lowres_clock> _scheduled_gossip_task;
     bool _enabled = false;
