@@ -35,7 +35,7 @@ stream_plan& stream_plan::transfer_ranges(inet_address to, sstring keyspace, dht
 stream_plan& stream_plan::transfer_ranges(inet_address to, sstring keyspace, dht::token_range_vector ranges, std::vector<sstring> column_families) {
     _range_added = true;
     auto session = _coordinator->get_or_create_session(_mgr, to);
-    session->add_transfer_ranges(keyspace, std::move(ranges), std::move(column_families));
+    session->add_transfer_ranges(keyspace, std::move(ranges), column_families);
     session->set_reason(_reason);
     return *this;
 }
