@@ -98,7 +98,8 @@ future<> group0_state_machine::apply(std::vector<raft::command_cref> command) {
 
         co_await std::visit(make_visitor(
         [&] (schema_change& chng) -> future<> {
-            return _mm.merge_schema_from(netw::msg_addr(std::move(cmd.creator_addr)), std::move(chng.mutations));
+            auto creator_host_id = locator::host_id(std::move(cmd.creator_id).uuid());
+            return _mm.merge_schema_from(netw::msg_addr(creator_host_id, std::move(cmd.creator_addr)), std::move(chng.mutations));
         },
         [&] (broadcast_table_query& query) -> future<> {
             auto result = co_await service::broadcast_tables::execute_broadcast_table_query(_sp, query.query, cmd.new_state_id);
@@ -122,13 +123,13 @@ future<> group0_state_machine::load_snapshot(raft::snapshot_id id) {
     return make_ready_future<>();
 }
 
-future<> group0_state_machine::transfer_snapshot(gms::inet_address from, raft::snapshot_descriptor snp) {
+future<> group0_state_machine::transfer_snapshot(raft::server_id from, gms::inet_address ip_addr, raft::snapshot_descriptor snp) {
     // Note that this may bring newer state than the group0 state machine raft's
     // log, so some raft entries may be double applied, but since the state
     // machine is idempotent it is not a problem.
 
-    slogger.trace("transfer snapshot from {} index {} snp id {}", from, snp.idx, snp.id);
-    netw::msg_addr addr{from, 0};
+    slogger.trace("transfer snapshot from {}/{} index {} snp id {}", from, ip_addr, snp.idx, snp.id);
+    netw::msg_addr addr{locator::host_id(from.uuid()), ip_addr, 0};
     // (Ab)use MIGRATION_REQUEST to also transfer group0 history table mutation besides schema tables mutations.
     auto [_, cm] = co_await _mm._messaging.send_migration_request(addr, netw::schema_pull_options { .group0_snapshot_transfer = true });
     if (!cm) {

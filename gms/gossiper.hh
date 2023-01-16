@@ -145,6 +145,9 @@ public:
     inet_address get_broadcast_address() const noexcept {
         return utils::fb_utilities::get_broadcast_address();
     }
+    locator::host_id get_host_id() const noexcept {
+        return utils::fb_utilities::get_host_id();
+    }
     const std::set<inet_address>& get_seeds() const noexcept;
 
 public:

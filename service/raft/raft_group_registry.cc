@@ -446,7 +446,8 @@ future<bool> direct_fd_pinger::ping(direct_failure_detector::pinger::endpoint_id
     }
 
     try {
-        auto reply = co_await ser::raft_rpc_verbs::send_direct_fd_ping(&_ms, netw::msg_addr(*addr), as, dst_id);
+        auto dst_host_id = locator::host_id(dst_id.uuid());
+        auto reply = co_await ser::raft_rpc_verbs::send_direct_fd_ping(&_ms, netw::msg_addr(dst_host_id, *addr), as, dst_id);
         if (auto* wrong_dst = std::get_if<wrong_destination>(&reply.result)) {
             // This may happen e.g. when node B is replacing node A with the same IP.
             // When we ping node A, the pings will reach node B instead.
