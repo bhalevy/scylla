@@ -161,7 +161,7 @@ public:
     stream_reason get_reason() const {
         return _reason;
     }
-    void set_reason(stream_reason reason) {
+    void set_reason(stream_reason reason) noexcept {
         _reason = reason;
     }
 
