@@ -269,7 +269,8 @@ future<> migration_manager::submit_migration_task(const gms::inet_address& endpo
         mlogger.warn("{}", msg);
         return can_ignore_down_node ? make_ready_future<>() : make_exception_future<>(std::runtime_error(msg));
     }
-    netw::msg_addr id{endpoint, 0};
+    // FIXME: use host_id to make sure we're talking to the right endpoint
+    netw::msg_addr id{locator::host_id::create_null_id(), endpoint, 0};
     return merge_schema_from(id).handle_exception([](std::exception_ptr e) {
         try {
             std::rethrow_exception(e);
@@ -872,7 +873,8 @@ future<std::vector<mutation>> migration_manager::prepare_view_drop_announcement(
 
 future<> migration_manager::push_schema_mutation(const gms::inet_address& endpoint, const std::vector<mutation>& schema)
 {
-    netw::msg_addr id{endpoint, 0};
+    // FIXME: use host_id to make sure we're talking to the right endpoint
+    netw::msg_addr id{locator::host_id::create_null_id(), endpoint, 0};
     auto schema_features = _feat.cluster_schema_features();
     auto adjusted_schema = db::schema_tables::adjust_schema_for_schema_features(schema, schema_features);
     auto fm = std::vector<frozen_mutation>(adjusted_schema.begin(), adjusted_schema.end());
@@ -1106,7 +1108,8 @@ future<> migration_manager::sync_schema(const replica::database& db, const std::
     using schema_and_hosts = std::unordered_map<table_schema_version, std::vector<gms::inet_address>>;
     return do_with(schema_and_hosts(), db.get_version(), [this, &nodes] (schema_and_hosts& schema_map, table_schema_version& my_version) {
         return parallel_for_each(nodes, [this, &schema_map, &my_version] (const gms::inet_address& node) {
-            return _messaging.send_schema_check(netw::msg_addr(node)).then([node, &schema_map, &my_version] (table_schema_version remote_version) {
+            // FIXME: use host_id to make sure we're talking to the right endpoint
+            return _messaging.send_schema_check(netw::msg_addr(locator::host_id::create_null_id(), node, 0)).then([node, &schema_map, &my_version] (table_schema_version remote_version) {
                 if (my_version != remote_version) {
                     schema_map[remote_version].emplace_back(node);
                 }

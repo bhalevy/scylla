@@ -190,7 +190,8 @@ future<> stream_transfer_task::execute() {
     auto plan_id = session->plan_id();
     auto cf_id = this->cf_id;
     auto dst_cpu_id = session->dst_cpu_id;
-    auto id = netw::msg_addr{session->peer, session->dst_cpu_id};
+    // FIXME: use host_id to make sure we're talking to the right endpoint
+    auto id = netw::msg_addr{locator::host_id::create_null_id(), session->peer, session->dst_cpu_id};
     sslog.debug("[Stream #{}] stream_transfer_task: cf_id={}", plan_id, cf_id);
     sort_and_merge_ranges();
     auto reason = session->get_reason();

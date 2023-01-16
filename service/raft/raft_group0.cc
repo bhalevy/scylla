@@ -7,6 +7,7 @@
  */
 #include <source_location>
 
+#include "message/msg_addr.hh"
 #include "service/raft/raft_group0.hh"
 #include "service/raft/raft_rpc.hh"
 #include "service/raft/raft_sys_table_storage.hh"
@@ -174,8 +175,8 @@ future<> raft_group0::uninit_rpc_verbs(netw::messaging_service& ms) {
     ).discard_result();
 }
 
-static future<group0_upgrade_state> send_get_group0_upgrade_state(netw::messaging_service& ms, const gms::inet_address& addr, abort_source& as) {
-    auto state = co_await ser::group0_rpc_verbs::send_get_group0_upgrade_state(&ms, netw::msg_addr(addr), as);
+static future<group0_upgrade_state> send_get_group0_upgrade_state(netw::messaging_service& ms, const netw::msg_addr& addr, abort_source& as) {
+    auto state = co_await ser::group0_rpc_verbs::send_get_group0_upgrade_state(&ms, addr, as);
     auto state_int = static_cast<int8_t>(state);
     if (state_int > group0_upgrade_state_last) {
         on_internal_error(upgrade_log, format(
@@ -466,10 +467,10 @@ struct group0_members {
     const raft_address_map& _address_map;
 
 
-    std::vector<gms::inet_address> get_inet_addrs(std::source_location l =
+    std::vector<netw::msg_addr> get_msg_addrs(std::source_location l =
             std::source_location::current()) const {
         const raft::config_member_set& members = _group0_server.get_configuration().current;
-        std::vector<gms::inet_address> ret;
+        std::vector<netw::msg_addr> ret;
         std::vector<raft::server_id> missing;
         ret.reserve(members.size());
         for (const auto& srv: members) {
@@ -477,7 +478,7 @@ struct group0_members {
             if (!addr.has_value()) {
                 missing.push_back(srv.addr.id);
             } else {
-                ret.push_back(addr.value());
+                ret.emplace_back(locator::host_id(srv.addr.id.uuid()), addr.value());
             }
         }
         if (!missing.empty()) {
@@ -1031,17 +1032,20 @@ static future<> wait_until_every_peer_joined_group0(db::system_keyspace& sys_ks,
         // We fetch both config and peers on each iteration; we don't assume that they don't change.
         // No new node should join while the procedure is running, but nodes may leave.
 
-        auto current_config = members0.get_inet_addrs();
+        auto current_config = members0.get_msg_addrs();
         if (current_config.empty()) {
             // Not all addresses are known
             continue;
         }
         std::sort(current_config.begin(), current_config.end());
 
-        auto peers = co_await sys_ks.load_peers();
+        auto peers = boost::copy_range<std::vector<netw::msg_addr>>(co_await sys_ks.load_host_ids()
+                | boost::adaptors::transformed([] (const std::pair<gms::inet_address, locator::host_id>& p) {
+                    return netw::msg_addr(p.second, p.first);
+                });
         std::sort(peers.begin(), peers.end());
 
-        std::vector<gms::inet_address> missing_peers;
+        std::vector<netw::msg_addr> missing_peers;
         std::set_difference(peers.begin(), peers.end(), current_config.begin(), current_config.end(), std::back_inserter(missing_peers));
 
         if (missing_peers.empty()) {
@@ -1067,9 +1071,9 @@ static future<bool> anyone_finished_upgrade(
     static constexpr auto max_concurrency = 10;
     static constexpr auto rpc_timeout = std::chrono::seconds{5};
 
-    auto current_config = members0.get_inet_addrs();
+    auto current_config = members0.get_msg_addrs();
     bool finished = false;
-    co_await max_concurrent_for_each(current_config, max_concurrency, [&] (const gms::inet_address& node) -> future<> {
+    co_await max_concurrent_for_each(current_config, max_concurrency, [&] (const netw::msg_addr& node) -> future<> {
         try {
             auto state = co_await with_timeout(as, rpc_timeout, std::bind_front(send_get_group0_upgrade_state, std::ref(ms), node));
             if (state == group0_upgrade_state::use_post_raft_procedures) {
@@ -1088,7 +1092,7 @@ static future<bool> anyone_finished_upgrade(
 
 // Check if it's possible to reach everyone through `get_group0_upgrade_state` RPC.
 static future<> check_remote_group0_upgrade_state_dry_run(
-        const noncopyable_function<future<std::vector<gms::inet_address>>()>& get_inet_addrs,
+        const noncopyable_function<future<std::vector<netw::msg_addr>>()>& get_msg_addrs,
         netw::messaging_service& ms, abort_source& as) {
     static constexpr auto rpc_timeout = std::chrono::seconds{5};
     static constexpr auto max_concurrency = 10;
@@ -1098,13 +1102,13 @@ static future<> check_remote_group0_upgrade_state_dry_run(
         // so we don't skip nodes which responded in earlier iterations.
         // We contact everyone in each iteration even if some of these guys already answered.
         // We fetch peers again on every attempt to handle the possibility of leaving nodes.
-        auto cluster_config = co_await get_inet_addrs();
+        auto cluster_config = co_await get_msg_addrs();
         if (cluster_config.empty()) {
             continue;
         }
 
         bool retry = false;
-        co_await max_concurrent_for_each(cluster_config, max_concurrency, [&] (const gms::inet_address& node) -> future<> {
+        co_await max_concurrent_for_each(cluster_config, max_concurrency, [&] (const netw::msg_addr& node) -> future<> {
             try {
                 upgrade_log.info("check_remote_group0_upgrade_state_dry_run: `send_get_group0_upgrade_state({})`", node);
                 co_await with_timeout(as, rpc_timeout, std::bind_front(send_get_group0_upgrade_state, std::ref(ms), node));
@@ -1138,16 +1142,16 @@ static future<bool> wait_for_peers_to_enter_synchronize_state(
     static constexpr auto rpc_timeout = std::chrono::seconds{5};
     static constexpr auto max_concurrency = 10;
 
-    auto entered_synchronize = make_lw_shared<std::unordered_set<gms::inet_address>>();
+    auto entered_synchronize = make_lw_shared<std::unordered_set<netw::msg_addr>>();
 
     // This is a work-around for boost tests where RPC module is not listening so we cannot contact ourselves.
     // But really, except the (arguably broken) test code, we don't need to be treated as an edge case. All nodes are symmetric.
     // For production code this line is unnecessary.
-    entered_synchronize->insert(utils::fb_utilities::get_broadcast_address());
+    entered_synchronize->emplace(utils::fb_utilities::get_host_id(), utils::fb_utilities::get_broadcast_address());
 
     for (sleep_with_exponential_backoff sleep;; co_await sleep(as)) {
         // We fetch the config again on every attempt to handle the possibility of removing failed nodes.
-        auto current_config = members0.get_inet_addrs();
+        auto current_config = members0.get_msg_addrs();
         if (current_config.empty()) {
             continue;
         }
@@ -1164,10 +1168,10 @@ static future<bool> wait_for_peers_to_enter_synchronize_state(
         }
 
         (void) [] (netw::messaging_service& ms, abort_source& as, gate::holder pause_shutdown,
-                   std::vector<gms::inet_address> current_config,
-                   lw_shared_ptr<std::unordered_set<gms::inet_address>> entered_synchronize,
+                   std::vector<netw::msg_addr> current_config,
+                   lw_shared_ptr<std::unordered_set<netw::msg_addr>> entered_synchronize,
                    lw_shared_ptr<bool> retry, ::tracker<bool> tracker) -> future<> {
-            co_await max_concurrent_for_each(current_config, max_concurrency, [&] (const gms::inet_address& node) -> future<> {
+            co_await max_concurrent_for_each(current_config, max_concurrency, [&] (const netw::msg_addr& node) -> future<> {
                 if (entered_synchronize->contains(node)) {
                     co_return;
                 }
@@ -1226,17 +1230,17 @@ collect_schema_versions_from_group0_members(
     static constexpr auto rpc_timeout = std::chrono::seconds{5};
     static constexpr auto max_concurrency = 10;
 
-    std::unordered_map<gms::inet_address, table_schema_version> versions;
+    std::unordered_map<netw::msg_addr, table_schema_version> versions;
     for (sleep_with_exponential_backoff sleep;; co_await sleep(as)) {
 
         // We fetch the config on each iteration; some nodes may leave.
-        auto current_config = members0.get_inet_addrs();
+        auto current_config = members0.get_msg_addrs();
         if (current_config.empty()) {
             continue;
         }
 
         bool failed = false;
-        co_await max_concurrent_for_each(current_config, max_concurrency, [&] (const gms::inet_address& node) -> future<> {
+        co_await max_concurrent_for_each(current_config, max_concurrency, [&] (const netw::msg_addr& node) -> future<> {
             if (versions.contains(node)) {
                 // This node was already contacted in a previous iteration.
                 co_return;
@@ -1245,7 +1249,7 @@ collect_schema_versions_from_group0_members(
             try {
                 upgrade_log.info("synchronize_schema: `send_schema_check({})`", node);
                 versions.emplace(node,
-                    co_await with_timeout(as, rpc_timeout, [&ms, addr = netw::msg_addr(node)] (abort_source& as) mutable {
+                    co_await with_timeout(as, rpc_timeout, [&ms, addr = node] (abort_source& as) mutable {
                             return ms.send_schema_check(std::move(addr), as);
                         }));
             } catch (abort_requested_exception&) {
@@ -1462,12 +1466,15 @@ future<> raft_group0::do_upgrade_to_group0(group0_upgrade_state start_state) {
     // step, on the other hand, allows nodes to leave and will unblock as soon as all remaining peers are
     // ready to answer.
     upgrade_log.info("Waiting until everyone is ready to start upgrade...");
-    auto get_inet_addrs = [this]() -> future<std::vector<gms::inet_address>> {
-        auto current_config = co_await _sys_ks.load_peers();
-        current_config.push_back(_gossiper.get_broadcast_address());
+    auto get_msg_addrs = [this]() -> future<std::vector<netw::msg_addr>> {
+        auto current_config = boost::copy_range<std::vector<netw::msg_addr>>(co_await _sys_ks.load_host_ids()
+                | boost::adaptors::transformed([] (const std::pair<gms::inet_address, locator::host_id>& p) {
+                    return netw::msg_addr(p.second, p.first);
+                }));
+        current_config.emplace_back(_gossiper.get_host_id(), _gossiper.get_broadcast_address());
         co_return current_config;
     };
-    co_await check_remote_group0_upgrade_state_dry_run(get_inet_addrs, _ms.local(), _abort_source);
+    co_await check_remote_group0_upgrade_state_dry_run(get_msg_addrs, _ms.local(), _abort_source);
 
     if (!joined_group0()) {
         upgrade_log.info("Joining group 0...");
@@ -1513,7 +1520,7 @@ future<> raft_group0::do_upgrade_to_group0(group0_upgrade_state start_state) {
         upgrade_log.info("Performing a dry run of remote `get_group0_upgrade_state` calls...");
         co_await check_remote_group0_upgrade_state_dry_run(
                 [members0] {
-                    return make_ready_future<std::vector<gms::inet_address>>(members0.get_inet_addrs());
+                    return make_ready_future<std::vector<netw::msg_addr>>(members0.get_msg_addrs());
                 }, _ms.local(), _abort_source);
 
         utils::get_local_injector().inject("group0_upgrade_before_synchronize",

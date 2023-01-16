@@ -512,7 +512,8 @@ future<query::forward_result> forward_service::dispatch(query::forward_request r
             throw std::runtime_error("No live endpoint available");
         }
 
-        auto endpoint_addr = netw::msg_addr{*live_endpoints.begin(), 0};
+        // FIXME: use host_id to make sure we're talking to the right endpoint
+        auto endpoint_addr = netw::msg_addr{locator::host_id::create_null_id(), *live_endpoints.begin(), 0};
         vnodes_per_addr[endpoint_addr].push_back(*vnode);
     }
 

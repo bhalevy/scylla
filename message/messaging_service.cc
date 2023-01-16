@@ -148,7 +148,10 @@ const size_t PER_TENANT_CONNECTION_COUNT = 3;
 
 bool operator==(const netw::msg_addr& x, const netw::msg_addr& y) noexcept {
     // Ignore cpu id for now since we do not really support shard to shard connections
-    return x.addr == y.addr && (x.host_id == y.host_id || !x.host_id || !y.host_id);
+    if (x.host_id && y.host_id) {
+        return x.host_id == y.host_id;
+    }
+    return x.addr == y.addr;
 }
 
 bool operator<(const netw::msg_addr& x, const netw::msg_addr& y) noexcept {

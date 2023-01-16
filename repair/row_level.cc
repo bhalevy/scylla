@@ -7,6 +7,7 @@
  */
 
 #include <seastar/util/defer.hh>
+#include "message/msg_addr.hh"
 #include "repair/repair.hh"
 #include "message/messaging_service.hh"
 #include "repair/repair_task.hh"
@@ -92,9 +93,9 @@ enum class repair_state : uint16_t {
 };
 
 struct repair_node_state {
-    gms::inet_address node;
+    netw::msg_addr node;
     repair_state state = repair_state::unknown;
-    explicit repair_node_state(gms::inet_address n) : node(n) { }
+    explicit repair_node_state(netw::msg_addr n) : node(n) { }
 };
 
 // Wraps sink and source objects for repair master or repair follower nodes.
@@ -122,7 +123,7 @@ public:
     void mark_source_closed(unsigned node_idx) {
         _sources_closed[node_idx] = true;
     }
-    future<std::tuple<sink_type, source_type>> get_sink_source(gms::inet_address remote_node, unsigned node_idx) {
+    future<std::tuple<sink_type, source_type>> get_sink_source(netw::msg_addr remote_node, unsigned node_idx) {
         using value_type = std::tuple<sink_type, source_type>;
         if (_sinks[node_idx] && _sources[node_idx]) {
             return make_ready_future<value_type>(value_type(_sinks[node_idx].value(), _sources[node_idx].value()));
@@ -130,7 +131,7 @@ public:
         if (_sinks[node_idx] || _sources[node_idx]) {
             return make_exception_future<value_type>(std::runtime_error(format("sink or source is missing for node {}", remote_node)));
         }
-        return _fn(_repair_meta_id, netw::msg_addr(remote_node)).then_unpack([this, node_idx] (rpc::sink<SinkType> sink, rpc::source<SourceType> source) mutable {
+        return _fn(_repair_meta_id, remote_node).then_unpack([this, node_idx] (rpc::sink<SinkType> sink, rpc::source<SourceType> source) mutable {
             _sinks[node_idx].emplace(std::move(sink));
             _sources[node_idx].emplace(std::move(source));
             return make_ready_future<value_type>(value_type(_sinks[node_idx].value(), _sources[node_idx].value()));
@@ -212,7 +213,8 @@ static const std::vector<row_level_diff_detect_algorithm>& suportted_diff_detect
 static row_level_diff_detect_algorithm get_common_diff_detect_algorithm(netw::messaging_service& ms, const inet_address_vector_replica_set& nodes) {
     std::vector<std::vector<row_level_diff_detect_algorithm>> nodes_algorithms(nodes.size());
     parallel_for_each(boost::irange(size_t(0), nodes.size()), [&ms, &nodes_algorithms, &nodes] (size_t idx) {
-        return ms.send_repair_get_diff_algorithms(netw::msg_addr(nodes[idx])).then(
+        // FIXME: use host_id to make sure we're talking to the right endpoint
+        return ms.send_repair_get_diff_algorithms(netw::msg_addr(locator::host_id::create_null_id(), nodes[idx])).then(
                 [&nodes_algorithms, &nodes, idx] (std::vector<row_level_diff_detect_algorithm> algorithms) {
             std::sort(algorithms.begin(), algorithms.end());
             nodes_algorithms[idx] = std::move(algorithms);
@@ -734,7 +736,7 @@ private:
     size_t _max_row_buf_size;
     uint64_t _seed = 0;
     repair_master _repair_master;
-    gms::inet_address _myip;
+    netw::msg_addr _my_addr;
     uint32_t _repair_meta_id;
     streaming::stream_reason _reason;
     // Repair master's sharding configuration
@@ -778,7 +780,7 @@ public:
     std::vector<repair_node_state>& all_nodes() {
         return _all_node_states;
     }
-    void set_repair_state(repair_state state, gms::inet_address node) {
+    void set_repair_state(repair_state state, netw::msg_addr node) {
         for (auto& ns : all_nodes()) {
             if (ns.node == node) {
                 ns.state = state;
@@ -792,8 +794,8 @@ public:
     repair_stats& stats() {
         return _stats;
     }
-    gms::inet_address myip() const {
-        return _myip;
+    const netw::msg_addr& my_addr() const noexcept {
+        return _my_addr;
     }
     uint32_t repair_meta_id() const {
         return _repair_meta_id;
@@ -842,7 +844,7 @@ public:
             , _max_row_buf_size(max_row_buf_size)
             , _seed(seed)
             , _repair_master(master)
-            , _myip(utils::fb_utilities::get_broadcast_address())
+            , _my_addr(utils::fb_utilities::get_broadcast_address())
             , _repair_meta_id(repair_meta_id)
             , _reason(reason)
             , _master_node_shard_config(std::move(master_node_shard_config))
@@ -1293,7 +1295,7 @@ private:
 
     // Give a list of rows, apply the rows to disk and update the _working_row_buf and _peer_row_hash_sets if requested
     // Must run inside a seastar thread
-    void apply_rows_on_master_in_thread(repair_rows_on_wire rows, gms::inet_address from, update_working_row_buf update_buf,
+    void apply_rows_on_master_in_thread(repair_rows_on_wire rows, netw::msg_addr from, update_working_row_buf update_buf,
             update_peer_row_hash_sets update_hash_set, unsigned node_idx) {
         if (rows.empty()) {
             return;
@@ -1302,7 +1304,7 @@ private:
         auto sz = get_repair_rows_size(row_diff).get0();
         stats().rx_row_bytes += sz;
         stats().rx_row_nr += row_diff.size();
-        stats().rx_row_nr_peer[from] += row_diff.size();
+        stats().rx_row_nr_peer[from.addr] += row_diff.size();
         if (update_buf) {
             // Both row_diff and _working_row_buf and are ordered, merging
             // two sored list to make sure the combination of row_diff
@@ -1381,11 +1383,11 @@ public:
     // RPC API
     // Return the hashes of the rows in _working_row_buf
     future<repair_hash_set>
-    get_full_row_hashes(gms::inet_address remote_node) {
-        if (remote_node == _myip) {
+    get_full_row_hashes(netw::msg_addr remote_node) {
+        if (remote_node == _my_addr) {
             return get_full_row_hashes_handler();
         }
-        return _messaging.send_repair_get_full_row_hashes(msg_addr(remote_node),
+        return _messaging.send_repair_get_full_row_hashes(remote_node,
                 _repair_meta_id).then([this, remote_node] (repair_hash_set hashes) {
             rlogger.debug("Got full hashes from peer={}, nr_hashes={}", remote_node, hashes.size());
             _metrics.rx_hashes_nr += hashes.size();
@@ -1398,7 +1400,7 @@ public:
 private:
     future<> get_full_row_hashes_source_op(
             lw_shared_ptr<repair_hash_set> current_hashes,
-            gms::inet_address remote_node,
+            netw::msg_addr remote_node,
             unsigned node_idx,
             rpc::source<repair_hash_with_cmd>& source) {
         return repeat([this, current_hashes, remote_node, node_idx, &source] () mutable {
@@ -1436,8 +1438,8 @@ private:
 
 public:
     future<repair_hash_set>
-    get_full_row_hashes_with_rpc_stream(gms::inet_address remote_node, unsigned node_idx) {
-        if (remote_node == _myip) {
+    get_full_row_hashes_with_rpc_stream(netw::msg_addr remote_node, unsigned node_idx) {
+        if (remote_node == _my_addr) {
             return get_full_row_hashes_handler();
         }
         auto current_hashes = make_lw_shared<repair_hash_set>();
@@ -1465,11 +1467,12 @@ public:
     // RPC API
     // Return the combined hashes of the current working row buf
     future<get_combined_row_hash_response>
-    get_combined_row_hash(std::optional<repair_sync_boundary> common_sync_boundary, gms::inet_address remote_node) {
-        if (remote_node == _myip) {
+    get_combined_row_hash(std::optional<repair_sync_boundary> common_sync_boundary, netw::msg_addr remote_node) {
+        if (remote_node == _my_addr) {
             return get_combined_row_hash_handler(common_sync_boundary);
         }
-        return _messaging.send_repair_get_combined_row_hash(msg_addr(remote_node),
+        // FIXME: use host_id to make sure we're talking to the right endpoint
+        return _messaging.send_repair_get_combined_row_hash(remote_node,
                 _repair_meta_id, common_sync_boundary).then([this] (get_combined_row_hash_response resp) {
             stats().rpc_call_nr++;
             stats().rx_hashes_nr++;
@@ -1492,8 +1495,8 @@ public:
 
     // RPC API
     future<>
-    repair_row_level_start(gms::inet_address remote_node, sstring ks_name, sstring cf_name, dht::token_range range, table_schema_version schema_version, streaming::stream_reason reason) {
-        if (remote_node == _myip) {
+    repair_row_level_start(netw::msg_addr remote_node, sstring ks_name, sstring cf_name, dht::token_range range, table_schema_version schema_version, streaming::stream_reason reason) {
+        if (remote_node == _my_addr) {
             return make_ready_future<>();
         }
         stats().rpc_call_nr++;
@@ -1503,7 +1506,7 @@ public:
         // Murmur3 is appropriate because that's the only supported partitioner at
         // the time this change is introduced.
         sstring remote_partitioner_name = "org.apache.cassandra.dht.Murmur3Partitioner";
-        return _messaging.send_repair_row_level_start(msg_addr(remote_node),
+        return _messaging.send_repair_row_level_start(msg_addr(remote_node,
                 _repair_meta_id, ks_name, cf_name, std::move(range), _algo, _max_row_buf_size, _seed,
                 _master_node_shard_config.shard, _master_node_shard_config.shard_count, _master_node_shard_config.ignore_msb,
                 remote_partitioner_name, std::move(schema_version), reason).then([ks_name, cf_name] (rpc::optional<repair_row_level_start_response> resp) {
@@ -1517,7 +1520,7 @@ public:
 
     // RPC handler
     static future<repair_row_level_start_response>
-    repair_row_level_start_handler(repair_service& repair, gms::inet_address from, uint32_t src_cpu_id, uint32_t repair_meta_id, sstring ks_name, sstring cf_name,
+    repair_row_level_start_handler(repair_service& repair, netw::msg_addr from, uint32_t src_cpu_id, uint32_t repair_meta_id, sstring ks_name, sstring cf_name,
             dht::token_range range, row_level_diff_detect_algorithm algo, uint64_t max_row_buf_size,
             uint64_t seed, shard_config master_node_shard_config, table_schema_version schema_version, streaming::stream_reason reason) {
         rlogger.debug(">>> Started Row Level Repair (Follower): local={}, peers={}, repair_meta_id={}, keyspace={}, cf={}, schema_version={}, range={}, seed={}, max_row_buf_siz={}",
@@ -1530,18 +1533,18 @@ public:
     }
 
     // RPC API
-    future<> repair_row_level_stop(gms::inet_address remote_node, sstring ks_name, sstring cf_name, dht::token_range range) {
-        if (remote_node == _myip) {
+    future<> repair_row_level_stop(netw::msg_addr remote_node, sstring ks_name, sstring cf_name, dht::token_range range) {
+        if (remote_node == _my_addr) {
             return stop();
         }
         stats().rpc_call_nr++;
-        return _messaging.send_repair_row_level_stop(msg_addr(remote_node),
+        return _messaging.send_repair_row_level_stop(remote_node,
                 _repair_meta_id, std::move(ks_name), std::move(cf_name), std::move(range));
     }
 
     // RPC handler
     static future<>
-    repair_row_level_stop_handler(repair_service& rs, gms::inet_address from, uint32_t repair_meta_id, sstring ks_name, sstring cf_name, dht::token_range range) {
+    repair_row_level_stop_handler(repair_service& rs, netw::msg_addr from, uint32_t repair_meta_id, sstring ks_name, sstring cf_name, dht::token_range range) {
         rlogger.debug("<<< Finished Row Level Repair (Follower): local={}, peers={}, repair_meta_id={}, keyspace={}, cf={}, range={}",
             utils::fb_utilities::get_broadcast_address(), from, repair_meta_id, ks_name, cf_name, range);
         auto rm = rs.get_repair_meta(from, repair_meta_id);
@@ -1552,17 +1555,17 @@ public:
     }
 
     // RPC API
-    future<uint64_t> repair_get_estimated_partitions(gms::inet_address remote_node) {
-        if (remote_node == _myip) {
+    future<uint64_t> repair_get_estimated_partitions(netw::msg_addr remote_node) {
+        if (remote_node == _my_addr) {
             return get_estimated_partitions();
         }
         stats().rpc_call_nr++;
-        return _messaging.send_repair_get_estimated_partitions(msg_addr(remote_node), _repair_meta_id);
+        return _messaging.send_repair_get_estimated_partitions(remote_node, _repair_meta_id);
     }
 
 
     // RPC handler
-    static future<uint64_t> repair_get_estimated_partitions_handler(repair_service& rs, gms::inet_address from, uint32_t repair_meta_id) {
+    static future<uint64_t> repair_get_estimated_partitions_handler(repair_service& rs, netw::msg_addr from, uint32_t repair_meta_id) {
         auto rm = rs.get_repair_meta(from, repair_meta_id);
         rm->set_repair_state_for_local_node(repair_state::get_estimated_partitions_started);
         return rm->get_estimated_partitions().then([rm] (uint64_t partitions) {
@@ -1572,17 +1575,17 @@ public:
     }
 
     // RPC API
-    future<> repair_set_estimated_partitions(gms::inet_address remote_node, uint64_t estimated_partitions) {
-        if (remote_node == _myip) {
+    future<> repair_set_estimated_partitions(netw::msg_addr remote_node, uint64_t estimated_partitions) {
+        if (remote_node == _my_addr) {
             return set_estimated_partitions(estimated_partitions);
         }
         stats().rpc_call_nr++;
-        return _messaging.send_repair_set_estimated_partitions(msg_addr(remote_node), _repair_meta_id, estimated_partitions);
+        return _messaging.send_repair_set_estimated_partitions(remote_node, _repair_meta_id, estimated_partitions);
     }
 
 
     // RPC handler
-    static future<> repair_set_estimated_partitions_handler(repair_service& rs, gms::inet_address from, uint32_t repair_meta_id, uint64_t estimated_partitions) {
+    static future<> repair_set_estimated_partitions_handler(repair_service& rs, netw::msg_addr from, uint32_t repair_meta_id, uint64_t estimated_partitions) {
         auto rm = rs.get_repair_meta(from, repair_meta_id);
         rm->set_repair_state_for_local_node(repair_state::set_estimated_partitions_started);
         return rm->set_estimated_partitions(estimated_partitions).then([rm] {
@@ -1593,12 +1596,12 @@ public:
     // RPC API
     // Return the largest sync point contained in the _row_buf , current _row_buf checksum, and the _row_buf size
     future<get_sync_boundary_response>
-    get_sync_boundary(gms::inet_address remote_node, std::optional<repair_sync_boundary> skipped_sync_boundary) {
-        if (remote_node == _myip) {
+    get_sync_boundary(netw::msg_addr remote_node, std::optional<repair_sync_boundary> skipped_sync_boundary) {
+        if (remote_node == _my_addr) {
             return get_sync_boundary_handler(skipped_sync_boundary);
         }
         stats().rpc_call_nr++;
-        return _messaging.send_repair_get_sync_boundary(msg_addr(remote_node), _repair_meta_id, skipped_sync_boundary);
+        return _messaging.send_repair_get_sync_boundary(remote_node, _repair_meta_id, skipped_sync_boundary);
     }
 
     // RPC handler
@@ -1613,9 +1616,9 @@ public:
     // RPC API
     // Return rows in the _working_row_buf with hash within the given sef_diff
     // Must run inside a seastar thread
-    void get_row_diff(repair_hash_set set_diff, needs_all_rows_t needs_all_rows, gms::inet_address remote_node, unsigned node_idx) {
+    void get_row_diff(repair_hash_set set_diff, needs_all_rows_t needs_all_rows, netw::msg_addr remote_node, unsigned node_idx) {
         if (needs_all_rows || !set_diff.empty()) {
-            if (remote_node == _myip) {
+            if (remote_node == _my_addr) {
                 return;
             }
             if (needs_all_rows) {
@@ -1625,7 +1628,7 @@ public:
                 _metrics.tx_hashes_nr += set_diff.size();
             }
             stats().rpc_call_nr++;
-            repair_rows_on_wire rows = _messaging.send_repair_get_row_diff(msg_addr(remote_node),
+            repair_rows_on_wire rows = _messaging.send_repair_get_row_diff(remote_node,
                     _repair_meta_id, std::move(set_diff), bool(needs_all_rows)).get0();
             if (!rows.empty()) {
                 apply_rows_on_master_in_thread(std::move(rows), remote_node, update_working_row_buf::yes, update_peer_row_hash_sets::no, node_idx);
@@ -1634,12 +1637,13 @@ public:
     }
 
     // Must run inside a seastar thread
-    void get_row_diff_and_update_peer_row_hash_sets(gms::inet_address remote_node, unsigned node_idx) {
-        if (remote_node == _myip) {
+    void get_row_diff_and_update_peer_row_hash_sets(netw::msg_addr remote_node, unsigned node_idx) {
+        if (remote_node == _my_addr) {
             return;
         }
         stats().rpc_call_nr++;
-        repair_rows_on_wire rows = _messaging.send_repair_get_row_diff(msg_addr(remote_node),
+        // FIXME: use host_id to make sure we're talking to the right endpoint
+        repair_rows_on_wire rows = _messaging.send_repair_get_row_diff(remote_node,
                 _repair_meta_id, {}, bool(needs_all_rows_t::yes)).get0();
         if (!rows.empty()) {
             apply_rows_on_master_in_thread(std::move(rows), remote_node, update_working_row_buf::yes, update_peer_row_hash_sets::yes, node_idx);
@@ -1650,7 +1654,7 @@ private:
     // Must run inside a seastar thread
     void get_row_diff_source_op(
             update_peer_row_hash_sets update_hash_set,
-            gms::inet_address remote_node,
+            netw::msg_addr remote_node,
             unsigned node_idx,
             rpc::sink<repair_hash_with_cmd>& sink,
             rpc::source<repair_row_on_wire_with_cmd>& source) {
@@ -1685,7 +1689,7 @@ private:
             repair_hash_set set_diff,
             needs_all_rows_t needs_all_rows,
             rpc::sink<repair_hash_with_cmd>& sink,
-            gms::inet_address remote_node) {
+            netw::msg_addr remote_node) {
         return do_with(std::move(set_diff), [needs_all_rows, remote_node, &sink] (repair_hash_set& set_diff) mutable {
             if (inject_rpc_stream_error) {
                 return make_exception_future<>(std::runtime_error("get_row_diff: Inject sender error in sink loop"));
@@ -1716,10 +1720,10 @@ public:
             repair_hash_set set_diff,
             needs_all_rows_t needs_all_rows,
             update_peer_row_hash_sets update_hash_set,
-            gms::inet_address remote_node,
+            netw::msg_addr remote_node,
             unsigned node_idx) {
         if (needs_all_rows || !set_diff.empty()) {
-            if (remote_node == _myip) {
+            if (remote_node == _my_addr) {
                 return;
             }
             if (needs_all_rows) {
@@ -1749,9 +1753,9 @@ public:
 
     // RPC API
     // Send rows in the _working_row_buf with hash within the given sef_diff
-    future<> put_row_diff(repair_hash_set set_diff, needs_all_rows_t needs_all_rows, gms::inet_address remote_node) {
+    future<> put_row_diff(repair_hash_set set_diff, needs_all_rows_t needs_all_rows, netw::msg_addr remote_node) {
         if (!set_diff.empty()) {
-            if (remote_node == _myip) {
+            if (remote_node == _my_addr) {
                 return make_ready_future<>();
             }
             size_t sz = set_diff.size();
@@ -1766,8 +1770,10 @@ public:
                         stats().tx_row_nr_peer[remote_node] += row_diff.size();
                         stats().tx_row_bytes += row_bytes;
                         stats().rpc_call_nr++;
-                        return to_repair_rows_on_wire(std::move(row_diff)).then([this, remote_node] (repair_rows_on_wire rows)  {
-                            return _messaging.send_repair_put_row_diff(msg_addr(remote_node), _repair_meta_id, std::move(rows));
+                        // FIXME: use host_id to make sure we're talking to the right endpoint
+                        auto remote_host_id = locator::host_id::create_null_id();
+                        return to_repair_rows_on_wire(std::move(row_diff)).then([this, remote_host_id, remote_node] (repair_rows_on_wire rows)  {
+                            return _messaging.send_repair_put_row_diff(msg_addr(remote_host_id, remote_node), _repair_meta_id, std::move(rows));
                         });
                     });
                 });
@@ -1778,7 +1784,7 @@ public:
 
 private:
     future<> put_row_diff_source_op(
-            gms::inet_address remote_node,
+            netw::msg_addr remote_node,
             unsigned node_idx,
             rpc::source<repair_stream_cmd>& source) {
         return repeat([this, remote_node, node_idx, &source] () mutable {
@@ -1804,7 +1810,7 @@ private:
     future<> put_row_diff_sink_op(
             repair_rows_on_wire rows,
             rpc::sink<repair_row_on_wire_with_cmd>& sink,
-            gms::inet_address remote_node) {
+            netw::msg_addr remote_node) {
         return do_with(std::move(rows), [&sink, remote_node] (repair_rows_on_wire& rows) mutable {
             return do_for_each(rows, [&sink] (repair_row_on_wire& row) mutable {
                 rlogger.trace("put_row_diff: send row");
@@ -1827,9 +1833,9 @@ public:
     future<> put_row_diff_with_rpc_stream(
             repair_hash_set set_diff,
             needs_all_rows_t needs_all_rows,
-            gms::inet_address remote_node, unsigned node_idx) {
+            netw::msg_addr remote_node, unsigned node_idx) {
         if (!set_diff.empty()) {
-            if (remote_node == _myip) {
+            if (remote_node == _my_addr) {
                 return make_ready_future<>();
             }
             size_t sz = set_diff.size();
@@ -1861,7 +1867,7 @@ public:
     }
 
     // RPC handler
-    future<> put_row_diff_handler(repair_rows_on_wire rows, gms::inet_address from) {
+    future<> put_row_diff_handler(repair_rows_on_wire rows, netw::msg_addr from) {
         return with_gate(_gate, [this, rows = std::move(rows)] () mutable {
             _cf.update_off_strategy_trigger();
             return apply_rows_on_follower(std::move(rows));
@@ -1881,7 +1887,7 @@ get_set_diff(const repair_hash_set& x, const repair_hash_set& y) {
 
 static future<stop_iteration> repair_get_row_diff_with_rpc_stream_process_op(
         sharded<repair_service>& repair,
-        gms::inet_address from,
+        netw::msg_addr from,
         uint32_t src_cpu_id,
         uint32_t repair_meta_id,
         rpc::sink<repair_row_on_wire_with_cmd> sink,
@@ -1938,7 +1944,7 @@ static future<stop_iteration> repair_get_row_diff_with_rpc_stream_process_op(
 
 static future<stop_iteration> repair_put_row_diff_with_rpc_stream_process_op(
         sharded<repair_service>& repair,
-        gms::inet_address from,
+        netw::msg_addr from,
         uint32_t src_cpu_id,
         uint32_t repair_meta_id,
         rpc::sink<repair_stream_cmd> sink,
@@ -1980,7 +1986,7 @@ static future<stop_iteration> repair_put_row_diff_with_rpc_stream_process_op(
 
 static future<stop_iteration> repair_get_full_row_hashes_with_rpc_stream_process_op(
         sharded<repair_service>& repair,
-        gms::inet_address from,
+        netw::msg_addr from,
         uint32_t src_cpu_id,
         uint32_t repair_meta_id,
         rpc::sink<repair_hash_with_cmd> sink,
@@ -2018,7 +2024,7 @@ static future<stop_iteration> repair_get_full_row_hashes_with_rpc_stream_process
 
 static future<> repair_get_row_diff_with_rpc_stream_handler(
         sharded<repair_service>& repair,
-        gms::inet_address from,
+        netw::msg_addr from,
         uint32_t src_cpu_id,
         uint32_t repair_meta_id,
         rpc::sink<repair_row_on_wire_with_cmd> sink,
@@ -2055,7 +2061,7 @@ static future<> repair_get_row_diff_with_rpc_stream_handler(
 
 static future<> repair_put_row_diff_with_rpc_stream_handler(
         sharded<repair_service>& repair,
-        gms::inet_address from,
+        netw::msg_addr from,
         uint32_t src_cpu_id,
         uint32_t repair_meta_id,
         rpc::sink<repair_stream_cmd> sink,
@@ -2092,7 +2098,7 @@ static future<> repair_put_row_diff_with_rpc_stream_handler(
 
 static future<> repair_get_full_row_hashes_with_rpc_stream_handler(
         sharded<repair_service>& repair,
-        gms::inet_address from,
+        netw::msg_addr from,
         uint32_t src_cpu_id,
         uint32_t repair_meta_id,
         rpc::sink<repair_hash_with_cmd> sink,
@@ -2126,7 +2132,7 @@ static future<> repair_get_full_row_hashes_with_rpc_stream_handler(
     });
 }
 
-future<repair_update_system_table_response> repair_service::repair_update_system_table_handler(gms::inet_address from, repair_update_system_table_request req) {
+future<repair_update_system_table_response> repair_service::repair_update_system_table_handler(netw::msg_addr from, repair_update_system_table_request req) {
     rlogger.debug("repair[{}]: Got repair_update_system_table_request from node={}, range={}, repair_time={}", req.repair_uuid, from, req.range, req.repair_time);
     auto& db = this->get_db();
     bool is_valid_range = true;
@@ -2161,10 +2167,10 @@ future<repair_update_system_table_response> repair_service::repair_update_system
     co_return repair_update_system_table_response();
 }
 
-future<repair_flush_hints_batchlog_response> repair_service::repair_flush_hints_batchlog_handler(gms::inet_address from, repair_flush_hints_batchlog_request req) {
+future<repair_flush_hints_batchlog_response> repair_service::repair_flush_hints_batchlog_handler(netw::msg_addr from, repair_flush_hints_batchlog_request req) {
     rlogger.info("repair[{}]: Started to process repair_flush_hints_batchlog_request from node={}, target_nodes={}, hints_timeout={}s, batchlog_timeout={}s",
             req.repair_uuid, from, req.target_nodes, req.hints_timeout.count(), req.batchlog_timeout.count());
-    std::vector<gms::inet_address> target_nodes(req.target_nodes.begin(), req.target_nodes.end());
+    std::vector<netw::msg_addr> target_nodes(req.target_nodes.begin(), req.target_nodes.end());
     db::hints::sync_point sync_point = co_await _sp.local().create_hint_sync_point(std::move(target_nodes));
     lowres_clock::time_point deadline = lowres_clock::now() + req.hints_timeout;
     try {
@@ -2195,7 +2201,7 @@ future<> repair_service::init_ms_handlers() {
 
     ms.register_repair_get_row_diff_with_rpc_stream([this, &ms] (const rpc::client_info& cinfo, uint64_t repair_meta_id, rpc::source<repair_hash_with_cmd> source) {
         auto src_cpu_id = cinfo.retrieve_auxiliary<uint32_t>("src_cpu_id");
-        auto from = cinfo.retrieve_auxiliary<gms::inet_address>("baddr");
+        auto from = cinfo.retrieve_auxiliary<netw::msg_addr>("baddr");
         auto sink = ms.make_sink_for_repair_get_row_diff_with_rpc_stream(source);
         // Start a new fiber.
         (void)repair_get_row_diff_with_rpc_stream_handler(container(), from, src_cpu_id, repair_meta_id, sink, source).handle_exception(
@@ -2206,7 +2212,7 @@ future<> repair_service::init_ms_handlers() {
     });
     ms.register_repair_put_row_diff_with_rpc_stream([this, &ms] (const rpc::client_info& cinfo, uint64_t repair_meta_id, rpc::source<repair_row_on_wire_with_cmd> source) {
         auto src_cpu_id = cinfo.retrieve_auxiliary<uint32_t>("src_cpu_id");
-        auto from = cinfo.retrieve_auxiliary<gms::inet_address>("baddr");
+        auto from = cinfo.retrieve_auxiliary<netw::msg_addr>("baddr");
         auto sink = ms.make_sink_for_repair_put_row_diff_with_rpc_stream(source);
         // Start a new fiber.
         (void)repair_put_row_diff_with_rpc_stream_handler(container(), from, src_cpu_id, repair_meta_id, sink, source).handle_exception(
@@ -2217,7 +2223,7 @@ future<> repair_service::init_ms_handlers() {
     });
     ms.register_repair_get_full_row_hashes_with_rpc_stream([this, &ms] (const rpc::client_info& cinfo, uint64_t repair_meta_id, rpc::source<repair_stream_cmd> source) {
         auto src_cpu_id = cinfo.retrieve_auxiliary<uint32_t>("src_cpu_id");
-        auto from = cinfo.retrieve_auxiliary<gms::inet_address>("baddr");
+        auto from = cinfo.retrieve_auxiliary<netw::msg_addr>("baddr");
         auto sink = ms.make_sink_for_repair_get_full_row_hashes_with_rpc_stream(source);
         // Start a new fiber.
         (void)repair_get_full_row_hashes_with_rpc_stream_handler(container(), from, src_cpu_id, repair_meta_id, sink, source).handle_exception(
@@ -2228,7 +2234,7 @@ future<> repair_service::init_ms_handlers() {
     });
     ms.register_repair_get_full_row_hashes([this] (const rpc::client_info& cinfo, uint32_t repair_meta_id) {
         auto src_cpu_id = cinfo.retrieve_auxiliary<uint32_t>("src_cpu_id");
-        auto from = cinfo.retrieve_auxiliary<gms::inet_address>("baddr");
+        auto from = cinfo.retrieve_auxiliary<netw::msg_addr>("baddr");
         return container().invoke_on(src_cpu_id % smp::count, [from, repair_meta_id] (repair_service& local_repair) {
             auto rm = local_repair.get_repair_meta(from, repair_meta_id);
             rm->set_repair_state_for_local_node(repair_state::get_full_row_hashes_started);
@@ -2242,7 +2248,7 @@ future<> repair_service::init_ms_handlers() {
     ms.register_repair_get_combined_row_hash([this] (const rpc::client_info& cinfo, uint32_t repair_meta_id,
             std::optional<repair_sync_boundary> common_sync_boundary) {
         auto src_cpu_id = cinfo.retrieve_auxiliary<uint32_t>("src_cpu_id");
-        auto from = cinfo.retrieve_auxiliary<gms::inet_address>("baddr");
+        auto from = cinfo.retrieve_auxiliary<netw::msg_addr>("baddr");
         return container().invoke_on(src_cpu_id % smp::count, [from, repair_meta_id,
                 common_sync_boundary = std::move(common_sync_boundary)] (repair_service& local_repair) mutable {
             auto rm = local_repair.get_repair_meta(from, repair_meta_id);
@@ -2257,7 +2263,7 @@ future<> repair_service::init_ms_handlers() {
     ms.register_repair_get_sync_boundary([this] (const rpc::client_info& cinfo, uint32_t repair_meta_id,
             std::optional<repair_sync_boundary> skipped_sync_boundary) {
         auto src_cpu_id = cinfo.retrieve_auxiliary<uint32_t>("src_cpu_id");
-        auto from = cinfo.retrieve_auxiliary<gms::inet_address>("baddr");
+        auto from = cinfo.retrieve_auxiliary<netw::msg_addr>("baddr");
         return container().invoke_on(src_cpu_id % smp::count, [from, repair_meta_id,
                 skipped_sync_boundary = std::move(skipped_sync_boundary)] (repair_service& local_repair) mutable {
             auto rm = local_repair.get_repair_meta(from, repair_meta_id);
@@ -2271,7 +2277,7 @@ future<> repair_service::init_ms_handlers() {
     ms.register_repair_get_row_diff([this] (const rpc::client_info& cinfo, uint32_t repair_meta_id,
             repair_hash_set set_diff, bool needs_all_rows) {
         auto src_cpu_id = cinfo.retrieve_auxiliary<uint32_t>("src_cpu_id");
-        auto from = cinfo.retrieve_auxiliary<gms::inet_address>("baddr");
+        auto from = cinfo.retrieve_auxiliary<netw::msg_addr>("baddr");
         _metrics.rx_hashes_nr += set_diff.size();
         auto fp = make_foreign(std::make_unique<repair_hash_set>(std::move(set_diff)));
         return container().invoke_on(src_cpu_id % smp::count, [from, repair_meta_id, fp = std::move(fp), needs_all_rows] (repair_service& local_repair) mutable {
@@ -2293,7 +2299,7 @@ future<> repair_service::init_ms_handlers() {
     ms.register_repair_put_row_diff([this] (const rpc::client_info& cinfo, uint32_t repair_meta_id,
             repair_rows_on_wire row_diff) {
         auto src_cpu_id = cinfo.retrieve_auxiliary<uint32_t>("src_cpu_id");
-        auto from = cinfo.retrieve_auxiliary<gms::inet_address>("baddr");
+        auto from = cinfo.retrieve_auxiliary<netw::msg_addr>("baddr");
         auto fp = make_foreign(std::make_unique<repair_rows_on_wire>(std::move(row_diff)));
         return container().invoke_on(src_cpu_id % smp::count, [from, repair_meta_id, fp = std::move(fp)] (repair_service& local_repair) mutable {
             auto rm = local_repair.get_repair_meta(from, repair_meta_id);
@@ -2313,7 +2319,7 @@ future<> repair_service::init_ms_handlers() {
             sstring cf_name, dht::token_range range, row_level_diff_detect_algorithm algo, uint64_t max_row_buf_size, uint64_t seed,
             unsigned remote_shard, unsigned remote_shard_count, unsigned remote_ignore_msb, sstring remote_partitioner_name, table_schema_version schema_version, rpc::optional<streaming::stream_reason> reason) {
         auto src_cpu_id = cinfo.retrieve_auxiliary<uint32_t>("src_cpu_id");
-        auto from = cinfo.retrieve_auxiliary<gms::inet_address>("baddr");
+        auto from = cinfo.retrieve_auxiliary<netw::msg_addr>("baddr");
         return container().invoke_on(src_cpu_id % smp::count, [from, src_cpu_id, repair_meta_id, ks_name, cf_name,
                 range, algo, max_row_buf_size, seed, remote_shard, remote_shard_count, remote_ignore_msb, schema_version, reason] (repair_service& local_repair) mutable {
             if (!local_repair._sys_dist_ks.local_is_initialized() || !local_repair._view_update_generator.local_is_initialized()) {
@@ -2330,7 +2336,7 @@ future<> repair_service::init_ms_handlers() {
     ms.register_repair_row_level_stop([this] (const rpc::client_info& cinfo, uint32_t repair_meta_id,
             sstring ks_name, sstring cf_name, dht::token_range range) {
         auto src_cpu_id = cinfo.retrieve_auxiliary<uint32_t>("src_cpu_id");
-        auto from = cinfo.retrieve_auxiliary<gms::inet_address>("baddr");
+        auto from = cinfo.retrieve_auxiliary<netw::msg_addr>("baddr");
         return container().invoke_on(src_cpu_id % smp::count, [from, repair_meta_id, ks_name, cf_name, range] (repair_service& local_repair) mutable {
             return repair_meta::repair_row_level_stop_handler(local_repair, from, repair_meta_id,
                     std::move(ks_name), std::move(cf_name), std::move(range));
@@ -2338,7 +2344,7 @@ future<> repair_service::init_ms_handlers() {
     });
     ms.register_repair_get_estimated_partitions([this] (const rpc::client_info& cinfo, uint32_t repair_meta_id) {
         auto src_cpu_id = cinfo.retrieve_auxiliary<uint32_t>("src_cpu_id");
-        auto from = cinfo.retrieve_auxiliary<gms::inet_address>("baddr");
+        auto from = cinfo.retrieve_auxiliary<netw::msg_addr>("baddr");
         return container().invoke_on(src_cpu_id % smp::count, [from, repair_meta_id] (repair_service& local_repair) mutable {
             return repair_meta::repair_get_estimated_partitions_handler(local_repair, from, repair_meta_id);
         });
@@ -2346,7 +2352,7 @@ future<> repair_service::init_ms_handlers() {
     ms.register_repair_set_estimated_partitions([this] (const rpc::client_info& cinfo, uint32_t repair_meta_id,
             uint64_t estimated_partitions) {
         auto src_cpu_id = cinfo.retrieve_auxiliary<uint32_t>("src_cpu_id");
-        auto from = cinfo.retrieve_auxiliary<gms::inet_address>("baddr");
+        auto from = cinfo.retrieve_auxiliary<netw::msg_addr>("baddr");
         return container().invoke_on(src_cpu_id % smp::count, [from, repair_meta_id, estimated_partitions] (repair_service& local_repair) mutable {
             return repair_meta::repair_set_estimated_partitions_handler(local_repair, from, repair_meta_id, estimated_partitions);
         });
@@ -2355,11 +2361,11 @@ future<> repair_service::init_ms_handlers() {
         return make_ready_future<std::vector<row_level_diff_detect_algorithm>>(suportted_diff_detect_algorithms());
     });
     ser::partition_checksum_rpc_verbs::register_repair_update_system_table(&ms, [this] (const rpc::client_info& cinfo, repair_update_system_table_request req) {
-        auto from = cinfo.retrieve_auxiliary<gms::inet_address>("baddr");
+        auto from = cinfo.retrieve_auxiliary<netw::msg_addr>("baddr");
         return repair_update_system_table_handler(from, std::move(req));
     });
     ser::partition_checksum_rpc_verbs::register_repair_flush_hints_batchlog(&ms, [this] (const rpc::client_info& cinfo, repair_flush_hints_batchlog_request req) {
-        auto from = cinfo.retrieve_auxiliary<gms::inet_address>("baddr");
+        auto from = cinfo.retrieve_auxiliary<netw::msg_addr>("baddr");
         return repair_flush_hints_batchlog_handler(from, std::move(req));
     });
 
@@ -2464,7 +2470,7 @@ public:
             sstring cf_name,
             table_id table_id,
             dht::token_range range,
-            std::vector<gms::inet_address> all_live_peer_nodes)
+            std::vector<netw::msg_addr> all_live_peer_nodes)
         : _shard_task(shard_task)
         , _cf_name(std::move(cf_name))
         , _table_id(std::move(table_id))
@@ -2482,7 +2488,7 @@ private:
         all_done,
     };
 
-    inet_address_vector_replica_set sort_peer_nodes(const std::vector<gms::inet_address>& nodes) {
+    inet_address_vector_replica_set sort_peer_nodes(const std::vector<netw::msg_addr>& nodes) {
         auto myip = utils::fb_utilities::get_broadcast_address();
         inet_address_vector_replica_set sorted_nodes(nodes.begin(), nodes.end());
         _shard_task.db.local().get_token_metadata().get_topology().sort_by_proximity(myip, sorted_nodes);
@@ -2740,10 +2746,11 @@ private:
         repair_update_system_table_request req{_shard_task.id.uuid(), _table_id, _shard_task.get_keyspace(), _cf_name, _range, repair_time};
         auto all_nodes = _all_live_peer_nodes;
         all_nodes.push_back(utils::fb_utilities::get_broadcast_address());
-        co_await coroutine::parallel_for_each(all_nodes, [this, req] (gms::inet_address node) -> future<> {
+        co_await coroutine::parallel_for_each(all_nodes, [this, req] (netw::msg_addr node) -> future<> {
             try {
                 auto& ms = _shard_task.messaging.local();
-                repair_update_system_table_response resp = co_await ser::partition_checksum_rpc_verbs::send_repair_update_system_table(&ms, netw::msg_addr(node), req);
+                // FIXME: use host_id to make sure we're talking to the right endpoint
+                repair_update_system_table_response resp = co_await ser::partition_checksum_rpc_verbs::send_repair_update_system_table(&ms, node, req);
                 (void)resp;  // nothing to do with the response yet
                 rlogger.debug("repair[{}]: Finished to update system.repair_history table of node {}", _shard_task.id.uuid(), node);
             } catch (...) {
@@ -2806,7 +2813,7 @@ public:
                     master.myip(), _all_live_peer_nodes, master.repair_meta_id(), _shard_task.get_keyspace(), _cf_name, schema_version, _range, _seed, max_row_buf_size);
 
 
-            std::vector<gms::inet_address> nodes_to_stop;
+            std::vector<netw::msg_addr> nodes_to_stop;
             nodes_to_stop.reserve(master.all_nodes().size());
             try {
                 parallel_for_each(master.all_nodes(), [&, this] (repair_node_state& ns) {
@@ -2858,7 +2865,7 @@ public:
                 _failed = true;
             }
 
-            parallel_for_each(nodes_to_stop, [&] (const gms::inet_address& node) {
+            parallel_for_each(nodes_to_stop, [&] (const netw::msg_addr& node) {
                 master.set_repair_state(repair_state::row_level_stop_started, node);
                 return master.repair_row_level_stop(node, _shard_task.get_keyspace(), _cf_name, _range).then([node, &master] {
                     master.set_repair_state(repair_state::row_level_stop_finished, node);
@@ -2883,7 +2890,7 @@ public:
 
 future<> repair_cf_range_row_level(shard_repair_task_impl& shard_task,
         sstring cf_name, table_id table_id, dht::token_range range,
-        const std::vector<gms::inet_address>& all_peer_nodes) {
+        const std::vector<netw::msg_addr>& all_peer_nodes) {
     return seastar::futurize_invoke([&shard_task, cf_name = std::move(cf_name), table_id = std::move(table_id), range = std::move(range), &all_peer_nodes] () mutable {
         auto repair = row_level_repair(shard_task, std::move(cf_name), std::move(table_id), std::move(range), all_peer_nodes);
         return do_with(std::move(repair), [] (row_level_repair& repair) {
@@ -2898,7 +2905,7 @@ public:
     row_level_repair_gossip_helper(repair_service& repair_service) noexcept
         : _repair_service(repair_service)
     {}
-    future<> remove_row_level_repair(gms::inet_address node) {
+    future<> remove_row_level_repair(netw::msg_addr node) {
         rlogger.debug("Started to remove row level repair on all shards for node {}", node);
         try {
             co_await _repair_service.container().invoke_on_all([node] (repair_service& local_repair) {
@@ -2910,39 +2917,39 @@ public:
         }
     }
     virtual future<> on_join(
-            gms::inet_address endpoint,
+            netw::msg_addr endpoint,
             gms::endpoint_state ep_state) override {
         return make_ready_future();
     }
     virtual future<> before_change(
-            gms::inet_address endpoint,
+            netw::msg_addr endpoint,
             gms::endpoint_state current_state,
             gms::application_state new_state_key,
             const gms::versioned_value& new_value) override {
         return make_ready_future();
     }
     virtual future<> on_change(
-            gms::inet_address endpoint,
+            netw::msg_addr endpoint,
             gms::application_state state,
             const gms::versioned_value& value) override {
         return make_ready_future();
     }
     virtual future<> on_alive(
-            gms::inet_address endpoint,
+            netw::msg_addr endpoint,
             gms::endpoint_state state) override {
         return make_ready_future();
     }
     virtual future<> on_dead(
-            gms::inet_address endpoint,
+            netw::msg_addr endpoint,
             gms::endpoint_state state) override {
         return remove_row_level_repair(endpoint);
     }
     virtual future<> on_remove(
-            gms::inet_address endpoint) override {
+            netw::msg_addr endpoint) override {
         return remove_row_level_repair(endpoint);
     }
     virtual future<> on_restart(
-            gms::inet_address endpoint,
+            netw::msg_addr endpoint,
             gms::endpoint_state ep_state) override {
         return remove_row_level_repair(endpoint);
     }
@@ -3067,7 +3074,7 @@ future<> repair_service::load_history() {
     co_return;
 }
 
-repair_meta_ptr repair_service::get_repair_meta(gms::inet_address from, uint32_t repair_meta_id) {
+repair_meta_ptr repair_service::get_repair_meta(netw::msg_addr from, uint32_t repair_meta_id) {
     node_repair_meta_id id{from, repair_meta_id};
     auto it = repair_meta_map().find(id);
     if (it == repair_meta_map().end()) {
@@ -3079,7 +3086,7 @@ repair_meta_ptr repair_service::get_repair_meta(gms::inet_address from, uint32_t
 
 future<>
 repair_service::insert_repair_meta(
-        const gms::inet_address& from,
+        const netw::msg_addr& from,
         uint32_t src_cpu_id,
         uint32_t repair_meta_id,
         dht::token_range range,
@@ -3142,7 +3149,7 @@ repair_service::insert_repair_meta(
 }
 
 future<>
-repair_service::remove_repair_meta(const gms::inet_address& from,
+repair_service::remove_repair_meta(const netw::msg_addr& from,
         uint32_t repair_meta_id,
         sstring ks_name,
         sstring cf_name,
@@ -3163,7 +3170,7 @@ repair_service::remove_repair_meta(const gms::inet_address& from,
 }
 
 future<>
-repair_service::remove_repair_meta(gms::inet_address from) {
+repair_service::remove_repair_meta(netw::msg_addr from) {
     rlogger.debug("Remove all repair_meta for single node {}", from);
     auto repair_metas = make_lw_shared<utils::chunked_vector<repair_meta_ptr>>();
     for (auto it = repair_meta_map().begin(); it != repair_meta_map().end();) {

@@ -1812,7 +1812,8 @@ future<std::unordered_map<sstring, std::vector<sstring>>> storage_service::descr
     std::unordered_map<sstring, std::vector<sstring>> results;
     netw::messaging_service& ms = _messaging.local();
     return map_reduce(std::move(live_hosts), [&ms] (auto host) {
-        auto f0 = ms.send_schema_check(netw::msg_addr{ host, 0 });
+        // FIXME: use host_id to make sure we're talking to the right endpoint
+        auto f0 = ms.send_schema_check(netw::msg_addr{locator::host_id::create_null_id(), host, 0 });
         return std::move(f0).then_wrapped([host] (auto f) {
             if (f.failed()) {
                 f.ignore_ready_future();
@@ -1921,7 +1922,8 @@ future<> storage_service::node_ops_cmd_heartbeat_updater(node_ops_cmd cmd, node_
         auto req = node_ops_cmd_request{cmd, uuid, {}, {}, {}};
         try {
           co_await coroutine::parallel_for_each(nodes, [this, ops, uuid, &req] (const gms::inet_address& node) {
-            return _messaging.local().send_node_ops_cmd(netw::msg_addr(node), req).then([ops, uuid, node] (node_ops_cmd_response resp) {
+            // FIXME: use host_id to make sure we're talking to the right endpoint
+            return _messaging.local().send_node_ops_cmd(netw::msg_addr(locator::host_id::create_null_id(), node), req).then([ops, uuid, node] (node_ops_cmd_response resp) {
                 slogger.debug("{}[{}]: Got heartbeat response from node={}", ops, uuid, node);
                 return make_ready_future<>();
             });
@@ -2003,7 +2005,8 @@ future<> storage_service::decommission() {
             auto req = node_ops_cmd_request{node_ops_cmd::decommission_prepare, uuid, ignore_nodes, leaving_nodes, {}};
             try {
                 parallel_for_each(nodes, [&ss, &req, &nodes_unknown_verb, &nodes_down, uuid] (const gms::inet_address& node) {
-                    return ss._messaging.local().send_node_ops_cmd(netw::msg_addr(node), req).then([uuid, node] (node_ops_cmd_response resp) {
+                    // FIXME: use host_id to make sure we're talking to the right endpoint
+                    return ss._messaging.local().send_node_ops_cmd(netw::msg_addr(locator::host_id::create_null_id(), node), req).then([uuid, node] (node_ops_cmd_response resp) {
                         slogger.debug("decommission[{}]: Got prepare response from node={}", uuid, node);
                     }).handle_exception_type([&nodes_unknown_verb, node, uuid] (seastar::rpc::unknown_verb_error&) {
                         slogger.warn("decommission[{}]: Node {} does not support decommission verb", uuid, node);
@@ -2041,7 +2044,8 @@ future<> storage_service::decommission() {
                 // Step 6: Finish
                 req.cmd = node_ops_cmd::decommission_done;
                 parallel_for_each(nodes, [&ss, &req, uuid] (const gms::inet_address& node) {
-                    return ss._messaging.local().send_node_ops_cmd(netw::msg_addr(node), req).then([uuid, node] (node_ops_cmd_response resp) {
+                    // FIXME: use host_id to make sure we're talking to the right endpoint
+                    return ss._messaging.local().send_node_ops_cmd(netw::msg_addr(locator::host_id::create_null_id(), node), req).then([uuid, node] (node_ops_cmd_response resp) {
                         slogger.debug("decommission[{}]: Got done response from node={}", uuid, node);
                         return make_ready_future<>();
                     });
@@ -2056,7 +2060,8 @@ future<> storage_service::decommission() {
                         // No need to revert previous prepare cmd for those who do not apply prepare cmd.
                         return make_ready_future<>();
                     }
-                    return ss._messaging.local().send_node_ops_cmd(netw::msg_addr(node), req).then([uuid, node] (node_ops_cmd_response resp) {
+                    // FIXME: use host_id to make sure we're talking to the right endpoint
+                    return ss._messaging.local().send_node_ops_cmd(netw::msg_addr(locator::host_id::create_null_id(), node), req).then([uuid, node] (node_ops_cmd_response resp) {
                         slogger.debug("decommission[{}]: Got abort response from node={}", uuid, node);
                     });
                 }).get();
@@ -2115,7 +2120,8 @@ void storage_service::run_bootstrap_ops(std::unordered_set<token>& bootstrap_tok
         std::unordered_map<gms::inet_address, std::list<node_ops_id>> pending_ops;
         auto req = node_ops_cmd_request(node_ops_cmd::query_pending_ops, uuid);
         parallel_for_each(sync_nodes, [this, req, uuid, &pending_ops] (const gms::inet_address& node) {
-            return _messaging.local().send_node_ops_cmd(netw::msg_addr(node), req).then([uuid, node, &pending_ops] (node_ops_cmd_response resp) {
+            // FIXME: use host_id to make sure we're talking to the right endpoint
+            return _messaging.local().send_node_ops_cmd(netw::msg_addr(locator::host_id::create_null_id(), node), req).then([uuid, node, &pending_ops] (node_ops_cmd_response resp) {
                 slogger.debug("bootstrap[{}]: Got query_pending_ops response from node={}, resp.pending_ops={}", uuid, node, resp.pending_ops);
                 if (!resp.pending_ops.empty()) {
                     pending_ops.emplace(node, resp.pending_ops);
@@ -2148,7 +2154,8 @@ void storage_service::run_bootstrap_ops(std::unordered_set<token>& bootstrap_tok
     try {
         // Step 3: Prepare to sync data
         parallel_for_each(sync_nodes, [this, &req, &nodes_unknown_verb, &nodes_down, uuid] (const gms::inet_address& node) {
-            return _messaging.local().send_node_ops_cmd(netw::msg_addr(node), req).then([uuid, node] (node_ops_cmd_response resp) {
+            // FIXME: use host_id to make sure we're talking to the right endpoint
+            return _messaging.local().send_node_ops_cmd(netw::msg_addr(locator::host_id::create_null_id(), node), req).then([uuid, node] (node_ops_cmd_response resp) {
                 slogger.debug("bootstrap[{}]: Got node_ops_cmd::bootstrap_prepare response from node={}", uuid, node);
             }).handle_exception_type([&nodes_unknown_verb, node, uuid] (seastar::rpc::unknown_verb_error&) {
                 slogger.warn("bootstrap[{}]: Node {} does not support node_ops_cmd verb", uuid, node);
@@ -2183,7 +2190,8 @@ void storage_service::run_bootstrap_ops(std::unordered_set<token>& bootstrap_tok
         // Step 6: Finish
         req.cmd = node_ops_cmd::bootstrap_done;
         parallel_for_each(sync_nodes, [this, &req, &nodes_aborted, uuid] (const gms::inet_address& node) {
-            return _messaging.local().send_node_ops_cmd(netw::msg_addr(node), req).then([&nodes_aborted, uuid, node] (node_ops_cmd_response resp) {
+            // FIXME: use host_id to make sure we're talking to the right endpoint
+            return _messaging.local().send_node_ops_cmd(netw::msg_addr(locator::host_id::create_null_id(), node), req).then([&nodes_aborted, uuid, node] (node_ops_cmd_response resp) {
                 nodes_aborted.emplace(node);
                 slogger.debug("bootstrap[{}]: Got done response from node={}", uuid, node);
                 return make_ready_future<>();
@@ -2199,7 +2207,8 @@ void storage_service::run_bootstrap_ops(std::unordered_set<token>& bootstrap_tok
                 // No need to revert previous prepare cmd for those who do not apply prepare cmd.
                 return make_ready_future<>();
             }
-            return _messaging.local().send_node_ops_cmd(netw::msg_addr(node), req).then([uuid, node] (node_ops_cmd_response resp) {
+            // FIXME: use host_id to make sure we're talking to the right endpoint
+            return _messaging.local().send_node_ops_cmd(netw::msg_addr(locator::host_id::create_null_id(), node), req).then([uuid, node] (node_ops_cmd_response resp) {
                 slogger.debug("bootstrap[{}]: Got abort response from node={}", uuid, node);
             });
         }).get();
@@ -2242,7 +2251,8 @@ void storage_service::run_replace_ops(std::unordered_set<token>& bootstrap_token
     try {
         // Step 2: Prepare to sync data
         parallel_for_each(sync_nodes, [this, &req, &nodes_unknown_verb, &nodes_down, uuid] (const gms::inet_address& node) {
-            return _messaging.local().send_node_ops_cmd(netw::msg_addr(node), req).then([uuid, node] (node_ops_cmd_response resp) {
+            // FIXME: use host_id to make sure we're talking to the right endpoint
+            return _messaging.local().send_node_ops_cmd(netw::msg_addr(locator::host_id::create_null_id(), node), req).then([uuid, node] (node_ops_cmd_response resp) {
                 slogger.debug("replace[{}]: Got node_ops_cmd::replace_prepare response from node={}", uuid, node);
             }).handle_exception_type([&nodes_unknown_verb, node, uuid] (seastar::rpc::unknown_verb_error&) {
                 slogger.warn("replace[{}]: Node {} does not support node_ops_cmd verb", uuid, node);
@@ -2279,7 +2289,8 @@ void storage_service::run_replace_ops(std::unordered_set<token>& bootstrap_token
         // Step 5: Wait for nodes to finish marking the replacing node as live
         req.cmd = node_ops_cmd::replace_prepare_mark_alive;
         parallel_for_each(sync_nodes, [this, &req, uuid] (const gms::inet_address& node) {
-            return _messaging.local().send_node_ops_cmd(netw::msg_addr(node), req).then([uuid, node] (node_ops_cmd_response resp) {
+            // FIXME: use host_id to make sure we're talking to the right endpoint
+            return _messaging.local().send_node_ops_cmd(netw::msg_addr(locator::host_id::create_null_id(), node), req).then([uuid, node] (node_ops_cmd_response resp) {
                 slogger.debug("replace[{}]: Got prepare_mark_alive response from node={}", uuid, node);
                 return make_ready_future<>();
             });
@@ -2288,7 +2299,8 @@ void storage_service::run_replace_ops(std::unordered_set<token>& bootstrap_token
         // Step 6: Update pending ranges on nodes
         req.cmd = node_ops_cmd::replace_prepare_pending_ranges;
         parallel_for_each(sync_nodes, [this, &req, uuid] (const gms::inet_address& node) {
-            return _messaging.local().send_node_ops_cmd(netw::msg_addr(node), req).then([uuid, node] (node_ops_cmd_response resp) {
+            // FIXME: use host_id to make sure we're talking to the right endpoint
+            return _messaging.local().send_node_ops_cmd(netw::msg_addr(locator::host_id::create_null_id(), node), req).then([uuid, node] (node_ops_cmd_response resp) {
                 slogger.debug("replace[{}]: Got pending_ranges response from node={}", uuid, node);
                 return make_ready_future<>();
             });
@@ -2309,7 +2321,8 @@ void storage_service::run_replace_ops(std::unordered_set<token>& bootstrap_token
         // Step 8: Finish
         req.cmd = node_ops_cmd::replace_done;
         parallel_for_each(sync_nodes, [this, &req, &nodes_aborted, uuid] (const gms::inet_address& node) {
-            return _messaging.local().send_node_ops_cmd(netw::msg_addr(node), req).then([&nodes_aborted, uuid, node] (node_ops_cmd_response resp) {
+            // FIXME: use host_id to make sure we're talking to the right endpoint
+            return _messaging.local().send_node_ops_cmd(netw::msg_addr(locator::host_id::create_null_id(), node), req).then([&nodes_aborted, uuid, node] (node_ops_cmd_response resp) {
                 nodes_aborted.emplace(node);
                 slogger.debug("replace[{}]: Got done response from node={}", uuid, node);
                 return make_ready_future<>();
@@ -2328,7 +2341,8 @@ void storage_service::run_replace_ops(std::unordered_set<token>& bootstrap_token
                 // No need to revert previous prepare cmd for those who do not apply prepare cmd.
                 return make_ready_future<>();
             }
-            return _messaging.local().send_node_ops_cmd(netw::msg_addr(node), req).then([uuid, node] (node_ops_cmd_response resp) {
+            // FIXME: use host_id to make sure we're talking to the right endpoint
+            return _messaging.local().send_node_ops_cmd(netw::msg_addr(locator::host_id::create_null_id(), node), req).then([uuid, node] (node_ops_cmd_response resp) {
                 slogger.debug("replace[{}]: Got abort response from node={}", uuid, node);
             });
         }).get();
@@ -2389,7 +2403,8 @@ future<> storage_service::removenode(locator::host_id host_id, std::list<locator
             auto req = node_ops_cmd_request{node_ops_cmd::removenode_prepare, uuid, ignore_nodes, leaving_nodes, {}};
             try {
                 parallel_for_each(nodes, [&ss, &req, &nodes_unknown_verb, &nodes_down, uuid] (const gms::inet_address& node) {
-                    return ss._messaging.local().send_node_ops_cmd(netw::msg_addr(node), req).then([uuid, node] (node_ops_cmd_response resp) {
+                    // FIXME: use host_id to make sure we're talking to the right endpoint
+                    return ss._messaging.local().send_node_ops_cmd(netw::msg_addr(locator::host_id::create_null_id(), node), req).then([uuid, node] (node_ops_cmd_response resp) {
                         slogger.debug("removenode[{}]: Got prepare response from node={}", uuid, node);
                     }).handle_exception_type([&nodes_unknown_verb, node, uuid] (seastar::rpc::unknown_verb_error&) {
                         slogger.warn("removenode[{}]: Node {} does not support removenode verb", uuid, node);
@@ -2421,7 +2436,8 @@ future<> storage_service::removenode(locator::host_id host_id, std::list<locator
                 // Step 4: Start to sync data
                 req.cmd = node_ops_cmd::removenode_sync_data;
                 parallel_for_each(nodes, [&ss, &req, uuid] (const gms::inet_address& node) {
-                    return ss._messaging.local().send_node_ops_cmd(netw::msg_addr(node), req).then([uuid, node] (node_ops_cmd_response resp) {
+                    // FIXME: use host_id to make sure we're talking to the right endpoint
+                    return ss._messaging.local().send_node_ops_cmd(netw::msg_addr(locator::host_id::create_null_id(), node), req).then([uuid, node] (node_ops_cmd_response resp) {
                         slogger.debug("removenode[{}]: Got sync_data response from node={}", uuid, node);
                         return make_ready_future<>();
                     });
@@ -2436,7 +2452,8 @@ future<> storage_service::removenode(locator::host_id host_id, std::list<locator
                 // Step 6: Finish
                 req.cmd = node_ops_cmd::removenode_done;
                 parallel_for_each(nodes, [&ss, &req, uuid] (const gms::inet_address& node) {
-                    return ss._messaging.local().send_node_ops_cmd(netw::msg_addr(node), req).then([uuid, node] (node_ops_cmd_response resp) {
+                    // FIXME: use host_id to make sure we're talking to the right endpoint
+                    return ss._messaging.local().send_node_ops_cmd(netw::msg_addr(locator::host_id::create_null_id(), node), req).then([uuid, node] (node_ops_cmd_response resp) {
                         slogger.debug("removenode[{}]: Got done response from node={}", uuid, node);
                         return make_ready_future<>();
                     });
@@ -2458,7 +2475,8 @@ future<> storage_service::removenode(locator::host_id host_id, std::list<locator
                         // No need to revert previous prepare cmd for those who do not apply prepare cmd.
                         return make_ready_future<>();
                     }
-                    return ss._messaging.local().send_node_ops_cmd(netw::msg_addr(node), req).then([uuid, node] (node_ops_cmd_response resp) {
+                    // FIXME: use host_id to make sure we're talking to the right endpoint
+                    return ss._messaging.local().send_node_ops_cmd(netw::msg_addr(locator::host_id::create_null_id(), node), req).then([uuid, node] (node_ops_cmd_response resp) {
                         slogger.debug("removenode[{}]: Got abort response from node={}", uuid, node);
                     });
                 }).get();
@@ -3056,7 +3074,8 @@ future<> storage_service::send_replication_notification(inet_address remote) {
             return *done || !_gossiper.is_alive(remote) || *sent >= 3;
         },
         [this, done, sent, remote, local] {
-            netw::msg_addr id{remote, 0};
+            // FIXME: use host_id to make sure we're talking to the right endpoint
+            netw::msg_addr id{locator::host_id::create_null_id(), remote, 0};
             (*sent)++;
             return _messaging.local().send_replication_finished(id, local).then_wrapped([id, done] (auto&& f) {
                 try {
@@ -3497,7 +3516,8 @@ future<> endpoint_lifecycle_notifier::notify_down(gms::inet_address endpoint) {
 
 future<> storage_service::notify_down(inet_address endpoint) {
     co_await container().invoke_on_all([endpoint] (auto&& ss) {
-        ss._messaging.local().remove_rpc_client(netw::msg_addr{endpoint, 0});
+        // FIXME: use host_id to make sure we're talking to the right endpoint
+        ss._messaging.local().remove_rpc_client(netw::msg_addr{locator::host_id::create_null_id(), endpoint, 0});
         return ss._lifecycle_notifier.notify_down(endpoint);
     });
     slogger.debug("Notify node {} has been down", endpoint);
@@ -3565,7 +3585,8 @@ future<> storage_service::notify_joined(inet_address endpoint) {
         "storage_service_notify_joined_sleep", std::chrono::milliseconds{500});
 
     co_await container().invoke_on_all([endpoint] (auto&& ss) {
-        ss._messaging.local().remove_rpc_client_with_ignored_topology(netw::msg_addr{endpoint, 0});
+        // FIXME: use host_id to make sure we're talking to the right endpoint
+        ss._messaging.local().remove_rpc_client_with_ignored_topology(netw::msg_addr{locator::host_id::create_null_id(), endpoint, 0});
         return ss._lifecycle_notifier.notify_joined(endpoint);
     });
     slogger.debug("Notify node {} has joined the cluster", endpoint);

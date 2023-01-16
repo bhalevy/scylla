@@ -349,7 +349,8 @@ public:
 
         try {
             co_await coroutine::parallel_for_each(all_endpoints, [&] (auto ep) {
-                return send_truncate(netw::msg_addr{ep, 0}, timeout, keyspace, cfname);
+                // FIXME: use host_id to make sure we're talking to the right endpoint
+                return send_truncate(netw::msg_addr{locator::host_id::create_null_id(), ep, 0}, timeout, keyspace, cfname);
             });
            } catch (rpc::timeout_error& e) {
                slogger.trace("Truncation of {} timed out: {}", cfname, e.what());
@@ -437,7 +438,8 @@ private:
             [&] () -> future<> {
                 try {
                     // FIXME: get_schema_for_write() doesn't timeout
-                    schema_ptr s = co_await get_schema_for_write(schema_version, netw::msg_addr{reply_to, shard});
+                    // FIXME: use host_id to make sure we're talking to the right endpoint
+                    schema_ptr s = co_await get_schema_for_write(schema_version, netw::msg_addr{locator::host_id::create_null_id(), reply_to, shard});
                     // Note: blocks due to execution_stage in replica::database::apply()
                     co_await apply_fn(p, trace_state_ptr, std::move(s), m, timeout);
                     // We wait for send_mutation_done to complete, otherwise, if reply_to is busy, we will accumulate
@@ -445,7 +447,8 @@ private:
                     //
                     // Usually we will return immediately, since this work only involves appending data to the connection
                     // send buffer.
-                    auto f = co_await coroutine::as_future(send_mutation_done(netw::msg_addr{reply_to, shard}, trace_state_ptr,
+                    // FIXME: use host_id to make sure we're talking to the right endpoint
+                    auto f = co_await coroutine::as_future(send_mutation_done(netw::msg_addr{locator::host_id::create_null_id(), reply_to, shard}, trace_state_ptr,
                             shard, response_id, p->get_view_update_backlog()));
                     f.ignore_ready_future();
                 } catch (...) {
@@ -466,7 +469,8 @@ private:
                 return parallel_for_each(forward.begin(), forward.end(), [&] (gms::inet_address forward) {
                     // Note: not a coroutine, since forward_fn() typically returns a ready future
                     tracing::trace(trace_state_ptr, "Forwarding a mutation to /{}", forward);
-                    return forward_fn(p, netw::msg_addr{forward, 0}, timeout, m, reply_to, shard, response_id,
+                    // FIXME: use host_id to make sure we're talking to the right endpoint
+                    return forward_fn(p, netw::msg_addr{locator::host_id::create_null_id(), forward, 0}, timeout, m, reply_to, shard, response_id,
                                         tracing::make_trace_info(trace_state_ptr))
                             .then_wrapped([&] (future<> f) {
                         if (f.failed()) {
@@ -480,8 +484,9 @@ private:
         );
         // ignore results, since we'll be returning them via MUTATION_DONE/MUTATION_FAILURE verbs
         if (errors.count) {
+            // FIXME: use host_id to make sure we're talking to the right endpoint
             auto f = co_await coroutine::as_future(send_mutation_failed(
-                    netw::msg_addr{reply_to, shard},
+                    netw::msg_addr{locator::host_id::create_null_id(), reply_to, shard},
                     trace_state_ptr,
                     shard,
                     response_id,
@@ -946,7 +951,8 @@ public:
         auto m = _mutations[ep];
         if (m) {
             tracing::trace(tr_state, "Sending a mutation to /{}", ep);
-            return sp.remote().send_mutation(netw::msg_addr{ep, 0}, timeout, tracing::make_trace_info(tr_state),
+            // FIXME: use host_id to make sure we're talking to the right endpoint
+            return sp.remote().send_mutation(netw::msg_addr{locator::host_id::create_null_id(), ep, 0}, timeout, tracing::make_trace_info(tr_state),
                     *m, std::move(forward), utils::fb_utilities::get_broadcast_address(), this_shard_id(),
                     response_id, rate_limit_info);
         }
@@ -992,7 +998,8 @@ public:
             storage_proxy::response_id_type response_id, storage_proxy::clock_type::time_point timeout,
             tracing::trace_state_ptr tr_state, db::per_partition_rate_limit::info rate_limit_info) override {
         tracing::trace(tr_state, "Sending a mutation to /{}", ep);
-        return sp.remote().send_mutation(netw::msg_addr{ep, 0}, timeout, tracing::make_trace_info(tr_state),
+        // FIXME: use host_id to make sure we're talking to the right endpoint
+        return sp.remote().send_mutation(netw::msg_addr{locator::host_id::create_null_id(), ep, 0}, timeout, tracing::make_trace_info(tr_state),
                 *_mutation, std::move(forward), utils::fb_utilities::get_broadcast_address(), this_shard_id(),
                 response_id, rate_limit_info);
     }
@@ -1021,7 +1028,8 @@ public:
             storage_proxy::response_id_type response_id, storage_proxy::clock_type::time_point timeout,
             tracing::trace_state_ptr tr_state, db::per_partition_rate_limit::info rate_limit_info) override {
         return sp.remote().send_hint_mutation(
-                netw::msg_addr{ep, 0}, timeout, tr_state,
+                // FIXME: use host_id to make sure we're talking to the right endpoint
+                netw::msg_addr{locator::host_id::create_null_id(), ep, 0}, timeout, tr_state,
                 *_mutation, std::move(forward), utils::fb_utilities::get_broadcast_address(), this_shard_id(), response_id, rate_limit_info);
     }
 };
@@ -1142,8 +1150,9 @@ public:
             tracing::trace_state_ptr tr_state, db::per_partition_rate_limit::info rate_limit_info) override {
         tracing::trace(tr_state, "Sending a learn to /{}", ep);
         // TODO: Enforce per partition rate limiting in paxos
+        // FIXME: use host_id to make sure we're talking to the right endpoint
         return sp.remote().send_paxos_learn(
-                netw::msg_addr{ep, 0}, timeout, tracing::make_trace_info(tr_state),
+                netw::msg_addr{locator::host_id::create_null_id(), ep, 0}, timeout, tracing::make_trace_info(tr_state),
                 *_proposal, std::move(forward), utils::fb_utilities::get_broadcast_address(), this_shard_id(), response_id);
     }
     virtual bool is_shared() override {
@@ -1818,7 +1827,8 @@ future<paxos::prepare_summary> paxos_response_handler::prepare_ballot(utils::UUI
                     tracing::trace(tr_state, "prepare_ballot: prepare {} locally", ballot);
                     response = co_await paxos::paxos_state::prepare(*_proxy, tr_state, _schema, *_cmd, _key.key(), ballot, only_digest, da, _timeout);
                 } else {
-                    response = co_await _proxy->remote().send_paxos_prepare(netw::msg_addr(peer), _timeout, tr_state, *_cmd, _key.key(), ballot, only_digest, da);
+                    // FIXME: use host_id to make sure we're talking to the right endpoint
+                    response = co_await _proxy->remote().send_paxos_prepare(netw::msg_addr(locator::host_id::create_null_id(), peer), _timeout, tr_state, *_cmd, _key.key(), ballot, only_digest, da);
                 }
             } catch (...) {
                 if (request_tracker.p) {
@@ -1977,7 +1987,8 @@ future<bool> paxos_response_handler::accept_proposal(lw_shared_ptr<paxos::propos
                     tracing::trace(tr_state, "accept_proposal: accept {} locally", *proposal);
                     accepted = co_await paxos::paxos_state::accept(*_proxy, tr_state, _schema, proposal->update.decorated_key(*_schema).token(), *proposal, _timeout);
                 } else {
-                    accepted = co_await _proxy->remote().send_paxos_accept(netw::msg_addr(peer), _timeout, tr_state, *proposal);
+                    // FIXME: use host_id to make sure we're talking to the right endpoint
+                    accepted = co_await _proxy->remote().send_paxos_accept(netw::msg_addr(locator::host_id::create_null_id(), peer), _timeout, tr_state, *proposal);
                 }
             } catch(...) {
                 if (request_tracker.p) {
@@ -2138,7 +2149,8 @@ void paxos_response_handler::prune(utils::UUID ballot) {
             return paxos::paxos_state::prune(_schema, _key.key(), ballot, _timeout, tr_state);
         } else {
             tracing::trace(tr_state, "prune: send prune of {} to {}", ballot, peer);
-            return _proxy->remote().send_paxos_prune(netw::msg_addr(peer), _timeout, tr_state, _schema->version(), _key.key(), ballot);
+            // FIXME: use host_id to make sure we're talking to the right endpoint
+            return _proxy->remote().send_paxos_prune(netw::msg_addr(locator::host_id::create_null_id(), peer), _timeout, tr_state, _schema->version(), _key.key(), ballot);
         }
     }).then_wrapped([this, h = shared_from_this()] (future<> f) {
         h->_proxy->get_stats().cas_now_pruning--;

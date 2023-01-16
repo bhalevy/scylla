@@ -26,6 +26,7 @@ using namespace netw;
 class tester {
 private:
     messaging_service& ms;
+    locator::host_id _host_id;
     gms::inet_address _server;
     uint32_t _cpuid;
 public:
@@ -33,7 +34,10 @@ public:
     using inet_address = gms::inet_address;
     using endpoint_state = gms::endpoint_state;
     netw::msg_addr get_msg_addr() {
-        return netw::msg_addr{_server, _cpuid};
+        return netw::msg_addr{_host_id, _server, _cpuid};
+    }
+    void set_server_host_id(const locator::host_id id) {
+        _host_id = id;
     }
     void set_server_ip(sstring ip) {
         _server = inet_address(ip);
@@ -188,6 +192,7 @@ int main(int ac, char ** av) {
                 }
                 auto ip = config["server"].as<std::string>();
                 auto cpuid = config["cpuid"].as<uint32_t>();
+                t->set_server_host_id(utils::fb_utilities::get_host_id());
                 t->set_server_ip(ip);
                 t->set_server_cpuid(cpuid);
                 fmt::print("=============TEST START===========\n");

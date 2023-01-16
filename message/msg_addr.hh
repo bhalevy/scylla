@@ -20,8 +20,6 @@ struct msg_addr {
     uint32_t cpu_id;
     friend bool operator==(const msg_addr& x, const msg_addr& y) noexcept;
     friend bool operator<(const msg_addr& x, const msg_addr& y) noexcept;
-    explicit msg_addr(gms::inet_address ip) noexcept : host_id(locator::host_id::create_null_id()), addr(ip), cpu_id(0) { }
-    msg_addr(gms::inet_address ip, uint32_t cpu) noexcept : host_id(locator::host_id::create_null_id()), addr(ip), cpu_id(cpu) { }
     msg_addr(const locator::host_id& id, gms::inet_address ip, uint32_t cpu = 0) noexcept : host_id(id), addr(ip), cpu_id(cpu) { }
 };
 

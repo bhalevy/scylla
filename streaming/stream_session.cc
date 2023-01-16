@@ -253,7 +253,8 @@ future<> stream_session::on_initialization_complete() {
     for (auto& x : _transfers) {
         prepare.summaries.emplace_back(x.second.get_summary());
     }
-    auto id = msg_addr{this->peer, 0};
+    // FIXME: use host_id to make sure we're talking to the right endpoint
+    auto id = msg_addr{locator::host_id::create_null_id(), this->peer, 0};
     sslog.debug("[Stream #{}] SEND PREPARE_MESSAGE to {}", plan_id(), id);
     return manager().ms().send_prepare_message(id, std::move(prepare), plan_id(), description(), get_reason()).then_wrapped([this, id] (auto&& f) {
         try {
@@ -410,7 +411,8 @@ void stream_session::send_failed_complete_message() {
     } else {
         return;
     }
-    auto id = msg_addr{this->peer, this->dst_cpu_id};
+    // FIXME: use host_id to make sure we're talking to the right endpoint
+    auto id = msg_addr{locator::host_id::create_null_id(), this->peer, this->dst_cpu_id};
     sslog.debug("[Stream #{}] SEND COMPLETE_MESSAGE to {}", plan_id, id);
     auto session = shared_from_this();
     bool failed = true;

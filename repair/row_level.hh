@@ -10,6 +10,7 @@
 
 #include <vector>
 #include "gms/inet_address.hh"
+#include "message/msg_addr.hh"
 #include "repair/repair.hh"
 #include "repair/repair_task.hh"
 #include "tasks/task_manager.hh"
@@ -208,7 +209,7 @@ public:
 
     future<>
     insert_repair_meta(
-            const gms::inet_address& from,
+            const netw::msg_addr& from,
             uint32_t src_cpu_id,
             uint32_t repair_meta_id,
             dht::token_range range,

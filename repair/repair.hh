@@ -31,6 +31,7 @@
 #include "repair/id.hh"
 #include "repair/sync_boundary.hh"
 #include "tasks/types.hh"
+#include "message/msg_addr.hh"
 
 namespace tasks {
 class repair_module;
@@ -87,10 +88,10 @@ class node_ops_info {
 public:
     node_ops_id ops_uuid;
     shared_ptr<abort_source> as;
-    std::list<gms::inet_address> ignore_nodes;
+    std::list<netw::msg_addr> ignore_nodes;
 
 public:
-    node_ops_info(node_ops_id ops_uuid_, shared_ptr<abort_source> as_, std::list<gms::inet_address>&& ignore_nodes_) noexcept;
+    node_ops_info(node_ops_id ops_uuid_, shared_ptr<abort_source> as_, std::list<netw::msg_addr>&& ignore_nodes_) noexcept;
     node_ops_info(const node_ops_info&) = delete;
     node_ops_info(node_ops_info&&) = delete;
 
@@ -149,13 +150,13 @@ public:
 
 class repair_neighbors {
 public:
-    std::vector<gms::inet_address> all;
-    std::vector<gms::inet_address> mandatory;
+    std::vector<netw::msg_addr> all;
+    std::vector<netw::msg_addr> mandatory;
     repair_neighbors() = default;
-    explicit repair_neighbors(std::vector<gms::inet_address> a)
+    explicit repair_neighbors(std::vector<netw::msg_addr> a)
         : all(std::move(a)) {
     }
-    repair_neighbors(std::vector<gms::inet_address> a, std::vector<gms::inet_address> m)
+    repair_neighbors(std::vector<netw::msg_addr> a, std::vector<netw::msg_addr> m)
         : all(std::move(a))
         , mandatory(std::move(m)) {
     }
@@ -190,10 +191,10 @@ struct get_sync_boundary_response {
 using get_combined_row_hash_response = repair_hash;
 
 struct node_repair_meta_id {
-    gms::inet_address ip;
+    netw::msg_addr addr;
     uint32_t repair_meta_id;
     bool operator==(const node_repair_meta_id& x) const {
-        return x.ip == ip && x.repair_meta_id == repair_meta_id;
+        return x.addr == addr && x.repair_meta_id == repair_meta_id;
     }
 };
 
@@ -333,7 +334,7 @@ struct repair_update_system_table_response {
 
 struct repair_flush_hints_batchlog_request {
     tasks::task_id repair_uuid;
-    std::list<gms::inet_address> target_nodes;
+    std::list<netw::msg_addr> target_nodes;
     std::chrono::seconds hints_timeout;
     std::chrono::seconds batchlog_timeout;
 };
@@ -350,7 +351,7 @@ struct hash<repair_hash> {
 
 template<>
 struct hash<node_repair_meta_id> {
-    size_t operator()(node_repair_meta_id id) const { return utils::tuple_hash()(id.ip, id.repair_meta_id); }
+    size_t operator()(node_repair_meta_id id) const { return utils::tuple_hash()(id.addr, id.repair_meta_id); }
 };
 
 }

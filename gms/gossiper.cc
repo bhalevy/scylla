@@ -54,7 +54,8 @@ constexpr std::chrono::hours gossiper::A_VERY_LONG_TIME;
 constexpr int64_t gossiper::MAX_GENERATION_DIFFERENCE;
 
 netw::msg_addr gossiper::get_msg_addr(inet_address to) const noexcept {
-    return msg_addr{to, _default_cpuid};
+    // FIXME: use host_id to make sure we're talking to the right endpoint
+    return msg_addr{locator::host_id::create_null_id(), to, _default_cpuid};
 }
 
 const sstring& gossiper::get_cluster_name() const noexcept {
@@ -766,7 +767,8 @@ future<> gossiper::failure_detector_loop_for_node(gms::inet_address node, int64_
         bool failed = false;
         try {
             logger.debug("failure_detector_loop: Send echo to node {}, status = started", node);
-            co_await _messaging.send_gossip_echo(netw::msg_addr(node), gossip_generation, max_duration);
+            // FIXME: use host_id to make sure we're talking to the right endpoint
+            co_await _messaging.send_gossip_echo(netw::msg_addr(locator::host_id::create_null_id(), node), gossip_generation, max_duration);
             logger.debug("failure_detector_loop: Send echo to node {}, status = ok", node);
         } catch (...) {
             failed = true;
@@ -1905,7 +1907,8 @@ future<> gossiper::do_shadow_round(std::unordered_set<gms::inet_address> nodes) 
         for (;;) {
             parallel_for_each(nodes.begin(), nodes.end(), [this, &request, &responses, &nodes_talked, &nodes_down, &fall_back_to_syn_msg] (gms::inet_address node) {
                 logger.debug("Sent get_endpoint_states request to {}, request={}", node, request.application_states);
-                return _messaging.send_gossip_get_endpoint_states(msg_addr(node), std::chrono::milliseconds(5000), request).then(
+                // FIXME: use host_id to make sure we're talking to the right endpoint
+                return _messaging.send_gossip_get_endpoint_states(msg_addr(locator::host_id::create_null_id(), node), std::chrono::milliseconds(5000), request).then(
                         [node, &nodes_talked, &responses] (gms::gossip_get_endpoint_states_response response) {
                     logger.debug("Got get_endpoint_states response from {}, response={}", node, response.endpoint_state_map);
                     responses.push_back(std::move(response));
@@ -1949,6 +1952,7 @@ future<> gossiper::do_shadow_round(std::unordered_set<gms::inet_address> nodes) 
                 for (const auto& node : nodes) {
                     utils::chunked_vector<gossip_digest> digests;
                     gossip_digest_syn message(get_cluster_name(), get_partitioner_name(), digests);
+                    // FIXME: use host_id to make sure we're talking to the right endpoint
                     auto id = get_msg_addr(node);
                     logger.trace("Sending a GossipDigestSyn (ShadowRound) to {} ...", id);
                     // Do it in the background.
@@ -2111,6 +2115,7 @@ future<> gossiper::do_stop_gossiping() {
             add_local_application_state(application_state::STATUS, versioned_value::shutdown(true)).get();
             auto live_endpoints = _live_endpoints;
             for (inet_address addr : live_endpoints) {
+                // FIXME: use host_id to make sure we're talking to the right endpoint
                 msg_addr id = get_msg_addr(addr);
                 logger.info("Sending a GossipShutdown to {} with generation {}", id.addr, local_generation);
                 _messaging.send_gossip_shutdown(id, get_broadcast_address(), local_generation).then_wrapped([id] (auto&&f) {
