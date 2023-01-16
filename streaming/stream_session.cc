@@ -490,7 +490,7 @@ void stream_session::add_transfer_ranges(sstring keyspace, dht::token_range_vect
         auto cf_id = cf->schema()->id();
         auto it = _transfers.find(cf_id);
         if (it == _transfers.end()) {
-            stream_transfer_task task(shared_from_this(), cf_id, ranges);
+            stream_transfer_task task(shared_from_this(), cf_id, std::move(ranges));
             auto inserted = _transfers.emplace(cf_id, std::move(task)).second;
             assert(inserted);
         } else {

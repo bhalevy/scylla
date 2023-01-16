@@ -36,7 +36,7 @@ namespace streaming {
 
 extern logging::logger sslog;
 
-stream_transfer_task::stream_transfer_task(shared_ptr<stream_session> session, table_id cf_id, dht::token_range_vector ranges, long total_size)
+stream_transfer_task::stream_transfer_task(shared_ptr<stream_session> session, table_id cf_id, dht::token_range_vector&& ranges, long total_size) noexcept
     : stream_task(session, cf_id)
     , _ranges(std::move(ranges))
     , _total_size(total_size) {
