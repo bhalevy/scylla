@@ -48,7 +48,7 @@ public:
 
     future<> execute();
 
-    void append_ranges(const dht::token_range_vector& ranges);
+    void append_ranges(dht::token_range_vector&& ranges);
     void sort_and_merge_ranges();
 };
 

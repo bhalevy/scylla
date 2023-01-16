@@ -239,8 +239,11 @@ future<> stream_transfer_task::execute() {
     });
 }
 
-void stream_transfer_task::append_ranges(const dht::token_range_vector& ranges) {
-    _ranges.insert(_ranges.end(), ranges.begin(), ranges.end());
+void stream_transfer_task::append_ranges(dht::token_range_vector&& ranges) {
+    _ranges.reserve(_ranges.size() + ranges.size());
+    for (auto&& r : ranges) {
+        _ranges.emplace_back(std::move(r));
+    }
 }
 
 void stream_transfer_task::sort_and_merge_ranges() {
