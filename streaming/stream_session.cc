@@ -327,7 +327,7 @@ future<prepare_message> stream_session::prepare(std::vector<stream_request> requ
                 throw std::runtime_error(err);
             }
         }
-        add_transfer_ranges(request.keyspace, request.ranges, request.column_families);
+        add_transfer_ranges(request.keyspace, std::move(request.ranges), request.column_families);
     }
     for (auto& summary : summaries) {
         sslog.debug("[Stream #{}] prepare stream_summary={}", plan_id, summary);
@@ -484,8 +484,8 @@ std::vector<replica::column_family*> stream_session::get_column_family_stores(co
     return stores;
 }
 
-void stream_session::add_transfer_ranges(sstring keyspace, dht::token_range_vector ranges, std::vector<sstring> column_families) {
-    auto cfs = get_column_family_stores(keyspace, column_families);
+void stream_session::add_transfer_ranges(const sstring& keyspace, dht::token_range_vector&& ranges, const std::vector<sstring>& column_families) {
+    auto cfs = get_column_family_stores(std::move(keyspace), std::move(column_families));
     for (auto& cf : cfs) {
         auto cf_id = cf->schema()->id();
         auto it = _transfers.find(cf_id);
