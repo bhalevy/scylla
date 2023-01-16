@@ -149,16 +149,22 @@ const size_t PER_SHARD_CONNECTION_COUNT = 2;
 const size_t PER_TENANT_CONNECTION_COUNT = 3;
 
 bool operator==(const netw::msg_addr& x, const netw::msg_addr& y) noexcept {
-    // Ignore cpu id for now since we do not really support shard to shard connections
-    return x.addr == y.addr;
+     // Ignore cpu id for now since we do not really support shard to shard connections
+    return x.addr == y.addr && (!x.host_id || !y.host_id || x.host_id == y.host_id);
 }
 
-bool operator<(const netw::msg_addr& x, const netw::msg_addr& y) noexcept {
+std::strong_ordering msg_addr::operator<=>(const msg_addr& o) const noexcept {
     // Ignore cpu id for now since we do not really support shard to shard connections
-    if (x.addr < y.addr) {
-        return true;
+    if (addr < o.addr) {
+        return std::strong_ordering::less;
+    } else if (addr == o.addr) {
+        if (!host_id || !o.host_id) {
+            return std::strong_ordering::equivalent;
+        } else {
+            return host_id <=> o.host_id;
+        }
     } else {
-        return false;
+        return std::strong_ordering::greater;
     }
 }
 
