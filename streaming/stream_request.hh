@@ -29,12 +29,12 @@ public:
     }
     std::vector<sstring> column_families;
     stream_request() = default;
-    stream_request(sstring _keyspace, dht::token_range_vector _ranges, std::vector<sstring> _column_families)
+    stream_request(sstring _keyspace, dht::token_range_vector&& _ranges, std::vector<sstring>&& _column_families) noexcept
         : keyspace(std::move(_keyspace))
         , ranges(std::move(_ranges))
         , column_families(std::move(_column_families)) {
     }
-    stream_request(sstring _keyspace, std::vector<wrapping_range<token>> _ranges, std::vector<sstring> _column_families)
+    stream_request(sstring _keyspace, std::vector<wrapping_range<token>>&& _ranges, std::vector<sstring>&& _column_families)
         : stream_request(std::move(_keyspace), ::compat::unwrap(std::move(_ranges)), std::move(_column_families)) {
     }
     friend std::ostream& operator<<(std::ostream& os, const stream_request& r);
