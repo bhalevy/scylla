@@ -215,7 +215,7 @@ public:
      * @param ranges Ranges to retrieve data
      * @param columnFamilies ColumnFamily names. Can be empty if requesting all CF under the keyspace.
      */
-    void add_stream_request(sstring keyspace, dht::token_range_vector ranges, std::vector<sstring> column_families) {
+    void add_stream_request(sstring keyspace, dht::token_range_vector&& ranges, std::vector<sstring>&& column_families) {
         _requests.emplace_back(std::move(keyspace), std::move(ranges), std::move(column_families));
     }
 
