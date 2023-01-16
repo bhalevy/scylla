@@ -150,16 +150,16 @@ const size_t PER_TENANT_CONNECTION_COUNT = 3;
 
 bool operator==(const netw::msg_addr& x, const netw::msg_addr& y) noexcept {
     // Ignore cpu id for now since we do not really support shard to shard connections
-    return x.addr == y.addr;
+    return x.addr == y.addr && x.host_id == y.host_id;
 }
 
-bool operator<(const netw::msg_addr& x, const netw::msg_addr& y) noexcept {
+std::strong_ordering msg_addr::operator<=>(const msg_addr& o) const noexcept {
     // Ignore cpu id for now since we do not really support shard to shard connections
-    if (x.addr < y.addr) {
-        return true;
-    } else {
-        return false;
+    auto ret = addr <=> o.addr;
+    if (ret != 0) {
+        return ret;
     }
+    return host_id <=> o.host_id;
 }
 
 std::ostream& operator<<(std::ostream& os, const netw::msg_addr& x) {
