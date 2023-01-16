@@ -29,7 +29,7 @@ public:
     }
     std::vector<sstring> column_families;
     stream_request() = default;
-    stream_request(sstring _keyspace, dht::token_range_vector _ranges, std::vector<sstring> _column_families)
+    stream_request(sstring _keyspace, dht::token_range_vector&& _ranges, std::vector<sstring>&& _column_families) noexcept
         : keyspace(std::move(_keyspace))
         , ranges(std::move(_ranges))
         , column_families(std::move(_column_families)) {
