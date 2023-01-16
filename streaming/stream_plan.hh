@@ -88,7 +88,7 @@ public:
      * @param ranges ranges to send
      * @return this object for chaining
      */
-    stream_plan& transfer_ranges(inet_address to, sstring keyspace, dht::token_range_vector ranges);
+    stream_plan& transfer_ranges(inet_address to, const sstring& keyspace, dht::token_range_vector&& ranges);
 
     /**
      * Add transfer task to send data of specific {@code columnFamilies} under {@code keyspace} and {@code ranges}.
@@ -100,7 +100,7 @@ public:
      * @param columnFamilies specific column families
      * @return this object for chaining
      */
-    stream_plan& transfer_ranges(inet_address to, sstring keyspace, dht::token_range_vector ranges, std::vector<sstring> column_families);
+    stream_plan& transfer_ranges(inet_address to, const sstring& keyspace, dht::token_range_vector&& ranges, const std::vector<sstring>& column_families);
 
     stream_plan& listeners(std::vector<stream_event_handler*> handlers);
 public:

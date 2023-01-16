@@ -28,11 +28,11 @@ stream_plan& stream_plan::request_ranges(inet_address from, sstring keyspace, dh
     return *this;
 }
 
-stream_plan& stream_plan::transfer_ranges(inet_address to, sstring keyspace, dht::token_range_vector ranges) {
+stream_plan& stream_plan::transfer_ranges(inet_address to, const sstring& keyspace, dht::token_range_vector&& ranges) {
     return transfer_ranges(to, keyspace, std::move(ranges), {});
 }
 
-stream_plan& stream_plan::transfer_ranges(inet_address to, sstring keyspace, dht::token_range_vector ranges, std::vector<sstring> column_families) {
+stream_plan& stream_plan::transfer_ranges(inet_address to, const sstring& keyspace, dht::token_range_vector&& ranges, const std::vector<sstring>& column_families) {
     _range_added = true;
     auto session = _coordinator->get_or_create_session(_mgr, to);
     session->add_transfer_ranges(keyspace, std::move(ranges), column_families);
