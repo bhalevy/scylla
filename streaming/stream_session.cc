@@ -494,7 +494,7 @@ void stream_session::add_transfer_ranges(sstring keyspace, dht::token_range_vect
             auto inserted = _transfers.emplace(cf_id, std::move(task)).second;
             assert(inserted);
         } else {
-            it->second.append_ranges(ranges);
+            it->second.append_ranges(std::move(ranges));
         }
     }
 }
