@@ -34,6 +34,7 @@
 #include <sstream>
 #include <algorithm>
 #include "locator/local_strategy.hh"
+#include "utils/fb_utilities.hh"
 #include "version.hh"
 #include "unimplemented.hh"
 #include "streaming/stream_plan.hh"
@@ -1073,13 +1074,23 @@ void storage_service::handle_state_moving(inet_address endpoint, std::vector<sst
     throw std::runtime_error(format("Move operation is not supported anymore, endpoint={}", endpoint));
 }
 
-future<> storage_service::handle_state_removing(inet_address endpoint, std::vector<sstring> pieces) {
-    slogger.debug("endpoint={} handle_state_removing", endpoint);
+future<> storage_service::handle_state_removing(netw::msg_addr addr, std::vector<sstring> pieces) {
+    slogger.debug("node={} handle_state_removing", addr);
     if (pieces.empty()) {
-        slogger.warn("Fail to handle_state_removing endpoint={} pieces={}", endpoint, pieces);
+        slogger.warn("Fail to handle_state_removing node={} pieces={}", addr, pieces);
         co_return;
     }
+
+    const auto& endpoint = addr.addr;
+    const auto& host_id = addr.host_id;
+    if (!host_id) {
+        co_await coroutine::return_exception(std::runtime_error("Normal node must use host_id"));
+    }
+
     if (endpoint == get_broadcast_address()) {
+        if (host_id != get_local_host_id()) {
+            log_error_and_throw<std::runtime_error>(slogger, "Received removenode gossip with wrong host_id={}: local_host_id={}", host_id, get_local_host_id());
+        }
         slogger.info("Received removenode gossip about myself. Is this node rejoining after an explicit removenode?");
         try {
             co_await drain();
@@ -1089,6 +1100,7 @@ future<> storage_service::handle_state_removing(inet_address endpoint, std::vect
         }
         co_return;
     }
+    // FIXME: use host_id
     if (get_token_metadata().is_normal_token_owner(endpoint)) {
         auto state = pieces[0];
         auto remove_tokens = get_token_metadata().get_tokens(endpoint);
@@ -1097,36 +1109,34 @@ future<> storage_service::handle_state_removing(inet_address endpoint, std::vect
             co_await excise(std::move(tmp), endpoint, extract_expire_time(pieces));
         } else if (sstring(gms::versioned_value::REMOVING_TOKEN) == state) {
             locator::node_ptr leaving_node;
-            co_await mutate_token_metadata([this, remove_tokens = std::move(remove_tokens), endpoint, &leaving_node] (mutable_token_metadata_ptr tmptr) mutable {
-                leaving_node = tmptr->get_topology().find_node(endpoint);
+            co_await mutate_token_metadata([this, remove_tokens = std::move(remove_tokens), &addr, &leaving_node] (mutable_token_metadata_ptr tmptr) mutable {
+                leaving_node = tmptr->get_topology().find_node(addr.host_id);
                 if (!leaving_node) {
-                    throw std::runtime_error(format("Removed node {} not found in topology", endpoint));
+                    throw std::runtime_error(format("Removed node {} not found in topology", addr));
                 }
                 slogger.debug("Tokens {} removed manually (leaving_node={})", remove_tokens, leaving_node);
                 // Note that the endpoint is being removed
-                tmptr->add_leaving_endpoint(endpoint);
+                tmptr->add_leaving_endpoint(addr.addr);
                 return update_pending_ranges(std::move(tmptr), format("handle_state_removing {}", leaving_node));
             });
             // find the endpoint coordinating this removal that we need to notify when we're done
             auto* value = _gossiper.get_application_state_ptr(endpoint, application_state::REMOVAL_COORDINATOR);
             if (!value) {
-                auto err = format("Can not find application_state for endpoint={}", endpoint);
+                auto err = format("Can not find application_state for node={}", addr);
                 slogger.warn("{}", err);
                 throw std::runtime_error(err);
             }
             std::vector<sstring> coordinator;
             boost::split(coordinator, value->value, boost::is_any_of(sstring(versioned_value::DELIMITER_STR)));
             if (coordinator.size() != 2) {
-                auto err = format("Can not split REMOVAL_COORDINATOR for endpoint={}, value={}", endpoint, value->value);
+                auto err = format("Can not split REMOVAL_COORDINATOR for node={}, value={}", addr, value->value);
                 slogger.warn("{}", err);
                 throw std::runtime_error(err);
             }
-            auto host_id = locator::host_id(utils::UUID(coordinator[1]));
-            auto notify_node = get_token_metadata().get_topology().find_node(host_id);
+            auto coordinator_host_id = locator::host_id(utils::UUID(coordinator[1]));
+            auto notify_node = get_token_metadata().get_topology().find_node(coordinator_host_id);
             if (!notify_node) {
-                auto err = format("Can not find notify node host_id={}", host_id);
-                slogger.warn("{}", err);
-                throw std::runtime_error(err);
+                log_warning_and_throw<std::runtime_error>(slogger, "Can not find notify coordinator node host_id={}", coordinator_host_id);
             }
             // grab any data we are now responsible for and notify responsible node
 
@@ -1146,6 +1156,7 @@ future<> storage_service::handle_state_removing(inet_address endpoint, std::vect
         if (sstring(gms::versioned_value::REMOVED_TOKEN) == pieces[0]) {
             add_expire_time_if_found(endpoint, extract_expire_time(pieces));
         }
+        // FIXME: use addr rather than endpoint
         co_await remove_endpoint(endpoint);
     }
 }
@@ -1209,7 +1220,7 @@ future<> storage_service::on_change(netw::msg_addr addr, application_state state
             co_await handle_state_normal(addr);
         } else if (move_name == sstring(versioned_value::REMOVING_TOKEN) ||
                    move_name == sstring(versioned_value::REMOVED_TOKEN)) {
-            co_await handle_state_removing(endpoint, pieces);
+            co_await handle_state_removing(addr, pieces);
         } else if (move_name == sstring(versioned_value::STATUS_LEAVING)) {
             co_await handle_state_leaving(endpoint);
         } else if (move_name == sstring(versioned_value::STATUS_LEFT)) {

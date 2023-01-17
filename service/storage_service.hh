@@ -252,6 +252,9 @@ private:
     inet_address get_broadcast_address() const {
         return utils::fb_utilities::get_broadcast_address();
     }
+    static const locator::host_id& get_local_host_id() noexcept {
+        return utils::fb_utilities::get_host_id();
+    }
     /* This abstraction maintains the token/endpoint metadata information */
     shared_token_metadata& _shared_token_metadata;
     locator::effective_replication_map_factory& _erm_factory;
@@ -535,10 +538,10 @@ private:
     /**
      * Handle notification that a node being actively removed from the ring via 'removenode'
      *
-     * @param endpoint node
+     * @param addr node
      * @param pieces either REMOVED_TOKEN (node is gone) or REMOVING_TOKEN (replicas need to be restored)
      */
-    future<> handle_state_removing(inet_address endpoint, std::vector<sstring> pieces);
+    future<> handle_state_removing(netw::msg_addr addr, std::vector<sstring> pieces);
 
     future<>
     handle_state_replacing_update_pending_ranges(mutable_token_metadata_ptr tmptr, inet_address replacing_node);
