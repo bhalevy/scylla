@@ -547,8 +547,8 @@ private:
     handle_state_replacing_update_pending_ranges(mutable_token_metadata_ptr tmptr, inet_address replacing_node);
 
 private:
-    future<> excise(std::unordered_set<token> tokens, inet_address endpoint);
-    future<> excise(std::unordered_set<token> tokens, inet_address endpoint, long expire_time);
+    future<> excise(std::unordered_set<token> tokens, netw::msg_addr addr);
+    future<> excise(std::unordered_set<token> tokens, netw::msg_addr addr, long expire_time);
 
     /** unlike excise we just need this endpoint gone without going through any notifications **/
     future<> remove_endpoint(inet_address endpoint);

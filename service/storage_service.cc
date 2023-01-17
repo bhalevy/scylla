@@ -1083,8 +1083,7 @@ future<> storage_service::handle_state_left(netw::msg_addr addr, std::vector<sst
         slogger.warn("handle_state_left: Get tokens from token_metadata, node={}, tokens={}", addr, tokens_from_tm);
         tokens = std::unordered_set<dht::token>(tokens_from_tm.begin(), tokens_from_tm.end());
     }
-    // FIXME: use host_id rather than endpoint
-    co_await excise(tokens, endpoint, extract_expire_time(pieces));
+    co_await excise(tokens, addr, extract_expire_time(pieces));
 }
 
 void storage_service::handle_state_moving(netw::msg_addr addr, std::vector<sstring> pieces) {
@@ -1123,7 +1122,7 @@ future<> storage_service::handle_state_removing(netw::msg_addr addr, std::vector
         auto remove_tokens = get_token_metadata().get_tokens(endpoint);
         if (sstring(gms::versioned_value::REMOVED_TOKEN) == state) {
             std::unordered_set<token> tmp(remove_tokens.begin(), remove_tokens.end());
-            co_await excise(std::move(tmp), endpoint, extract_expire_time(pieces));
+            co_await excise(std::move(tmp), addr, extract_expire_time(pieces));
         } else if (sstring(gms::versioned_value::REMOVING_TOKEN) == state) {
             locator::node_ptr leaving_node;
             co_await mutate_token_metadata([this, remove_tokens = std::move(remove_tokens), &addr, &leaving_node] (mutable_token_metadata_ptr tmptr) mutable {
@@ -2574,7 +2573,7 @@ future<> storage_service::removenode(locator::host_id host_id, std::list<locator
                     // FIXME: use host_id
                     ss._gossiper.advertise_token_removed(leaving_node->endpoint(), host_id).get();
                     std::unordered_set<token> tmp(tokens.begin(), tokens.end());
-                    ss.excise(std::move(tmp), leaving_node->endpoint()).get();
+                    ss.excise(std::move(tmp), leaving_node->msg_addr()).get();
                     removed_from_token_ring = true;
 
                     // Step 7: Finish token movement
@@ -3192,25 +3191,28 @@ future<> storage_service::restore_replica_count(locator::node_ptr leaving_node, 
     }
 }
 
-future<> storage_service::excise(std::unordered_set<token> tokens, inet_address endpoint) {
-    slogger.info("Removing tokens {} for {}", tokens, endpoint);
-    // FIXME: HintedHandOffManager.instance.deleteHintsForEndpoint(endpoint);
+future<> storage_service::excise(std::unordered_set<token> tokens, netw::msg_addr addr) {
+    slogger.info("Removing tokens {} for {}", tokens, addr);
+    const auto& endpoint = addr.addr;
+    // FIXME: use addr
     co_await remove_endpoint(endpoint);
     auto tmlock = std::make_optional(co_await get_token_metadata_lock());
     auto tmptr = co_await get_mutable_token_metadata_ptr();
     tmptr->remove_endpoint(endpoint);
     tmptr->remove_bootstrap_tokens(tokens);
 
-    co_await update_pending_ranges(tmptr, format("excise {}", endpoint));
+    co_await update_pending_ranges(tmptr, format("excise {}", addr));
     co_await replicate_to_all_cores(std::move(tmptr));
     tmlock.reset();
 
+    // FIXME: use addr
     co_await notify_left(endpoint);
 }
 
-future<> storage_service::excise(std::unordered_set<token> tokens, inet_address endpoint, int64_t expire_time) {
-    add_expire_time_if_found(endpoint, expire_time);
-    return excise(tokens, endpoint);
+future<> storage_service::excise(std::unordered_set<token> tokens, netw::msg_addr addr, int64_t expire_time) {
+    // FIXME: use addr
+    add_expire_time_if_found(addr.addr, expire_time);
+    return excise(std::move(tokens), std::move(addr));
 }
 
 future<> storage_service::send_replication_notification(inet_address remote) {
@@ -3538,9 +3540,9 @@ future<> storage_service::force_remove_completion() {
                     }
                     co_await ss._gossiper.advertise_token_removed(endpoint, host_id);
                     std::unordered_set<token> tokens_set(tokens.begin(), tokens.end());
-                    co_await ss.excise(tokens_set, endpoint);
+                    co_await ss.excise(tokens_set, netw::msg_addr(endpoint, 0, host_id));
 
-                    slogger.info("force_remove_completion: removing endpoint {} from group 0", endpoint);
+                    slogger.info("force_remove_completion: removing node {} from group 0", endpoint);
                     assert(ss._group0);
                     bool raft_available = co_await ss._group0->wait_for_raft();
                     if (raft_available) {
