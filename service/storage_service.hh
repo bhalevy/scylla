@@ -515,9 +515,9 @@ private:
     /**
      * Handle node preparing to leave the ring
      *
-     * @param endpoint node
+     * @param addr node
      */
-    future<> handle_state_leaving(inet_address endpoint);
+    future<> handle_state_leaving(netw::msg_addr addr);
 
     /**
      * Handle node leaving the ring. This will happen when a node is decommissioned
