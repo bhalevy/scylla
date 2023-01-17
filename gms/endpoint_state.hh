@@ -14,6 +14,7 @@
 #include "gms/heart_beat_state.hh"
 #include "gms/application_state.hh"
 #include "gms/versioned_value.hh"
+#include "locator/host_id.hh"
 #include <optional>
 #include <chrono>
 
@@ -164,6 +165,17 @@ public:
     }
 
     bool is_cql_ready() const noexcept;
+
+    locator::host_id get_host_id() const noexcept {
+        auto* app_state = get_application_state_ptr(application_state::HOST_ID);
+        if (app_state) {
+            const auto& value = app_state->value;
+            if (!value.empty()) {
+                return locator::host_id(utils::UUID(value));
+            }
+        }
+        return locator::host_id::create_null_id();
+    }
 
     friend std::ostream& operator<<(std::ostream& os, const endpoint_state& x);
 };
