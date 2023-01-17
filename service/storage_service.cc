@@ -1056,25 +1056,34 @@ future<> storage_service::handle_state_leaving(netw::msg_addr addr) {
     co_await replicate_to_all_cores(std::move(tmptr));
 }
 
-future<> storage_service::handle_state_left(inet_address endpoint, std::vector<sstring> pieces) {
-    slogger.debug("endpoint={} handle_state_left", endpoint);
+future<> storage_service::handle_state_left(netw::msg_addr addr, std::vector<sstring> pieces) {
+    slogger.debug("node={} handle_state_left", addr);
     if (pieces.size() < 2) {
-        slogger.warn("Fail to handle_state_left endpoint={} pieces={}", endpoint, pieces);
+        slogger.warn("Fail to handle_state_left node={} pieces={}", addr, pieces);
         co_return;
     }
+
+    const auto& endpoint = addr.addr;
+    const auto& host_id = addr.host_id;
+    if (!host_id) {
+        co_await coroutine::return_exception(std::runtime_error("Left node must use host_id"));
+    }
+
+    // FIXME: use host_id rather than endpoint
     auto tokens = get_tokens_for(endpoint);
-    slogger.debug("Node {} state left, tokens {}", endpoint, tokens);
+    slogger.debug("Node {} state left, tokens {}", addr, tokens);
     if (tokens.empty()) {
         auto eps = _gossiper.get_endpoint_state_for_endpoint_ptr(endpoint);
         if (eps) {
-            slogger.warn("handle_state_left: Tokens for node={} are empty, endpoint_state={}", endpoint, *eps);
+            slogger.warn("handle_state_left: Tokens for node={} are empty, endpoint_state={}", addr, *eps);
         } else {
-            slogger.warn("handle_state_left: Couldn't find endpoint state for node={}", endpoint);
+            slogger.warn("handle_state_left: Couldn't find endpoint state for node={}", addr);
         }
         auto tokens_from_tm = get_token_metadata().get_tokens(endpoint);
-        slogger.warn("handle_state_left: Get tokens from token_metadata, node={}, tokens={}", endpoint, tokens_from_tm);
+        slogger.warn("handle_state_left: Get tokens from token_metadata, node={}, tokens={}", addr, tokens_from_tm);
         tokens = std::unordered_set<dht::token>(tokens_from_tm.begin(), tokens_from_tm.end());
     }
+    // FIXME: use host_id rather than endpoint
     co_await excise(tokens, endpoint, extract_expire_time(pieces));
 }
 
@@ -1232,7 +1241,7 @@ future<> storage_service::on_change(netw::msg_addr addr, application_state state
         } else if (move_name == sstring(versioned_value::STATUS_LEAVING)) {
             co_await handle_state_leaving(addr);
         } else if (move_name == sstring(versioned_value::STATUS_LEFT)) {
-            co_await handle_state_left(endpoint, pieces);
+            co_await handle_state_left(addr, pieces);
         } else if (move_name == sstring(versioned_value::STATUS_MOVING)) {
             handle_state_moving(endpoint, pieces);
         } else if (move_name == sstring(versioned_value::HIBERNATE)) {

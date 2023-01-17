@@ -522,10 +522,10 @@ private:
     /**
      * Handle node leaving the ring. This will happen when a node is decommissioned
      *
-     * @param endpoint If reason for leaving is decommission, endpoint is the leaving node.
+     * @param addr If reason for leaving is decommission, addr is the leaving node.
      * @param pieces STATE_LEFT,token
      */
-    future<> handle_state_left(inet_address endpoint, std::vector<sstring> pieces);
+    future<> handle_state_left(netw::msg_addr addr, std::vector<sstring> pieces);
 
     /**
      * Handle node moving inside the ring.
