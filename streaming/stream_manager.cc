@@ -299,10 +299,11 @@ stream_bytes stream_manager::get_progress_on_local_shard() const {
     return ret;
 }
 
-bool stream_manager::has_peer(inet_address endpoint) const {
+bool stream_manager::has_peer(const netw::msg_addr& addr) const {
     for (auto sr : get_all_streams()) {
         for (auto session : sr->get_coordinator()->get_all_stream_sessions()) {
-            if (session->peer == endpoint) {
+            // FIXME: validate host_id
+            if (session->peer == addr.addr) {
                 return true;
             }
         }
@@ -310,10 +311,11 @@ bool stream_manager::has_peer(inet_address endpoint) const {
     return false;
 }
 
-void stream_manager::fail_sessions(inet_address endpoint) {
+void stream_manager::fail_sessions(const netw::msg_addr& addr) {
     for (auto sr : get_all_streams()) {
         for (auto session : sr->get_coordinator()->get_all_stream_sessions()) {
-            if (session->peer == endpoint) {
+            // FIXME: validate host_id
+            if (session->peer == addr.addr) {
                 session->close_session(stream_session_state::FAILED);
             }
         }
@@ -328,40 +330,40 @@ void stream_manager::fail_all_sessions() {
     }
 }
 
-future<> stream_manager::on_remove(inet_address endpoint) {
-    if (has_peer(endpoint)) {
-        sslog.info("stream_manager: Close all stream_session with peer = {} in on_remove", endpoint);
+future<> stream_manager::on_remove(netw::msg_addr addr) {
+    if (has_peer(addr)) {
+        sslog.info("stream_manager: Close all stream_session with peer = {} in on_remove", addr);
         //FIXME: discarded future.
-        (void)container().invoke_on_all([endpoint] (auto& sm) {
-            sm.fail_sessions(endpoint);
-        }).handle_exception([endpoint] (auto ep) {
-            sslog.warn("stream_manager: Fail to close sessions peer = {} in on_remove", endpoint);
+        (void)container().invoke_on_all([&addr] (auto& sm) {
+            sm.fail_sessions(addr);
+        }).handle_exception([&addr] (auto ep) {
+            sslog.warn("stream_manager: Fail to close sessions peer = {} in on_remove", addr);
         });
     }
     return make_ready_future();
 }
 
-future<> stream_manager::on_restart(inet_address endpoint, endpoint_state ep_state) {
-    if (has_peer(endpoint)) {
-        sslog.info("stream_manager: Close all stream_session with peer = {} in on_restart", endpoint);
+future<> stream_manager::on_restart(netw::msg_addr addr, endpoint_state ep_state) {
+    if (has_peer(addr)) {
+        sslog.info("stream_manager: Close all stream_session with peer = {} in on_restart", addr);
         //FIXME: discarded future.
-        (void)container().invoke_on_all([endpoint] (auto& sm) {
-            sm.fail_sessions(endpoint);
-        }).handle_exception([endpoint] (auto ep) {
-            sslog.warn("stream_manager: Fail to close sessions peer = {} in on_restart", endpoint);
+        (void)container().invoke_on_all([&addr] (auto& sm) {
+            sm.fail_sessions(addr);
+        }).handle_exception([&addr] (auto ep) {
+            sslog.warn("stream_manager: Fail to close sessions peer = {} in on_restart", addr);
         });
     }
     return make_ready_future();
 }
 
-future<> stream_manager::on_dead(inet_address endpoint, endpoint_state ep_state) {
-    if (has_peer(endpoint)) {
-        sslog.info("stream_manager: Close all stream_session with peer = {} in on_dead", endpoint);
+future<> stream_manager::on_dead(netw::msg_addr addr, endpoint_state ep_state) {
+    if (has_peer(addr)) {
+        sslog.info("stream_manager: Close all stream_session with peer = {} in on_dead", addr);
         //FIXME: discarded future.
-        (void)container().invoke_on_all([endpoint] (auto& sm) {
-            sm.fail_sessions(endpoint);
-        }).handle_exception([endpoint] (auto ep) {
-            sslog.warn("stream_manager: Fail to close sessions peer = {} in on_dead", endpoint);
+        (void)container().invoke_on_all([&addr] (auto& sm) {
+            sm.fail_sessions(addr);
+        }).handle_exception([&addr] (auto ep) {
+            sslog.warn("stream_manager: Fail to close sessions peer = {} in on_dead", addr);
         });
     }
     return make_ready_future();

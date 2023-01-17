@@ -2910,41 +2910,41 @@ public:
         }
     }
     virtual future<> on_join(
-            gms::inet_address endpoint,
+            netw::msg_addr,
             gms::endpoint_state ep_state) override {
         return make_ready_future();
     }
     virtual future<> before_change(
-            gms::inet_address endpoint,
+            netw::msg_addr,
             gms::endpoint_state current_state,
             gms::application_state new_state_key,
             const gms::versioned_value& new_value) override {
         return make_ready_future();
     }
     virtual future<> on_change(
-            gms::inet_address endpoint,
+            netw::msg_addr,
             gms::application_state state,
             const gms::versioned_value& value) override {
         return make_ready_future();
     }
     virtual future<> on_alive(
-            gms::inet_address endpoint,
+            netw::msg_addr,
             gms::endpoint_state state) override {
         return make_ready_future();
     }
     virtual future<> on_dead(
-            gms::inet_address endpoint,
+            netw::msg_addr addr,
             gms::endpoint_state state) override {
-        return remove_row_level_repair(endpoint);
+        return remove_row_level_repair(addr.addr);
     }
     virtual future<> on_remove(
-            gms::inet_address endpoint) override {
-        return remove_row_level_repair(endpoint);
+            netw::msg_addr addr) override {
+        return remove_row_level_repair(addr.addr);
     }
     virtual future<> on_restart(
-            gms::inet_address endpoint,
+            netw::msg_addr addr,
             gms::endpoint_state ep_state) override {
-        return remove_row_level_repair(endpoint);
+        return remove_row_level_repair(addr.addr);
     }
 };
 

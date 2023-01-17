@@ -76,20 +76,20 @@ class feature_enabler : public i_endpoint_state_change_subscriber {
     gossiper& _g;
 public:
     feature_enabler(gossiper& g) : _g(g) {}
-    future<> on_join(inet_address ep, endpoint_state state) override {
+    future<> on_join(netw::msg_addr, endpoint_state state) override {
         return _g.maybe_enable_features();
     }
-    future<> on_change(inet_address ep, application_state state, const versioned_value&) override {
+    future<> on_change(netw::msg_addr, application_state state, const versioned_value&) override {
         if (state == application_state::SUPPORTED_FEATURES) {
             return _g.maybe_enable_features();
         }
         return make_ready_future();
     }
-    future<> before_change(inet_address, endpoint_state, application_state, const versioned_value&) override { return make_ready_future(); }
-    future<> on_alive(inet_address, endpoint_state) override { return make_ready_future(); }
-    future<> on_dead(inet_address, endpoint_state) override { return make_ready_future(); }
-    future<> on_remove(inet_address) override { return make_ready_future(); }
-    future<> on_restart(inet_address, endpoint_state) override { return make_ready_future(); }
+    future<> before_change(netw::msg_addr, endpoint_state, application_state, const versioned_value&) override { return make_ready_future(); }
+    future<> on_alive(netw::msg_addr, endpoint_state) override { return make_ready_future(); }
+    future<> on_dead(netw::msg_addr, endpoint_state) override { return make_ready_future(); }
+    future<> on_remove(netw::msg_addr) override { return make_ready_future(); }
+    future<> on_restart(netw::msg_addr, endpoint_state) override { return make_ready_future(); }
 };
 
 gossiper::gossiper(abort_source& as, feature_service& features, const locator::shared_token_metadata& stm, netw::messaging_service& ms, sharded<db::system_keyspace>& sys_ks, const db::config& cfg, gossip_config gcfg)
@@ -687,9 +687,12 @@ future<> gossiper::remove_endpoint(inet_address endpoint) {
     // do subscribers first so anything in the subscriber that depends on gossiper state won't get confused
     // We can not run on_remove callbacks here becasue on_remove in
     // storage_service might take the gossiper::timer_callback_lock
-    (void)seastar::async([this, endpoint] {
-        _subscribers.for_each([endpoint] (shared_ptr<i_endpoint_state_change_subscriber> subscriber) {
-            return subscriber->on_remove(endpoint);
+    auto it = _endpoint_state_map.find(endpoint);
+    auto addr = netw::msg_addr(endpoint, 0,
+        it != _endpoint_state_map.end() ? std::make_optional<locator::host_id>(it->second.get_host_id()) : std::nullopt);
+    (void)seastar::async([this, addr] {
+        _subscribers.for_each([&addr] (shared_ptr<i_endpoint_state_change_subscriber> subscriber) {
+            return subscriber->on_remove(addr);
         }).get();
     }).handle_exception([] (auto ep) {
         logger.warn("Fail to call on_remove callback: {}", ep);
@@ -1651,7 +1654,7 @@ future<> gossiper::handle_major_state_change(inet_address ep, const endpoint_sta
     auto* eps_new = get_endpoint_state_for_endpoint_ptr(ep);
     if (eps_new) {
         co_await _subscribers.for_each([ep, eps_new] (shared_ptr<i_endpoint_state_change_subscriber> subscriber) {
-            return subscriber->on_join(ep, *eps_new);
+            return subscriber->on_join(netw::msg_addr(ep, 0, eps_new->get_host_id()), *eps_new);
         });
     }
     // check this at the end so nodes will learn about the endpoint

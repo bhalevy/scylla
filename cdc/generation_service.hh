@@ -103,14 +103,14 @@ public:
         return _cdc_metadata;
     }
 
-    virtual future<> before_change(gms::inet_address, gms::endpoint_state, gms::application_state, const gms::versioned_value&) override { return make_ready_future(); }
-    virtual future<> on_alive(gms::inet_address, gms::endpoint_state) override { return make_ready_future(); }
-    virtual future<> on_dead(gms::inet_address, gms::endpoint_state) override { return make_ready_future(); }
-    virtual future<> on_remove(gms::inet_address) override { return make_ready_future(); }
-    virtual future<> on_restart(gms::inet_address, gms::endpoint_state) override { return make_ready_future(); }
+    virtual future<> before_change(netw::msg_addr, gms::endpoint_state, gms::application_state, const gms::versioned_value&) override { return make_ready_future(); }
+    virtual future<> on_alive(netw::msg_addr, gms::endpoint_state) override { return make_ready_future(); }
+    virtual future<> on_dead(netw::msg_addr, gms::endpoint_state) override { return make_ready_future(); }
+    virtual future<> on_remove(netw::msg_addr) override { return make_ready_future(); }
+    virtual future<> on_restart(netw::msg_addr, gms::endpoint_state) override { return make_ready_future(); }
 
-    virtual future<> on_join(gms::inet_address, gms::endpoint_state) override;
-    virtual future<> on_change(gms::inet_address, gms::application_state, const gms::versioned_value&) override;
+    virtual future<> on_join(netw::msg_addr, gms::endpoint_state) override;
+    virtual future<> on_change(netw::msg_addr, gms::application_state, const gms::versioned_value&) override;
 
     future<> check_and_repair_cdc_streams();
 

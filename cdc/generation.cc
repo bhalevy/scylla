@@ -727,7 +727,7 @@ future<> generation_service::after_join(std::optional<cdc::generation_id>&& star
     _cdc_streams_rewrite_complete = maybe_rewrite_streams_descriptions();
 }
 
-future<> generation_service::on_join(gms::inet_address ep, gms::endpoint_state ep_state) {
+future<> generation_service::on_join(netw::msg_addr addr, gms::endpoint_state ep_state) {
     assert_shard_zero(__PRETTY_FUNCTION__);
 
     auto val = ep_state.get_application_state_ptr(gms::application_state::CDC_GENERATION_ID);
@@ -735,10 +735,10 @@ future<> generation_service::on_join(gms::inet_address ep, gms::endpoint_state e
         return make_ready_future();
     }
 
-    return on_change(ep, gms::application_state::CDC_GENERATION_ID, *val);
+    return on_change(addr, gms::application_state::CDC_GENERATION_ID, *val);
 }
 
-future<> generation_service::on_change(gms::inet_address ep, gms::application_state app_state, const gms::versioned_value& v) {
+future<> generation_service::on_change(netw::msg_addr addr, gms::application_state app_state, const gms::versioned_value& v) {
     assert_shard_zero(__PRETTY_FUNCTION__);
 
     if (app_state != gms::application_state::CDC_GENERATION_ID) {
@@ -746,7 +746,7 @@ future<> generation_service::on_change(gms::inet_address ep, gms::application_st
     }
 
     auto gen_id = gms::versioned_value::cdc_generation_id_from_string(v.value);
-    cdc_log.debug("Endpoint: {}, CDC generation ID change: {}", ep, gen_id);
+    cdc_log.debug("Endpoint: {}, CDC generation ID change: {}", addr, gen_id);
 
     return handle_cdc_generation(gen_id);
 }

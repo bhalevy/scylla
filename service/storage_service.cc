@@ -1136,17 +1136,21 @@ future<> storage_service::handle_state_removing(inet_address endpoint, std::vect
     }
 }
 
-future<> storage_service::on_join(gms::inet_address endpoint, gms::endpoint_state ep_state) {
-    slogger.debug("endpoint={} on_join", endpoint);
+future<> storage_service::on_join(netw::msg_addr addr, gms::endpoint_state ep_state) {
+    const auto& endpoint = addr.addr;
+    slogger.debug("node={} on_join", addr);
     for (const auto& e : ep_state.get_application_state_map()) {
-        co_await on_change(endpoint, e.first, e.second);
+        co_await on_change(addr, e.first, e.second);
     }
 }
 
-future<> storage_service::on_alive(gms::inet_address endpoint, gms::endpoint_state state) {
-    slogger.debug("endpoint={} on_alive", endpoint);
+future<> storage_service::on_alive(netw::msg_addr addr, gms::endpoint_state state) {
+    const auto& endpoint = addr.addr;
+    slogger.debug("node={} on_alive", addr);
+    // FIXME: use host_id
     bool is_normal_token_owner = get_token_metadata().is_normal_token_owner(endpoint);
     if (is_normal_token_owner) {
+        // FIXME: use addr
         co_await notify_up(endpoint);
     }
     bool replacing_pending_ranges = _replacing_nodes_pending_ranges_updater.contains(endpoint);
@@ -1168,18 +1172,19 @@ future<> storage_service::on_alive(gms::inet_address endpoint, gms::endpoint_sta
     }
 }
 
-future<> storage_service::before_change(gms::inet_address endpoint, gms::endpoint_state current_state, gms::application_state new_state_key, const gms::versioned_value& new_value) {
-    slogger.debug("endpoint={} before_change: new app_state={}, new versioned_value={}", endpoint, new_state_key, new_value);
+future<> storage_service::before_change(netw::msg_addr addr, gms::endpoint_state current_state, gms::application_state new_state_key, const gms::versioned_value& new_value) {
+    slogger.debug("node={} before_change: new app_state={}, new versioned_value={}", addr, new_state_key, new_value);
     return make_ready_future();
 }
 
-future<> storage_service::on_change(inet_address endpoint, application_state state, const versioned_value& value) {
-    slogger.debug("endpoint={} on_change:     app_state={}, versioned_value={}", endpoint, state, value);
+future<> storage_service::on_change(netw::msg_addr addr, application_state state, const versioned_value& value) {
+    const auto& endpoint = addr.addr;
+    slogger.debug("node={} on_change:     app_state={}, versioned_value={}", addr, state, value);
     if (state == application_state::STATUS) {
         std::vector<sstring> pieces;
         boost::split(pieces, value.value, boost::is_any_of(sstring(versioned_value::DELIMITER_STR)));
         if (pieces.empty()) {
-            slogger.warn("Fail to split status in on_change: endpoint={}, app_state={}, value={}", endpoint, state, value);
+            slogger.warn("Fail to split status in on_change: node={}, app_state={}, value={}", addr, state, value);
             co_return;
         }
         sstring move_name = pieces[0];
@@ -1198,21 +1203,22 @@ future<> storage_service::on_change(inet_address endpoint, application_state sta
         } else if (move_name == sstring(versioned_value::STATUS_MOVING)) {
             handle_state_moving(endpoint, pieces);
         } else if (move_name == sstring(versioned_value::HIBERNATE)) {
-            slogger.warn("endpoint={} went into HIBERNATE state, this is no longer supported.  Use a new version to perform the replace operation.", endpoint);
+            slogger.warn("node={} went into HIBERNATE state, this is no longer supported.  Use a new version to perform the replace operation.", addr);
         } else {
             co_return; // did nothing.
         }
     } else {
+        // FIXME: use host_id rather than endpoint
         auto* ep_state = _gossiper.get_endpoint_state_for_endpoint_ptr(endpoint);
         if (!ep_state || _gossiper.is_dead_state(*ep_state)) {
-            slogger.debug("Ignoring state change for dead or unknown endpoint: {}", endpoint);
+            slogger.debug("Ignoring state change for dead or unknown node: {}", addr);
             co_return;
         }
         if (get_token_metadata().is_normal_token_owner(endpoint)) {
-            slogger.debug("endpoint={} on_change:     updating system.peers table", endpoint);
+            slogger.debug("node={} on_change:     updating system.peers table", addr);
             co_await do_update_system_peers_table(endpoint, state, value);
             if (state == application_state::RPC_READY) {
-                slogger.debug("Got application_state::RPC_READY for node {}, is_cql_ready={}", endpoint, ep_state->is_cql_ready());
+                slogger.debug("Got application_state::RPC_READY for node {}, is_cql_ready={}", addr, ep_state->is_cql_ready());
                 co_await notify_cql_change(endpoint, ep_state->is_cql_ready());
             } else if (state == application_state::INTERNAL_IP) {
                 co_await maybe_reconnect_to_preferred_ip(endpoint, inet_address(value.value));
@@ -1236,25 +1242,27 @@ future<> storage_service::maybe_reconnect_to_preferred_ip(inet_address ep, inet_
 }
 
 
-future<> storage_service::on_remove(gms::inet_address endpoint) {
-    slogger.debug("endpoint={} on_remove", endpoint);
+future<> storage_service::on_remove(netw::msg_addr addr) {
+    slogger.debug("node={} on_remove", addr);
     auto tmlock = co_await get_token_metadata_lock();
     auto tmptr = co_await get_mutable_token_metadata_ptr();
-    tmptr->remove_endpoint(endpoint);
-    co_await update_pending_ranges(tmptr, format("on_remove {}", endpoint));
+    // FIXME: use host_id
+    tmptr->remove_endpoint(addr.addr);
+    co_await update_pending_ranges(tmptr, format("on_remove {}", addr));
     co_await replicate_to_all_cores(std::move(tmptr));
 }
 
-future<> storage_service::on_dead(gms::inet_address endpoint, gms::endpoint_state state) {
-    slogger.debug("endpoint={} on_dead", endpoint);
-    return notify_down(endpoint);
+future<> storage_service::on_dead(netw::msg_addr addr, gms::endpoint_state state) {
+    slogger.debug("node={} on_dead", addr);
+    // FIXME: use addr
+    return notify_down(addr.addr);
 }
 
-future<> storage_service::on_restart(gms::inet_address endpoint, gms::endpoint_state state) {
-    slogger.debug("endpoint={} on_restart", endpoint);
+future<> storage_service::on_restart(netw::msg_addr addr, gms::endpoint_state state) {
+    slogger.debug("node={} on_restart", addr);
     // If we have restarted before the node was even marked down, we need to reset the connection pool
     if (state.is_alive()) {
-        return on_dead(endpoint, state);
+        return on_dead(addr, state);
     }
     return make_ready_future();
 }

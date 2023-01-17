@@ -1129,16 +1129,17 @@ future<column_mapping> get_column_mapping(table_id table_id, table_schema_versio
     return db::schema_tables::get_column_mapping(table_id, v);
 }
 
-future<> migration_manager::on_join(gms::inet_address endpoint, gms::endpoint_state ep_state) {
-    schedule_schema_pull(endpoint, ep_state);
+future<> migration_manager::on_join(netw::msg_addr addr, gms::endpoint_state ep_state) {
+    schedule_schema_pull(addr.addr, ep_state);
     return make_ready_future();
 }
 
-future<> migration_manager::on_change(gms::inet_address endpoint, gms::application_state state, const gms::versioned_value& value) {
+future<> migration_manager::on_change(netw::msg_addr addr, gms::application_state state, const gms::versioned_value& value) {
     if (state == gms::application_state::SCHEMA) {
+        const auto& endpoint = addr.addr;
         auto* ep_state = _gossiper.get_endpoint_state_for_endpoint_ptr(endpoint);
         if (!ep_state || _gossiper.is_dead_state(*ep_state)) {
-            mlogger.debug("Ignoring state change for dead or unknown endpoint: {}", endpoint);
+            mlogger.debug("Ignoring state change for dead or unknown endpoint: {}", addr);
             return make_ready_future();
         }
         if (_storage_proxy.get_token_metadata_ptr()->is_normal_token_owner(endpoint)) {
@@ -1148,8 +1149,8 @@ future<> migration_manager::on_change(gms::inet_address endpoint, gms::applicati
     return make_ready_future();
 }
 
-future<> migration_manager::on_alive(gms::inet_address endpoint, gms::endpoint_state state) {
-    schedule_schema_pull(endpoint, state);
+future<> migration_manager::on_alive(netw::msg_addr addr, gms::endpoint_state state) {
+    schedule_schema_pull(addr.addr, state);
     return make_ready_future();
 }
 

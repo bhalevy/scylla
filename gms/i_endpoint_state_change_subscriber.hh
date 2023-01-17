@@ -14,6 +14,7 @@
 #include "gms/endpoint_state.hh"
 #include "gms/application_state.hh"
 #include "gms/versioned_value.hh"
+#include "message/msg_addr.hh"
 
 namespace gms {
 
@@ -35,17 +36,17 @@ public:
      * @param endpoint endpoint for which the state change occurred.
      * @param epState  state that actually changed for the above endpoint.
      */
-    virtual future<> on_join(inet_address endpoint, endpoint_state ep_state) = 0;
+    virtual future<> on_join(netw::msg_addr addr, endpoint_state ep_state) = 0;
 
-    virtual future<> before_change(inet_address endpoint, endpoint_state current_state, application_state new_statekey, const versioned_value& newvalue) = 0;
+    virtual future<> before_change(netw::msg_addr addr, endpoint_state current_state, application_state new_statekey, const versioned_value& newvalue) = 0;
 
-    virtual future<> on_change(inet_address endpoint, application_state state, const versioned_value& value) = 0;
+    virtual future<> on_change(netw::msg_addr addr, application_state state, const versioned_value& value) = 0;
 
-    virtual future<> on_alive(inet_address endpoint, endpoint_state state) = 0;
+    virtual future<> on_alive(netw::msg_addr addr, endpoint_state state) = 0;
 
-    virtual future<> on_dead(inet_address endpoint, endpoint_state state) = 0;
+    virtual future<> on_dead(netw::msg_addr addr, endpoint_state state) = 0;
 
-    virtual future<> on_remove(inet_address endpoint) = 0;
+    virtual future<> on_remove(netw::msg_addr addr) = 0;
 
     /**
      * Called whenever a node is restarted.
@@ -53,7 +54,7 @@ public:
      * previously marked down. It will have only if {@code state.isAlive() == false}
      * as {@code state} is from before the restarted node is marked up.
      */
-    virtual future<> on_restart(inet_address endpoint, endpoint_state state) = 0;
+    virtual future<> on_restart(netw::msg_addr addr, endpoint_state state) = 0;
 };
 
 } // namespace gms
