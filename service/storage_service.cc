@@ -1654,11 +1654,10 @@ future<> storage_service::check_for_endpoint_collision(std::unordered_set<gms::i
 }
 
 future<> storage_service::remove_node(netw::msg_addr addr) {
-    // FIXME: use addr
-    const auto& endpoint = addr.addr;
-    co_await _gossiper.remove_endpoint(endpoint);
+    co_await _gossiper.remove_node(addr);
     try {
-        co_await _sys_ks.local().remove_endpoint(endpoint);
+        // FIXME: use addr
+        co_await _sys_ks.local().remove_endpoint(addr.addr);
     } catch (...) {
         slogger.error("fail to remove node={}: {}", addr, std::current_exception());
     }
