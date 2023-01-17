@@ -842,16 +842,24 @@ future<> storage_service::handle_state_bootstrap(netw::msg_addr addr) {
     co_await replicate_to_all_cores(std::move(tmptr));
 }
 
-future<> storage_service::handle_state_normal(inet_address endpoint) {
-    slogger.debug("endpoint={} handle_state_normal", endpoint);
+future<> storage_service::handle_state_normal(netw::msg_addr addr) {
+    slogger.debug("node={} handle_state_normal", addr);
+
+    const auto& endpoint = addr.addr;
+    const auto& host_id = addr.host_id;
+    if (!host_id) {
+        co_await coroutine::return_exception(std::runtime_error("Normal node must use host_id"));
+    }
+
+    // FIXME: use host_id rather than endpoint
     auto tokens = get_tokens_for(endpoint);
 
-    slogger.debug("Node {} state normal, token {}", endpoint, tokens);
+    slogger.debug("Node {} state normal, token {}", addr, tokens);
 
     auto tmlock = std::make_unique<token_metadata_lock>(co_await get_token_metadata_lock());
     auto tmptr = co_await get_mutable_token_metadata_ptr();
     if (tmptr->is_normal_token_owner(endpoint)) {
-        slogger.info("Node {} state jump to normal", endpoint);
+        slogger.info("Node {} state jump to normal", addr);
     }
     std::unordered_set<inet_address> endpoints_to_remove;
 
@@ -859,9 +867,8 @@ future<> storage_service::handle_state_normal(inet_address endpoint) {
         tmptr->remove_endpoint(node);
         endpoints_to_remove.insert(node);
     };
-    // Order Matters, TM.updateHostID() should be called before TM.updateNormalToken(), (see CASSANDRA-4300).
-    if (_gossiper.uses_host_id(endpoint)) {
-        auto host_id = _gossiper.get_host_id(endpoint);
+
+    // FIXME: indentation
         auto existing = tmptr->get_endpoint_for_host_id(host_id);
         if (existing && *existing != endpoint) {
             if (*existing == get_broadcast_address()) {
@@ -888,7 +895,6 @@ future<> storage_service::handle_state_normal(inet_address endpoint) {
             slogger.info("Set host_id={} to be owned by node={}", host_id, endpoint);
             tmptr->update_host_id(host_id, endpoint);
         }
-    }
 
     // Tokens owned by the handled endpoint.
     // The endpoint broadcasts its set of chosen tokens. If a token was also chosen by another endpoint,
@@ -903,9 +909,10 @@ future<> storage_service::handle_state_normal(inet_address endpoint) {
 
     for (auto t : tokens) {
         // we don't want to update if this node is responsible for the token and it has a later startup time than endpoint.
+        // FIXME: use host_id rather than endpoint
         auto current = token_to_endpoint_map.find(t);
         if (current == token_to_endpoint_map.end()) {
-            slogger.debug("handle_state_normal: New node {} at token {}", endpoint, t);
+            slogger.debug("handle_state_normal: New node {} at token {}", addr, t);
             owned_tokens.insert(t);
             continue;
         }
@@ -972,7 +979,7 @@ future<> storage_service::handle_state_normal(inet_address endpoint) {
         co_await tmptr->update_normal_tokens(owned_tokens, endpoint);
     }
 
-    co_await update_pending_ranges(tmptr, format("handle_state_normal {}", endpoint));
+    co_await update_pending_ranges(tmptr, format("handle_state_normal {}", addr));
     co_await replicate_to_all_cores(std::move(tmptr));
     tmlock.reset();
 
@@ -991,6 +998,7 @@ future<> storage_service::handle_state_normal(inet_address endpoint) {
 
     // Send joined notification only when this node was not a member prior to this
     if (do_notify_joined) {
+        // FIXME: use netw::msg_addr rather than endpoint
         co_await notify_joined(endpoint);
     }
 
@@ -1199,7 +1207,7 @@ future<> storage_service::on_change(netw::msg_addr addr, application_state state
             co_await handle_state_bootstrap(addr);
         } else if (move_name == sstring(versioned_value::STATUS_NORMAL) ||
                    move_name == sstring(versioned_value::SHUTDOWN)) {
-            co_await handle_state_normal(endpoint);
+            co_await handle_state_normal(addr);
         } else if (move_name == sstring(versioned_value::REMOVING_TOKEN) ||
                    move_name == sstring(versioned_value::REMOVED_TOKEN)) {
             co_await handle_state_removing(endpoint, pieces);

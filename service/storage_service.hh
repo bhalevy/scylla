@@ -505,9 +505,9 @@ private:
      * Handle node move to normal state. That is, node is entering token ring and participating
      * in reads.
      *
-     * @param endpoint node
+     * @param addr node
      */
-    future<> handle_state_normal(inet_address endpoint);
+    future<> handle_state_normal(netw::msg_addr addr);
 
     /**
      * Handle node preparing to leave the ring
