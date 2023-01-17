@@ -1170,7 +1170,7 @@ future<> storage_service::handle_state_removing(netw::msg_addr addr, std::vector
         }
     } else { // now that the gossiper has told us about this nonexistent member, notify the gossiper to remove it
         if (sstring(gms::versioned_value::REMOVED_TOKEN) == pieces[0]) {
-            add_expire_time_if_found(endpoint, extract_expire_time(pieces));
+            add_expire_time_if_found(addr, extract_expire_time(pieces));
         }
         // FIXME: use addr rather than endpoint
         co_await remove_endpoint(endpoint);
@@ -3210,8 +3210,7 @@ future<> storage_service::excise(std::unordered_set<token> tokens, netw::msg_add
 }
 
 future<> storage_service::excise(std::unordered_set<token> tokens, netw::msg_addr addr, int64_t expire_time) {
-    // FIXME: use addr
-    add_expire_time_if_found(addr.addr, expire_time);
+    add_expire_time_if_found(addr, expire_time);
     return excise(std::move(tokens), std::move(addr));
 }
 
@@ -3290,11 +3289,12 @@ storage_service::stream_ranges(std::unordered_map<sstring, std::unordered_multim
     }
 }
 
-void storage_service::add_expire_time_if_found(inet_address endpoint, int64_t expire_time) {
+void storage_service::add_expire_time_if_found(netw::msg_addr addr, int64_t expire_time) {
     if (expire_time != 0L) {
         using clk = gms::gossiper::clk;
         auto time = clk::time_point(clk::duration(expire_time));
-        _gossiper.add_expire_time_for_endpoint(endpoint, time);
+        // FIXME: use addr
+        _gossiper.add_expire_time_for_endpoint(addr.addr, time);
     }
 }
 
