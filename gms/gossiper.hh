@@ -296,6 +296,10 @@ public:
      */
     future<> remove_endpoint(inet_address endpoint);
     future<> force_remove_endpoint(inet_address endpoint);
+    /**
+     * Removes the node from Gossip but retains endpoint state
+     */
+    future<> remove_node(netw::msg_addr addr);
 private:
     /**
      * Quarantines the endpoint for QUARANTINE_DELAY

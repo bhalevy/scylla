@@ -690,6 +690,10 @@ future<> gossiper::remove_endpoint(inet_address endpoint) {
     auto it = _endpoint_state_map.find(endpoint);
     auto addr = netw::msg_addr(endpoint, 0,
         it != _endpoint_state_map.end() ? std::make_optional<locator::host_id>(it->second.get_host_id()) : std::nullopt);
+    return remove_node(std::move(addr));
+}
+
+future<> gossiper::remove_node(netw::msg_addr addr) {
     (void)seastar::async([this, addr] {
         _subscribers.for_each([&addr] (shared_ptr<i_endpoint_state_change_subscriber> subscriber) {
             return subscriber->on_remove(addr);
@@ -698,6 +702,7 @@ future<> gossiper::remove_endpoint(inet_address endpoint) {
         logger.warn("Fail to call on_remove callback: {}", ep);
     });
 
+    const auto& endpoint = addr.addr;
     if(_seeds.contains(endpoint)) {
         build_seeds_list();
         _seeds.erase(endpoint);
@@ -709,8 +714,9 @@ future<> gossiper::remove_endpoint(inet_address endpoint) {
     _unreachable_endpoints.erase(endpoint);
     _syn_handlers.erase(endpoint);
     _ack_handlers.erase(endpoint);
+    // FIXME: use addr
     quarantine_endpoint(endpoint);
-    logger.debug("removing endpoint {}", endpoint);
+    logger.debug("removed node {}", addr);
 }
 
 future<> gossiper::do_status_check() {
