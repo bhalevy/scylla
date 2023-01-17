@@ -21,6 +21,7 @@
 
 #include "locator/types.hh"
 #include "inet_address_vectors.hh"
+#include "message/msg_addr.hh"
 
 using namespace seastar;
 
@@ -86,6 +87,10 @@ public:
     state get_state() const noexcept { return _state; }
 
     static std::string to_string(state);
+
+    netw::msg_addr msg_addr() const noexcept {
+        return netw::msg_addr(_endpoint, 0, _host_id);
+    }
 
 private:
     static node_holder make(const locator::topology* topology, locator::host_id id, inet_address endpoint, endpoint_dc_rack dc_rack, state state, node::this_node is_this_node = this_node::no, idx_type idx = -1);
