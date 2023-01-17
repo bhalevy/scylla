@@ -20,6 +20,7 @@
 #include "db/consistency_level.hh"
 #include <seastar/core/smp.hh>
 #include "locator/topology.hh"
+#include "message/msg_addr.hh"
 #include "utils/UUID.hh"
 #include "gms/inet_address.hh"
 #include "log.hh"
@@ -802,12 +803,20 @@ future<> storage_service::handle_state_replacing_update_pending_ranges(mutable_t
     co_await update_pending_ranges(tmptr, format("handle_state_replacing {}", replacing_node));
 }
 
-future<> storage_service::handle_state_bootstrap(inet_address endpoint) {
-    slogger.debug("endpoint={} handle_state_bootstrap", endpoint);
+future<> storage_service::handle_state_bootstrap(netw::msg_addr addr) {
+    slogger.debug("Node {} handle_state_bootstrap", addr);
+
+    const auto& endpoint = addr.addr;
+    const auto& host_id = addr.host_id;
+    if (!host_id) {
+        co_await coroutine::return_exception(std::runtime_error("Bootstrap node must use host_id"));
+    }
+
     // explicitly check for TOKENS, because a bootstrapping node might be bootstrapping in legacy mode; that is, not using vnodes and no token specified
+    // FIXME: use host_id rather than endpoint
     auto tokens = get_tokens_for(endpoint);
 
-    slogger.debug("Node {} state bootstrapping, token {}", endpoint, tokens);
+    slogger.debug("Node {} state bootstrapping, token {}", addr, tokens);
 
     // if this node is present in token metadata, either we have missed intermediate states
     // or the node had crashed. Print warning if needed, clear obsolete stuff and
@@ -821,17 +830,15 @@ future<> storage_service::handle_state_bootstrap(inet_address endpoint) {
         // common (not enough time for gossip to spread). Therefore we report only the
         // former in the log.
         if (!tmptr->is_leaving(endpoint)) {
-            slogger.info("Node {} state jump to bootstrap", endpoint);
+            slogger.info("Node {} state jump to bootstrap", addr);
         }
         tmptr->remove_endpoint(endpoint);
     }
 
     tmptr->update_topology(endpoint, get_dc_rack_for(endpoint), locator::node::state::joining);
     tmptr->add_bootstrap_tokens(tokens, endpoint);
-    if (_gossiper.uses_host_id(endpoint)) {
-        tmptr->update_host_id(_gossiper.get_host_id(endpoint), endpoint);
-    }
-    co_await update_pending_ranges(tmptr, format("handle_state_bootstrap {}", endpoint));
+    tmptr->update_host_id(host_id, endpoint);
+    co_await update_pending_ranges(tmptr, format("handle_state_bootstrap {}", addr));
     co_await replicate_to_all_cores(std::move(tmptr));
 }
 
@@ -1189,7 +1196,7 @@ future<> storage_service::on_change(netw::msg_addr addr, application_state state
         }
         sstring move_name = pieces[0];
         if (move_name == sstring(versioned_value::STATUS_BOOTSTRAPPING)) {
-            co_await handle_state_bootstrap(endpoint);
+            co_await handle_state_bootstrap(addr);
         } else if (move_name == sstring(versioned_value::STATUS_NORMAL) ||
                    move_name == sstring(versioned_value::SHUTDOWN)) {
             co_await handle_state_normal(endpoint);

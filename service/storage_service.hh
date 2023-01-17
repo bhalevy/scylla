@@ -497,9 +497,9 @@ private:
     /**
      * Handle node bootstrap
      *
-     * @param endpoint bootstrapping node
+     * @param addr bootstrapping node
      */
-    future<> handle_state_bootstrap(inet_address endpoint);
+    future<> handle_state_bootstrap(netw::msg_addr addr);
 
     /**
      * Handle node move to normal state. That is, node is entering token ring and participating
