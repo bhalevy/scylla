@@ -550,8 +550,8 @@ private:
     future<> excise(std::unordered_set<token> tokens, netw::msg_addr addr);
     future<> excise(std::unordered_set<token> tokens, netw::msg_addr addr, long expire_time);
 
-    /** unlike excise we just need this endpoint gone without going through any notifications **/
-    future<> remove_endpoint(inet_address endpoint);
+    /** unlike excise we just need this node gone without going through any notifications **/
+    future<> remove_node(netw::msg_addr addr);
 
     void add_expire_time_if_found(netw::msg_addr addr, int64_t expire_time);
 

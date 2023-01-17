@@ -984,7 +984,8 @@ future<> storage_service::handle_state_normal(netw::msg_addr addr) {
     tmlock.reset();
 
     for (auto ep : endpoints_to_remove) {
-        co_await remove_endpoint(ep);
+        // FIXME: use node_ptr
+        co_await remove_node(netw::msg_addr(ep));
     }
     slogger.debug("handle_state_normal: endpoint={} is_normal_token_owner={} endpoint_to_remove={} owned_tokens={}", endpoint, is_normal_token_owner, endpoints_to_remove.contains(endpoint), owned_tokens);
     if (!owned_tokens.empty() && !endpoints_to_remove.count(endpoint)) {
@@ -1172,8 +1173,7 @@ future<> storage_service::handle_state_removing(netw::msg_addr addr, std::vector
         if (sstring(gms::versioned_value::REMOVED_TOKEN) == pieces[0]) {
             add_expire_time_if_found(addr, extract_expire_time(pieces));
         }
-        // FIXME: use addr rather than endpoint
-        co_await remove_endpoint(endpoint);
+        co_await remove_node(addr);
     }
 }
 
@@ -1653,12 +1653,14 @@ future<> storage_service::check_for_endpoint_collision(std::unordered_set<gms::i
     });
 }
 
-future<> storage_service::remove_endpoint(inet_address endpoint) {
+future<> storage_service::remove_node(netw::msg_addr addr) {
+    // FIXME: use addr
+    const auto& endpoint = addr.addr;
     co_await _gossiper.remove_endpoint(endpoint);
     try {
         co_await _sys_ks.local().remove_endpoint(endpoint);
     } catch (...) {
-        slogger.error("fail to remove endpoint={}: {}", endpoint, std::current_exception());
+        slogger.error("fail to remove node={}: {}", addr, std::current_exception());
     }
 }
 
@@ -3194,10 +3196,10 @@ future<> storage_service::restore_replica_count(locator::node_ptr leaving_node, 
 future<> storage_service::excise(std::unordered_set<token> tokens, netw::msg_addr addr) {
     slogger.info("Removing tokens {} for {}", tokens, addr);
     const auto& endpoint = addr.addr;
-    // FIXME: use addr
-    co_await remove_endpoint(endpoint);
+    co_await remove_node(addr);
     auto tmlock = std::make_optional(co_await get_token_metadata_lock());
     auto tmptr = co_await get_mutable_token_metadata_ptr();
+    // FIXME: user host_id
     tmptr->remove_endpoint(endpoint);
     tmptr->remove_bootstrap_tokens(tokens);
 
