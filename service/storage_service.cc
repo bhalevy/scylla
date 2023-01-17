@@ -1087,8 +1087,8 @@ future<> storage_service::handle_state_left(netw::msg_addr addr, std::vector<sst
     co_await excise(tokens, endpoint, extract_expire_time(pieces));
 }
 
-void storage_service::handle_state_moving(inet_address endpoint, std::vector<sstring> pieces) {
-    throw std::runtime_error(format("Move operation is not supported anymore, endpoint={}", endpoint));
+void storage_service::handle_state_moving(netw::msg_addr addr, std::vector<sstring> pieces) {
+    throw std::runtime_error(format("Move operation is not supported anymore, node={}", addr));
 }
 
 future<> storage_service::handle_state_removing(netw::msg_addr addr, std::vector<sstring> pieces) {
@@ -1243,7 +1243,7 @@ future<> storage_service::on_change(netw::msg_addr addr, application_state state
         } else if (move_name == sstring(versioned_value::STATUS_LEFT)) {
             co_await handle_state_left(addr, pieces);
         } else if (move_name == sstring(versioned_value::STATUS_MOVING)) {
-            handle_state_moving(endpoint, pieces);
+            handle_state_moving(addr, pieces);
         } else if (move_name == sstring(versioned_value::HIBERNATE)) {
             slogger.warn("node={} went into HIBERNATE state, this is no longer supported.  Use a new version to perform the replace operation.", addr);
         } else {

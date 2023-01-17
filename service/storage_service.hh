@@ -530,10 +530,10 @@ private:
     /**
      * Handle node moving inside the ring.
      *
-     * @param endpoint moving endpoint address
+     * @param addr moving node
      * @param pieces STATE_MOVING, token
      */
-    void handle_state_moving(inet_address endpoint, std::vector<sstring> pieces);
+    void handle_state_moving(netw::msg_addr addr, std::vector<sstring> pieces);
 
     /**
      * Handle notification that a node being actively removed from the ring via 'removenode'
