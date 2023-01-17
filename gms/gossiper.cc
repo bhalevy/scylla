@@ -21,6 +21,7 @@
 #include "gms/failure_detector.hh"
 #include "gms/i_failure_detection_event_listener.hh"
 #include "gms/i_endpoint_state_change_subscriber.hh"
+#include "locator/topology.hh"
 #include "message/messaging_service.hh"
 #include "log.hh"
 #include "db/system_keyspace.hh"
@@ -578,7 +579,13 @@ future<> gossiper::do_apply_state_locally(gms::inet_address node, const endpoint
                 // major state change will handle the update by inserting the remote state directly
                 co_await this->handle_major_state_change(node, remote_state);
             } else {
-                logger.debug("Applying remote_state for node {} (remote generation > local generation)", node);
+                locator::host_id host_id;
+                auto* host_id_state = remote_state.get_application_state_ptr(application_state::HOST_ID);
+                if (host_id_state) {
+                    host_id = locator::host_id(utils::UUID(host_id_state->value));
+                    _host_id_to_endpoint_map[host_id] = node;
+                }
+                logger.debug("Applying remote_state for node {}/{} (remote generation > local generation)", node, host_id);
                 _endpoint_state_map[node] = remote_state;
             }
         } else if (remote_generation == local_generation) {
@@ -616,7 +623,13 @@ future<> gossiper::do_apply_state_locally(gms::inet_address node, const endpoint
         if (listener_notification) {
             co_await this->handle_major_state_change(node, remote_state);
         } else {
-            logger.debug("Applying remote_state for node {} (new node)", node);
+            locator::host_id host_id;
+            auto* host_id_state = remote_state.get_application_state_ptr(application_state::HOST_ID);
+            if (host_id_state) {
+                host_id = locator::host_id(utils::UUID(host_id_state->value));
+                _host_id_to_endpoint_map[host_id] = node;
+            }
+            logger.debug("Applying remote_state for node {}/{} (new node)", node, host_id);
             _endpoint_state_map[node] = remote_state;
         }
     }
@@ -1137,14 +1150,24 @@ future<> gossiper::replicate(inet_address ep, const endpoint_state& es) {
         if (this_shard_id() != orig) {
             g._endpoint_state_map[ep].add_application_state(es);
         }
+        auto* host_id_state = es.get_application_state_ptr(application_state::HOST_ID);
+        if (host_id_state) {
+            auto host_id = locator::host_id(utils::UUID(host_id_state->value));
+            g._host_id_to_endpoint_map[host_id] = ep;
+        }
     });
 }
 
 future<> gossiper::replicate(inet_address ep, const std::map<application_state, versioned_value>& src, const utils::chunked_vector<application_state>& changed) {
     return container().invoke_on_all([ep, &src, &changed, orig = this_shard_id(), self = shared_from_this()] (gossiper& g) {
-        if (this_shard_id() != orig) {
-            for (auto&& key : changed) {
-                g._endpoint_state_map[ep].add_application_state(key, src.at(key));
+        for (auto&& key : changed) {
+            const auto& val = src.at(key);
+            if (this_shard_id() != orig) {
+                g._endpoint_state_map[ep].add_application_state(key, val);
+            }
+            if (key == application_state::HOST_ID) {
+                auto host_id = locator::host_id(utils::UUID(val.value));
+                g._host_id_to_endpoint_map[host_id] = ep;
             }
         }
     });
@@ -1154,6 +1177,10 @@ future<> gossiper::replicate(inet_address ep, application_state key, const versi
     return container().invoke_on_all([ep, key, &value, orig = this_shard_id(), self = shared_from_this()] (gossiper& g) {
         if (this_shard_id() != orig) {
             g._endpoint_state_map[ep].add_application_state(key, value);
+        }
+        if (key == application_state::HOST_ID) {
+            auto host_id = locator::host_id(utils::UUID(value.value));
+            g._host_id_to_endpoint_map[host_id] = ep;
         }
     });
 }
@@ -1179,6 +1206,7 @@ future<> gossiper::advertise_removing(inet_address endpoint, locator::host_id ho
     eps.add_application_state(application_state::STATUS, versioned_value::removing_nonlocal(host_id));
     eps.add_application_state(application_state::REMOVAL_COORDINATOR, versioned_value::removal_coordinator(local_host_id));
     _endpoint_state_map[endpoint] = eps;
+    _host_id_to_endpoint_map[host_id] = endpoint;
     co_await replicate(endpoint, eps);
 }
 
@@ -1191,6 +1219,7 @@ future<> gossiper::advertise_token_removed(inet_address endpoint, locator::host_
     logger.info("Completing removal of {}", endpoint);
     add_expire_time_for_endpoint(endpoint, expire_time);
     _endpoint_state_map[endpoint] = eps;
+    _host_id_to_endpoint_map[host_id] = endpoint;
     co_await replicate(endpoint, eps);
     // ensure at least one gossip round occurs before returning
     co_await sleep_abortable(INTERVAL * 2, _abort_source);
@@ -2543,6 +2572,10 @@ future<> gossiper::maybe_enable_features() {
 
 locator::token_metadata_ptr gossiper::get_token_metadata_ptr() const noexcept {
     return _shared_token_metadata.get();
+}
+
+const locator::topology& gossiper::get_topology() const noexcept {
+    return get_token_metadata_ptr()->get_topology();
 }
 
 } // namespace gms

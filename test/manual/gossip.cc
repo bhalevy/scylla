@@ -96,6 +96,7 @@ int main(int ac, char ** av) {
 
             std::map<gms::application_state, gms::versioned_value> app_states = {
                 { gms::application_state::LOAD, gms::versioned_value::load(0.5) },
+                { gms::application_state::HOST_ID, gms::versioned_value::host_id(utils::fb_utilities::get_host_id()) },
             };
 
             using namespace std::chrono;

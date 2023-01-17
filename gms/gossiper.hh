@@ -162,6 +162,7 @@ private:
     std::unordered_map<inet_address, endpoint_state> _endpoint_state_map;
     // Used for serializing changes to _endpoint_state_map and running of associated change listeners.
     endpoint_locks_map _endpoint_locks;
+    std::unordered_map<locator::host_id, inet_address> _host_id_to_endpoint_map;
 
 public:
     const std::vector<sstring> DEAD_STATES = {
@@ -595,6 +596,7 @@ private:
     // Get features supported by all the nodes this node knows about
     std::set<sstring> get_supported_features(const std::unordered_map<gms::inet_address, sstring>& loaded_peer_features, ignore_features_of_local_node ignore_local_node) const;
     locator::token_metadata_ptr get_token_metadata_ptr() const noexcept;
+    const locator::topology& get_topology() const noexcept;
 public:
     void check_knows_remote_features(std::set<std::string_view>& local_features, const std::unordered_map<inet_address, sstring>& loaded_peer_features) const;
     future<> maybe_enable_features();
