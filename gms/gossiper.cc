@@ -777,7 +777,7 @@ future<> gossiper::failure_detector_loop_for_node(gms::inet_address node, int64_
             asp->request_abort_ex(abort_requested_exception());
         }
     });
-    while (is_enabled()) {
+    while (is_enabled() && !_abort_source.abort_requested()) {
         abort_source as;
         asp = &as;
         bool failed = false;
