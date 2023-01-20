@@ -166,7 +166,7 @@ collect_sstables_for_reshard(sharded<sstables::sstable_directory>& dir, compacti
         if (owned_ranges_ptr) {
             const auto& owned_ranges = *owned_ranges_ptr;
             co_await d.do_for_each_sstable([&] (sstables::shared_sstable sst) -> future<> {
-                if (needs_cleanup(sst, owned_ranges, sst->get_schema())) {
+                if (needs_cleanup(sst, owned_ranges)) {
                     need_cleanup.push_back(co_await sst->get_open_info());
                 }
             });
