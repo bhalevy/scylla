@@ -477,7 +477,7 @@ protected:
     std::unordered_set<shared_sstable> _compacting_for_max_purgeable_func;
     // optional owned_ranges vector for cleanup;
     owned_ranges_ptr _owned_ranges = {};
-    mutable std::optional<dht::incremental_owned_ranges_checker> _owned_ranges_checker;
+    std::optional<dht::incremental_owned_ranges_checker> _owned_ranges_checker;
     // Garbage collected sstables that are sealed but were not added to SSTable set yet.
     std::vector<shared_sstable> _unused_garbage_collected_sstables;
     // Garbage collected sstables that were added to SSTable set and should be eventually removed from it.
@@ -635,8 +635,8 @@ protected:
             // sstables should never be shared with other shards at this point.
             assert(dht::shard_of(*_schema, dk.token()) == this_shard_id());
 #endif
-
-            if (!_owned_ranges_checker->belongs_to_current_node(dk.token())) {
+            auto zis = const_cast<compaction*>(this);
+            if (!zis->_owned_ranges_checker->belongs_to_current_node(dk.token())) {
                 log_trace("Token {} does not belong to this node, skipping", dk.token());
                 return false;
             }
