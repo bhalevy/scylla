@@ -633,8 +633,8 @@ protected:
             // sstables should never be shared with other shards at this point.
             assert(dht::shard_of(*_schema, dk.token()) == this_shard_id());
 #endif
-
-            if (!_owned_ranges_checker->belongs_to_current_node(dk.token())) {
+            auto zis = const_cast<compaction*>(this);
+            if (!zis->_owned_ranges_checker->belongs_to_current_node(dk.token())) {
                 log_trace("Token {} does not belong to this node, skipping", dk.token());
                 return false;
             }
