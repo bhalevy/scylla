@@ -1276,7 +1276,25 @@ future<bool> table::perform_offstrategy_compaction() {
 future<> table::perform_cleanup_compaction(compaction::owned_ranges_ptr sorted_owned_ranges) {
     co_await flush();
     co_await parallel_foreach_compaction_group([this, sorted_owned_ranges = std::move(sorted_owned_ranges)] (compaction_group& cg) {
-        return get_compaction_manager().perform_cleanup(sorted_owned_ranges, cg.as_table_state());
+        const auto& cg_range = cg.token_range();
+        auto cmp = dht::token_comparator();
+        dht::token_range_vector cg_ranges;
+        for (const auto& range : *sorted_owned_ranges) {
+            auto trimmed = range.intersection(cg_range, cmp);
+            if (!trimmed) {
+                if (cg_ranges.empty()) {
+                    // didn't get to the cg range yet.
+                    continue;
+                } else {
+                    // since sorted_owned_ranges is sorted and deoverlapped
+                    // once the current range and the cg range are disjoint, we're done.
+                    break;
+                }
+
+            }
+            cg_ranges.emplace_back(std::move(*trimmed));
+        }
+        return get_compaction_manager().perform_cleanup(compaction::make_owned_ranges_ptr(std::move(cg_ranges)), cg.as_table_state());
     });
 }
 
