@@ -532,6 +532,7 @@ private:
     // Return compaction group if table owns a single one. Otherwise, null is returned.
     compaction_group* single_compaction_group_if_available() const noexcept;
     // Select a compaction group from a given token.
+    size_t compaction_group_idx_for_token(dht::token token) const noexcept;
     compaction_group& compaction_group_for_token(dht::token token) const noexcept;
     // Select a compaction group from a given key.
     compaction_group& compaction_group_for_key(partition_key_view key, const schema_ptr& s) const noexcept;

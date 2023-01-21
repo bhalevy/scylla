@@ -520,7 +520,7 @@ compaction_group* table::single_compaction_group_if_available() const noexcept {
     return _compaction_groups.size() == 1 ? &*_compaction_groups[0] : nullptr;
 }
 
-compaction_group& table::compaction_group_for_token(dht::token token) const noexcept {
+size_t table::compaction_group_idx_for_token(dht::token token) const noexcept {
     unsigned idx = 0;
     // avoids shift by 64.
     if (_x_log2_compaction_groups) {
@@ -528,7 +528,14 @@ compaction_group& table::compaction_group_for_token(dht::token token) const noex
         auto mask = (1 << _x_log2_compaction_groups) - 1;
         idx = (value >> (64 - _x_log2_compaction_groups)) & mask;
     }
-    assert(idx < _compaction_groups.size());
+    return idx;
+}
+
+compaction_group& table::compaction_group_for_token(dht::token token) const noexcept {
+    auto idx = compaction_group_idx_for_token(token);
+    if (idx >= _compaction_groups.size()) {
+        on_fatal_internal_error(tlogger, format("compaction_group_for_token: index out of range: idx={} size_log2={} size={} token={}", ssize_t(idx), _x_log2_compaction_groups, _compaction_groups.size(), token));
+    }
     return *_compaction_groups[idx];
 }
 
