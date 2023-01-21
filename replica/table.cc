@@ -521,14 +521,18 @@ compaction_group* table::single_compaction_group_if_available() const noexcept {
 }
 
 size_t table::compaction_group_idx_for_token(dht::token token) const noexcept {
-    unsigned idx = 0;
-    // avoids shift by 64.
-    if (_x_log2_compaction_groups) {
-        auto value = dht::token::to_int64(token);
-        auto mask = (1 << _x_log2_compaction_groups) - 1;
-        idx = (value >> (64 - _x_log2_compaction_groups)) & mask;
+    size_t number_of_cg = 1 << _x_log2_compaction_groups;
+    size_t max_cg = number_of_cg - 1;
+    if (!_x_log2_compaction_groups || token.is_minimum()) {
+        return 0;
     }
-    return idx;
+    if (token.is_maximum()) {
+        return max_cg;
+    }
+    int64_t value = dht::token::to_int64(token);
+    uint8_t log2_shift = (64 - _x_log2_compaction_groups);
+    int64_t mask = int64_t(max_cg) << log2_shift;
+    return ((value & mask) >> log2_shift) + number_of_cg / 2;
 }
 
 compaction_group& table::compaction_group_for_token(dht::token token) const noexcept {
