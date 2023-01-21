@@ -22,8 +22,12 @@
 #include <boost/range/adaptor/transformed.hpp>
 #include "sstables/key.hh"
 #include <seastar/core/thread.hh>
+#include <seastar/core/on_internal_error.hh>
+#include "log.hh"
 
 namespace dht {
+
+static logging::logger logger("i_partitioner");
 
 sharder::sharder(unsigned shard_count, unsigned sharding_ignore_msb_bits)
     : _shard_count(shard_count)
@@ -437,6 +441,49 @@ future<dht::partition_range_vector> subtract_ranges(const schema& schema, const 
     }
 
     co_return res;
+}
+
+dht::token_range_vector split_token_range_msb(unsigned most_significant_bits) {
+    dht::token_range_vector ret;
+    // Avoid shift left 64
+    if (!most_significant_bits) {
+        auto&& start_bound = dht::token_range::bound(dht::minimum_token(), true);
+        auto&& end_bound = dht::token_range::bound(dht::maximum_token(), true);
+        ret.emplace_back(std::move(start_bound), std::move(end_bound));
+        return ret;
+    }
+    int64_t number_of_ranges = 1 << most_significant_bits;
+    ret.reserve(number_of_ranges);
+    assert(most_significant_bits < 64);
+    uint8_t log2_shift = (64 - most_significant_bits);
+    int64_t key;
+    int64_t keys_per_range = int64_t(1) << log2_shift;
+    for (int64_t i = 0; i < number_of_ranges; i++) {
+        std::optional<dht::token_range::bound> start_bound;
+        std::optional<dht::token_range::bound> end_bound;
+        if (i == 0) {
+            start_bound = dht::token_range::bound(dht::minimum_token(), true);
+            key = int64_t(1 - number_of_ranges / 2) << log2_shift;
+        } else {
+            if (compaction_group_of(most_significant_bits, dht::token::from_int64(key)) != i) {
+                on_fatal_internal_error(logger, format("split_token_range_msb: inconsistent start_bound compaction group: index={} start_key={} compaction_group_of={}",
+                        i, key, compaction_group_of(most_significant_bits, dht::token::from_int64(key))));
+            }
+            start_bound = dht::token_range::bound(dht::token::from_int64(key), true);
+            key += keys_per_range;
+        }
+        if (i < number_of_ranges - 1) {
+            if (compaction_group_of(most_significant_bits, dht::token::from_int64(key)) != i + 1) {
+                on_fatal_internal_error(logger, format("split_token_range_msb: inconsistent end_bound compaction group: next_index={} end_key={} compaction_group_of={}",
+                        i + 1, key, compaction_group_of(most_significant_bits, dht::token::from_int64(key))));
+            }
+            end_bound = dht::token_range::bound(dht::token::from_int64(key), false);
+        } else {
+            end_bound = dht::token_range::bound(dht::maximum_token(), true);
+        }
+        ret.emplace_back(std::move(start_bound), std::move(end_bound));
+    }
+    return ret;
 }
 
 }
