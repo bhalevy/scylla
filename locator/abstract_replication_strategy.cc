@@ -68,6 +68,17 @@ inet_address_vector_replica_set abstract_replication_strategy::get_natural_endpo
     return res->second;
 }
 
+stop_iteration abstract_replication_strategy::for_each_natural_endpoint_until(const noncopyable_function<stop_iteration(const inet_address&)>& func, const token& search_token, const effective_replication_map& erm) const {
+    const token& key_token = erm.get_token_metadata_ptr()->first_token(search_token);
+    auto res = erm.get_replication_map().find(key_token);
+    for (const auto& ep : res->second) {
+        if (func(ep)) {
+            return stop_iteration::yes;
+        }
+    }
+    return stop_iteration::no;
+}
+
 inet_address_vector_replica_set effective_replication_map::get_natural_endpoints_without_node_being_replaced(const token& search_token) const {
     inet_address_vector_replica_set natural_endpoints = get_natural_endpoints(search_token);
     if (_tmptr->is_any_node_being_replaced() &&
@@ -136,7 +147,7 @@ insert_token_range_to_sorted_container_while_unwrapping(
 }
 
 dht::token_range_vector
-effective_replication_map::do_get_ranges(noncopyable_function<bool(inet_address_vector_replica_set)> should_add_range) const {
+effective_replication_map::do_get_ranges(noncopyable_function<std::optional<bool>(const inet_address&)> should_add_range) const {
     dht::token_range_vector ret;
     const auto& tm = *_tmptr;
     const auto& sorted_tokens = tm.sorted_tokens();
@@ -145,7 +156,15 @@ effective_replication_map::do_get_ranges(noncopyable_function<bool(inet_address_
     }
     auto prev_tok = sorted_tokens.back();
     for (const auto& tok : sorted_tokens) {
-        if (should_add_range(get_natural_endpoints(tok))) {
+        bool add_range = false;
+        for_each_natural_endpoint_until([&] (const inet_address& ep) {
+            if (auto opt_res = should_add_range(ep)) {
+                add_range = *opt_res;
+                return stop_iteration::yes;
+            }
+            return stop_iteration::no;
+        }, tok);
+        if (add_range) {
             insert_token_range_to_sorted_container_while_unwrapping(prev_tok, tok, ret);
         }
         prev_tok = tok;
@@ -155,13 +174,11 @@ effective_replication_map::do_get_ranges(noncopyable_function<bool(inet_address_
 
 dht::token_range_vector
 effective_replication_map::get_ranges(inet_address ep) const {
-    return do_get_ranges([ep] (inet_address_vector_replica_set eps) {
-        for (auto a : eps) {
-            if (a == ep) {
-                return true;
-            }
+    return do_get_ranges([ep] (const inet_address& e) -> std::optional<bool> {
+        if (e == ep) {
+            return true;
         }
-        return false;
+        return std::nullopt;
     });
 }
 
@@ -187,8 +204,8 @@ abstract_replication_strategy::get_ranges(inet_address ep, token_metadata_ptr tm
 
 dht::token_range_vector
 effective_replication_map::get_primary_ranges(inet_address ep) const {
-    return do_get_ranges([ep] (inet_address_vector_replica_set eps) {
-        return eps.size() > 0 && eps[0] == ep;
+    return do_get_ranges([ep] (const inet_address& e) -> std::optional<bool> {
+        return e == ep;
     });
 }
 
@@ -197,16 +214,14 @@ effective_replication_map::get_primary_ranges_within_dc(inet_address ep) const {
     const topology& topo = _tmptr->get_topology();
     sstring local_dc = topo.get_datacenter(ep);
     std::unordered_set<inet_address> local_dc_nodes = topo.get_datacenter_endpoints().at(local_dc);
-    return do_get_ranges([ep, local_dc_nodes = std::move(local_dc_nodes)] (inet_address_vector_replica_set eps) {
+    return do_get_ranges([ep, local_dc_nodes = std::move(local_dc_nodes)] (const inet_address& e) -> std::optional<bool> {
         // Unlike get_primary_ranges() which checks if ep is the first
         // owner of this range, here we check if ep is the first just
         // among nodes which belong to the local dc of ep.
-        for (auto& e : eps) {
-            if (local_dc_nodes.contains(e)) {
-                return e == ep;
-            }
+        if (!local_dc_nodes.contains(e)) {
+            return std::nullopt;
         }
-        return false;
+        return e == ep;
     });
 }
 
@@ -340,6 +355,10 @@ future<replication_map> effective_replication_map::clone_endpoints_gently() cons
 
 inet_address_vector_replica_set effective_replication_map::get_natural_endpoints(const token& search_token) const {
     return _rs->get_natural_endpoints(search_token, *this);
+}
+
+stop_iteration effective_replication_map::for_each_natural_endpoint_until(const noncopyable_function<stop_iteration(const inet_address&)>& func, const token& search_token) const {
+    return _rs->for_each_natural_endpoint_until(func, search_token, *this);
 }
 
 future<> effective_replication_map::clear_gently() noexcept {
