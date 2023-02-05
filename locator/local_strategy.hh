@@ -44,6 +44,7 @@ public:
      * on token calculations but LocalStrategy may be used before tokens are set up.
      */
     inet_address_vector_replica_set get_natural_endpoints(const token&, const effective_replication_map&) const override;
+    virtual bool in_natural_endpoints(const noncopyable_function<bool(const inet_address_vector_replica_set&)>& func, const token&, const effective_replication_map&) const override;
 };
 
 }

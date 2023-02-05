@@ -36,6 +36,10 @@ inet_address_vector_replica_set everywhere_replication_strategy::get_natural_end
     return boost::copy_range<inet_address_vector_replica_set>(tm.get_all_endpoints());
 }
 
+bool everywhere_replication_strategy::in_natural_endpoints(const noncopyable_function<bool(const inet_address_vector_replica_set&)>& func, const token& t, const effective_replication_map& erm) const {
+    return func(get_natural_endpoints(t, erm));
+}
+
 using registry = class_registrator<abstract_replication_strategy, everywhere_replication_strategy, const replication_strategy_config_options&>;
 static registry registrator("org.apache.cassandra.locator.EverywhereStrategy");
 static registry registrator_short_name("EverywhereStrategy");

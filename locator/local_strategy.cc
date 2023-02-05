@@ -37,6 +37,10 @@ inet_address_vector_replica_set local_strategy::get_natural_endpoints(const toke
     return inet_address_vector_replica_set({utils::fb_utilities::get_broadcast_address()});
 }
 
+bool local_strategy::in_natural_endpoints(const noncopyable_function<bool(const inet_address_vector_replica_set&)>& func, const token& t, const effective_replication_map& erm) const {
+    return func(get_natural_endpoints(t, erm));
+}
+
 using registry = class_registrator<abstract_replication_strategy, local_strategy, const replication_strategy_config_options&>;
 static registry registrator("org.apache.cassandra.locator.LocalStrategy");
 static registry registrator_short_name("LocalStrategy");
