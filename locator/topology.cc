@@ -167,15 +167,18 @@ void topology::sort_by_proximity(inet_address address, inet_address_vector_repli
 }
 
 int topology::compare_endpoints(const inet_address& address, const inet_address& a1, const inet_address& a2) const {
+    // Eliminate the unlikely case that both Nodes are the same.
+    if (a1 == a2) [[unlikely]] {
+        return 0;
+    }
+
     //
     // if one of the Nodes IS the Node we are comparing to and the other one
     // IS NOT - then return the appropriate result.
     //
-    if (address == a1 && address != a2) {
+    if (address == a1) {
         return -1;
-    }
-
-    if (address == a2 && address != a1) {
+    } else if (address == a2) {
         return 1;
     }
 
@@ -184,14 +187,13 @@ int topology::compare_endpoints(const inet_address& address, const inet_address&
     sstring a1_datacenter = get_datacenter(a1);
     sstring a2_datacenter = get_datacenter(a2);
 
-    if (address_datacenter == a1_datacenter &&
-        address_datacenter != a2_datacenter) {
-        return -1;
-    } else if (address_datacenter == a2_datacenter &&
-               address_datacenter != a1_datacenter) {
-        return 1;
-    } else if (address_datacenter == a2_datacenter &&
-               address_datacenter == a1_datacenter) {
+    // If one of the Nodes IS in the same Data Center as the Node
+    // we are comparing to and the other one
+    // IS NOT - then return the appropriate result.
+    if (address_datacenter == a1_datacenter) {
+        if (address_datacenter != a2_datacenter) {
+            return -1;
+        }
         //
         // ...otherwise (in case Nodes belong to the same Data Center) check
         // the racks they belong to.
@@ -200,18 +202,25 @@ int topology::compare_endpoints(const inet_address& address, const inet_address&
         sstring a1_rack = get_rack(a1);
         sstring a2_rack = get_rack(a2);
 
-        if (address_rack == a1_rack && address_rack != a2_rack) {
-            return -1;
-        }
-
-        if (address_rack == a2_rack && address_rack != a1_rack) {
+        // If one of the Nodes IS in the same Rack as the Node
+        // we are comparing to and the other one
+        // IS NOT - then return the appropriate result.
+        if (address_rack == a1_rack) {
+            if (address_rack != a2_rack) {
+                return -1;
+            }
+        } else if (address_rack == a2_rack) {
             return 1;
         }
+        // We don't differentiate between Nodes if all Nodes belong to
+        // the same Rack or to different Racks (in the same Data Center),
+        // thus make them equal.
+    } else if (address_datacenter == a2_datacenter) {
+        return 1;
+    } else {
+        // We don't differentiate between Nodes if all Nodes belong to different
+        // Data Centers, thus make them equal.
     }
-    //
-    // We don't differentiate between Nodes if all Nodes belong to different
-    // Data Centers, thus make them equal.
-    //
     return 0;
 }
 
