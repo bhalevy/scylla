@@ -12,6 +12,7 @@
 
 #include <unordered_set>
 #include <unordered_map>
+#include <compare>
 
 #include <seastar/core/future.hh>
 #include <seastar/core/sstring.hh>
@@ -101,7 +102,7 @@ private:
      * compares two endpoints in relation to the target endpoint, returning as
      * Comparator.compare would
      */
-    int compare_endpoints(const inet_address& address, const inet_address& a1, const inet_address& a2) const;
+    std::strong_ordering compare_endpoints(const inet_address& address, const inet_address& a1, const inet_address& a2) const;
 
     /** multi-map: DC -> endpoints in that DC */
     std::unordered_map<sstring,
