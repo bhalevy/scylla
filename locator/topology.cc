@@ -25,6 +25,9 @@ future<> topology::clear_gently() noexcept {
     co_await utils::clear_gently(_dc_racks);
     co_await utils::clear_gently(_current_locations);
     _datacenters.clear();
+    _dc_radix.clear();
+    _dc_rack_radix.clear();
+    _endpoint_radix.clear();
     co_return;
 }
 
@@ -55,6 +58,9 @@ future<topology> topology::clone_gently() const {
     }
     co_await coroutine::maybe_yield();
     ret._datacenters = _datacenters;
+    ret._dc_radix = _dc_radix;
+    ret._dc_rack_radix = _dc_rack_radix;
+    ret._endpoint_radix = _endpoint_radix;
     ret._sort_by_proximity = _sort_by_proximity;
     co_return ret;
 }
@@ -73,8 +79,21 @@ void topology::update_endpoint(const inet_address& ep, endpoint_dc_rack dr)
     tlogger.debug("update_endpoint: {} {}/{}", ep, dr.dc, dr.rack);
     _dc_endpoints[dr.dc].insert(ep);
     _dc_racks[dr.dc][dr.rack].insert(ep);
-    _datacenters.insert(dr.dc);
-    _current_locations[ep] = std::move(dr);
+    auto [datacenters_it, new_dc] = _datacenters.insert(dr.dc);
+    _current_locations[ep] = dr;
+
+    location_metric m = 0;
+    auto [dc_it, dc_emplaced] = _dc_radix.try_emplace(dr.dc, _dc_radix.size());
+    location_metric dc_metric = dc_it->second;
+    assert(!(dc_metric & ~0x7fffUL));
+    auto [dc_rack_it, dc_rack_emplaced] = _dc_rack_radix.try_emplace(dr.dc);
+    auto [rack_it, rack_inserted] = dc_rack_it->second.try_emplace(dr.rack, dc_rack_it->second.size());
+    location_metric rack_metric = rack_it->second;
+    assert(!(rack_metric & ~0xffffUL));
+    auto [endpoint_it, endpoint_inserted] = _endpoint_radix.try_emplace(ep, _endpoint_radix.size());
+    location_metric node_metric = endpoint_it->second;
+    assert(!(node_metric & ~0xffffffffUL));
+    _node_metrics[ep] = (dc_metric << 48) | (rack_metric << 32) | node_metric;
 }
 
 void topology::remove_endpoint(inet_address ep)
@@ -95,6 +114,8 @@ void topology::remove_endpoint(inet_address ep)
             _dc_endpoints.erase(dit);
             _datacenters.erase(dc);
             _dc_racks.erase(dc);
+            _dc_radix.erase(dc);
+            _dc_rack_radix.erase(dc);
         } else {
             auto& racks = _dc_racks[dc];
             if (auto rit = racks.find(rack); rit != racks.end()) {
@@ -102,6 +123,7 @@ void topology::remove_endpoint(inet_address ep)
                 eps.erase(ep);
                 if (eps.empty()) {
                     racks.erase(rit);
+                    _dc_rack_radix.at(dc).erase(rack);
                 }
             }
         }
