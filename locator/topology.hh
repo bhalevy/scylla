@@ -123,6 +123,9 @@ private:
     std::unordered_set<sstring> _datacenters;
 
     void calculate_datacenters();
+
+public:
+    void test_compare_endpoints(const inet_address& address, const inet_address& a1, const inet_address& a2) const;
 };
 
 } // namespace locator
