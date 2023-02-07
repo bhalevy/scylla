@@ -71,10 +71,10 @@ public:
     }
 
     const endpoint_dc_rack& get_location(const inet_address& ep) const;
-    sstring get_rack() const;
-    sstring get_rack(inet_address ep) const;
-    sstring get_datacenter() const;
-    sstring get_datacenter(inet_address ep) const;
+    const sstring& get_rack() const;
+    const sstring& get_rack(inet_address ep) const;
+    const sstring& get_datacenter() const;
+    const sstring& get_datacenter(inet_address ep) const;
 
     auto get_local_dc_filter() const noexcept {
         return [ this, local_dc = get_datacenter() ] (inet_address ep) {
