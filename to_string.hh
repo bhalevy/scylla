@@ -163,4 +163,28 @@ static inline std::ostream& operator<<(std::ostream& os, const std::strong_order
     return os;
 }
 
+static inline std::ostream& operator<<(std::ostream& os, const std::weak_ordering& order) {
+    if (order > 0) {
+        os << "gt";
+    } else if (order < 0) {
+        os << "lt";
+    } else {
+        os << "eq";
+    }
+    return os;
+}
+
+static inline std::ostream& operator<<(std::ostream& os, const std::partial_ordering& order) {
+    if (order == std::partial_ordering::unordered) {
+        os << "unordered";
+    } else if (order > 0) {
+        os << "gt";
+    } else if (order < 0) {
+        os << "lt";
+    } else {
+        os << "eq";
+    }
+    return os;
+}
+
 }
