@@ -117,10 +117,18 @@ private:
     /** reverse-lookup map: endpoint -> current known dc/rack assignment */
     std::unordered_map<inet_address, endpoint_dc_rack> _current_locations;
 
+    // keep a numeric metric for a node representing its dc/rack location
+    // for comparing proximity
+    using location_metric = int64_t;
+    std::unordered_map<inet_address, location_metric> _node_location_map;
+
     bool _sort_by_proximity = true;
 
     // pre-calculated
     std::unordered_set<sstring> _datacenters;
+    std::unordered_map<sstring, unsigned> _dc_radix;
+    std::unordered_map<sstring, std::unordered_map<sstring, unsigned>> _dc_rack_radix;
+    std::unordered_map<inet_address, unsigned> _endpoint_radix;
 
     void calculate_datacenters();
 
