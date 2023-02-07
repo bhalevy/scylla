@@ -142,19 +142,19 @@ const endpoint_dc_rack& topology::get_location(const inet_address& ep) const {
 // - topology should be aware of internal-ip conversions
 // - topology should be pre-populated with data loaded from system ks
 
-sstring topology::get_rack() const {
+const sstring& topology::get_rack() const {
     return get_rack(utils::fb_utilities::get_broadcast_address());
 }
 
-sstring topology::get_rack(inet_address ep) const {
+const sstring& topology::get_rack(inet_address ep) const {
     return get_location(ep).rack;
 }
 
-sstring topology::get_datacenter() const {
+const sstring& topology::get_datacenter() const {
     return get_datacenter(utils::fb_utilities::get_broadcast_address());
 }
 
-sstring topology::get_datacenter(inet_address ep) const {
+const sstring& topology::get_datacenter(inet_address ep) const {
     return get_location(ep).dc;
 }
 
@@ -183,9 +183,9 @@ int topology::compare_endpoints(const inet_address& address, const inet_address&
     }
 
     // ...otherwise perform the similar check in regard to Data Center
-    sstring address_datacenter = get_datacenter(address);
-    sstring a1_datacenter = get_datacenter(a1);
-    sstring a2_datacenter = get_datacenter(a2);
+    const auto& address_datacenter = get_datacenter(address);
+    const auto& a1_datacenter = get_datacenter(a1);
+    const auto& a2_datacenter = get_datacenter(a2);
 
     // If one of the Nodes IS in the same Data Center as the Node
     // we are comparing to and the other one
@@ -198,9 +198,9 @@ int topology::compare_endpoints(const inet_address& address, const inet_address&
         // ...otherwise (in case Nodes belong to the same Data Center) check
         // the racks they belong to.
         //
-        sstring address_rack = get_rack(address);
-        sstring a1_rack = get_rack(a1);
-        sstring a2_rack = get_rack(a2);
+        const auto& address_rack = get_rack(address);
+        const auto& a1_rack = get_rack(a1);
+        const auto& a2_rack = get_rack(a2);
 
         // If one of the Nodes IS in the same Rack as the Node
         // we are comparing to and the other one
