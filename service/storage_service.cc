@@ -1548,7 +1548,7 @@ future<> storage_service::replicate_to_all_cores(mutable_token_metadata_ptr tmpt
 
 future<> storage_service::stop() {
     // make sure nobody uses the semaphore
-    node_ops_singal_abort(std::nullopt);
+    node_ops_signal_abort(std::nullopt);
     _listeners.clear();
     co_await _async_gate.close();
     co_await std::move(_node_ops_abort_thread);
@@ -2570,7 +2570,7 @@ future<node_ops_cmd_response> storage_service::node_ops_cmd_handler(gms::inet_ad
                     return update_pending_ranges(tmptr, format("removenode {}", req.leaving_nodes));
                 });
             },
-            [this, ops_uuid] () mutable { node_ops_singal_abort(ops_uuid); });
+            [this, ops_uuid] () mutable { node_ops_signal_abort(ops_uuid); });
             _node_ops.emplace(ops_uuid, std::move(meta));
         } else if (req.cmd == node_ops_cmd::removenode_heartbeat) {
             slogger.debug("removenode[{}]: Updated heartbeat from coordinator={}", req.ops_uuid,  coordinator);
@@ -2620,7 +2620,7 @@ future<node_ops_cmd_response> storage_service::node_ops_cmd_handler(gms::inet_ad
                     return update_pending_ranges(tmptr, format("decommission {}", req.leaving_nodes));
                 });
             },
-            [this, ops_uuid] () mutable { node_ops_singal_abort(ops_uuid); });
+            [this, ops_uuid] () mutable { node_ops_signal_abort(ops_uuid); });
             _node_ops.emplace(ops_uuid, std::move(meta));
         } else if (req.cmd == node_ops_cmd::decommission_heartbeat) {
             slogger.debug("decommission[{}]: Updated heartbeat from coordinator={}", req.ops_uuid,  coordinator);
@@ -2684,7 +2684,7 @@ future<node_ops_cmd_response> storage_service::node_ops_cmd_handler(gms::inet_ad
                     return update_pending_ranges(tmptr, format("replace {}", req.replace_nodes));
                 });
             },
-            [this, ops_uuid ] { node_ops_singal_abort(ops_uuid); });
+            [this, ops_uuid ] { node_ops_signal_abort(ops_uuid); });
             _node_ops.emplace(ops_uuid, std::move(meta));
         } else if (req.cmd == node_ops_cmd::replace_prepare_mark_alive) {
             // Wait for local node has marked replacing node as alive
@@ -2738,7 +2738,7 @@ future<node_ops_cmd_response> storage_service::node_ops_cmd_handler(gms::inet_ad
                     return update_pending_ranges(tmptr, format("bootstrap {}", req.bootstrap_nodes));
                 });
             },
-            [this, ops_uuid ] { node_ops_singal_abort(ops_uuid); });
+            [this, ops_uuid ] { node_ops_signal_abort(ops_uuid); });
             _node_ops.emplace(ops_uuid, std::move(meta));
         } else if (req.cmd == node_ops_cmd::bootstrap_heartbeat) {
             slogger.debug("bootstrap[{}]: Updated heartbeat from coordinator={}", req.ops_uuid, coordinator);
@@ -3782,8 +3782,8 @@ future<> storage_service::node_ops_abort(node_ops_id ops_uuid) {
     }
 }
 
-void storage_service::node_ops_singal_abort(std::optional<node_ops_id> ops_uuid) {
-    slogger.debug("node_ops_singal_abort: ops_uuid={}", ops_uuid);
+void storage_service::node_ops_signal_abort(std::optional<node_ops_id> ops_uuid) {
+    slogger.debug("node_ops_signal_abort: ops_uuid={}", ops_uuid);
     _node_ops_abort_queue.push_back(ops_uuid);
     _node_ops_abort_cond.signal();
 }
