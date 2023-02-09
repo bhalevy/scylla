@@ -32,6 +32,7 @@
 #include <sstream>
 #include <algorithm>
 #include "locator/local_strategy.hh"
+#include "utils/fb_utilities.hh"
 #include "version.hh"
 #include "unimplemented.hh"
 #include "streaming/stream_plan.hh"
@@ -2079,7 +2080,7 @@ future<> storage_service::decommission() {
                 }).get();
                 slogger.info("decommission[{}]: Finished token ring movement, removing node={}, sync_nodes={}, ignore_nodes={}", uuid, endpoint, nodes, ignore_nodes);
             } catch (...) {
-                slogger.warn("decommission[{}]: Abort decommission operation started, removing node={}, sync_nodes={}, ignore_nodes={}", uuid, endpoint, nodes, ignore_nodes);
+                slogger.error("decommission[{}]: decommissioning node={}, sync_nodes={}, ignore_nodes={} failed: {}. Aborting operation", uuid, endpoint, nodes, ignore_nodes, std::current_exception());
                 // we need to revert the effect of prepare verb the decommission ops is failed
                 req.cmd = node_ops_cmd::decommission_abort;
                 parallel_for_each(nodes, [&ss, &req, &nodes_unknown_verb, &nodes_down, uuid] (const gms::inet_address& node) -> future<> {
@@ -2094,7 +2095,7 @@ future<> storage_service::decommission() {
                         slogger.warn("decommission[{}]: abort request failed on node={}: {}", uuid, node, std::current_exception());
                     }
                 }).get();
-                slogger.warn("decommission[{}]: Abort decommission operation finished, removing node={}, sync_nodes={}, ignore_nodes={}", uuid, endpoint, nodes, ignore_nodes);
+                slogger.info("decommission[{}]: Abort decommission operation finished, removing node={}, sync_nodes={}, ignore_nodes={}", uuid, endpoint, nodes, ignore_nodes);
                 throw;
             }
 
@@ -2255,8 +2256,8 @@ void storage_service::run_bootstrap_ops(std::unordered_set<token>& bootstrap_tok
             });
         }).get();
     } catch (...) {
-        slogger.error("bootstrap[{}]: Abort bootstrap operation started, bootstrap_nodes={}, sync_nodes={}, ignore_nodes={}: {}",
-                uuid, bootstrap_nodes, sync_nodes, ignore_nodes, std::current_exception());
+        slogger.error("bootstrap[{}]: bootstrapping node={}, bootstrap_nodes={}, sync_nodes={}, ignore_nodes={} failed: {}. Aborting operation",
+                uuid, utils::fb_utilities::get_broadcast_address(), bootstrap_nodes, sync_nodes, ignore_nodes, std::current_exception());
         // we need to revert the effect of prepare verb the bootstrap ops is failed
         req.cmd = node_ops_cmd::bootstrap_abort;
         parallel_for_each(sync_nodes, [this, &req, &nodes_unknown_verb, &nodes_down, &nodes_aborted, uuid] (const gms::inet_address& node) -> future<> {
@@ -2272,8 +2273,8 @@ void storage_service::run_bootstrap_ops(std::unordered_set<token>& bootstrap_tok
                 slogger.warn("bootstrap[{}]: abort request failed on node={}: {}", uuid, node, std::current_exception());
             }
         }).get();
-        slogger.error("bootstrap[{}]: Abort bootstrap operation finished, bootstrap_nodes={}, sync_nodes={}, ignore_nodes={}: {}",
-                uuid, bootstrap_nodes, sync_nodes, ignore_nodes, std::current_exception());
+        slogger.info("bootstrap[{}]: Abort bootstrap operation finished, bootstrap_nodes={}, sync_nodes={}, ignore_nodes={}",
+                uuid, bootstrap_nodes, sync_nodes, ignore_nodes);
         throw;
     }
 }
@@ -2388,8 +2389,8 @@ void storage_service::run_replace_ops(std::unordered_set<token>& bootstrap_token
         _gossiper.advertise_to_nodes({}).get();
         slogger.info("replace[{}]: Allow any nodes to mark replacing node={} as alive", uuid,  get_broadcast_address());
     } catch (...) {
-        slogger.error("replace[{}]: Abort replace operation started, replace_nodes={}, sync_nodes={}, ignore_nodes={}: {}",
-                uuid, replace_nodes, sync_nodes, ignore_nodes, std::current_exception());
+        slogger.error("replace[{}]: replacing node {}/{}, replace_nodes={}, sync_nodes={}, ignore_nodes={} failed: {}. Aborting operation",
+                uuid, replace_info.host_id, replace_info.address, replace_nodes, sync_nodes, ignore_nodes, std::current_exception());
         // we need to revert the effect of prepare verb the replace ops is failed
         req.cmd = node_ops_cmd::replace_abort;
         parallel_for_each(sync_nodes, [this, &req, &nodes_unknown_verb, &nodes_down, &nodes_aborted, uuid] (const gms::inet_address& node) -> future<> {
@@ -2404,8 +2405,8 @@ void storage_service::run_replace_ops(std::unordered_set<token>& bootstrap_token
                 slogger.warn("replace[{}]: abort request failed on node={}: {}", uuid, node, std::current_exception());
             }
         }).get();
-        slogger.error("replace[{}]: Abort replace operation finished, replace_nodes={}, sync_nodes={}, ignore_nodes={}: {}",
-                uuid, replace_nodes, sync_nodes, ignore_nodes, std::current_exception());
+        slogger.info("replace[{}]: Abort replace operation finished, replace_nodes={}, sync_nodes={}, ignore_nodes={}",
+                uuid, replace_nodes, sync_nodes, ignore_nodes);
         throw;
     }
 }
@@ -2543,7 +2544,7 @@ future<> storage_service::removenode(locator::host_id host_id, std::list<locator
 
                     slogger.info("removenode[{}]: Finished token movement, node={}, sync_nodes={}, ignore_nodes={}", uuid, endpoint, nodes, ignore_nodes);
                 } catch (...) {
-                    slogger.warn("removenode[{}]: removing node={}, sync_nodes={}, ignore_nodes={} failed, error {}",
+                    slogger.error("removenode[{}]: removing node={}, sync_nodes={}, ignore_nodes={} failed: {}. Aborting operation",
                                  uuid, endpoint, nodes, ignore_nodes, std::current_exception());
                     // we need to revert the effect of prepare verb the removenode ops is failed
                     req.cmd = node_ops_cmd::removenode_abort;
