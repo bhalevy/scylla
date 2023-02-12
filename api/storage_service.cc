@@ -674,7 +674,7 @@ void set_storage_service(http_context& ctx, routes& r, sharded<service::storage_
                 // major compact smaller tables first, to increase chances of success if low on space.
                 std::ranges::sort(local_tables, std::less<>(), [&] (const table_info& ti) {
                     try {
-                        return db.find_column_family(ti.id).get_stats().live_disk_space_used;
+                        return db.find_column_family(ti.id).rebuild_and_get_stats().live_disk_space_used;
                     } catch (const replica::no_such_column_family& e) {
                         return int64_t(-1);
                     }
@@ -707,7 +707,7 @@ void set_storage_service(http_context& ctx, routes& r, sharded<service::storage_
                 // cleanup smaller tables first, to increase chances of success if low on space.
                 std::ranges::sort(local_tables, std::less<>(), [&] (const table_info& ti) {
                     try {
-                        return db.find_column_family(ti.id).get_stats().live_disk_space_used;
+                        return db.find_column_family(ti.id).rebuild_and_get_stats().live_disk_space_used;
                     } catch (const replica::no_such_column_family& e) {
                         return int64_t(-1);
                     }
