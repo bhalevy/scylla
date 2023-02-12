@@ -920,6 +920,11 @@ public:
         return _compaction_manager;
     }
 
+    const table_stats& rebuild_and_get_stats() const {
+        const_cast<table*>(this)->rebuild_statistics();
+        return _stats;
+    }
+
     table_stats& get_stats() const {
         return _stats;
     }

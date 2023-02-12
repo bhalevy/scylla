@@ -67,21 +67,21 @@ future<> foreach_column_family(http_context& ctx, const sstring& name, function<
 future<json::json_return_type>  get_cf_stats(http_context& ctx, const sstring& name,
         int64_t replica::column_family_stats::*f) {
     return map_reduce_cf(ctx, name, int64_t(0), [f](const replica::column_family& cf) {
-        return cf.get_stats().*f;
+        return cf.rebuild_and_get_stats().*f;
     }, std::plus<int64_t>());
 }
 
 future<json::json_return_type>  get_cf_stats(http_context& ctx,
         int64_t replica::column_family_stats::*f) {
     return map_reduce_cf(ctx, int64_t(0), [f](const replica::column_family& cf) {
-        return cf.get_stats().*f;
+        return cf.rebuild_and_get_stats().*f;
     }, std::plus<int64_t>());
 }
 
 static future<json::json_return_type>  get_cf_stats_count(http_context& ctx, const sstring& name,
         utils::timed_rate_moving_average_summary_and_histogram replica::column_family_stats::*f) {
     return map_reduce_cf(ctx, name, int64_t(0), [f](const replica::column_family& cf) {
-        return (cf.get_stats().*f).hist.count;
+        return (cf.rebuild_and_get_stats().*f).hist.count;
     }, std::plus<int64_t>());
 }
 
@@ -94,7 +94,8 @@ static future<json::json_return_type>  get_cf_stats_sum(http_context& ctx, const
         // with count. The information is gather in nano second,
         // but reported in micro
         replica::column_family& cf = db.find_column_family(uuid);
-        return ((cf.get_stats().*f).hist.count/1000.0) * (cf.get_stats().*f).hist.mean;
+        const auto& stats = cf.rebuild_and_get_stats();
+        return ((stats.*f).hist.count/1000.0) * (stats.*f).hist.mean;
     }, 0.0, std::plus<double>()).then([](double res) {
         return make_ready_future<json::json_return_type>((int64_t)res);
     });
@@ -104,7 +105,7 @@ static future<json::json_return_type>  get_cf_stats_sum(http_context& ctx, const
 static future<json::json_return_type>  get_cf_stats_count(http_context& ctx,
         utils::timed_rate_moving_average_summary_and_histogram replica::column_family_stats::*f) {
     return map_reduce_cf(ctx, int64_t(0), [f](const replica::column_family& cf) {
-        return (cf.get_stats().*f).hist.count;
+        return (cf.rebuild_and_get_stats().*f).hist.count;
     }, std::plus<int64_t>());
 }
 
@@ -112,7 +113,8 @@ static future<json::json_return_type>  get_cf_histogram(http_context& ctx, const
         utils::timed_rate_moving_average_and_histogram replica::column_family_stats::*f) {
     auto uuid = get_uuid(name, ctx.db.local());
     return ctx.db.map_reduce0([f, uuid](const replica::database& p) {
-        return (p.find_column_family(uuid).get_stats().*f).hist;},
+        auto& cf = p.find_column_family(uuid);
+        return (cf.rebuild_and_get_stats().*f).hist;},
             utils::ihistogram(),
             std::plus<utils::ihistogram>())
             .then([](const utils::ihistogram& val) {
@@ -124,7 +126,8 @@ static future<json::json_return_type>  get_cf_histogram(http_context& ctx, const
         utils::timed_rate_moving_average_summary_and_histogram replica::column_family_stats::*f) {
     auto uuid = get_uuid(name, ctx.db.local());
     return ctx.db.map_reduce0([f, uuid](const replica::database& p) {
-        return (p.find_column_family(uuid).get_stats().*f).hist;},
+        auto& cf = p.find_column_family(uuid);
+        return (cf.rebuild_and_get_stats().*f).hist;},
             utils::ihistogram(),
             std::plus<utils::ihistogram>())
             .then([](const utils::ihistogram& val) {
@@ -136,7 +139,7 @@ static future<json::json_return_type> get_cf_histogram(http_context& ctx, utils:
     std::function<utils::ihistogram(const replica::database&)> fun = [f] (const replica::database& db)  {
         utils::ihistogram res;
         for (auto i : db.get_column_families()) {
-            res += (i.second->get_stats().*f).hist;
+            res += (i.second->rebuild_and_get_stats().*f).hist;
         }
         return res;
     };
@@ -151,7 +154,8 @@ static future<json::json_return_type>  get_cf_rate_and_histogram(http_context& c
         utils::timed_rate_moving_average_summary_and_histogram replica::column_family_stats::*f) {
     auto uuid = get_uuid(name, ctx.db.local());
     return ctx.db.map_reduce0([f, uuid](const replica::database& p) {
-        return (p.find_column_family(uuid).get_stats().*f).rate();},
+        auto& cf = p.find_column_family(uuid);
+        return (cf.rebuild_and_get_stats().*f).rate();},
             utils::rate_moving_average_and_histogram(),
             std::plus<utils::rate_moving_average_and_histogram>())
             .then([](const utils::rate_moving_average_and_histogram& val) {
@@ -163,7 +167,7 @@ static future<json::json_return_type> get_cf_rate_and_histogram(http_context& ct
     std::function<utils::rate_moving_average_and_histogram(const replica::database&)> fun = [f] (const replica::database& db)  {
         utils::rate_moving_average_and_histogram res;
         for (auto i : db.get_column_families()) {
-            res += (i.second->get_stats().*f).rate();
+            res += (i.second->rebuild_and_get_stats().*f).rate();
         }
         return res;
     };
@@ -251,8 +255,11 @@ static future<json::json_return_type> sum_sstable(http_context& ctx, bool total)
     });
 }
 
-future<json::json_return_type> map_reduce_cf_time_histogram(http_context& ctx, const sstring& name, std::function<utils::time_estimated_histogram(const replica::column_family&)> f) {
-    return map_reduce_cf_raw(ctx, name, utils::time_estimated_histogram(), f, utils::time_estimated_histogram_merge).then([](const utils::time_estimated_histogram& res) {
+future<json::json_return_type> map_reduce_cf_time_histogram(http_context& ctx, const sstring& name, std::function<utils::time_estimated_histogram(const replica::column_family_stats&)> f) {
+    auto reduce = [f = std::move(f)] (const replica::table& cf) {
+        return f(cf.rebuild_and_get_stats());
+    };
+    return map_reduce_cf_raw(ctx, name, utils::time_estimated_histogram(), reduce, utils::time_estimated_histogram_merge).then([](const utils::time_estimated_histogram& res) {
         return make_ready_future<json::json_return_type>(time_to_json_histogram(res));
     });
 }
@@ -824,26 +831,26 @@ void set_column_family(http_context& ctx, routes& r, sharded<db::system_keyspace
     });
 
     cf::get_cas_prepare.set(r, [&ctx] (std::unique_ptr<request> req) {
-        return map_reduce_cf_time_histogram(ctx, req->param["name"], [](const replica::column_family& cf) {
-            return cf.get_stats().cas_prepare.histogram();
+        return map_reduce_cf_time_histogram(ctx, req->param["name"], [](const replica::column_family_stats& stats) {
+            return stats.cas_prepare.histogram();
         });
     });
 
     cf::get_cas_propose.set(r, [&ctx] (std::unique_ptr<request> req) {
-        return map_reduce_cf_time_histogram(ctx, req->param["name"], [](const replica::column_family& cf) {
-            return cf.get_stats().cas_accept.histogram();
+        return map_reduce_cf_time_histogram(ctx, req->param["name"], [](const replica::column_family_stats& stats) {
+            return stats.cas_accept.histogram();
         });
     });
 
     cf::get_cas_commit.set(r, [&ctx] (std::unique_ptr<request> req) {
-        return map_reduce_cf_time_histogram(ctx, req->param["name"], [](const replica::column_family& cf) {
-            return cf.get_stats().cas_learn.histogram();
+        return map_reduce_cf_time_histogram(ctx, req->param["name"], [](const replica::column_family_stats& stats) {
+            return stats.cas_learn.histogram();
         });
     });
 
     cf::get_sstables_per_read_histogram.set(r, [&ctx] (std::unique_ptr<request> req) {
         return map_reduce_cf(ctx, req->param["name"], utils::estimated_histogram(0), [](replica::column_family& cf) {
-            return cf.get_stats().estimated_sstable_per_read;
+            return cf.rebuild_and_get_stats().estimated_sstable_per_read;
         },
         utils::estimated_histogram_merge, utils_json::estimated_histogram());
     });
@@ -942,14 +949,14 @@ void set_column_family(http_context& ctx, routes& r, sharded<db::system_keyspace
     });
 
     cf::get_read_latency_estimated_histogram.set(r, [&ctx](std::unique_ptr<request> req) {
-        return map_reduce_cf_time_histogram(ctx, req->param["name"], [](const replica::column_family& cf) {
-            return cf.get_stats().reads.histogram();
+        return map_reduce_cf_time_histogram(ctx, req->param["name"], [](const replica::column_family_stats& stats) {
+            return stats.reads.histogram();
         });
     });
 
     cf::get_write_latency_estimated_histogram.set(r, [&ctx](std::unique_ptr<request> req) {
-        return map_reduce_cf_time_histogram(ctx, req->param["name"], [](const replica::column_family& cf) {
-            return cf.get_stats().writes.histogram();
+        return map_reduce_cf_time_histogram(ctx, req->param["name"], [](const replica::column_family_stats& stats) {
+            return stats.writes.histogram();
         });
     });
 
