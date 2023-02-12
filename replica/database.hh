@@ -925,7 +925,11 @@ public:
         return _stats;
     }
 
-    table_stats& get_stats() const {
+    table_stats& get_stats() {
+        return _stats;
+    }
+
+    const table_stats& get_stats() const {
         return _stats;
     }
 
