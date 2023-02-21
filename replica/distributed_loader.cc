@@ -263,6 +263,7 @@ future<> reshard(sstables::sstable_directory& dir, sstables::sstable_directory::
             desc.options = sstables::compaction_type_options::make_reshard();
             desc.creator = creator;
             desc.owned_ranges = owned_ranges_ptr;
+            desc.requires_cleanup = true;
 
             auto result = co_await sstables::compact_sstables(std::move(desc), info, t);
             // input sstables are moved, to guarantee their resources are released once we're done

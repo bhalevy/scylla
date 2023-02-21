@@ -508,7 +508,7 @@ protected:
         , _selector(_sstable_set ? _sstable_set->make_incremental_selector() : std::optional<sstable_set::incremental_selector>{})
         , _compacting_for_max_purgeable_func(std::unordered_set<shared_sstable>(_sstables.begin(), _sstables.end()))
         , _owned_ranges(std::move(descriptor.owned_ranges))
-        , _owned_ranges_checker(_owned_ranges ? std::optional<dht::incremental_owned_ranges_checker>(*_owned_ranges) : std::nullopt)
+        , _owned_ranges_checker(_owned_ranges && descriptor.requires_cleanup ? std::optional<dht::incremental_owned_ranges_checker>(*_owned_ranges) : std::nullopt)
     {
         for (auto& sst : _sstables) {
             _stats_collector.update(sst->get_encoding_stats_for_compaction());
@@ -1899,12 +1899,14 @@ uint64_t compaction_descriptor::sstables_size() const {
 }
 
 void compaction_descriptor::retrieve_owned_ranges_if_required(::compaction::compaction_state& cs) {
+    requires_cleanup = false;
     for (const auto& sst : sstables) {
         if (cs.sstables_requiring_cleanup.contains(sst)) {
             if (!cs.owned_ranges_ptr) {
                 on_internal_error_noexcept(clogger, format("SSTable {} requires cleanup, but table state has null owned ranges", sst->get_filename()));
             }
             owned_ranges = cs.owned_ranges_ptr;
+            requires_cleanup = true;
             break;
         }
     }
