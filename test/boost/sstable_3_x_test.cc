@@ -56,7 +56,7 @@ public:
         : _env(env)
         , _sst(_env.make_sstable(std::move(schema),
                             path,
-                            generation,
+                            sstables::generation_type(generation),
                             version,
                             sstable_format_types::big,
                             1))
@@ -3005,11 +3005,11 @@ SEASTAR_TEST_CASE(test_uncompressed_collections_read) {
   });
 }
 
-static sstables::shared_sstable open_sstable(test_env& env, schema_ptr schema, sstring dir, sstables::generation_type::int_t generation) {
+static sstables::shared_sstable open_sstable(test_env& env, schema_ptr schema, sstring dir, sstables::generation_type generation) {
     return env.reusable_sst(std::move(schema), dir, generation, sstables::sstable::version_types::mc).get0();
 }
 
-static std::vector<sstables::shared_sstable> open_sstables(test_env& env, schema_ptr s, sstring dir, std::vector<sstables::generation_type::int_t> generations) {
+static std::vector<sstables::shared_sstable> open_sstables(test_env& env, schema_ptr s, sstring dir, std::vector<sstables::generation_type> generations) {
     std::vector<sstables::shared_sstable> result;
     for(auto generation: generations) {
         result.push_back(open_sstable(env, s, dir, generation));
@@ -3018,7 +3018,8 @@ static std::vector<sstables::shared_sstable> open_sstables(test_env& env, schema
 }
 
 static flat_mutation_reader_v2 compacted_sstable_reader(test_env& env, schema_ptr s,
-                     sstring table_name, std::vector<sstables::generation_type::int_t> generations) {
+                     sstring table_name, std::vector<sstables::generation_type::int_t> gen_values) {
+    auto generations = generations_from_values(gen_values);
     auto cm = make_lw_shared<compaction_manager_for_testing>(false);
     auto cl_stats = make_lw_shared<cell_locker_stats>();
     auto tracker = make_lw_shared<cache_tracker>();
@@ -3027,7 +3028,7 @@ static flat_mutation_reader_v2 compacted_sstable_reader(test_env& env, schema_pt
     lw_shared_ptr<replica::memtable> mt = make_lw_shared<replica::memtable>(s);
 
     auto sstables = open_sstables(env, s, format("test/resource/sstables/3.x/uncompressed/{}", table_name), generations);
-    auto new_generation = generations.back() + 1;
+    auto new_generation = sstables::new_generation(generations.back());
 
     auto desc = sstables::compaction_descriptor(std::move(sstables), default_priority_class());
     desc.creator = [s, &env, new_generation] (shard_id dummy) {
@@ -5117,11 +5118,12 @@ SEASTAR_TEST_CASE(test_sstable_reader_on_unknown_column) {
   for (auto version : test_sstable_versions) {
     auto mt = make_lw_shared<replica::memtable>(write_schema);
     mt->apply(partition);
+    sstables::generation_factory gen_factory;
     for (auto index_block_size : {1, 128, 64*1024}) {
         auto _ = env.tempdir().make_sweeper();
         sstable_writer_config cfg = env.manager().configure_writer();
         cfg.promoted_index_block_size = index_block_size;
-        auto sst = make_sstable_easy(env, mt, cfg, 1, version);
+        auto sst = make_sstable_easy(env, mt, cfg, gen_factory(), version);
 
         BOOST_REQUIRE_EXCEPTION(
             assert_that(sst->make_reader(read_schema, env.make_reader_permit(), query::full_partition_range, read_schema->full_slice()))

@@ -89,7 +89,7 @@ shared_sstable make_sstable(sstables::test_env& env, schema_ptr s, sstring dir, 
         mt->apply(m);
     }
 
-    auto sst = env.make_sstable(s, dir_path.string(), 1, version, sstable_format_types::big, default_sstable_buffer_size, query_time);
+    auto sst = env.make_sstable(s, dir_path.string(), env.new_generation(), version, sstable_format_types::big, default_sstable_buffer_size, query_time);
     auto mr = mt->make_flat_reader(s, env.make_reader_permit());
     sst->write_components(std::move(mr), mutations.size(), s, cfg, mt->get_encoding_stats()).get();
     sst->load().get();
@@ -97,18 +97,18 @@ shared_sstable make_sstable(sstables::test_env& env, schema_ptr s, sstring dir, 
 }
 
 shared_sstable make_sstable_easy(test_env& env, flat_mutation_reader_v2 rd, sstable_writer_config cfg,
-        sstables::generation_type::int_t gen_value, const sstables::sstable::version_types version, int expected_partition) {
+        sstables::generation_type gen, const sstables::sstable::version_types version, int expected_partition) {
     auto s = rd.schema();
-    auto sst = env.make_sstable(s, gen_value, version, sstable_format_types::big);
+    auto sst = env.make_sstable(s, gen, version, sstable_format_types::big);
     sst->write_components(std::move(rd), expected_partition, s, cfg, encoding_stats{}).get();
     sst->load().get();
     return sst;
 }
 
 shared_sstable make_sstable_easy(test_env& env, lw_shared_ptr<replica::memtable> mt, sstable_writer_config cfg,
-        sstables::generation_type::int_t gen_value, const sstable::version_types v, int estimated_partitions, gc_clock::time_point query_time) {
+        sstables::generation_type gen, const sstable::version_types v, int estimated_partitions, gc_clock::time_point query_time) {
     schema_ptr s = mt->schema();
-    auto sst = env.make_sstable(s, gen_value, v, sstable_format_types::big, default_sstable_buffer_size, query_time);
+    auto sst = env.make_sstable(s, gen, v, sstable_format_types::big, default_sstable_buffer_size, query_time);
     auto mr = mt->make_flat_reader(s, env.make_reader_permit());
     sst->write_components(std::move(mr), estimated_partitions, s, cfg, mt->get_encoding_stats()).get();
     sst->load().get();
