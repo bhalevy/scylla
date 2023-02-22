@@ -37,7 +37,7 @@ class version_type final {
 
 class versioned_value {
     sstring value();
-    int version();
+    gms::version_type version();
 };
 
 class heart_beat_state {
