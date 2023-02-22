@@ -44,9 +44,34 @@ public:
         return ret;
     }
 
+    tagged_generation_type& operator+=(value_type n) noexcept {
+        _value += n;
+        return *this;
+    }
+
+    tagged_generation_type& operator-=(value_type n) noexcept {
+        _value -= n;
+        return *this;
+    }
+
     explicit operator value_type() const noexcept { return _value; }
     constexpr value_type value() const noexcept { return _value; }
 };
+
+template <typename Tag, typename ValueType>
+tagged_generation_type<Tag, ValueType> operator+(const tagged_generation_type<Tag, ValueType>& x, ValueType v) noexcept {
+    return tagged_generation_type<Tag, ValueType>(x.value() + v);
+}
+
+template <typename Tag, typename ValueType>
+tagged_generation_type<Tag, ValueType> operator-(const tagged_generation_type<Tag, ValueType>& x, ValueType v) noexcept {
+    return tagged_generation_type<Tag, ValueType>(x.value() - v);
+}
+
+template <typename Tag, typename ValueType>
+ValueType operator-(const tagged_generation_type<Tag, ValueType>& x, const tagged_generation_type<Tag, ValueType>& y) noexcept {
+    return x.value() - y.value();
+}
 
 using generation_type = tagged_generation_type<struct generation_type_tag, int>;
 
