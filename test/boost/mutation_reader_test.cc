@@ -17,6 +17,7 @@
 #include <seastar/core/coroutine.hh>
 #include <seastar/util/closeable.hh>
 
+#include "sstables/generation_type.hh"
 #include "test/lib/scylla_test_case.hh"
 #include <seastar/testing/thread_test_case.hh>
 #include "test/lib/mutation_assertions.hh"
@@ -974,11 +975,10 @@ SEASTAR_TEST_CASE(reader_selector_fast_forwarding_test) {
 }
 
 static
-sstables::shared_sstable create_sstable(sstables::test_env& env, schema_ptr s, std::vector<mutation> mutations) {
+sstables::shared_sstable create_sstable(sstables::test_env& env, schema_ptr s, sstables::generation_type gen, std::vector<mutation> mutations) {
     static thread_local auto tmp = tmpdir();
-    static sstables::generation_type::int_t gen = 0;
     return make_sstable_containing([&] {
-        return env.make_sstable(s, tmp.path().string(), gen++);
+        return env.make_sstable(s, tmp.path().string(), gen);
     }, mutations);
 }
 
@@ -999,6 +999,7 @@ SEASTAR_TEST_CASE(test_fast_forwarding_combined_reader_is_consistent_with_slicin
         std::vector<mutation> combined;
         std::list<dht::partition_range> reader_ranges;
         std::vector<flat_mutation_reader_v2> readers;
+        sstables::generation_factory gen_factory;
         for (int i = 0; i < n_readers; ++i) {
             std::vector<mutation> muts;
             for (auto&& key : keys) {
@@ -1013,7 +1014,7 @@ SEASTAR_TEST_CASE(test_fast_forwarding_combined_reader_is_consistent_with_slicin
                     combined[j++].apply(m);
                 }
             }
-            mutation_source ds = create_sstable(env, s, muts)->as_mutation_source();
+            mutation_source ds = create_sstable(env, s, gen_factory(), muts)->as_mutation_source();
             reader_ranges.push_back(dht::partition_range::make({keys[0]}, {keys[0]}));
             readers.push_back(ds.make_reader_v2(s,
                 permit,
@@ -1082,9 +1083,10 @@ SEASTAR_TEST_CASE(test_combined_reader_slicing_with_overlapping_range_tombstones
         ss.add_row(m2, ss.make_ckey(4), "v2"); // position after rt2.position() but before rt2.end_position().
 
         std::vector<flat_mutation_reader_v2> readers;
+        sstables::generation_factory gen_factory;
 
-        mutation_source ds1 = create_sstable(env, s, {m1})->as_mutation_source();
-        mutation_source ds2 = create_sstable(env, s, {m2})->as_mutation_source();
+        mutation_source ds1 = create_sstable(env, s, gen_factory(), {m1})->as_mutation_source();
+        mutation_source ds2 = create_sstable(env, s, gen_factory(), {m2})->as_mutation_source();
 
         // upper bound ends before the row in m2, so that the raw is fetched after next fast forward.
         auto range = ss.make_ckey_range(0, 3);

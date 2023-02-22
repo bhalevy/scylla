@@ -136,8 +136,8 @@ public:
         return sstables::binary_search(p, entries, sk);
     }
 
-    void change_generation_number(sstables::generation_type::int_t generation) {
-        _sst->_generation = generation_from_value(generation);
+    void change_generation_number(sstables::generation_type generation) {
+        _sst->_generation = generation;
     }
 
     void change_dir(sstring dir) {
@@ -365,20 +365,20 @@ future<compaction_result> compact_sstables(compaction_manager& cm, sstables::com
         can_purge_tombstones can_purge = can_purge_tombstones::yes);
 
 shared_sstable make_sstable_easy(test_env& env, const fs::path& path, flat_mutation_reader_v2 rd, sstable_writer_config cfg,
-        sstables::generation_type::int_t generation = 1, const sstables::sstable::version_types version = sstables::get_highest_sstable_version(), int expected_partition = 1);
+        sstables::generation_type generation = sstables::new_generation(), const sstables::sstable::version_types version = sstables::get_highest_sstable_version(), int expected_partition = 1);
 inline shared_sstable make_sstable_easy(test_env& env, flat_mutation_reader_v2 rd, sstable_writer_config cfg,
-        sstables::generation_type::int_t gen_value = 1, 
+        sstables::generation_type generation = sstables::new_generation(), 
         const sstables::sstable::version_types v = sstables::get_highest_sstable_version(),
         int expected_partition = 1) {
-    return make_sstable_easy(env, env.tempdir().path(), std::move(rd), std::move(cfg), gen_value, v, expected_partition);
+    return make_sstable_easy(env, env.tempdir().path(), std::move(rd), std::move(cfg), generation, v, expected_partition);
 }
 
 shared_sstable make_sstable_easy(test_env& env, const fs::path& path, lw_shared_ptr<replica::memtable> mt, sstable_writer_config cfg,
-        sstables::generation_type::int_t gen = 1, const sstable::version_types v = sstables::get_highest_sstable_version(), int estimated_partitions = 1, gc_clock::time_point = gc_clock::now());
+        sstables::generation_type generation = sstables::new_generation(), const sstable::version_types v = sstables::get_highest_sstable_version(), int estimated_partitions = 1, gc_clock::time_point = gc_clock::now());
 inline shared_sstable make_sstable_easy(test_env& env, lw_shared_ptr<replica::memtable> mt, sstable_writer_config cfg,
-        sstables::generation_type::int_t gen_value = 1,
+        sstables::generation_type generation = sstables::new_generation(),
         const sstable::version_types v = sstables::get_highest_sstable_version(),
         int estimated_partitions = 1,
         gc_clock::time_point query_time = gc_clock::now()) {
-    return make_sstable_easy(env, env.tempdir().path(), std::move(mt), std::move(cfg), gen_value, v, estimated_partitions, query_time);
+    return make_sstable_easy(env, env.tempdir().path(), std::move(mt), std::move(cfg), generation, v, estimated_partitions, query_time);
 }
