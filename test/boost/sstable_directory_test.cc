@@ -7,8 +7,10 @@
  */
 
 
+#include "seastar/core/smp.hh"
 #include "sstables/generation_type.hh"
 #include "test/lib/scylla_test_case.hh"
+#include <algorithm>
 #include <seastar/core/sstring.hh>
 #include "sstables/shared_sstable.hh"
 #include "sstables/sstable_directory.hh"
@@ -59,6 +61,22 @@ schema_ptr test_table_schema() {
 
 using namespace sstables;
 
+class generation_for_sharded_test {
+    std::optional<sstables::generation_type> _gen;
+    shard_id _shard = this_shard_id();
+public:
+    generation_for_sharded_test(std::optional<sstables::generation_type> gen = std::nullopt) noexcept : _gen(std::move(gen)) {};
+
+    // Must be called from a seastar thread.
+    sstables::generation_type regenerate() noexcept {
+        return smp::submit_to(_shard, [&] {
+            _gen = sstables::new_generation(_gen);
+            return *_gen;
+        }).get();
+    }
+};
+
+// Must be called from a seastar thread.
 sstables::shared_sstable
 make_sstable_for_this_shard(std::function<sstables::shared_sstable()> sst_factory) {
     auto s = test_table_schema();
@@ -73,7 +91,7 @@ make_sstable_for_this_shard(std::function<sstables::shared_sstable()> sst_factor
 /// Arguments passed to the function are passed to table::make_sstable
 template <typename... Args>
 sstables::shared_sstable
-make_sstable_for_all_shards(replica::database& db, replica::table& table, fs::path sstdir, sstables::generation_type::int_t generation = 1) {
+make_sstable_for_all_shards(replica::database& db, replica::table& table, fs::path sstdir, sstables::generation_type generation = sstables::new_generation()) {
     // Unlike the previous helper, we'll assume we're in a thread here. It's less flexible
     // but the users are usually in a thread, and rewrite_toc_without_scylla_component requires
     // a thread. We could fix that, but deferring that for now.
@@ -85,7 +103,7 @@ make_sstable_for_all_shards(replica::database& db, replica::table& table, fs::pa
         m.set_clustered_cell(clustering_key::make_empty(), bytes("c"), data_value(int32_t(0)), api::timestamp_type(0));
         mt->apply(std::move(m));
     }
-    auto sst = table.get_sstables_manager().make_sstable(s, sstdir.native(), generation_from_value(generation++));
+    auto sst = table.get_sstables_manager().make_sstable(s, sstdir.native(), generation);
     write_memtable_to_sstable(*mt, sst, table.get_sstables_manager().configure_writer("test")).get();
     mt->clear_gently().get();
     // We can't write an SSTable with bad sharding, so pretend
@@ -95,7 +113,7 @@ make_sstable_for_all_shards(replica::database& db, replica::table& table, fs::pa
     return sst;
 }
 
-sstables::shared_sstable new_sstable(sstables::test_env& env, fs::path dir, sstables::generation_type::int_t gen) {
+sstables::shared_sstable new_sstable(sstables::test_env& env, fs::path dir, sstables::generation_type gen) {
     // Use sstable_version_types::md since local_host_id isn't set
     // so we fail `validate_originating_host_id`
     testlog.debug("new_sstable: dir={} gen={}", dir, gen);
@@ -109,7 +127,7 @@ sstables::shared_sstable new_env_sstable(sstables::test_env& env) {
     return env.make_sstable(test_table_schema(), sstables::sstable_version_types::md);
 }
 
-sstables::shared_sstable new_env_sstable_with_gen(sstables::test_env& env, sstables::generation_type::int_t gen) {
+sstables::shared_sstable new_env_sstable_with_gen(sstables::test_env& env, sstables::generation_type gen) {
     // Use sstable_version_types::md since local_host_id isn't set
     // so we fail `validate_originating_host_id`
     testlog.debug("new_env_sstable_with_gen: gen={} dir={}", gen, env.tempdir().path());
@@ -306,15 +324,29 @@ SEASTAR_THREAD_TEST_CASE(sstable_directory_test_temporary_statistics) {
 // Test that we see the right generation during the scan. Temporary files are skipped
 SEASTAR_THREAD_TEST_CASE(sstable_directory_test_generation_sanity) {
     sstables::test_env::do_with_sharded_async([] (sharded<test_env>& env) {
-        make_sstable_for_this_shard(std::bind(new_env_sstable_with_gen, std::ref(env.local()), 3333));
-        auto sst = make_sstable_for_this_shard(std::bind(new_env_sstable_with_gen, std::ref(env.local()), 6666));
+        sstables::generation_factory gen_factory;
+        auto gen1 = gen_factory();
+        auto gen2 = gen_factory();
+        make_sstable_for_this_shard(std::bind(new_env_sstable_with_gen, std::ref(env.local()), gen1));
+        auto sst = make_sstable_for_this_shard(std::bind(new_env_sstable_with_gen, std::ref(env.local()), gen2));
         rename_file(test::filename(*sst, sstables::component_type::TOC).native(), test::filename(*sst, sstables::component_type::TemporaryTOC).native()).get();
 
-        with_sstable_directory(env, [] (sharded<sstables::sstable_directory>& sstdir) {
+        std::vector<bool> gen1_seen;
+        gen1_seen.resize(smp::count);
+        with_sstable_directory(env, [&] (sharded<sstables::sstable_directory>& sstdir) {
             distributed_loader_for_tests::process_sstable_dir(sstdir, { .throw_on_missing_toc = true }).get();
-            auto max_generation_seen = highest_generation_seen(sstdir).get0();
-            BOOST_REQUIRE_EQUAL(max_generation_seen->value(), 3333);
+            sstdir.invoke_on_all([&] (sstables::sstable_directory& sstdir) {
+                return seastar::async([&] {
+                    sstdir.do_for_each_sstable([&] (const shared_sstable& sst) {
+                        BOOST_REQUIRE(sst->generation() == gen1);
+                        BOOST_REQUIRE(!gen1_seen[this_shard_id()]);
+                        gen1_seen[this_shard_id()] = true;
+                        return make_ready_future<>();
+                    }).get();
+                });
+            }).get();
         });
+        BOOST_REQUIRE_EQUAL(std::count(gen1_seen.begin(), gen1_seen.end(), true), 1);
     }).get();
 }
 
@@ -346,7 +378,7 @@ SEASTAR_THREAD_TEST_CASE(sstable_directory_unshared_sstables_sanity_matched_gene
                 // this is why it is annoying for the internal functions in the test infrastructure to
                 // assume threaded execution
                 return seastar::async([dir, i, &env] {
-                    make_sstable_for_this_shard(std::bind(new_sstable, std::ref(env), dir, i));
+                    make_sstable_for_this_shard(std::bind(new_sstable, std::ref(env), dir, sstables::generation_type(i)));
                 });
             }).get();
         }
@@ -369,7 +401,7 @@ SEASTAR_THREAD_TEST_CASE(sstable_directory_unshared_sstables_sanity_unmatched_ge
                 // this is why it is annoying for the internal functions in the test infrastructure to
                 // assume threaded execution
                 return seastar::async([dir, i, &env] {
-                    make_sstable_for_this_shard(std::bind(new_sstable, std::ref(env), dir, i + 1));
+                    make_sstable_for_this_shard(std::bind(new_sstable, std::ref(env), dir, sstables::generation_type(i + 1)));
                 });
             }).get();
         }
@@ -476,23 +508,21 @@ SEASTAR_TEST_CASE(sstable_directory_shared_sstables_reshard_correctly) {
         }).get();
 
         unsigned num_sstables = 10 * smp::count;
-        auto generation = 0;
+        sstables::generation_factory gen_factory;
         for (unsigned nr = 0; nr < num_sstables; ++nr) {
-            make_sstable_for_all_shards(e.db().local(), cf, upload_path.native(), generation++);
+            make_sstable_for_all_shards(e.db().local(), cf, upload_path.native(), gen_factory());
         }
 
-      with_sstable_directory(upload_path, e, [&e, upload_path] (sharded<sstables::sstable_directory>& sstdir) {
+      with_sstable_directory(upload_path, e, [&] (sharded<sstables::sstable_directory>& sstdir) {
         distributed_loader_for_tests::process_sstable_dir(sstdir, { .throw_on_missing_toc = true }).get();
         verify_that_all_sstables_are_local(sstdir, 0).get();
 
-        auto max_generation_seen = highest_generation_seen(sstdir).get0();
-        std::atomic<sstables::generation_type::int_t> generation_for_test = {};
-        generation_for_test.store(max_generation_seen->value() + 1, std::memory_order_relaxed);
+        auto generation_for_test = generation_for_sharded_test(*highest_generation_seen(sstdir).get0());
 
         distributed_loader_for_tests::reshard(sstdir, e.db(), "ks", "cf", [&e, upload_path, &generation_for_test] (shard_id id) {
-            auto generation = generation_for_test.fetch_add(1, std::memory_order_relaxed);
+            auto generation = generation_for_test.regenerate();
             auto& cf = e.local_db().find_column_family("ks", "cf");
-            return cf.get_sstables_manager().make_sstable(cf.schema(), upload_path.native(), generation_from_value(generation));
+            return cf.get_sstables_manager().make_sstable(cf.schema(), upload_path.native(), generation);
         }).get();
         verify_that_all_sstables_are_local(sstdir, smp::count * smp::count).get();
       });
@@ -516,23 +546,21 @@ SEASTAR_TEST_CASE(sstable_directory_shared_sstables_reshard_distributes_well_eve
         }).get();
 
         unsigned num_sstables = 10 * smp::count;
-        auto generation = 0;
+        sstables::generation_factory gen_factory;
         for (unsigned nr = 0; nr < num_sstables; ++nr) {
-            make_sstable_for_all_shards(e.db().local(), cf, upload_path.native(), generation++ * smp::count);
+            make_sstable_for_all_shards(e.db().local(), cf, upload_path.native(), generation_from_value(gen_factory().value() * smp::count));
         }
 
       with_sstable_directory(upload_path, e, [&e, upload_path] (sharded<sstables::sstable_directory>& sstdir) {
         distributed_loader_for_tests::process_sstable_dir(sstdir, { .throw_on_missing_toc = true }).get();
         verify_that_all_sstables_are_local(sstdir, 0).get();
 
-        auto max_generation_seen = highest_generation_seen(sstdir).get0();
-        std::atomic<sstables::generation_type::int_t> generation_for_test = {};
-        generation_for_test.store(max_generation_seen->value() + 1, std::memory_order_relaxed);
+        auto generation_for_test = generation_for_sharded_test(*highest_generation_seen(sstdir).get0());
 
         distributed_loader_for_tests::reshard(sstdir, e.db(), "ks", "cf", [&e, upload_path, &generation_for_test] (shard_id id) {
-            auto generation = generation_for_test.fetch_add(1, std::memory_order_relaxed);
+            auto generation = generation_for_test.regenerate();
             auto& cf = e.local_db().find_column_family("ks", "cf");
-            return cf.get_sstables_manager().make_sstable(cf.schema(), upload_path.native(), generation_from_value(generation));
+            return cf.get_sstables_manager().make_sstable(cf.schema(), upload_path.native(), generation);
         }).get();
         verify_that_all_sstables_are_local(sstdir, smp::count * smp::count).get();
       });
@@ -556,23 +584,21 @@ SEASTAR_TEST_CASE(sstable_directory_shared_sstables_reshard_respect_max_threshol
         }).get();
 
         unsigned num_sstables = (cf.schema()->max_compaction_threshold() + 1) * smp::count;
-        auto generation = 0;
+        sstables::generation_factory gen_factory;
         for (unsigned nr = 0; nr < num_sstables; ++nr) {
-            make_sstable_for_all_shards(e.db().local(), cf, upload_path.native(), generation++);
+            make_sstable_for_all_shards(e.db().local(), cf, upload_path.native(), gen_factory());
         }
 
       with_sstable_directory(upload_path, e, [&, upload_path] (sharded<sstables::sstable_directory>& sstdir) {
         distributed_loader_for_tests::process_sstable_dir(sstdir, { .throw_on_missing_toc = true }).get();
         verify_that_all_sstables_are_local(sstdir, 0).get();
 
-        auto max_generation_seen = highest_generation_seen(sstdir).get0();
-        std::atomic<sstables::generation_type::int_t> generation_for_test = {};
-        generation_for_test.store(max_generation_seen->value() + 1, std::memory_order_relaxed);
+        auto generation_for_test = generation_for_sharded_test(*highest_generation_seen(sstdir).get0());
 
         distributed_loader_for_tests::reshard(sstdir, e.db(), "ks", "cf", [&e, upload_path, &generation_for_test] (shard_id id) {
-            auto generation = generation_for_test.fetch_add(1, std::memory_order_relaxed);
+            auto generation = generation_for_test.regenerate();
             auto& cf = e.local_db().find_column_family("ks", "cf");
-            return cf.get_sstables_manager().make_sstable(cf.schema(), upload_path.native(), generation_from_value(generation));
+            return cf.get_sstables_manager().make_sstable(cf.schema(), upload_path.native(), generation);
         }).get();
         verify_that_all_sstables_are_local(sstdir, 2 * smp::count * smp::count).get();
       });
