@@ -399,11 +399,6 @@ sstables::shared_sstable make_sstable(replica::table& table, fs::path dir, sstab
     return sstm.make_sstable(table.schema(), dir.native(), gen, sstm.get_highest_supported_format(), sstables::sstable_format_types::big, gc_clock::now(), &error_handler_gen_for_upload_dir);
 }
 
-[[deprecated("Use generation_type parameter")]]
-sstables::shared_sstable make_sstable(replica::table& table, fs::path dir, sstables::generation_type::int_t generation_value) {
-    return make_sstable(table, std::move(dir), sstables::generation_from_value(generation_value));
-}
-
 future<>
 distributed_loader::process_upload_dir(distributed<replica::database>& db, distributed<db::system_distributed_keyspace>& sys_dist_ks,
         distributed<db::view::view_update_generator>& view_update_generator, sstring ks, sstring cf) {
@@ -442,15 +437,18 @@ distributed_loader::process_upload_dir(distributed<replica::database>& db, distr
             shard_gen[s].store(shard_generation_base * smp::count + s, std::memory_order_relaxed);
         }
 
-        reshard(directory, db, ks, cf, [&global_table, upload, &shard_gen] (shard_id shard) mutable {
-            // we need generation calculated by instance of cf at requested shard
+        // we need generation calculated by instance of cf at requested shard
+        auto new_generation_for_shard = [&] (shard_id shard) {
             auto gen = shard_gen[shard].fetch_add(smp::count, std::memory_order_relaxed);
-            return make_sstable(*global_table, upload, gen);
+            return sstables::generation_type(gen);
+        };
+
+        reshard(directory, db, ks, cf, [&] (shard_id shard) mutable {
+            return make_sstable(*global_table, upload, new_generation_for_shard(shard));
         }, service::get_local_streaming_priority()).get();
 
-        reshape(directory, db, sstables::reshape_mode::strict, ks, cf, [global_table, upload, &shard_gen] (shard_id shard) {
-            auto gen = shard_gen[shard].fetch_add(smp::count, std::memory_order_relaxed);
-            return make_sstable(*global_table, upload, gen);
+        reshape(directory, db, sstables::reshape_mode::strict, ks, cf, [&] (shard_id shard) {
+            return make_sstable(*global_table, upload, new_generation_for_shard(shard));
         }, [] (const sstables::shared_sstable&) { return true; }, service::get_local_streaming_priority()).get();
 
         // Move to staging directory to avoid clashes with future uploads. Unique generation number ensures no collisions.

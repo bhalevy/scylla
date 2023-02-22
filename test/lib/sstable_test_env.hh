@@ -77,12 +77,6 @@ public:
         return _impl->mgr.make_sstable(std::move(schema), dir, generation, v, f, now, default_io_error_handler_gen(), buffer_size);
 
     }
-    [[deprecated("Use generation_type parameter")]]
-    shared_sstable make_sstable(schema_ptr schema, sstring dir, sstables::generation_type::int_t gen_value,
-            sstable::version_types v = sstables::get_highest_sstable_version(), sstable::format_types f = sstable::format_types::big,
-            size_t buffer_size = default_sstable_buffer_size, gc_clock::time_point now = gc_clock::now()) {
-        return make_sstable(std::move(schema), std::move(dir), generation_from_value(gen_value), v, f, buffer_size, now);
-    }
 
     shared_sstable make_sstable(schema_ptr schema, sstables::generation_type gen, sstable::version_types v, size_t buffer_size,
             gc_clock::time_point now = gc_clock::now()) {
@@ -91,10 +85,6 @@ public:
 
     shared_sstable make_sstable(schema_ptr schema, sstables::generation_type generation = sstables::new_generation(), sstable::version_types v = sstables::get_highest_sstable_version()) {
         return make_sstable(std::move(schema), tempdir().path().native(), generation, v);
-    }
-
-    shared_sstable make_sstable(schema_ptr schema, sstables::generation_type::int_t gen_value, sstable::version_types v = sstables::get_highest_sstable_version()) {
-        return make_sstable(std::move(schema), tempdir().path().native(), gen_value, v);
     }
 
     shared_sstable make_sstable(schema_ptr schema, sstable::version_types v) {
