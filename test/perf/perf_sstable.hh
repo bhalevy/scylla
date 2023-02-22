@@ -179,7 +179,7 @@ public:
     }
 
     future<> load_sstables(unsigned iterations) {
-        _sst.push_back(_env.make_sstable(s, this->dir(), 0));
+        _sst.push_back(_env.make_sstable(s, this->dir()));
         return _sst.back()->load();
     }
 
@@ -195,7 +195,7 @@ public:
             size_t partitions = _mt->partition_count();
 
             test_setup::create_empty_test_dir(dir()).get();
-            auto sst = _env.make_sstable(s, dir(), idx, sstables::get_highest_sstable_version(), sstable::format_types::big, _cfg.buffer_size);
+            auto sst = _env.make_sstable(s, dir(), sstables::generation_type(idx), sstables::get_highest_sstable_version(), sstable::format_types::big, _cfg.buffer_size);
 
             auto start = perf_sstable_test_env::now();
             write_memtable_to_sstable_for_test(*_mt, sst).get();
@@ -211,8 +211,8 @@ public:
     future<double> compaction(int idx) {
         return test_setup::create_empty_test_dir(dir()).then([this, idx] {
             return sstables::test_env::do_with_async_returning<double>([this, idx] (sstables::test_env& env) {
-                auto gen_factory = generation_factory(generation_type(idx));
-                auto sst_gen = sst_factory(_env, s, gen_factory, sstables::get_highest_sstable_version(), _cfg.buffer_size);
+                auto gen_factory = sstables::generation_factory(generation_type(idx));
+                auto sst_gen = sstables::sst_factory(_env, s, gen_factory, sstables::get_highest_sstable_version(), _cfg.buffer_size);
 
                 std::vector<shared_sstable> ssts;
                 for (auto i = 0u; i < _cfg.sstables; i++) {

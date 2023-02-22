@@ -55,16 +55,25 @@ class test_env {
         db::nop_large_data_handler nop_ld_handler;
         test_env_sstables_manager mgr;
         reader_concurrency_semaphore semaphore;
-        sstables::generation_type::int_t generation = 1;
+        std::optional<sstables::generation_type> generation;
 
         impl(test_env_config cfg);
         impl(impl&&) = delete;
         impl(const impl&) = delete;
+
+        sstables::generation_type new_generation() {
+            generation = sstables::new_generation(generation);
+            return *generation;
+        }
     };
     std::unique_ptr<impl> _impl;
 public:
 
     explicit test_env(test_env_config cfg = {}) : _impl(std::make_unique<impl>(std::move(cfg))) { }
+
+    sstables::generation_type new_generation() {
+        return _impl->new_generation();
+    }
 
     future<> stop() {
         return _impl->mgr.close().finally([this] {
@@ -78,33 +87,18 @@ public:
         return _impl->mgr.make_sstable(std::move(schema), dir, generation, v, f, now, default_io_error_handler_gen(), buffer_size);
     }
 
-    [[deprecated("use sstables::generation_type param")]]
-    shared_sstable make_sstable(schema_ptr schema, sstring dir, sstables::generation_type::int_t generation,
-            sstable::version_types v = sstables::get_highest_sstable_version(), sstable::format_types f = sstable::format_types::big,
-            size_t buffer_size = default_sstable_buffer_size, gc_clock::time_point now = gc_clock::now()) {
-        return make_sstable(std::move(schema), std::move(dir), generation_from_value(generation), v, f, buffer_size, now);
-    }
-
     shared_sstable make_sstable(schema_ptr schema, sstables::generation_type generation,
             sstable::version_types v = sstables::get_highest_sstable_version(), sstable::format_types f = sstable::format_types::big,
             size_t buffer_size = default_sstable_buffer_size, gc_clock::time_point now = gc_clock::now()) {
         return make_sstable(std::move(schema), _impl->dir.path().native(), generation, std::move(v), std::move(f), buffer_size, now);
     }
 
-    [[deprecated("use sstables::generation_type param")]]
-    shared_sstable make_sstable(schema_ptr schema, sstables::generation_type::int_t gen_value,
-            sstable::version_types v = sstables::get_highest_sstable_version(), sstable::format_types f = sstable::format_types::big,
-            size_t buffer_size = default_sstable_buffer_size, gc_clock::time_point now = gc_clock::now()) {
-        return make_sstable(std::move(schema), sstables::generation_type(gen_value), std::move(v), std::move(f), buffer_size, now);
+    shared_sstable make_sstable(schema_ptr schema, sstring dir, sstable::version_types v = sstables::get_highest_sstable_version()) {
+        return make_sstable(std::move(schema), std::move(dir), new_generation(), std::move(v));
     }
 
     shared_sstable make_sstable(schema_ptr schema, sstable::version_types v = sstables::get_highest_sstable_version()) {
-        return make_sstable(std::move(schema), _impl->generation++, std::move(v));
-    }
-
-    shared_sstable make_sstable(schema_ptr schema, sstables::generation_type::int_t gen_value, sstable::version_types v, size_t buffer_size,
-            gc_clock::time_point now = gc_clock::now()) {
-        return make_sstable(std::move(schema), gen_value, v, sstable::format_types::big, buffer_size, now);
+        return make_sstable(std::move(schema), _impl->dir.path().native(), std::move(v));
     }
 
     struct sst_not_found : public std::runtime_error {
