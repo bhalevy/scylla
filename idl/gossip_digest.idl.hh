@@ -27,6 +27,14 @@ enum class application_state:int {
         SUPPORTED_FEATURES
 };
 
+class generation_type final {
+    int32_t value();
+};
+
+class version_type final {
+    int32_t value();
+};
+
 class versioned_value {
     sstring value();
     int version();
