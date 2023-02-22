@@ -14,6 +14,7 @@
 #include "gms/gossip_digest_syn.hh"
 #include "gms/gossip_digest_ack.hh"
 #include "gms/gossip_digest_ack2.hh"
+#include "gms/version_generator.hh"
 #include "gms/versioned_value.hh"
 #include "gms/gossiper.hh"
 #include "gms/feature_service.hh"
@@ -442,6 +443,7 @@ future<> gossiper::handle_shutdown_msg(inet_address from, std::optional<int64_t>
 
     auto permit = co_await this->lock_endpoint(from);
     if (generation_number_opt) {
+        debug_validate_gossip_generation(*generation_number_opt);
         auto es = this->get_endpoint_state_for_endpoint_ptr(from);
         if (es) {
             auto local_generation = es->get_heart_beat_state().get_generation();
