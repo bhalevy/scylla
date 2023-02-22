@@ -401,9 +401,14 @@ distributed_loader::make_sstables_available(sstables::sstable_directory& dir, sh
     co_return new_sstables.size();
 }
 
-sstables::shared_sstable make_sstable(replica::table& table, fs::path dir, sstables::generation_type::int_t generation_value) {
+sstables::shared_sstable make_sstable(replica::table& table, fs::path dir, sstables::generation_type gen) {
     auto& sstm = table.get_sstables_manager();
-    return sstm.make_sstable(table.schema(), dir.native(), sstables::generation_from_value(generation_value), sstm.get_highest_supported_format(), sstables::sstable_format_types::big, gc_clock::now(), &error_handler_gen_for_upload_dir);
+    return sstm.make_sstable(table.schema(), dir.native(), gen, sstm.get_highest_supported_format(), sstables::sstable_format_types::big, gc_clock::now(), &error_handler_gen_for_upload_dir);
+}
+
+[[deprecated("Use generation_type parameter")]]
+sstables::shared_sstable make_sstable(replica::table& table, fs::path dir, sstables::generation_type::int_t generation_value) {
+    return make_sstable(table, std::move(dir), sstables::generation_from_value(generation_value));
 }
 
 future<>
