@@ -15,6 +15,7 @@
 #include <vector>
 #include "schema/schema_fwd.hh"
 #include "utils/UUID.hh"
+#include "utils/generation-number.hh"
 #include "gms/inet_address.hh"
 #include "query-result-set.hh"
 #include "db_clock.hh"
@@ -365,7 +366,7 @@ public:
 
     static future<std::unordered_map<gms::inet_address, sstring>> load_peer_features();
 
-    future<int> increment_and_get_generation();
+    future<utils::generation_type> increment_and_get_generation();
     bool bootstrap_needed() const;
     bool bootstrap_complete() const;
     bool bootstrap_in_progress() const;

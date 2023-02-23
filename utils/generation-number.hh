@@ -8,8 +8,12 @@
 
 #pragma once
 
+#include "utils/tagged_integral.hh"
+
 namespace utils {
 
-int get_generation_number();
+using generation_type = tagged_integral<struct generation_type_tag, int>;
+
+generation_type get_generation_number();
 
 }

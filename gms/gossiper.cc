@@ -568,7 +568,7 @@ future<> gossiper::do_apply_state_locally(gms::inet_address node, const endpoint
         int local_generation = local_state.get_heart_beat_state().get_generation();
         int remote_generation = remote_state.get_heart_beat_state().get_generation();
         logger.trace("{} local generation {}, remote generation {}", node, local_generation, remote_generation);
-        if (remote_generation > utils::get_generation_number() + MAX_GENERATION_DIFFERENCE) {
+        if (remote_generation > utils::get_generation_number().value() + MAX_GENERATION_DIFFERENCE) {
             // assume some peer has corrupted memory and is broadcasting an unbelievable generation about another peer (or itself)
             logger.warn("received an invalid gossip generation for peer {}; local generation = {}, received generation = {}",
                 node, local_generation, remote_generation);
@@ -1822,7 +1822,7 @@ void gossiper::examine_gossiper(utils::chunked_vector<gossip_digest>& g_digest_l
     }
 }
 
-future<> gossiper::start_gossiping(int generation_nbr, std::map<application_state, versioned_value> preload_local_states, gms::advertise_myself advertise) {
+future<> gossiper::start_gossiping(utils::generation_type generation_nbr, std::map<application_state, versioned_value> preload_local_states, gms::advertise_myself advertise) {
     co_await container().invoke_on_all([advertise] (gossiper& g) {
         if (!advertise) {
             g._advertise_myself = false;
@@ -1835,7 +1835,7 @@ future<> gossiper::start_gossiping(int generation_nbr, std::map<application_stat
         logger.warn("Use the generation number provided by user: generation = {}", generation_nbr);
     }
     endpoint_state& local_state = _endpoint_state_map[get_broadcast_address()];
-    local_state.set_heart_beat_state_and_update_timestamp(heart_beat_state(generation_nbr));
+    local_state.set_heart_beat_state_and_update_timestamp(heart_beat_state(generation_nbr.value()));
     local_state.mark_alive();
     for (auto& entry : preload_local_states) {
         local_state.add_application_state(entry.first, entry.second);
