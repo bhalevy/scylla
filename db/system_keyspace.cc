@@ -3020,10 +3020,10 @@ future<> system_keyspace::get_repair_history(::table_id table_id, repair_history
     });
 }
 
-future<int> system_keyspace::increment_and_get_generation() {
+future<utils::generation_type> system_keyspace::increment_and_get_generation() {
     auto req = format("SELECT gossip_generation FROM system.{} WHERE key='{}'", LOCAL, LOCAL);
     auto rs = co_await _qp.local().execute_internal(req, cql3::query_processor::cache_internal::yes);
-    int generation;
+    utils::generation_type generation;
     if (rs->empty() || !rs->one().has("gossip_generation")) {
         // seconds-since-epoch isn't a foolproof new generation
         // (where foolproof is "guaranteed to be larger than the last one seen at this ip address"),
@@ -3031,8 +3031,8 @@ future<int> system_keyspace::increment_and_get_generation() {
         generation = utils::get_generation_number();
     } else {
         // Other nodes will ignore gossip messages about a node that have a lower generation than previously seen.
-        int stored_generation = rs->one().template get_as<int>("gossip_generation") + 1;
-        int now = utils::get_generation_number();
+        utils::generation_type stored_generation(rs->one().template get_as<int>("gossip_generation") + 1);
+        utils::generation_type now = utils::get_generation_number();
         if (stored_generation >= now) {
             slogger.warn("Using stored Gossip Generation {} as it is greater than current system time {}."
                         "See CASSANDRA-3654 if you experience problems", stored_generation, now);
@@ -3042,7 +3042,7 @@ future<int> system_keyspace::increment_and_get_generation() {
         }
     }
     req = format("INSERT INTO system.{} (key, gossip_generation) VALUES ('{}', ?)", LOCAL, LOCAL);
-    co_await _qp.local().execute_internal(req, {generation}, cql3::query_processor::cache_internal::yes);
+    co_await _qp.local().execute_internal(req, {generation.value()}, cql3::query_processor::cache_internal::yes);
     co_await force_blocking_flush(LOCAL);
     co_return generation;
 }

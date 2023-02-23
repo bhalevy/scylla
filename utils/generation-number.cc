@@ -11,11 +11,11 @@
 
 namespace utils {
 
-int get_generation_number() {
+generation_type get_generation_number() noexcept {
     using namespace std::chrono;
     auto now = high_resolution_clock::now().time_since_epoch();
     int generation_number = duration_cast<seconds>(now).count();
-    return generation_number;
+    return generation_type(generation_number);
 }
 
 }
