@@ -3368,6 +3368,12 @@ future<> remove_table_directory_if_has_no_snapshots(fs::path table_dir) {
     }
 }
 
+std::string to_string(const shared_sstable& sst, bool include_origin) {
+    return include_origin ?
+        fmt::format("{}:level={:d}:origin={}", sst->get_filename(), sst->get_sstable_level(), sst->get_origin()) :
+        fmt::format("{}:level={:d}", sst->get_filename(), sst->get_sstable_level());
+}
+
 } // namespace sstables
 
 namespace seastar {
@@ -3383,3 +3389,11 @@ sstables::sstable*
 seastar::internal::lw_shared_ptr_accessors<sstables::sstable, void>::to_value(seastar::lw_shared_ptr_counter_base*);
 
 }
+
+namespace std {
+
+std::ostream& operator<<(std::ostream& os, const sstables::shared_sstable& sst) {
+    return os << sstables::to_string(sst);
+}
+
+} // namespace std

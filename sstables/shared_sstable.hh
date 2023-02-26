@@ -35,6 +35,12 @@ namespace sstables {
 using shared_sstable = seastar::lw_shared_ptr<sstable>;
 using sstable_list = std::unordered_set<shared_sstable>;
 
+std::string to_string(const shared_sstable& sst, bool include_origin = true);
+
 }
 
+namespace std {
 
+std::ostream& operator<<(std::ostream& os, const sstables::shared_sstable& sst);
+
+} // namespace std
