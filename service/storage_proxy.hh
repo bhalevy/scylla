@@ -448,6 +448,8 @@ private:
         inet_address_vector_replica_set& l2) const;
 
     void destroy_mutation_gently(mutation&& m) const;
+    frozen_mutation freeze_and_destroy_mutation(mutation&& m) const;
+    frozen_mutation_and_schema freeze_mutation_and_schema_and_destroy_mutation(mutation&& m) const;
 
 public:
     storage_proxy(distributed<replica::database>& db, gms::gossiper& gossiper, config cfg, db::view::node_update_backlog& max_view_update_backlog,
