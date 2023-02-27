@@ -2765,6 +2765,14 @@ storage_proxy::response_id_type storage_proxy::unique_response_handler::release(
     return r;
 }
 
+void storage_proxy::destroy_mutation_gently(mutation&& m) const {
+    // destroy the mutation in the background.
+    // the gate is closed on shutdown
+    (void)with_gate(_async_gate, [m = std::move(m)] () mutable {
+        return m.clear_gently();
+    });
+}
+
 future<>
 storage_proxy::mutate_locally(const mutation& m, tracing::trace_state_ptr tr_state, db::commitlog::force_sync sync, clock_type::time_point timeout, smp_service_group smp_grp, db::per_partition_rate_limit::info rate_limit_info) {
     auto shard = m.shard_of();
@@ -6275,6 +6283,9 @@ future<> storage_proxy::drain_on_shutdown() {
     return async([this] {
         cancel_write_handlers([] (const abstract_write_response_handler&) { return true; });
         _hints_resource_manager.stop().get();
+        if (!_async_gate.is_closed()) {
+            _async_gate.close().get();
+        }
     });
 }
 
