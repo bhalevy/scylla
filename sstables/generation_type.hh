@@ -49,6 +49,26 @@ inline generation_type new_generation(std::optional<generation_type> prev = std:
     }
 }
 
+class generation_factory {
+    std::optional<generation_type> _next;
+    std::optional<generation_type> _prev;
+public:
+    generation_factory(generation_type gen = new_generation()) noexcept : _next(gen) {}
+
+    generation_factory(const generation_factory&) = delete;
+    generation_factory(generation_factory&&) = delete;
+
+    generation_type prev() const noexcept {
+        return *_prev;
+    }
+
+    generation_type operator()() noexcept {
+        _prev = _next;
+        _next = new_generation(_next);
+        return *_prev;
+    }
+};
+
 } //namespace sstables
 
 namespace std {
