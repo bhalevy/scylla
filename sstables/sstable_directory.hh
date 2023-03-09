@@ -109,7 +109,7 @@ private:
     io_error_handler_gen _error_handler_gen;
     std::unique_ptr<components_lister> _lister;
 
-    generation_type _max_generation_seen = generation_from_value(0);
+    std::optional<generation_type> _max_generation_seen;
     sstables::sstable_version_types _max_version_seen = sstables::sstable_version_types::ka;
 
     // SSTables that are unshared and belong to this shard. They are already stored as an
@@ -154,7 +154,7 @@ public:
     future<> move_foreign_sstables(sharded<sstable_directory>& source_directory);
 
     // returns what is the highest generation seen in this directory.
-    generation_type highest_generation_seen() const;
+    std::optional<generation_type> highest_generation_seen() const;
 
     // returns what is the highest version seen in this directory.
     sstables::sstable_version_types highest_version_seen() const;
@@ -218,5 +218,7 @@ public:
     static future<> delete_atomically(std::vector<shared_sstable> ssts);
     static future<> replay_pending_delete_log(std::filesystem::path log_file);
 };
+
+future<std::optional<sstables::generation_type>> highest_generation_seen(sharded<sstables::sstable_directory>& directory);
 
 }
