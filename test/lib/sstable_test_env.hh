@@ -88,6 +88,11 @@ public:
         return make_sstable(std::move(schema), _impl->generation++, std::move(v));
     }
 
+    shared_sstable make_sstable(schema_ptr schema, sstables::generation_type::int_t gen_value, sstable::version_types v, size_t buffer_size,
+            gc_clock::time_point now = gc_clock::now()) {
+        return make_sstable(std::move(schema), gen_value, v, sstable::format_types::big, buffer_size, now);
+    }
+
     struct sst_not_found : public std::runtime_error {
         sst_not_found(const sstring& dir, sstables::generation_type::int_t generation)
             : std::runtime_error(format("no versions of sstable generation {} found in {}", generation, dir))
