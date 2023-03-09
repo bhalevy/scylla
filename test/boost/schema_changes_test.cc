@@ -42,7 +42,7 @@ SEASTAR_TEST_CASE(test_schema_changes) {
 
                 created_with_base_schema = make_sstable_easy(env, dir.path(), mt, env.manager().configure_writer(), gen, version, base_mutations.size());
 
-                created_with_changed_schema = env.make_sstable(changed, dir.path().string(), gen, version, sstables::sstable::format_types::big);
+                created_with_changed_schema = env.make_sstable(changed, dir.path().string(), gen, version);
                 created_with_changed_schema->load().get();
 
                 cache.emplace(std::tuple { version, base }, std::tuple { created_with_base_schema, gen });
@@ -50,7 +50,7 @@ SEASTAR_TEST_CASE(test_schema_changes) {
             } else {
                 created_with_base_schema = std::get<shared_sstable>(it->second);
 
-                created_with_changed_schema = env.make_sstable(changed, dir.path().string(), std::get<int>(it->second), version, sstables::sstable::format_types::big);
+                created_with_changed_schema = env.make_sstable(changed, dir.path().string(), std::get<int>(it->second), version);
                 created_with_changed_schema->load().get();
             }
 

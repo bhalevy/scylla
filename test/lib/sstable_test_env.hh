@@ -71,10 +71,23 @@ public:
         });
     }
 
-    shared_sstable make_sstable(schema_ptr schema, sstring dir, sstables::generation_type::int_t generation,
+    shared_sstable make_sstable(schema_ptr schema, sstring dir, sstables::generation_type::int_t generation = 1,
             sstable::version_types v = sstables::get_highest_sstable_version(), sstable::format_types f = sstable::format_types::big,
             size_t buffer_size = default_sstable_buffer_size, gc_clock::time_point now = gc_clock::now()) {
         return _impl->mgr.make_sstable(std::move(schema), dir, generation_from_value(generation), v, f, now, default_io_error_handler_gen(), buffer_size);
+    }
+
+    shared_sstable make_sstable(schema_ptr schema, sstables::generation_type::int_t gen_value, sstable::version_types v, size_t buffer_size,
+            gc_clock::time_point now = gc_clock::now()) {
+        return make_sstable(std::move(schema), tempdir().path().native(), gen_value, v, sstable::format_types::big, buffer_size, now);
+    }
+
+    shared_sstable make_sstable(schema_ptr schema, sstables::generation_type::int_t gen_value = 1, sstable::version_types v = sstables::get_highest_sstable_version()) {
+        return make_sstable(std::move(schema), tempdir().path().native(), gen_value, v);
+    }
+
+    shared_sstable make_sstable(schema_ptr schema, sstable::version_types v) {
+        return make_sstable(std::move(schema), tempdir().path().native(), 1, v);
     }
 
     struct sst_not_found : public std::runtime_error {
@@ -83,6 +96,7 @@ public:
         {}
     };
 
+    // Loads a sstable with a given generation and version in the given dir
     future<shared_sstable> reusable_sst(schema_ptr schema, sstring dir, sstables::generation_type::int_t generation,
             sstable::version_types version, sstable::format_types f = sstable::format_types::big) {
         auto sst = make_sstable(std::move(schema), dir, generation, version, f);
@@ -92,8 +106,28 @@ public:
         });
     }
 
-    // looks up the sstable in the given dir
+    future<shared_sstable> reusable_sst(schema_ptr schema, sstables::generation_type gen, sstable::version_types v) {
+        return reusable_sst(std::move(schema), generation_value(gen), v);
+    }
+    // FIXME: for now allow numeric generation
+    future<shared_sstable> reusable_sst(schema_ptr schema, sstables::generation_type::int_t gen_value, sstable::version_types v) {
+        return reusable_sst(std::move(schema), tempdir().path().native(), gen_value, v);
+    }
+
+    future<shared_sstable> reusable_sst(schema_ptr schema, sstable::version_types v) {
+        return reusable_sst(std::move(schema), 1, v);
+    }
+
+    // looks up the sstable with a given generation in the given dir by scanning all versions
     future<shared_sstable> reusable_sst(schema_ptr schema, sstring dir, sstables::generation_type::int_t generation);
+
+    future<shared_sstable> reusable_sst(schema_ptr schema, sstables::generation_type gen) {
+        return reusable_sst(std::move(schema), tempdir().path().native(), generation_value(gen));
+    }
+    // FIXME: for now allow numeric generation
+    future<shared_sstable> reusable_sst(schema_ptr schema, sstables::generation_type::int_t gen_value = 1) {
+        return reusable_sst(std::move(schema), sstables::generation_type(gen_value));
+    }
 
     test_env_sstables_manager& manager() { return _impl->mgr; }
     reader_concurrency_semaphore& semaphore() { return _impl->semaphore; }
