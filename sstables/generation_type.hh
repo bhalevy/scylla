@@ -41,6 +41,14 @@ constexpr generation_type::int_t generation_value(generation_type generation) {
     return generation.value();
 }
 
+inline generation_type new_generation(std::optional<generation_type> prev = std::nullopt) {
+    if (!prev) {
+        return generation_type(1);
+    } else {
+        return generation_type(prev->value() + 1);
+    }
+}
+
 } //namespace sstables
 
 namespace std {
