@@ -209,8 +209,9 @@ public:
         });
     }
 
-    table_for_tests make_table_for_tests(schema_ptr s = nullptr, std::optional<sstring> dir = std::nullopt) {
-        return table_for_tests(manager(), s, dir.value_or(tempdir().path().native()));
+    table_for_tests make_table_for_tests(schema_ptr s = nullptr, std::optional<sstring> dir = std::nullopt,
+            sstables::sstable_version_types sstables_version = sstables::get_highest_sstable_version()) {
+        return table_for_tests(manager(), s, dir.value_or(tempdir().path().native()), sstables_version);
     }
 };
 
