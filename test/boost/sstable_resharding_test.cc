@@ -43,13 +43,13 @@ void run_sstable_resharding_test() {
     auto close_env = defer([&] { env.stop().get(); });
   for (const auto version : writable_sstable_versions) {
     auto s = get_schema();
-    auto cf = env.make_table_for_tests(s);
+    auto cf = env.make_table_for_tests(s, version);
     auto close_cf = deferred_stop(cf);
     std::unordered_map<shard_id, std::vector<mutation>> muts;
     static constexpr auto keys_per_shard = 1000u;
 
     // create sst shared by all shards
-    {
+    sstables::shared_sstable sst = std::invoke([&] {
         auto mt = make_lw_shared<replica::memtable>(s);
         auto get_mutation = [mt, s] (const dht::decorated_key& key, auto value) {
             mutation m(s, key);
@@ -67,10 +67,10 @@ void run_sstable_resharding_test() {
                 mt->apply(std::move(m));
             }
         }
-        auto sst = env.make_sstable(s, 0, version);
+        auto sst = cf.make_sstable();
         write_memtable_to_sstable_for_test(*mt, sst).get();
-    }
-    auto sst = env.reusable_sst(s, 0, version).get0();
+        return env.reusable_sst(s, sst->generation(), version);
+    }).get();
 
     // FIXME: sstable write has a limitation in which it will generate sharding metadata only
     // for a single shard. workaround that by setting shards manually. from this test perspective,

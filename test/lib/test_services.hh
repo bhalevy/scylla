@@ -33,6 +33,7 @@
 #include "compaction/compaction_manager.hh"
 #include "compaction/table_state.hh"
 #include "sstables/sstables_manager.hh"
+#include "sstables/version.hh"
 
 struct table_for_tests {
     class table_state;
@@ -47,6 +48,7 @@ struct table_for_tests {
         compaction_manager cm{tm, compaction_manager::for_testing_tag{}};
         lw_shared_ptr<replica::column_family> cf;
         std::unique_ptr<table_state> table_s;
+        sstables::sstable_version_types sstables_version;
         data();
         ~data();
     };
@@ -56,7 +58,8 @@ struct table_for_tests {
 
     explicit table_for_tests(sstables::sstables_manager& sstables_manager);
 
-    explicit table_for_tests(sstables::sstables_manager& sstables_manager, schema_ptr s, std::optional<sstring> datadir = {});
+    explicit table_for_tests(sstables::sstables_manager& sstables_manager, schema_ptr s,
+            std::optional<sstring> datadir = {}, sstables::sstable_version_types sstables_version = sstables::get_highest_sstable_version());
 
     schema_ptr schema() { return _data->s; }
 
@@ -75,5 +78,19 @@ struct table_for_tests {
 
     future<> stop_and_keep_alive() {
         return stop().finally([cf = *this] {});
+    }
+
+    sstables::shared_sstable make_sstable(std::optional<sstables::sstable_version_types> version = std::nullopt) {
+        auto& table = *_data->cf;
+        auto& sstables_manager = table.get_sstables_manager();
+        return sstables_manager.make_sstable(_data->s, _data->cfg.datadir, table.calculate_generation_for_new_table(), version.value_or(_data->sstables_version));
+    }
+
+    std::function<sstables::shared_sstable()> get_creator() {
+        return [this] { return make_sstable(); };
+    }
+
+    operator std::function<sstables::shared_sstable()>() {
+        return get_creator();
     }
 };
