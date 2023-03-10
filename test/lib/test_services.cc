@@ -113,7 +113,7 @@ public:
     }
 };
 
-table_for_tests::table_for_tests(sstables::sstables_manager& sstables_manager, schema_ptr s, std::optional<sstring> datadir)
+table_for_tests::table_for_tests(sstables::sstables_manager& sstables_manager, schema_ptr s, std::optional<sstring> datadir, sstables::sstable_version_types sstables_version)
     : _data(make_lw_shared<data>())
 {
     _data->s = s ? s : make_default_schema();
@@ -127,6 +127,7 @@ table_for_tests::table_for_tests(sstables::sstables_manager& sstables_manager, s
     _data->cf->mark_ready_for_writes();
     _data->table_s = std::make_unique<table_state>(*_data, sstables_manager);
     _data->cm.add(*_data->table_s);
+    _data->sstables_version = sstables_version;
 }
 
 compaction::table_state& table_for_tests::as_table_state() noexcept {
