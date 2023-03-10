@@ -144,7 +144,7 @@ SEASTAR_TEST_CASE(compaction_manager_basic_test) {
     auto s = make_shared_schema({}, some_keyspace, some_column_family,
         {{"p1", utf8_type}}, {{"c1", utf8_type}}, {{"r1", int32_type}}, {}, utf8_type);
 
-    table_for_tests cf(env.manager(), s, env.tempdir().path().string());
+    auto cf = env.make_table_for_tests(s);
     auto& cm = cf.get_compaction_manager();
     auto close_cf = deferred_stop(cf);
     cf->set_compaction_strategy(sstables::compaction_strategy_type::size_tiered);
@@ -208,7 +208,7 @@ SEASTAR_TEST_CASE(compact) {
         builder.set_comment("Example table for compaction");
         builder.set_gc_grace_seconds(std::numeric_limits<int32_t>::max());
         auto s = builder.build();
-        table_for_tests cf(env.manager(), s);
+        auto cf = env.make_table_for_tests(s);
         auto close_cf = deferred_stop(cf);
 
         auto sstables = open_sstables(env, s, "test/resource/sstables/compaction", {1,2,3}).get();
@@ -304,7 +304,7 @@ static future<std::vector<sstables::generation_type::int_t>> compact_sstables(te
     builder.set_min_compaction_threshold(4);
     auto s = builder.build(schema_builder::compact_storage::no);
 
-    auto cf = make_lw_shared<table_for_tests>(env.manager(), s);
+    auto cf = make_lw_shared<table_for_tests>(env.make_table_for_tests(s));
 
     auto generations = make_lw_shared<std::vector<sstables::generation_type::int_t>>(std::move(generations_to_compact));
     auto sstables = make_lw_shared<std::vector<sstables::shared_sstable>>();
@@ -533,7 +533,7 @@ static bool sstable_overlaps(const lw_shared_ptr<replica::column_family>& cf, ss
 SEASTAR_TEST_CASE(leveled_01) {
   BOOST_REQUIRE_EQUAL(smp::count, 1);
   return test_env::do_with_async([] (test_env& env) {
-    table_for_tests cf(env.manager());
+    auto cf = env.make_table_for_tests();
 
     const auto keys = tests::generate_partition_keys(50, cf.schema());
     const auto& min_key = keys.front();
@@ -576,7 +576,7 @@ SEASTAR_TEST_CASE(leveled_01) {
 SEASTAR_TEST_CASE(leveled_02) {
   BOOST_REQUIRE_EQUAL(smp::count, 1);
   return test_env::do_with_async([] (test_env& env) {
-    table_for_tests cf(env.manager());
+    auto cf = env.make_table_for_tests();
 
     const auto keys = tests::generate_partition_keys(50, cf.schema());
     const auto& min_key = keys.front();
@@ -629,7 +629,7 @@ SEASTAR_TEST_CASE(leveled_02) {
 SEASTAR_TEST_CASE(leveled_03) {
   BOOST_REQUIRE_EQUAL(smp::count, 1);
   return test_env::do_with_async([] (test_env& env) {
-    table_for_tests cf(env.manager());
+    auto cf = env.make_table_for_tests();
 
     const auto keys = tests::generate_partition_keys(50, cf.schema());
     const auto& min_key = keys.front();
@@ -686,7 +686,7 @@ SEASTAR_TEST_CASE(leveled_03) {
 SEASTAR_TEST_CASE(leveled_04) {
   BOOST_REQUIRE_EQUAL(smp::count, 1);
   return test_env::do_with_async([] (test_env& env) {
-    table_for_tests cf(env.manager());
+    auto cf = env.make_table_for_tests();
 
     const auto keys = tests::generate_partition_keys(50, cf.schema());
     const auto& min_key = keys.front();
@@ -770,7 +770,7 @@ SEASTAR_TEST_CASE(leveled_05) {
 SEASTAR_TEST_CASE(leveled_06) {
     // Test that we can compact a single L1 compaction into an empty L2.
   return test_env::do_with_async([] (test_env& env) {
-    table_for_tests cf(env.manager());
+    auto cf = env.make_table_for_tests();
 
     auto max_sstable_size_in_mb = 1;
     auto max_sstable_size_in_bytes = max_sstable_size_in_mb*1024*1024;
@@ -803,7 +803,7 @@ SEASTAR_TEST_CASE(leveled_06) {
 
 SEASTAR_TEST_CASE(leveled_07) {
   return test_env::do_with_async([] (test_env& env) {
-    table_for_tests cf(env.manager());
+    auto cf = env.make_table_for_tests();
 
     const auto key = tests::generate_partition_key(cf.schema());
     for (auto i = 0; i < leveled_manifest::MAX_COMPACTING_L0*2; i++) {
@@ -828,7 +828,7 @@ SEASTAR_TEST_CASE(leveled_07) {
 
 SEASTAR_TEST_CASE(leveled_invariant_fix) {
   return test_env::do_with_async([] (test_env& env) {
-    table_for_tests cf(env.manager());
+    auto cf = env.make_table_for_tests();
 
     auto sstables_no = cf.schema()->max_compaction_threshold();
     auto keys = tests::generate_partition_keys(sstables_no, cf.schema());
@@ -869,7 +869,7 @@ SEASTAR_TEST_CASE(leveled_stcs_on_L0) {
     builder.set_min_compaction_threshold(4);
     auto s = builder.build(schema_builder::compact_storage::no);
 
-    table_for_tests cf(env.manager(), s);
+    auto cf = env.make_table_for_tests(s);
 
     const auto keys = tests::generate_partition_keys(1, cf.schema());
     auto sstable_max_size_in_mb = 1;
@@ -913,7 +913,7 @@ SEASTAR_TEST_CASE(leveled_stcs_on_L0) {
 
 SEASTAR_TEST_CASE(overlapping_starved_sstables_test) {
   return test_env::do_with_async([] (test_env& env) {
-    table_for_tests cf(env.manager());
+    auto cf = env.make_table_for_tests();
 
     const auto keys = tests::generate_partition_keys(5, cf.schema());
     auto min_key = keys.front();
@@ -946,7 +946,7 @@ SEASTAR_TEST_CASE(overlapping_starved_sstables_test) {
 
 SEASTAR_TEST_CASE(check_overlapping) {
   return test_env::do_with_async([] (test_env& env) {
-    table_for_tests cf(env.manager());
+    auto cf = env.make_table_for_tests();
 
     const auto keys = tests::generate_partition_keys(4, cf.schema());
     const auto& min_key = keys.front();
@@ -985,7 +985,7 @@ SEASTAR_TEST_CASE(tombstone_purge_test) {
         };
 
         auto compact = [&, s] (std::vector<shared_sstable> all, std::vector<shared_sstable> to_compact) -> std::vector<shared_sstable> {
-            table_for_tests cf(env.manager(), s);
+            auto cf = env.make_table_for_tests(s);
             auto stop_cf = deferred_stop(cf);
             for (auto&& sst : all) {
                 column_family_test(cf).add_sstable(sst).get();
@@ -1196,7 +1196,7 @@ SEASTAR_TEST_CASE(sstable_rewrite) {
                 new_tables->emplace_back(sst);
                 return sst;
             };
-            auto cf = make_lw_shared<table_for_tests>(env.manager(), s);
+            auto cf = make_lw_shared<table_for_tests>(env.make_table_for_tests(s));
             std::vector<shared_sstable> sstables;
             sstables.push_back(std::move(sstp));
 
@@ -1234,7 +1234,7 @@ SEASTAR_TEST_CASE(test_sstable_max_local_deletion_time_2) {
                 builder.with_column("c1", utf8_type, column_kind::clustering_key);
                 builder.with_column("r1", utf8_type);
                 schema_ptr s = builder.build(schema_builder::compact_storage::no);
-                table_for_tests cf(env.manager(), s);
+                auto cf = env.make_table_for_tests(s);
                 auto close_cf = deferred_stop(cf);
                 auto mt = make_lw_shared<replica::memtable>(s);
                 auto now = gc_clock::now();
@@ -1299,7 +1299,7 @@ SEASTAR_TEST_CASE(get_fully_expired_sstables_test) {
     auto t4 = gc_clock::from_time_t(30).time_since_epoch().count();
 
     {
-        table_for_tests cf(env.manager());
+        auto cf = env.make_table_for_tests();
         auto close_cf = deferred_stop(cf);
 
         auto sst1 = add_sstable_for_overlapping_test(env, cf, /*gen*/1, min_key.key(), keys[1].key(), build_stats(t0, t1, t1));
@@ -1311,7 +1311,7 @@ SEASTAR_TEST_CASE(get_fully_expired_sstables_test) {
     }
 
     {
-        table_for_tests cf(env.manager());
+        auto cf = env.make_table_for_tests();
         auto close_cf = deferred_stop(cf);
 
         auto sst1 = add_sstable_for_overlapping_test(env, cf, /*gen*/1, min_key.key(), keys[1].key(), build_stats(t0, t1, t1));
@@ -1351,7 +1351,7 @@ SEASTAR_TEST_CASE(compaction_with_fully_expired_table) {
         write_memtable_to_sstable_for_test(*mt, sst).get();
         sst = env.reusable_sst(s, 1).get0();
 
-        table_for_tests cf(env.manager(), s);
+        auto cf = env.make_table_for_tests(s);
         auto close_cf = deferred_stop(cf);
 
         auto ssts = std::vector<shared_sstable>{ sst };
@@ -1373,7 +1373,7 @@ SEASTAR_TEST_CASE(basic_date_tiered_strategy_test) {
         {{"p1", utf8_type}}, {}, {}, {}, utf8_type));
     builder.set_min_compaction_threshold(4);
     auto s = builder.build(schema_builder::compact_storage::no);
-    table_for_tests cf(env.manager(), s);
+    auto cf = env.make_table_for_tests(s);
 
     std::vector<sstables::shared_sstable> candidates;
     int min_threshold = cf->schema()->min_compaction_threshold();
@@ -1412,7 +1412,7 @@ SEASTAR_TEST_CASE(date_tiered_strategy_test_2) {
         {{"p1", utf8_type}}, {}, {}, {}, utf8_type));
     builder.set_min_compaction_threshold(4);
     auto s = builder.build(schema_builder::compact_storage::no);
-    table_for_tests cf(env.manager(), s);
+    auto cf = env.make_table_for_tests(s);
 
     // deterministic timestamp for Fri, 01 Jan 2016 00:00:00 GMT.
     auto tp = db_clock::from_time_t(1451606400);
@@ -1561,7 +1561,7 @@ SEASTAR_TEST_CASE(time_window_strategy_correctness_test) {
         std::map<sstring, sstring> options;
         time_window_compaction_strategy twcs(options);
         std::map<api::timestamp_type, std::vector<shared_sstable>> buckets;
-        table_for_tests cf(env.manager(), s);
+        auto cf = env.make_table_for_tests(s);
         auto close_cf = deferred_stop(cf);
         auto control = make_strategy_control_for_test(false);
 
@@ -1655,7 +1655,7 @@ SEASTAR_TEST_CASE(time_window_strategy_size_tiered_behavior_correctness) {
             buckets[bound].push_back(std::move(sst));
         };
 
-        table_for_tests cf(env.manager(), s);
+        auto cf = env.make_table_for_tests(s);
         auto close_cf = deferred_stop(cf);
         auto major_compact_bucket = [&] (api::timestamp_type window_ts) {
             auto bound = time_window_compaction_strategy::get_window_lower_bound(window_size, window_ts);
@@ -1725,7 +1725,7 @@ SEASTAR_TEST_CASE(min_max_clustering_key_test_2) {
                       .with_column("ck1", utf8_type, column_kind::clustering_key)
                       .with_column("r1", int32_type)
                       .build();
-            table_for_tests cf(env.manager(), s);
+            auto cf = env.make_table_for_tests(s);
             auto close_cf = deferred_stop(cf);
             auto mt = make_lw_shared<replica::memtable>(s);
             const column_definition &r1_col = *s->get_column_definition("r1");
@@ -1767,7 +1767,7 @@ SEASTAR_TEST_CASE(min_max_clustering_key_test_2) {
 
 SEASTAR_TEST_CASE(size_tiered_beyond_max_threshold_test) {
   return test_env::do_with([] (test_env& env) {
-    table_for_tests cf(env.manager());
+    auto cf = env.make_table_for_tests();
     auto cs = sstables::make_compaction_strategy(sstables::compaction_strategy_type::size_tiered, cf.schema()->compaction_strategy_options());
 
     std::vector<sstables::shared_sstable> candidates;
@@ -1830,7 +1830,7 @@ SEASTAR_TEST_CASE(sstable_expired_data_ratio) {
         run.insert(sst);
         BOOST_REQUIRE(std::fabs(run.estimate_droppable_tombstone_ratio(gc_before) - expired) <= 0.1);
 
-        table_for_tests cf(env.manager(), s);
+        auto cf = env.make_table_for_tests(s);
         auto close_cf = deferred_stop(cf);
         auto creator = [&, gen = make_lw_shared<sstables::generation_type::int_t>(2)] {
             auto sst = env.make_sstable(s, (*gen)++, sstables::get_highest_sstable_version(), big);
@@ -1906,7 +1906,7 @@ SEASTAR_TEST_CASE(compaction_correctness_with_partitioned_sstable_set) {
         auto compact = [&, s] (std::vector<shared_sstable> all) -> std::vector<shared_sstable> {
             // NEEDED for partitioned_sstable_set to actually have an effect
             std::for_each(all.begin(), all.end(), [] (auto& sst) { sst->set_sstable_level(1); });
-            table_for_tests cf(env.manager(), s);
+            auto cf = env.make_table_for_tests(s);
             auto close_cf = deferred_stop(cf);
             return compact_sstables(sstables::compaction_descriptor(std::move(all), default_priority_class(), 0, 0 /*std::numeric_limits<uint64_t>::max()*/),
                 cf, sst_gen).get0().new_sstables;
@@ -2024,7 +2024,7 @@ SEASTAR_TEST_CASE(sstable_cleanup_correctness_test) {
             auto sst = make_sstable_containing(sst_gen, mutations);
             auto run_identifier = sst->run_identifier();
 
-            table_for_tests cf(env.manager(), s, env.tempdir().path().string());
+            auto cf = env.make_table_for_tests(s);
             auto close_cf = deferred_stop(cf);
             cf->start();
 
@@ -2169,7 +2169,7 @@ SEASTAR_TEST_CASE(sstable_scrub_validate_mode_test) {
 
             testlog.info("Loaded sstable {}", sst->get_filename());
 
-            table_for_tests table(env.manager(), schema, env.tempdir().path().string());
+            auto table = env.make_table_for_tests(schema);
             auto close_cf = deferred_stop(table);
             table->start();
 
@@ -2360,7 +2360,7 @@ SEASTAR_TEST_CASE(sstable_scrub_skip_mode_test) {
 
             testlog.info("Loaded sstable {}", sst->get_filename());
 
-            table_for_tests table(env.manager(), schema, env.tempdir().path().string());
+            auto table = env.make_table_for_tests(schema);
             auto close_cf = deferred_stop(table);
             table->start();
             auto& compaction_manager = table.get_compaction_manager();
@@ -2451,7 +2451,7 @@ SEASTAR_TEST_CASE(sstable_scrub_segregate_mode_test) {
 
             testlog.info("Loaded sstable {}", sst->get_filename());
 
-            table_for_tests table(env.manager(), schema, env.tempdir().path().string());
+            auto table = env.make_table_for_tests(schema);
             auto close_cf = deferred_stop(table);
             table->start();
             auto& compaction_manager = table.get_compaction_manager();
@@ -2557,7 +2557,7 @@ SEASTAR_TEST_CASE(sstable_scrub_quarantine_mode_test) {
 
                 testlog.info("Loaded sstable {}", sst->get_filename());
 
-                table_for_tests table(env.manager(), schema, env.tempdir().path().string());
+                auto table = env.make_table_for_tests(schema);
                 auto close_cf = deferred_stop(table);
                 table->start();
                 auto& compaction_manager = table.get_compaction_manager();
@@ -2889,7 +2889,7 @@ SEASTAR_TEST_CASE(sstable_run_based_compaction_test) {
         };
 
         auto tracker = make_lw_shared<cache_tracker>();
-        table_for_tests cf(env.manager(), s);
+        auto cf = env.make_table_for_tests(s);
         auto close_cf = deferred_stop(cf);
         cf->mark_ready_for_writes();
         cf->start();
@@ -3025,7 +3025,7 @@ SEASTAR_TEST_CASE(compaction_strategy_aware_major_compaction_test) {
         sst2->set_sstable_level(3);
         auto candidates = std::vector<sstables::shared_sstable>({ sst, sst2 });
 
-        table_for_tests cf(env.manager());
+        auto cf = env.make_table_for_tests();
         auto close_cf = deferred_stop(cf);
 
         {
@@ -3058,7 +3058,7 @@ SEASTAR_TEST_CASE(backlog_tracker_correctness_after_changing_compaction_strategy
             return sst;
         };
 
-        table_for_tests cf(env.manager(), s);
+        auto cf = env.make_table_for_tests(s);
         auto close_cf = deferred_stop(cf);
         cf->set_compaction_strategy(sstables::compaction_strategy_type::leveled);
 
@@ -3109,7 +3109,7 @@ SEASTAR_TEST_CASE(partial_sstable_run_filtered_out_test) {
                 .with_column("id", utf8_type, column_kind::partition_key)
                 .with_column("value", int32_type).build();
 
-        table_for_tests cf(env.manager(), s, env.tempdir().path().string());
+        auto cf = env.make_table_for_tests(s);
         auto close_cf = deferred_stop(cf);
         cf->start();
 
@@ -3352,7 +3352,7 @@ SEASTAR_TEST_CASE(incremental_compaction_data_resurrection_test) {
         // make mut1_deletion gc'able.
         forward_jump_clocks(std::chrono::seconds(ttl));
 
-        table_for_tests cf(env.manager(), s, env.tempdir().path().string());
+        auto cf = env.make_table_for_tests(s);
         auto close_cf = deferred_stop(cf);
         cf->start();
         cf->set_compaction_strategy(sstables::compaction_strategy_type::null);
@@ -3454,7 +3454,7 @@ SEASTAR_TEST_CASE(twcs_major_compaction_test) {
         auto mut3 = make_insert(0ms);
         auto mut4 = make_insert(1ms);
 
-        table_for_tests cf(env.manager(), s, env.tempdir().path().string());
+        auto cf = env.make_table_for_tests(s);
         auto close_cf = deferred_stop(cf);
         cf->start();
         cf->set_compaction_strategy(sstables::compaction_strategy_type::time_window);
@@ -3477,7 +3477,8 @@ SEASTAR_TEST_CASE(autocompaction_control_test) {
                 .with_column("value", int32_type)
                 .build();
 
-        table_for_tests cf(env.manager(), s, env.tempdir().path().string());
+        auto tmp = tmpdir();
+        auto cf = env.make_table_for_tests(s);
         auto& cm = cf.get_compaction_manager();
         auto close_cf = deferred_stop(cf);
         cf->set_compaction_strategy(sstables::compaction_strategy_type::size_tiered);
@@ -3565,7 +3566,7 @@ SEASTAR_TEST_CASE(test_bug_6472) {
             return m;
         };
 
-        table_for_tests cf(env.manager(), s, env.tempdir().path().native());
+        auto cf = env.make_table_for_tests(s);
         auto close_cf = deferred_stop(cf);
         cf->start();
 
@@ -3680,7 +3681,7 @@ SEASTAR_TEST_CASE(test_twcs_partition_estimate) {
             return make_sstable_containing(sst_gen, {m});
         };
 
-        table_for_tests cf(env.manager(), s, env.tempdir().path().native());
+        auto cf = env.make_table_for_tests(s);
         auto close_cf = deferred_stop(cf);
         cf->start();
 
@@ -3797,7 +3798,7 @@ SEASTAR_TEST_CASE(test_twcs_interposer_on_memtable_flush) {
         };
 
         auto _ = env.tempdir().make_sweeper();
-        table_for_tests cf(env.manager(), s, env.tempdir().path().string());
+        auto cf = env.make_table_for_tests(s);
         auto close_cf = deferred_stop(cf);
         cf->start();
 
@@ -3851,7 +3852,7 @@ SEASTAR_TEST_CASE(test_twcs_compaction_across_buckets) {
             return m;
         };
 
-        table_for_tests cf(env.manager(), s);
+        auto cf = env.make_table_for_tests(s);
         auto close_cf = deferred_stop(cf);
 
         constexpr unsigned windows = 10;
@@ -3892,7 +3893,7 @@ SEASTAR_TEST_CASE(test_offstrategy_sstable_compaction) {
             auto mut = mutation(s, pk);
             ss.add_row(mut, ss.make_ckey(0), "val");
 
-            table_for_tests cf(env.manager(), s, tmp.path().string());
+            auto cf = env.make_table_for_tests(s, tmp.path().string());
             auto close_cf = deferred_stop(cf);
             auto sst_gen = [&env, s, cf, path = tmp.path().string(), version] () mutable {
                 return env.make_sstable(s, path, column_family_test::calculate_generation_for_new_table(*cf), version, big);
@@ -4158,7 +4159,7 @@ SEASTAR_TEST_CASE(test_twcs_single_key_reader_filtering) {
         auto sst2 = make_sstable_containing(sst_gen, {make_row(0, 1)});
         auto dkey = sst1->get_first_decorated_key();
 
-        table_for_tests cf(env.manager(), s, env.tempdir().path().string());
+        auto cf = env.make_table_for_tests(s);
         auto close_cf = deferred_stop(cf);
         cf->start();
 
@@ -4468,7 +4469,7 @@ SEASTAR_TEST_CASE(twcs_single_key_reader_through_compound_set_test) {
             return m;
         };
 
-        table_for_tests cf(env.manager(), s, env.tempdir().path().string());
+        auto cf = env.make_table_for_tests(s);
         auto close_cf = deferred_stop(cf);
         cf->start();
 
@@ -4515,7 +4516,7 @@ SEASTAR_TEST_CASE(test_major_does_not_miss_data_in_memtable) {
 
         auto pkey = tests::generate_partition_key(s);
 
-        table_for_tests cf(env.manager(), s, env.tempdir().path().string());
+        auto cf = env.make_table_for_tests(s);
         auto close_cf = deferred_stop(cf);
         auto sst_gen = [&env, &cf, s] () mutable {
             return env.make_sstable(s, column_family_test::calculate_generation_for_new_table(*cf),
@@ -4590,7 +4591,7 @@ SEASTAR_TEST_CASE(simple_backlog_controller_test) {
             simple_schema ss;
             auto s = ss.schema();
 
-            table_for_tests t(env.manager(), s, "");
+            auto t = env.make_table_for_tests(s);
             t->start();
             t->set_compaction_strategy(compaction_strategy_type);
             return t;
@@ -4687,7 +4688,7 @@ SEASTAR_TEST_CASE(test_compaction_strategy_cleanup_method) {
             auto _ = env.tempdir().make_sweeper();
             auto keys = tests::generate_partition_keys(all_files, s);
 
-            table_for_tests cf(env.manager(), s, env.tempdir().path().string());
+            auto cf = env.make_table_for_tests(s);
             auto close_cf = deferred_stop(cf);
             auto sst_gen = [&env, &cf, s]() mutable {
                 return env.make_sstable(s, column_family_test::calculate_generation_for_new_table(*cf),
@@ -4778,7 +4779,7 @@ SEASTAR_TEST_CASE(test_large_partition_splitting_on_compaction) {
             return env.make_sstable(s, (*gen)++, sstables::get_highest_sstable_version(), big);
         };
         auto pkey = tests::generate_partition_key(s);
-        table_for_tests cf(env.manager(), s);
+        auto cf = env.make_table_for_tests(s);
         auto close_cf = deferred_stop(cf);
 
         auto get_next_ckey = [&] {
@@ -4906,7 +4907,7 @@ SEASTAR_TEST_CASE(check_table_sstable_set_includes_maintenance_sstables) {
         mut1.partition().apply_insert(*s, ss.make_ckey(0), ss.new_timestamp());
         auto sst = make_sstable_containing(env.make_sstable(s), {std::move(mut1)});
 
-        table_for_tests cf(env.manager(), s);
+        auto cf = env.make_table_for_tests(s);
         auto close_cf = deferred_stop(cf);
 
         cf->add_sstable_and_update_cache(sst, sstables::offstrategy::yes).get();
