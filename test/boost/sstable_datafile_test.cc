@@ -12,6 +12,7 @@
 #include <seastar/core/aligned_buffer.hh>
 #include <seastar/util/closeable.hh>
 
+#include "sstables/generation_type.hh"
 #include "sstables/sstables.hh"
 #include "sstables/key.hh"
 #include "sstables/compress.hh"
@@ -2210,16 +2211,14 @@ SEASTAR_TEST_CASE(sstable_set_erase) {
 
 SEASTAR_TEST_CASE(sstable_tombstone_histogram_test) {
     return test_env::do_with_async([] (test_env& env) {
-        sstables::generation_type::int_t gen = 1;
+        sstables::generation_factory gen_factory;
         for (auto version : writable_sstable_versions) {
             auto builder = schema_builder("tests", "tombstone_histogram_test")
                     .with_column("id", utf8_type, column_kind::partition_key)
                     .with_column("value", int32_type);
             auto s = builder.build();
 
-            auto sst_gen = [&] {
-                return env.make_sstable(s, gen++, version);
-            };
+            auto sst_gen = sst_factory(env, s, gen_factory, version);
 
             auto next_timestamp = [] {
                 static thread_local api::timestamp_type next = 1;
@@ -2345,9 +2344,7 @@ SEASTAR_TEST_CASE(test_summary_entry_spanning_more_keys_than_min_interval) {
             keys_written++;
         }
 
-        auto sst_gen = [&env, s, gen = make_lw_shared<sstables::generation_type::int_t>(1)] () mutable {
-            return env.make_sstable(s, (*gen)++);
-        };
+        auto sst_gen = sst_factory(env, s);
         auto sst = make_sstable_containing(sst_gen, mutations);
 
         summary& sum = sstables::test(sst).get_summary();
@@ -2547,9 +2544,7 @@ SEASTAR_TEST_CASE(summary_rebuild_sanity) {
             mutations.push_back(make_insert(partition_key::from_exploded(*s, {std::move(key)})));
         }
 
-        auto sst_gen = [&env, s, gen = make_lw_shared<sstables::generation_type::int_t>(1)] () mutable {
-            return env.make_sstable(s, (*gen)++);
-        };
+        auto sst_gen = sst_factory(env, s);
         auto sst = make_sstable_containing(sst_gen, mutations);
 
         summary s1 = sstables::test(sst).move_summary();
@@ -2590,9 +2585,7 @@ SEASTAR_TEST_CASE(sstable_partition_estimation_sanity_test) {
             return m;
         };
 
-        auto sst_gen = [&env, s, gen = make_lw_shared<sstables::generation_type::int_t>(1)] () mutable {
-            return env.make_sstable(s, (*gen)++);
-        };
+        auto sst_gen = sst_factory(env, s);
 
         {
             auto total_partitions = s->min_index_interval()*2;
@@ -2630,9 +2623,7 @@ SEASTAR_TEST_CASE(sstable_timestamp_metadata_correcness_with_negative) {
                     .with_column("id", utf8_type, column_kind::partition_key)
                     .with_column("value", int32_type).build();
 
-            auto sst_gen = [&env, s, gen = make_lw_shared<sstables::generation_type::int_t>(1), version]() mutable {
-                return env.make_sstable(s, (*gen)++, version);
-            };
+            auto sst_gen = sst_factory(env, s, version);
 
             auto make_insert = [&](partition_key key, api::timestamp_type ts) {
                 mutation m(s, key);
@@ -2714,9 +2705,7 @@ SEASTAR_TEST_CASE(sstable_run_clustering_disjoint_invariant_test) {
         auto s = ss.schema();
         auto pks = ss.make_pkeys(1);
 
-        auto sst_gen = [&env, s, gen = make_lw_shared<sstables::generation_type::int_t>(1)]() {
-            return env.make_sstable(s, (*gen)++);
-        };
+        auto sst_gen = sst_factory(env, s);
 
         auto make_sstable = [&] (int first_ckey_idx, int last_ckey_idx) {
             std::vector<mutation> muts;
@@ -2873,7 +2862,7 @@ SEASTAR_TEST_CASE(test_may_have_partition_tombstones) {
         auto s = ss.schema();
         auto pks = ss.make_pkeys(2);
 
-        sstables::generation_type::int_t gen = 0;
+        sstables::generation_factory gen_factory;
         for (auto version : all_sstable_versions) {
             if (version < sstable_version_types::md) {
                 continue;
@@ -2887,9 +2876,7 @@ SEASTAR_TEST_CASE(test_may_have_partition_tombstones) {
             ss.delete_range(mut1, query::clustering_range::make({ss.make_ckey(3)}, {ss.make_ckey(5)}));
             ss.add_row(mut2, ss.make_ckey(6), "val");
 
-            auto sst_gen = [&env, s, &gen, version] () {
-                return env.make_sstable(s, ++gen, version);
-            };
+            auto sst_gen = sst_factory(env, s, gen_factory, version);
 
             {
                 auto sst = make_sstable_containing(sst_gen, {mut1, mut2});
@@ -3125,9 +3112,7 @@ SEASTAR_TEST_CASE(partial_sstable_deletion_test) {
         simple_schema ss;
         auto s = ss.schema();
         auto pks = ss.make_pkeys(1);
-        auto sst_gen = [&env, s] () {
-            return env.make_sstable(s, 1);
-        };
+        auto sst_gen = sst_factory(env, s);
 
         auto mut1 = mutation(s, pks[0]);
         mut1.partition().apply_insert(*s, ss.make_ckey(0), ss.new_timestamp());
@@ -3208,9 +3193,7 @@ SEASTAR_TEST_CASE(test_crawling_reader_out_of_range_last_range_tombstone_change)
         using bound = query::clustering_range::bound;
         table.delete_range(mut, query::clustering_range::make(bound{ckeys[3], true}, bound{clustering_key::make_empty(), true}), tombstone(1, gc_clock::now()));
 
-        auto sst_gen = [&env, &table] () {
-            return env.make_sstable(table.schema(), 1);
-        };
+        auto sst_gen = sst_factory(env, table.schema());
         auto sst = make_sstable_containing(sst_gen, {mut});
 
         assert_that(sst->make_crawling_reader(table.schema(), env.make_reader_permit())).has_monotonic_positions();
@@ -3232,9 +3215,7 @@ SEASTAR_TEST_CASE(test_crawling_reader_random_schema_random_mutations) {
 
         const auto muts = tests::generate_random_mutations(random_schema, 20).get();
 
-        auto sst_gen = [&env, schema] () {
-            return env.make_sstable(schema, 1);
-        };
+        auto sst_gen = sst_factory(env, schema);
         auto sst = make_sstable_containing(sst_gen, muts);
 
         {
@@ -3256,16 +3237,14 @@ SEASTAR_TEST_CASE(find_first_position_in_partition_from_sstable_test) {
         class with_static_row_tag;
         using with_static_row = bool_class<with_static_row_tag>;
 
-        sstables::generation_type::int_t gen = 1;
+        generation_factory gen_factory;
         auto check_sstable_first_and_last_positions = [&] (size_t partitions, with_range_tombstone with_range_tombstone, with_static_row with_static_row) {
             testlog.info("check_sstable_first_and_last_positions: partitions={}, with_range_tombstone={}, with_static_row={}",
                 partitions, bool(with_range_tombstone), bool(with_static_row));
             simple_schema ss;
             auto s = ss.schema();
             auto pks = ss.make_pkeys(partitions);
-            auto sst_gen = [&] {
-                return env.make_sstable(s, gen++);
-            };
+            auto sst_gen = sst_factory(env, s, gen_factory);
 
             std::vector<mutation> muts;
             std::optional<position_in_partition> first_position, last_position;

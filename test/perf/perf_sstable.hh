@@ -211,9 +211,8 @@ public:
     future<double> compaction(int idx) {
         return test_setup::create_empty_test_dir(dir()).then([this, idx] {
             return sstables::test_env::do_with_async_returning<double>([this, idx] (sstables::test_env& env) {
-                auto sst_gen = [this, gen = make_lw_shared<sstables::generation_type::int_t>(idx)] () mutable {
-                    return _env.make_sstable(s, dir(), (*gen)++, sstables::get_highest_sstable_version(), sstable::format_types::big, _cfg.buffer_size);
-                };
+                auto gen_factory = generation_factory(generation_type(idx));
+                auto sst_gen = sst_factory(_env, s, gen_factory, sstables::get_highest_sstable_version(), _cfg.buffer_size);
 
                 std::vector<shared_sstable> ssts;
                 for (auto i = 0u; i < _cfg.sstables; i++) {
@@ -234,7 +233,7 @@ public:
 
                 auto descriptor = sstables::compaction_descriptor(std::move(ssts), default_priority_class());
                 descriptor.enable_garbage_collection(cf->get_sstable_set());
-                descriptor.creator = [sst_gen = std::move(sst_gen)] (unsigned dummy) mutable {
+                descriptor.creator = [&sst_gen] (unsigned dummy) mutable {
                     return sst_gen();
                 };
                 descriptor.replacer = sstables::replacer_fn_no_op();
