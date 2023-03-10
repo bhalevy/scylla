@@ -67,10 +67,8 @@ void run_sstable_resharding_test() {
                 mt->apply(std::move(m));
             }
         }
-        auto sst = cf.make_sstable();
-        write_memtable_to_sstable_for_test(*mt, sst).get();
-        return env.reusable_sst(s, sst->generation(), version);
-    }().get();
+        return make_sstable_containing(cf, mt);
+    }();
 
     // FIXME: sstable write has a limitation in which it will generate sharding metadata only
     // for a single shard. workaround that by setting shards manually. from this test perspective,

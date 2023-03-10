@@ -407,6 +407,7 @@ SEASTAR_TEST_CASE(test_sstable_can_write_and_read_range_tombstone) {
     return test_env::do_with_async([] (test_env& env) {
         auto s = make_shared_schema({}, "ks", "cf",
             {{"p1", utf8_type}}, {{"c1", int32_type}}, {{"r1", int32_type}}, {}, utf8_type);
+        auto sst_gen = sst_factory(env, s);
 
         auto key = tests::generate_partition_key(s);
         auto c_key_start = clustering_key::from_exploded(*s, {int32_type->decompose(1)});
@@ -419,22 +420,19 @@ SEASTAR_TEST_CASE(test_sstable_can_write_and_read_range_tombstone) {
         auto mt = make_lw_shared<replica::memtable>(s);
         mt->apply(std::move(m));
 
-        auto sst = env.make_sstable(s);
-        write_memtable_to_sstable_for_test(*mt, sst).get();
-        sst->load().get();
-        auto mut = with_closeable(sst->make_reader(s, env.make_reader_permit(), query::full_partition_range, s->full_slice()), [] (auto& mr) {
-            return read_mutation_from_flat_mutation_reader(mr);
-        }).get0();
-        BOOST_REQUIRE(bool(mut));
-        auto rts = mut->partition().row_tombstones();
-        BOOST_REQUIRE(rts.size() == 1);
-        auto it = rts.begin();
-        BOOST_REQUIRE(it->tombstone().equal(*s, range_tombstone(
-                        c_key_start,
-                        bound_kind::excl_start,
-                        c_key_end,
-                        bound_kind::excl_end,
-                        tombstone(9, ttl))));
+        verify_mutation(env, sst_gen, mt, query::full_partition_range, [&] (mutation_opt& mut) {
+            BOOST_REQUIRE(bool(mut));
+            auto rts = mut->partition().row_tombstones();
+            BOOST_REQUIRE(rts.size() == 1);
+            auto it = rts.begin();
+            BOOST_REQUIRE(it->tombstone().equal(*s, range_tombstone(
+                          c_key_start,
+                          bound_kind::excl_start,
+                          c_key_end,
+                          bound_kind::excl_end,
+                          tombstone(9, ttl))));
+            return stop_iteration::yes;
+        }).get();
     });
 }
 
