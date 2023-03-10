@@ -176,7 +176,7 @@ SEASTAR_TEST_CASE(compaction_manager_basic_test) {
         m.set_clustered_cell(c_key, r1_col, make_atomic_cell(int32_type, int32_type->decompose(1)));
         mt->apply(std::move(m));
 
-        auto sst = env.make_sstable(s, column_family_test::calculate_generation_for_new_table(*cf));
+        auto sst = cf.make_sstable();
 
         write_memtable_to_sstable_for_test(*mt, sst).get();
         sst->load().get();
@@ -3901,17 +3901,14 @@ SEASTAR_TEST_CASE(test_offstrategy_sstable_compaction) {
             auto mut = mutation(s, pk);
             ss.add_row(mut, ss.make_ckey(0), "val");
 
-            auto cf = env.make_table_for_tests(s, tmp.path().string());
+            auto cf = env.make_table_for_tests(s, tmp.path().string(), version);
             auto close_cf = deferred_stop(cf);
-            auto sst_gen = [&env, s, cf, path = tmp.path().string(), version] () mutable {
-                return env.make_sstable(s, path, column_family_test::calculate_generation_for_new_table(*cf), version);
-            };
 
             cf->mark_ready_for_writes();
             cf->start();
 
             for (auto i = 0; i < cf->schema()->max_compaction_threshold(); i++) {
-                auto sst = make_sstable_containing(sst_gen, {mut});
+                auto sst = make_sstable_containing(cf, {mut});
                 cf->add_sstable_and_update_cache(std::move(sst), sstables::offstrategy::yes).get();
             }
             BOOST_REQUIRE(cf->perform_offstrategy_compaction().get0());
@@ -4518,9 +4515,6 @@ SEASTAR_TEST_CASE(test_major_does_not_miss_data_in_memtable) {
 
         auto cf = env.make_table_for_tests(s);
         auto close_cf = deferred_stop(cf);
-        auto sst_gen = [&env, &cf, s] () mutable {
-            return env.make_sstable(s, column_family_test::calculate_generation_for_new_table(*cf));
-        };
 
         auto row_mut = [&] () {
             static thread_local int32_t value = 1;
@@ -4529,7 +4523,7 @@ SEASTAR_TEST_CASE(test_major_does_not_miss_data_in_memtable) {
             m.set_clustered_cell(c_key, bytes("value"), data_value(int32_t(value)), gc_clock::now().time_since_epoch().count());
             return m;
         }();
-        auto sst = make_sstable_containing(sst_gen, {std::move(row_mut)});
+        auto sst = make_sstable_containing(cf, {std::move(row_mut)});
         cf->add_sstable_and_update_cache(sst).get();
         assert_table_sstable_count(cf, 1);
 
@@ -4689,9 +4683,6 @@ SEASTAR_TEST_CASE(test_compaction_strategy_cleanup_method) {
 
             auto cf = env.make_table_for_tests(s, tmp.path().string());
             auto close_cf = deferred_stop(cf);
-            auto sst_gen = [&env, &cf, s, &tmp]() mutable {
-                return env.make_sstable(s, tmp.path().string(), column_family_test::calculate_generation_for_new_table(*cf));
-            };
 
             using namespace std::chrono;
             auto now = gc_clock::now().time_since_epoch() + duration_cast<microseconds>(seconds(tests::random::get_int(0, 3600*24)));
@@ -4709,7 +4700,7 @@ SEASTAR_TEST_CASE(test_compaction_strategy_cleanup_method) {
             candidates.reserve(all_files);
             for (auto i = 0; i < all_files; i++) {
                 auto current_step = duration_cast<microseconds>(step_base) * i;
-                auto sst = make_sstable_containing(sst_gen, {make_mutation(i, next_timestamp(current_step))});
+                auto sst = make_sstable_containing(cf, {make_mutation(i, next_timestamp(current_step))});
                 sst->set_sstable_level(sstable_level);
                 candidates.push_back(std::move(sst));
             }
