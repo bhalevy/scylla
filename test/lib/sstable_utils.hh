@@ -8,6 +8,8 @@
 
 #pragma once
 
+#include <optional>
+
 #include "sstables/sstables.hh"
 #include "sstables/shared_sstable.hh"
 #include "sstables/index_reader.hh"
@@ -244,6 +246,65 @@ inline
 future<> for_each_sstable_version(AsyncAction action) {
     return seastar::do_for_each(all_sstable_versions, std::move(action));
 }
+
+class sst_factory {
+public:
+    test_env& env;
+    schema_ptr schema;
+    tmpdir& tmp;
+    sstables::sstable_version_types version = sstables::get_highest_sstable_version();
+    size_t buffer_size = sstables::default_sstable_buffer_size;
+private:
+    generation_factory local_gen_factory;
+    generation_factory& gen_factory = local_gen_factory;
+
+public:
+    sst_factory(test_env& env, schema_ptr schema,
+            sstables::sstable_version_types version = sstables::get_highest_sstable_version())
+        : env(env)
+        , schema(std::move(schema))
+        , tmp(env.tempdir())
+        , version(version)
+    {}
+    sst_factory(test_env& env, schema_ptr schema, generation_factory& extern_gen_factory,
+            sstables::sstable_version_types version = sstables::get_highest_sstable_version(),
+            size_t buffer_size = sstables::default_sstable_buffer_size)
+        : env(env)
+        , schema(std::move(schema))
+        , tmp(env.tempdir())
+        , version(version)
+        , buffer_size(buffer_size)
+        , gen_factory(extern_gen_factory)
+    {}
+
+    shared_sstable make_sstable() {
+        return env.make_sstable(schema, tmp.path().native(), gen_factory(), version, sstable::format_types::big, buffer_size);
+    }
+
+    shared_sstable make_sstable_with_level(uint32_t level) {
+        auto sst = make_sstable();
+        sst->set_sstable_level(level);
+        return sst;
+    }
+
+    shared_sstable operator()() {
+        return make_sstable();
+    }
+
+    shared_sstable operator()(uint32_t level) {
+        auto sst = make_sstable();
+        sst->set_sstable_level(level);
+        return sst;
+    }
+
+    std::function<sstables::shared_sstable()> get_creator() {
+        return [this] { return make_sstable(); };
+    }
+
+    operator std::function<sstables::shared_sstable()>() {
+        return get_creator();
+    }
+};
 
 } // namespace sstables
 

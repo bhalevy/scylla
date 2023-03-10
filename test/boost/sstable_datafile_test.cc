@@ -12,6 +12,7 @@
 #include <seastar/core/aligned_buffer.hh>
 #include <seastar/util/closeable.hh>
 
+#include "sstables/generation_type.hh"
 #include "sstables/sstables.hh"
 #include "sstables/key.hh"
 #include "sstables/compress.hh"
