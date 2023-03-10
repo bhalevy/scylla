@@ -125,12 +125,12 @@ future<compaction_result> compact_sstables(compaction_manager& cm, sstables::com
     co_return ret;
 }
 
-static sstring toc_filename(const sstring& dir, schema_ptr schema, sstables::generation_type::int_t generation, sstable_version_types v) {
-    return sstable::filename(dir, schema->ks_name(), schema->cf_name(), v, generation_from_value(generation),
+static sstring toc_filename(const sstring& dir, schema_ptr schema, sstables::generation_type generation, sstable_version_types v) {
+    return sstable::filename(dir, schema->ks_name(), schema->cf_name(), v, generation,
                              sstable_format_types::big, component_type::TOC);
 }
 
-future<shared_sstable> test_env::reusable_sst(schema_ptr schema, sstring dir, sstables::generation_type::int_t generation) {
+future<shared_sstable> test_env::reusable_sst(schema_ptr schema, sstring dir, sstables::generation_type generation) {
     for (auto v : boost::adaptors::reverse(all_sstable_versions)) {
         if (co_await file_exists(toc_filename(dir, schema, generation, v))) {
             co_return co_await reusable_sst(schema, dir, generation, v);
