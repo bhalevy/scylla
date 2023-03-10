@@ -670,29 +670,6 @@ SEASTAR_THREAD_TEST_CASE(test_sm_fast_forwarding_combining_reader_with_galloping
     assertions.produces_end_of_stream();
 }
 
-struct sst_factory {
-    sstables::test_env& env;
-    schema_ptr s;
-    sstring path;
-    sstables::generation_type::int_t gen;
-    uint32_t level;
-
-    sst_factory(sstables::test_env& env, schema_ptr s, const sstring& path, sstables::generation_type::int_t gen, int level)
-        : env(env)
-        , s(s)
-        , path(path)
-        , gen(gen)
-        , level(level)
-    {}
-
-    sstables::shared_sstable operator()() {
-        auto sst = env.make_sstable(s, path, gen);
-        sst->set_sstable_level(level);
-
-        return sst;
-    }
-};
-
 SEASTAR_TEST_CASE(combined_mutation_reader_test) {
   return sstables::test_env::do_with_async([] (sstables::test_env& env) {
     simple_schema s;
@@ -733,15 +710,13 @@ SEASTAR_TEST_CASE(combined_mutation_reader_test) {
     const mutation expexted_mutation_4 = sstable_level_0_0_mutations[2] + sstable_level_2_0_mutations[1];
     const mutation expexted_mutation_5 = sstable_level_2_1_mutations[0];
 
-    auto tmp = tmpdir();
-
-    sstables::generation_type::int_t gen{0};
+    auto sst_gen = sst_factory(env, s.schema());
     std::vector<sstables::shared_sstable> sstable_list = {
-            make_sstable_containing(sst_factory(env, s.schema(), tmp.path().string(), ++gen, 0), std::move(sstable_level_0_0_mutations)),
-            make_sstable_containing(sst_factory(env, s.schema(), tmp.path().string(), ++gen, 1), std::move(sstable_level_1_0_mutations)),
-            make_sstable_containing(sst_factory(env, s.schema(), tmp.path().string(), ++gen, 1), std::move(sstable_level_1_1_mutations)),
-            make_sstable_containing(sst_factory(env, s.schema(), tmp.path().string(), ++gen, 2), std::move(sstable_level_2_0_mutations)),
-            make_sstable_containing(sst_factory(env, s.schema(), tmp.path().string(), ++gen, 2), std::move(sstable_level_2_1_mutations)),
+            make_sstable_containing([&] { return sst_gen.make_sstable_with_level(0); }, std::move(sstable_level_0_0_mutations)),
+            make_sstable_containing([&] { return sst_gen.make_sstable_with_level(1); }, std::move(sstable_level_1_0_mutations)),
+            make_sstable_containing([&] { return sst_gen.make_sstable_with_level(1); }, std::move(sstable_level_1_1_mutations)),
+            make_sstable_containing([&] { return sst_gen.make_sstable_with_level(2); }, std::move(sstable_level_2_0_mutations)),
+            make_sstable_containing([&] { return sst_gen.make_sstable_with_level(2); }, std::move(sstable_level_2_1_mutations)),
     };
 
     auto cs = sstables::make_compaction_strategy(sstables::compaction_strategy_type::leveled, {});
@@ -3848,14 +3823,14 @@ static future<> do_test_clustering_order_merger_sstable_set(bool reversed) {
     auto pr = dht::partition_range::make_singular(dht::ring_position(g._pk));
     auto make_tested = [&env, query_schema, pk = g._pk, &pr, &query_slice, reversed]
             (const time_series_sstable_set& sst_set,
-                const std::unordered_set<sstables::generation_type::int_t>& included_gens, streamed_mutation::forwarding fwd) {
+                const std::unordered_set<sstables::generation_type>& included_gens, streamed_mutation::forwarding fwd) {
         auto permit = env.make_reader_permit();
         auto q = sst_set.make_position_reader_queue(
             [query_schema, &pr, &query_slice, fwd, permit] (sstable& sst) {
                 return sst.make_reader(query_schema, permit, pr,
                                           query_slice, seastar::default_priority_class(), nullptr, fwd);
             },
-            [included_gens] (const sstable& sst) { return included_gens.contains(generation_value(sst.generation())); },
+            [included_gens] (const sstable& sst) { return included_gens.contains(sst.generation()); },
             pk.key(), query_schema, permit, fwd, reversed);
         return make_clustering_combined_reader(query_schema, permit, fwd, std::move(q));
     };
@@ -3864,6 +3839,8 @@ static future<> do_test_clustering_order_merger_sstable_set(bool reversed) {
     std::cout << "test_clustering_order_merger_sstable_set seed: " << seed << std::endl;
     auto engine = std::mt19937(seed);
     std::bernoulli_distribution dist(0.9);
+
+    auto sst_gen = sst_factory(env, table_schema);
 
     for (int run = 0; run < 100; ++run) {
         auto scenario = g.generate_scenario(engine);
@@ -3876,18 +3853,14 @@ static future<> do_test_clustering_order_merger_sstable_set(bool reversed) {
             }
         }
 
-        auto tmp = tmpdir();
         time_series_sstable_set sst_set(table_schema);
         mutation merged(table_schema, g._pk);
-        std::unordered_set<sstables::generation_type::int_t> included_gens;
-        sstables::generation_type::int_t gen = 0;
+        std::unordered_set<sstables::generation_type> included_gens;
         for (auto& mb: scenario.readers_data) {
-            auto sst_factory = [table_schema, &env, &tmp, gen = ++gen] () {
-                return env.make_sstable(std::move(table_schema), tmp.path().string(), gen);
-            };
+            shared_sstable sst;
 
             if (mb.m) {
-                sst_set.insert(make_sstable_containing(std::move(sst_factory), {*mb.m}));
+                sst = make_sstable_containing(sst_gen, {*mb.m});
             } else {
                 // We want to have an sstable that won't return any fragments when we query it
                 // for our partition (not even `partition_start`). For that we create an sstable
@@ -3895,11 +3868,12 @@ static future<> do_test_clustering_order_merger_sstable_set(bool reversed) {
                 auto pk = pkeys[1];
                 assert(!pk.equal(*g._s, g._pk));
 
-                sst_set.insert(make_sstable_containing(std::move(sst_factory), {mutation(table_schema, pk)}));
+                sst = make_sstable_containing(sst_gen, {mutation(table_schema, pk)});
             }
+            sst_set.insert(sst);
 
             if (dist(engine)) {
-                included_gens.insert(gen);
+                included_gens.insert(sst->generation());
                 if (mb.m) {
                     merged += *mb.m;
                 }
