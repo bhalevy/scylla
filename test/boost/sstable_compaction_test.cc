@@ -1170,7 +1170,7 @@ SEASTAR_TEST_CASE(tombstone_purge_test) {
 
 SEASTAR_TEST_CASE(sstable_rewrite) {
     BOOST_REQUIRE(smp::count == 1);
-    return test_env::do_with([] (test_env& env) {
+    return test_env::do_with_async([] (test_env& env) {
         auto s = make_shared_schema({}, some_keyspace, some_column_family,
             {{"p1", utf8_type}}, {{"c1", utf8_type}}, {{"r1", utf8_type}}, {}, utf8_type);
 
@@ -1188,38 +1188,33 @@ SEASTAR_TEST_CASE(sstable_rewrite) {
         apply_key(key_for_this_shard[0]);
 
         auto sst = env.make_sstable(s, 51);
-        return write_memtable_to_sstable_for_test(*mt, sst).then([&env, s, sst] {
-            return env.reusable_sst(s, 51);
-        }).then([&env, s, key = key_for_this_shard[0]] (auto sstp) mutable {
-            auto new_tables = make_lw_shared<std::vector<sstables::shared_sstable>>();
-            auto creator = [&env, new_tables, s] {
-                auto sst = env.make_sstable(s, 52);
-                new_tables->emplace_back(sst);
-                return sst;
-            };
-            auto cf = make_lw_shared<table_for_tests>(env.make_table_for_tests(s));
-            std::vector<shared_sstable> sstables;
-            sstables.push_back(std::move(sstp));
+        write_memtable_to_sstable_for_test(*mt, sst).get();
+        auto sstp = env.reusable_sst(s, 51).get();
+        auto key = key_for_this_shard[0];
+        std::vector<sstables::shared_sstable> new_tables;
+        auto creator = [&] {
+            auto sst = env.make_sstable(s, 52);
+            new_tables.emplace_back(sst);
+            return sst;
+        };
+        auto cf = env.make_table_for_tests(s);
+        auto stop_cf = deferred_stop(cf);
+        std::vector<shared_sstable> sstables;
+        sstables.push_back(std::move(sstp));
 
-            return compact_sstables(sstables::compaction_descriptor(std::move(sstables), default_priority_class()), *cf, creator).then([&env, s, key, new_tables] (auto) {
-                BOOST_REQUIRE(new_tables->size() == 1);
-                auto newsst = (*new_tables)[0];
-                BOOST_REQUIRE(generation_value(newsst->generation()) == 52);
-                auto reader = make_lw_shared<flat_mutation_reader_v2>(sstable_reader(newsst, s, env.make_reader_permit()));
-                return (*reader)().then([s, reader, key] (mutation_fragment_v2_opt m) {
-                    BOOST_REQUIRE(m);
-                    BOOST_REQUIRE(m->is_partition_start());
-                    BOOST_REQUIRE(m->as_partition_start().key().equal(*s, key));
-                    return reader->next_partition();
-                }).then([reader] {
-                    return (*reader)();
-                }).then([reader] (mutation_fragment_v2_opt m) {
-                    BOOST_REQUIRE(!m);
-                }).finally([reader] {
-                    return reader->close();
-                });
-            }).finally([cf] () mutable { return cf->stop_and_keep_alive(); });
-        }).then([sst, mt, s] {});
+        compact_sstables(sstables::compaction_descriptor(std::move(sstables), default_priority_class()), cf, creator).get();
+        BOOST_REQUIRE(new_tables.size() == 1);
+        auto newsst = new_tables[0];
+        BOOST_REQUIRE(generation_value(newsst->generation()) == 52);
+        auto reader = sstable_reader(newsst, s, env.make_reader_permit());
+        auto close_reader = deferred_close(reader);
+        auto m = reader().get();
+        BOOST_REQUIRE(m);
+        BOOST_REQUIRE(m->is_partition_start());
+        BOOST_REQUIRE(m->as_partition_start().key().equal(*s, key));
+        reader.next_partition().get();
+        m = reader().get();
+        BOOST_REQUIRE(!m);
     });
 }
 
