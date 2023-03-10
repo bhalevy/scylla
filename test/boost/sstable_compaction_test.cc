@@ -774,14 +774,14 @@ SEASTAR_TEST_CASE(leveled_05) {
 
         // Check compaction code with leveled strategy. In this test, two sstables of level 0 will be created.
         auto generations = compact_sstables(env, tmpdir_path, { 48, 49 }, 50, true, 1024*1024, compaction_strategy_type::leveled).get();
-            BOOST_REQUIRE(generations.size() == 2);
-            BOOST_REQUIRE(generations[0] == 50);
-            BOOST_REQUIRE(generations[1] == 51);
+        BOOST_REQUIRE(generations.size() == 2);
+        BOOST_REQUIRE(generations[0] == 50);
+        BOOST_REQUIRE(generations[1] == 51);
 
-                for (auto gen : generations) {
-                    auto fname = sstable::filename(tmpdir_path, "ks", "cf", sstables::get_highest_sstable_version(), generation_from_value(gen), big, component_type::Data);
-                    BOOST_REQUIRE(file_size(fname).get0() >= 1024*1024);
-                }
+        for (auto gen : generations) {
+            auto fname = sstable::filename(tmpdir_path, "ks", "cf", sstables::get_highest_sstable_version(), generation_from_value(gen), big, component_type::Data);
+            BOOST_REQUIRE(file_size(fname).get0() >= 1024*1024);
+        }
     });
 }
 
