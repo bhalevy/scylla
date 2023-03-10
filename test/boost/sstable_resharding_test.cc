@@ -38,6 +38,7 @@ static schema_ptr get_schema(unsigned shard_count, unsigned sharding_ignore_msb_
     return get_schema_builder().with_sharder(shard_count, sharding_ignore_msb_bits).build();
 }
 
+// Must be called in a seastar thread.
 void run_sstable_resharding_test() {
     test_env env;
     auto close_env = defer([&] { env.stop().get(); });
@@ -67,10 +68,8 @@ void run_sstable_resharding_test() {
                 mt->apply(std::move(m));
             }
         }
-        auto sst = cf.make_sstable();
-        write_memtable_to_sstable_for_test(*mt, sst).get();
-        return env.reusable_sst(s, sst->generation(), version);
-    }).get();
+        return make_sstable_containing(cf, mt);
+    });
 
     // FIXME: sstable write has a limitation in which it will generate sharding metadata only
     // for a single shard. workaround that by setting shards manually. from this test perspective,
