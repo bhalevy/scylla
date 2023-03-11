@@ -24,7 +24,7 @@ using namespace std::chrono_literals;
 SEASTAR_TEST_CASE(test_schema_changes) {
   return sstables::test_env::do_with_async([] (sstables::test_env& env) {
     auto dir = tmpdir();
-    int gen = 1;
+    sstables::generation_type::int_t gen = 1;
 
     std::map<std::tuple<sstables::sstable::version_types, schema_ptr>, std::tuple<shared_sstable, int>> cache;
     for_each_schema_change([&] (schema_ptr base, const std::vector<mutation>& base_mutations,

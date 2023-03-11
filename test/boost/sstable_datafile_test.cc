@@ -591,7 +591,7 @@ SEASTAR_TEST_CASE(test_counter_write) {
     });
 }
 
-static shared_sstable sstable_for_overlapping_test(test_env& env, const schema_ptr& schema, int64_t gen,
+static shared_sstable sstable_for_overlapping_test(test_env& env, const schema_ptr& schema, sstables::generation_type::int_t gen,
         const partition_key& first_key, const partition_key& last_key, uint32_t level = 0) {
     auto sst = env.make_sstable(schema, "", gen, la, big);
     sstables::test(sst).set_values_for_leveled_strategy(0, level, 0, first_key, last_key);
@@ -2115,7 +2115,7 @@ SEASTAR_TEST_CASE(sstable_set_incremental_selector) {
     auto cs = sstables::make_compaction_strategy(sstables::compaction_strategy_type::leveled, s->compaction_strategy_options());
     const auto decorated_keys = tests::generate_partition_keys(8, s);
 
-    auto check = [] (sstable_set::incremental_selector& selector, const dht::decorated_key& key, std::unordered_set<int64_t> expected_gens) {
+    auto check = [] (sstable_set::incremental_selector& selector, const dht::decorated_key& key, std::unordered_set<sstables::generation_type::int_t> expected_gens) {
         auto sstables = selector.select(key).sstables;
         BOOST_REQUIRE_EQUAL(sstables.size(), expected_gens.size());
         for (auto& sst : sstables) {
@@ -2234,7 +2234,7 @@ SEASTAR_TEST_CASE(sstable_tombstone_histogram_test) {
             auto s = builder.build();
 
             auto tmp = tmpdir();
-            auto sst_gen = [&env, s, &tmp, gen = make_lw_shared<unsigned>(1), version]() mutable {
+            auto sst_gen = [&env, s, &tmp, gen = make_lw_shared<sstables::generation_type::int_t>(1), version]() mutable {
                 return env.make_sstable(s, tmp.path().string(), (*gen)++, version, big);
             };
 
@@ -2296,7 +2296,7 @@ SEASTAR_TEST_CASE(sstable_owner_shards) {
             m.set_clustered_cell(clustering_key::make_empty(), bytes("value"), data_value(int32_t(1)), 1);
             return m;
         };
-        auto gen = make_lw_shared<unsigned>(1);
+        auto gen = make_lw_shared<sstables::generation_type::int_t>(1);
         auto make_shared_sstable = [&] (std::unordered_set<unsigned> shards, unsigned ignore_msb, unsigned smp_count) {
             auto key_schema = schema_builder(s).with_sharder(smp_count, ignore_msb).build();
             auto mut = [&] (auto shard) {
@@ -2364,7 +2364,7 @@ SEASTAR_TEST_CASE(test_summary_entry_spanning_more_keys_than_min_interval) {
         }
 
         auto tmp = tmpdir();
-        auto sst_gen = [&env, s, &tmp, gen = make_lw_shared<unsigned>(1)] () mutable {
+        auto sst_gen = [&env, s, &tmp, gen = make_lw_shared<sstables::generation_type::int_t>(1)] () mutable {
             return env.make_sstable(s, tmp.path().string(), (*gen)++, sstables::get_highest_sstable_version(), big);
         };
         auto sst = make_sstable_containing(sst_gen, mutations);
@@ -2568,7 +2568,7 @@ SEASTAR_TEST_CASE(summary_rebuild_sanity) {
         }
 
         auto tmp = tmpdir();
-        auto sst_gen = [&env, s, &tmp, gen = make_lw_shared<unsigned>(1)] () mutable {
+        auto sst_gen = [&env, s, &tmp, gen = make_lw_shared<sstables::generation_type::int_t>(1)] () mutable {
             return env.make_sstable(s, tmp.path().string(), (*gen)++, sstables::get_highest_sstable_version(), big);
         };
         auto sst = make_sstable_containing(sst_gen, mutations);
@@ -2612,7 +2612,7 @@ SEASTAR_TEST_CASE(sstable_partition_estimation_sanity_test) {
         };
 
         auto tmp = tmpdir();
-        auto sst_gen = [&env, s, &tmp, gen = make_lw_shared<unsigned>(1)] () mutable {
+        auto sst_gen = [&env, s, &tmp, gen = make_lw_shared<sstables::generation_type::int_t>(1)] () mutable {
             return env.make_sstable(s, tmp.path().string(), (*gen)++, sstables::get_highest_sstable_version(), big);
         };
 
@@ -2653,7 +2653,7 @@ SEASTAR_TEST_CASE(sstable_timestamp_metadata_correcness_with_negative) {
                     .with_column("value", int32_type).build();
 
             auto tmp = tmpdir();
-            auto sst_gen = [&env, s, &tmp, gen = make_lw_shared<unsigned>(1), version]() mutable {
+            auto sst_gen = [&env, s, &tmp, gen = make_lw_shared<sstables::generation_type::int_t>(1), version]() mutable {
                 return env.make_sstable(s, tmp.path().string(), (*gen)++, version, big);
             };
 
@@ -2702,7 +2702,7 @@ SEASTAR_TEST_CASE(sstable_run_disjoint_invariant_test) {
         auto s = ss.schema();
 
         const auto keys = tests::generate_partition_keys(6, s);
-        auto next_gen = [gen = make_lw_shared<unsigned>(1)] { return (*gen)++; };
+        auto next_gen = [gen = make_lw_shared<sstables::generation_type::int_t>(1)] { return (*gen)++; };
 
         sstables::sstable_run run;
 
@@ -2738,7 +2738,7 @@ SEASTAR_TEST_CASE(sstable_run_clustering_disjoint_invariant_test) {
         auto s = ss.schema();
         auto pks = ss.make_pkeys(1);
         auto tmp = tmpdir();
-        auto sst_gen = [&env, s, &tmp, gen = make_lw_shared<unsigned>(1)]() {
+        auto sst_gen = [&env, s, &tmp, gen = make_lw_shared<sstables::generation_type::int_t>(1)]() {
             return env.make_sstable(s, tmp.path().string(), (*gen)++, sstables::get_highest_sstable_version(), big);
         };
 
@@ -2900,7 +2900,7 @@ SEASTAR_TEST_CASE(test_may_have_partition_tombstones) {
         auto pks = ss.make_pkeys(2);
 
         auto tmp = tmpdir();
-        unsigned gen = 0;
+        sstables::generation_type::int_t gen = 0;
         for (auto version : all_sstable_versions) {
             if (version < sstable_version_types::md) {
                 continue;
@@ -2977,7 +2977,7 @@ SEASTAR_TEST_CASE(test_sstable_origin) {
         const auto pk = tests::generate_partition_key(s);
         auto mut = mutation(s, pk);
         ss.add_row(mut, ss.make_ckey(0), "val");
-        int gen = 1;
+        sstables::generation_type::int_t gen = 1;
         fs::path tmp = env.tempdir().path();
 
         for (const auto version : all_sstable_versions) {
@@ -3097,7 +3097,7 @@ SEASTAR_TEST_CASE(test_validate_checksums) {
         const std::map<sstring, sstring> no_compression_params = {};
         const std::map<sstring, sstring> lz4_compression_params = {{compression_parameters::SSTABLE_COMPRESSION, "LZ4Compressor"}};
 
-        int gen = 0;
+        sstables::generation_type::int_t gen = 0;
 
         for (const auto version : writable_sstable_versions) {
             testlog.info("version={}", sstables::to_string(version));
