@@ -141,7 +141,7 @@ SEASTAR_TEST_CASE(sstable_is_shared_correctness) {
             m.set_clustered_cell(clustering_key::make_empty(), bytes("value"), data_value(int32_t(value)), api::timestamp_type(0));
             return m;
         };
-        auto gen = make_lw_shared<unsigned>(1);
+        auto gen = make_lw_shared<sstables::generation_type::int_t>(1);
 
         // created sstable owned only by this shard
         {
