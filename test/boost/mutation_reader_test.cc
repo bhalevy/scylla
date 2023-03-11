@@ -674,10 +674,10 @@ struct sst_factory {
     sstables::test_env& env;
     schema_ptr s;
     sstring path;
-    unsigned gen;
+    sstables::generation_type::int_t gen;
     uint32_t level;
 
-    sst_factory(sstables::test_env& env, schema_ptr s, const sstring& path, unsigned gen, int level)
+    sst_factory(sstables::test_env& env, schema_ptr s, const sstring& path, sstables::generation_type::int_t gen, int level)
         : env(env)
         , s(s)
         , path(path)
@@ -735,7 +735,7 @@ SEASTAR_TEST_CASE(combined_mutation_reader_test) {
 
     auto tmp = tmpdir();
 
-    unsigned gen{0};
+    sstables::generation_type::int_t gen{0};
     std::vector<sstables::shared_sstable> sstable_list = {
             make_sstable_containing(sst_factory(env, s.schema(), tmp.path().string(), ++gen, 0), std::move(sstable_level_0_0_mutations)),
             make_sstable_containing(sst_factory(env, s.schema(), tmp.path().string(), ++gen, 1), std::move(sstable_level_1_0_mutations)),
@@ -1001,7 +1001,7 @@ SEASTAR_TEST_CASE(reader_selector_fast_forwarding_test) {
 static
 sstables::shared_sstable create_sstable(sstables::test_env& env, schema_ptr s, std::vector<mutation> mutations) {
     static thread_local auto tmp = tmpdir();
-    static int gen = 0;
+    static sstables::generation_type::int_t gen = 0;
     return make_sstable_containing([&] {
         return env.make_sstable(s, tmp.path().string(), gen++);
     }, mutations);
@@ -3848,7 +3848,7 @@ static future<> do_test_clustering_order_merger_sstable_set(bool reversed) {
     auto pr = dht::partition_range::make_singular(dht::ring_position(g._pk));
     auto make_tested = [&env, query_schema, pk = g._pk, &pr, &query_slice, reversed]
             (const time_series_sstable_set& sst_set,
-                const std::unordered_set<int64_t>& included_gens, streamed_mutation::forwarding fwd) {
+                const std::unordered_set<sstables::generation_type::int_t>& included_gens, streamed_mutation::forwarding fwd) {
         auto permit = env.make_reader_permit();
         auto q = sst_set.make_position_reader_queue(
             [query_schema, &pr, &query_slice, fwd, permit] (sstable& sst) {
@@ -3879,8 +3879,8 @@ static future<> do_test_clustering_order_merger_sstable_set(bool reversed) {
         auto tmp = tmpdir();
         time_series_sstable_set sst_set(table_schema);
         mutation merged(table_schema, g._pk);
-        std::unordered_set<int64_t> included_gens;
-        int64_t gen = 0;
+        std::unordered_set<sstables::generation_type::int_t> included_gens;
+        sstables::generation_type::int_t gen = 0;
         for (auto& mb: scenario.readers_data) {
             auto sst_factory = [table_schema, &env, &tmp, gen = ++gen] () {
                 return env.make_sstable(std::move(table_schema), tmp.path().string(), gen,
