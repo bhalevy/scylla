@@ -224,12 +224,12 @@ SEASTAR_TEST_CASE(compact) {
     tmpdir dir;
     sstring tmpdir_path = dir.path().string();
 
-        open_sstables(env, s, "test/resource/sstables/compaction", {1,2,3}).then([&env, tmpdir_path, s, cf, generation] (auto sstables) mutable {
+        auto sstables = open_sstables(env, s, "test/resource/sstables/compaction", {1,2,3}).get();
             auto new_sstable = [&env, gen = make_lw_shared<sstables::generation_type::int_t>(generation), s, tmpdir_path] {
                 return env.make_sstable(s, tmpdir_path,
                         (*gen)++, sstables::get_highest_sstable_version(), sstables::sstable::format_types::big);
             };
-            return compact_sstables(sstables::compaction_descriptor(std::move(sstables), default_priority_class()), cf, new_sstable).then([&env, s, cf, tmpdir_path] (auto) {
+            compact_sstables(sstables::compaction_descriptor(std::move(sstables), default_priority_class()), cf, new_sstable).get();
                 // Verify that the compacted sstable has the right content. We expect to see:
                 //  name  | age | height
                 // -------+-----+--------
@@ -237,13 +237,18 @@ SEASTAR_TEST_CASE(compact) {
                 //    tom |  20 |    180
                 //   john |  20 |   deleted
                 //   nadav - deleted partition
-                return open_sstable(env, s, tmpdir_path, generation).then([&env, s] (shared_sstable sst) {
-                    auto reader = make_lw_shared<flat_mutation_reader_v2>(sstable_reader(sst, s, env.make_reader_permit())); // reader holds sst and s alive.
-                    return read_mutation_from_flat_mutation_reader(*reader).then([reader, s] (mutation_opt m) {
+                shared_sstable sst = open_sstable(env, s, tmpdir_path, generation).get();
+                    auto reader = sstable_reader(sst, s, env.make_reader_permit());
+                    auto close_reader = deferred_close(reader);
+                    auto verify_mutation = [&] (std::function<void(const mutation_opt&)> verify) {
+                        auto m = read_mutation_from_flat_mutation_reader(reader).get();
+                        verify(m);
+                    };
+                    verify_mutation([&] (const mutation_opt& m) {
                         BOOST_REQUIRE(m);
                         BOOST_REQUIRE(m->key().equal(*s, partition_key::from_singular(*s, data_value(sstring("jerry")))));
                         BOOST_REQUIRE(!m->partition().partition_tombstone());
-                        auto rows = m->partition().clustered_rows();
+                        auto& rows = m->partition().clustered_rows();
                         BOOST_REQUIRE(rows.calculate_size() == 1);
                         auto &row = rows.begin()->row();
                         BOOST_REQUIRE(!row.deleted_at());
@@ -252,12 +257,12 @@ SEASTAR_TEST_CASE(compact) {
                         auto& cdef2 = *s->get_column_definition("height");
                         BOOST_REQUIRE(cells.cell_at(cdef1.id).as_atomic_cell(cdef1).value() == managed_bytes({0,0,0,40}));
                         BOOST_REQUIRE(cells.cell_at(cdef2.id).as_atomic_cell(cdef2).value() == managed_bytes({0,0,0,(int8_t)170}));
-                        return read_mutation_from_flat_mutation_reader(*reader);
-                    }).then([reader, s] (mutation_opt m) {
+                    });
+                    verify_mutation([&] (const mutation_opt& m) {
                         BOOST_REQUIRE(m);
                         BOOST_REQUIRE(m->key().equal(*s, partition_key::from_singular(*s, data_value(sstring("tom")))));
                         BOOST_REQUIRE(!m->partition().partition_tombstone());
-                        auto rows = m->partition().clustered_rows();
+                        auto& rows = m->partition().clustered_rows();
                         BOOST_REQUIRE(rows.calculate_size() == 1);
                         auto &row = rows.begin()->row();
                         BOOST_REQUIRE(!row.deleted_at());
@@ -266,12 +271,12 @@ SEASTAR_TEST_CASE(compact) {
                         auto& cdef2 = *s->get_column_definition("height");
                         BOOST_REQUIRE(cells.cell_at(cdef1.id).as_atomic_cell(cdef1).value() == managed_bytes({0,0,0,20}));
                         BOOST_REQUIRE(cells.cell_at(cdef2.id).as_atomic_cell(cdef2).value() == managed_bytes({0,0,0,(int8_t)180}));
-                        return read_mutation_from_flat_mutation_reader(*reader);
-                    }).then([reader, s] (mutation_opt m) {
+                    });
+                    verify_mutation([&] (const mutation_opt& m) {
                         BOOST_REQUIRE(m);
                         BOOST_REQUIRE(m->key().equal(*s, partition_key::from_singular(*s, data_value(sstring("john")))));
                         BOOST_REQUIRE(!m->partition().partition_tombstone());
-                        auto rows = m->partition().clustered_rows();
+                        auto& rows = m->partition().clustered_rows();
                         BOOST_REQUIRE(rows.calculate_size() == 1);
                         auto &row = rows.begin()->row();
                         BOOST_REQUIRE(!row.deleted_at());
@@ -280,22 +285,17 @@ SEASTAR_TEST_CASE(compact) {
                         auto& cdef2 = *s->get_column_definition("height");
                         BOOST_REQUIRE(cells.cell_at(cdef1.id).as_atomic_cell(cdef1).value() == managed_bytes({0,0,0,20}));
                         BOOST_REQUIRE(cells.find_cell(cdef2.id) == nullptr);
-                        return read_mutation_from_flat_mutation_reader(*reader);
-                    }).then([reader, s] (mutation_opt m) {
+                    });
+                    verify_mutation([&] (const mutation_opt& m) {
                         BOOST_REQUIRE(m);
                         BOOST_REQUIRE(m->key().equal(*s, partition_key::from_singular(*s, data_value(sstring("nadav")))));
                         BOOST_REQUIRE(m->partition().partition_tombstone());
-                        auto rows = m->partition().clustered_rows();
+                        auto& rows = m->partition().clustered_rows();
                         BOOST_REQUIRE(rows.calculate_size() == 0);
-                        return read_mutation_from_flat_mutation_reader(*reader);
-                    }).then([reader] (mutation_opt m) {
-                        BOOST_REQUIRE(!m);
-                    }).finally([reader] {
-                        return reader->close();
                     });
-                });
-            });
-        }).get();
+                    verify_mutation([&] (const mutation_opt& m) {
+                        BOOST_REQUIRE(!m);
+                    });
   });
 
     // verify that the compacted sstable look like
