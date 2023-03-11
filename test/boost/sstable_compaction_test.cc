@@ -309,48 +309,47 @@ static std::vector<sstables::shared_sstable> get_candidates_for_leveled_strategy
 static future<std::vector<sstables::generation_type::int_t>> compact_sstables(test_env& env, std::vector<sstables::generation_type::int_t> generations_to_compact,
         sstables::generation_type::int_t new_generation, bool create_sstables, uint64_t min_sstable_size, compaction_strategy_type strategy) {
     BOOST_REQUIRE(smp::count == 1);
-    // FIXME: indentation
     return seastar::async(
             [&env, generations_to_compact = std::move(generations_to_compact), new_generation, create_sstables, min_sstable_size, strategy] () mutable {
-    schema_builder builder(make_shared_schema({}, some_keyspace, some_column_family,
-        {{"p1", utf8_type}}, {{"c1", utf8_type}}, {{"r1", utf8_type}}, {}, utf8_type));
-    builder.set_compressor_params(compression_parameters::no_compression());
-    builder.set_min_compaction_threshold(4);
-    auto s = builder.build(schema_builder::compact_storage::no);
-    auto tmpdir_path = env.tempdir().path().native();
+        schema_builder builder(make_shared_schema({}, some_keyspace, some_column_family,
+            {{"p1", utf8_type}}, {{"c1", utf8_type}}, {{"r1", utf8_type}}, {}, utf8_type));
+        builder.set_compressor_params(compression_parameters::no_compression());
+        builder.set_min_compaction_threshold(4);
+        auto s = builder.build(schema_builder::compact_storage::no);
+        auto tmpdir_path = env.tempdir().path().native();
 
-    auto cf = make_lw_shared<table_for_tests>(env.make_table_for_tests(s, tmpdir_path));
-    auto stop_cf = deferred_stop(*cf);
+        auto cf = make_lw_shared<table_for_tests>(env.make_table_for_tests(s, tmpdir_path));
+        auto stop_cf = deferred_stop(*cf);
 
-    auto generations = make_lw_shared<std::vector<sstables::generation_type::int_t>>(std::move(generations_to_compact));
-    auto sstables = make_lw_shared<std::vector<sstables::shared_sstable>>();
-    auto created = make_lw_shared<std::vector<sstables::generation_type::int_t>>();
+        auto generations = make_lw_shared<std::vector<sstables::generation_type::int_t>>(std::move(generations_to_compact));
+        auto sstables = make_lw_shared<std::vector<sstables::shared_sstable>>();
+        auto created = make_lw_shared<std::vector<sstables::generation_type::int_t>>();
 
         if (!create_sstables) {
             auto opened_sstables = open_sstables(env, s, tmpdir_path, *generations).get();
-                for (auto& sst : opened_sstables) {
-                    sstables->push_back(sst);
-                }
+            for (auto& sst : opened_sstables) {
+                sstables->push_back(sst);
+            }
         } else {
-        for (auto generation : *generations) {
-            auto mt = make_lw_shared<replica::memtable>(s);
+            for (auto generation : *generations) {
+                auto mt = make_lw_shared<replica::memtable>(s);
 
-            const column_definition& r1_col = *s->get_column_definition("r1");
+                const column_definition& r1_col = *s->get_column_definition("r1");
 
-            sstring k = "key" + to_sstring(generation);
-            auto key = partition_key::from_exploded(*s, {to_bytes(k)});
-            auto c_key = clustering_key::from_exploded(*s, {to_bytes("abc")});
+                sstring k = "key" + to_sstring(generation);
+                auto key = partition_key::from_exploded(*s, {to_bytes(k)});
+                auto c_key = clustering_key::from_exploded(*s, {to_bytes("abc")});
 
-            mutation m(s, key);
-            m.set_clustered_cell(c_key, r1_col, make_atomic_cell(utf8_type, bytes(min_sstable_size, 'a')));
-            mt->apply(std::move(m));
+                mutation m(s, key);
+                m.set_clustered_cell(c_key, r1_col, make_atomic_cell(utf8_type, bytes(min_sstable_size, 'a')));
+                mt->apply(std::move(m));
 
-            auto sst = env.make_sstable(s, tmpdir_path, generation);
+                auto sst = env.make_sstable(s, tmpdir_path, generation);
 
-            write_memtable_to_sstable_for_test(*mt, sst).get();
+                write_memtable_to_sstable_for_test(*mt, sst).get();
                 sst->load().get();
-                    sstables->push_back(sst);
-        }
+                sstables->push_back(sst);
+            }
         }
         auto generation = make_lw_shared<sstables::generation_type::int_t>(new_generation);
         auto new_sstable = [&env, generation, created, s, tmpdir_path] {
