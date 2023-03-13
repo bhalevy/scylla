@@ -1,3 +1,13 @@
+/*
+ * Copyright (C) 2022-present ScyllaDB
+ */
+
+/*
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ */
+
+#define BOOST_TEST_MODULE core
+
 #include "cql3/column_identifier.hh"
 #include "cql3/util.hh"
 #include "seastar/core/shared_ptr.hh"
@@ -5,7 +15,6 @@
 #include "types/list.hh"
 #include "types/map.hh"
 #include <boost/test/tools/old/interface.hpp>
-#define BOOST_TEST_MODULE core
 
 #include <boost/test/unit_test.hpp>
 #include <utility>

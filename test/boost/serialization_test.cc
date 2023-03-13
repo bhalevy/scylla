@@ -7,6 +7,8 @@
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
+#define BOOST_TEST_MODULE test-serialization
+
 #include <iostream>
 #include <assert.h>
 #include <sstream>
@@ -18,7 +20,6 @@
 #include "gms/inet_address_serializer.hh"
 #include "serializer_impl.hh"
 
-#define BOOST_TEST_MODULE test-serialization
 #include <boost/test/unit_test.hpp>
 
 void show(std::stringstream &ss) {
