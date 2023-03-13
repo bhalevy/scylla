@@ -9,16 +9,14 @@
 #pragma once
 
 #include <seastar/core/sstring.hh>
-#include <vector>
-#include <sstream>
-#include <unordered_set>
-#include <set>
-#include <optional>
-#include <list>
-#include <map>
+#include <string>
 
 #include "seastarx.hh"
-#include "utils/chunked_vector.hh"
+
+#include "bytes.hh"
+
+#include <boost/test/utils/basic_cstring/basic_cstring_fwd.hpp>
+#include <boost/range/adaptor/transformed.hpp>
 
 namespace utils {
 
@@ -63,25 +61,10 @@ std::ostream& operator<<(std::ostream& os, const print_with_comma<NeedsComma, Pr
 
 namespace std {
 
-template<typename Printable>
-static inline
+template <std::ranges::range Range>
 sstring
-to_string(const std::vector<Printable>& items) {
-    return "[" + utils::join(", ", items) + "]";
-}
-
-template<typename Printable>
-static inline
-sstring
-to_string(const std::set<Printable>& items) {
-    return "{" + utils::join(", ", items) + "}";
-}
-
-template<typename Printable>
-static inline
-sstring
-to_string(const std::unordered_set<Printable>& items) {
-    return "{" + utils::join(", ", items) + "}";
+to_string(const Range& items) {
+    return fmt::format("{{{}}}", fmt::join(items, ", "));
 }
 
 template<typename Printable>
@@ -107,45 +90,23 @@ std::ostream& operator<<(std::ostream& os, const std::tuple<T...>& p) {
     return print_tuple(os, p, std::make_index_sequence<sizeof...(T)>());
 }
 
-template <typename T, typename... Args>
-std::ostream& operator<<(std::ostream& os, const std::unordered_set<T, Args...>& items) {
-    os << "{" << utils::join(", ", items) << "}";
+// Exclude string-like types to avoid printing them as vector of chars
+template <std::ranges::range Range>
+requires (
+       !std::convertible_to<Range, std::string>
+    && !std::convertible_to<Range, std::string_view>
+    && !std::convertible_to<Range, bytes>
+    && !std::convertible_to<Range, bytes_view>
+    && !std::same_as<Range, boost::unit_test::basic_cstring<const char>>
+)
+std::ostream& operator<<(std::ostream& os, const Range& items) {
+    fmt::print(os, "{{{}}}", fmt::join(items, ", "));
     return os;
 }
 
-template <typename T>
-std::ostream& operator<<(std::ostream& os, const std::set<T>& items) {
-    os << "{" << utils::join(", ", items) << "}";
-    return os;
-}
-
-template<typename T, size_t N>
-std::ostream& operator<<(std::ostream& os, const std::array<T, N>& items) {
-    os << "{" << utils::join(", ", items) << "}";
-    return os;
-}
-
-template <typename K, typename V, typename... Args>
-std::ostream& operator<<(std::ostream& os, const std::unordered_map<K, V, Args...>& items) {
-    os << "{" << utils::join(", ", items) << "}";
-    return os;
-}
-
-template <typename K, typename V, typename... Args>
-std::ostream& operator<<(std::ostream& os, const std::map<K, V, Args...>& items) {
-    os << "{" << utils::join(", ", items) << "}";
-    return os;
-}
-
-template <typename T>
-std::ostream& operator<<(std::ostream& os, const utils::chunked_vector<T>& items) {
-    os << "[" << utils::join(", ", items) << "]";
-    return os;
-}
-
-template <typename T>
-std::ostream& operator<<(std::ostream& os, const std::list<T>& items) {
-    os << "[" << utils::join(", ", items) << "]";
+template <typename... Args>
+std::ostream& operator<<(std::ostream& os, const boost::transformed_range<Args...>& items) {
+    fmt::print(os, "{{{}}}", fmt::join(items, ", "));
     return os;
 }
 
