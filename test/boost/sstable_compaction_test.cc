@@ -481,38 +481,31 @@ SEASTAR_TEST_CASE(compact_02) {
 // Leveled compaction strategy tests
 
 // NOTE: must run in a thread.
-static void add_sstable_for_leveled_test(test_env& env, lw_shared_ptr<replica::column_family> cf, sstables::generation_type::int_t gen_value, uint64_t fake_data_size,
+static sstables::shared_sstable add_sstable_for_leveled_test(test_env& env, lw_shared_ptr<replica::column_family> cf, uint64_t fake_data_size,
                                          uint32_t sstable_level, const partition_key& first_key, const partition_key& last_key, int64_t max_timestamp = 0) {
-    auto gen = sstables::generation_type(gen_value);
-    auto sst = env.make_sstable(cf->schema(), "", gen);
+    auto sst = cf->make_sstable();
     sstables::test(sst).set_values_for_leveled_strategy(fake_data_size, sstable_level, max_timestamp, first_key, last_key);
     assert(sst->data_size() == fake_data_size);
     assert(sst->get_sstable_level() == sstable_level);
     assert(sst->get_stats_metadata().max_timestamp == max_timestamp);
-    assert(sst->generation() == gen);
     column_family_test(cf).add_sstable(sst).get();
+    return sst;
 }
 
 // NOTE: must run in a thread.
-static shared_sstable add_sstable_for_overlapping_test(test_env& env, lw_shared_ptr<replica::column_family> cf, sstables::generation_type::int_t gen_value,
+static shared_sstable add_sstable_for_overlapping_test(test_env& env, lw_shared_ptr<replica::column_family> cf,
         const partition_key& first_key, const partition_key& last_key, stats_metadata stats = {}) {
-    auto gen = sstables::generation_type(gen_value);
-    auto sst = env.make_sstable(cf->schema(), "", gen);
+    auto sst = cf->make_sstable();
     sstables::test(sst).set_values(std::move(first_key), std::move(last_key), std::move(stats));
     column_family_test(cf).add_sstable(sst).get();
     return sst;
 }
 
-static shared_sstable sstable_for_overlapping_test(test_env& env, const schema_ptr& schema, sstables::generation_type gen,
+static shared_sstable sstable_for_overlapping_test(test_env& env, lw_shared_ptr<replica::column_family> cf,
         const partition_key& first_key, const partition_key& last_key, uint32_t level = 0) {
-    auto sst = env.make_sstable(schema, "", gen);
+    auto sst = cf->make_sstable();
     sstables::test(sst).set_values_for_leveled_strategy(0, level, 0, first_key, last_key);
     return sst;
-}
-
-static shared_sstable sstable_for_overlapping_test(test_env& env, const schema_ptr& schema, sstables::generation_type::int_t gen_value,
-        const partition_key& first_key, const partition_key& last_key, uint32_t level = 0) {
-    return sstable_for_overlapping_test(env, schema, sstables::generation_type(gen_value), first_key, last_key, level);
 }
 
 // ranges: [a,b] and [c,d]
@@ -524,18 +517,8 @@ static bool key_range_overlaps(table_for_tests& cf, const dht::decorated_key& a,
     return range1.overlaps(range2, dht::ring_position_comparator(*cf.schema()));
 }
 
-static shared_sstable get_sstable(const lw_shared_ptr<replica::column_family>& cf, sstables::generation_type generation) {
-    auto sstables = cf->get_sstables();
-    auto entry = boost::range::find_if(*sstables, [generation] (shared_sstable sst) { return generation == sst->generation(); });
-    assert(entry != sstables->end());
-    assert((*entry)->generation() == generation);
-    return *entry;
-}
-
-static bool sstable_overlaps(const lw_shared_ptr<replica::column_family>& cf, sstables::generation_type::int_t gen1, sstables::generation_type::int_t gen2) {
-    auto candidate1 = get_sstable(cf, sstables::generation_type(gen1));
+static bool sstable_overlaps(const lw_shared_ptr<replica::column_family>& cf, sstables::shared_sstable candidate1, sstables::shared_sstable candidate2) {
     auto range1 = range<dht::token>::make(candidate1->get_first_decorated_key()._token, candidate1->get_last_decorated_key()._token);
-    auto candidate2 = get_sstable(cf, sstables::generation_type(gen2));
     auto range2 = range<dht::token>::make(candidate2->get_first_decorated_key()._token, candidate2->get_last_decorated_key()._token);
     return range1.overlaps(range2, dht::token_comparator());
 }
@@ -552,14 +535,14 @@ SEASTAR_TEST_CASE(leveled_01) {
     auto max_sstable_size = max_sstable_size_in_mb*1024*1024;
 
     // Creating two sstables which key range overlap.
-    add_sstable_for_leveled_test(env, cf, /*gen*/1, max_sstable_size, /*level*/0, min_key.key(), max_key.key());
+    auto sst1 = add_sstable_for_leveled_test(env, cf, max_sstable_size, /*level*/0, min_key.key(), max_key.key());
     BOOST_REQUIRE(cf->get_sstables()->size() == 1);
 
-    add_sstable_for_leveled_test(env, cf, /*gen*/2, max_sstable_size, /*level*/0, keys[1].key(), max_key.key());
+    auto sst2 = add_sstable_for_leveled_test(env, cf, max_sstable_size, /*level*/0, keys[1].key(), max_key.key());
     BOOST_REQUIRE(cf->get_sstables()->size() == 2);
 
     BOOST_REQUIRE(key_range_overlaps(cf, min_key, max_key, keys[1], max_key) == true);
-    BOOST_REQUIRE(sstable_overlaps(cf, 1, 2) == true);
+    BOOST_REQUIRE(sstable_overlaps(cf, sst1, sst2) == true);
 
     auto candidates = get_candidates_for_leveled_strategy(*cf);
     sstables::size_tiered_compaction_strategy_options stcs_options;
@@ -571,13 +554,16 @@ SEASTAR_TEST_CASE(leveled_01) {
     BOOST_REQUIRE(candidate.sstables.size() == 2);
     BOOST_REQUIRE(candidate.level == 1);
 
-    std::set<sstables::generation_type::int_t> gens = { 1, 2 };
+    std::unordered_set<sstables::shared_sstable> expected_sstables;
+    expected_sstables.insert(sst1);
+    expected_sstables.insert(sst2);
+
     for (auto& sst : candidate.sstables) {
-        BOOST_REQUIRE(gens.contains(generation_value(sst->generation())));
-        gens.erase(generation_value(sst->generation()));
+        BOOST_REQUIRE(expected_sstables.contains(sst));
+        expected_sstables.erase(sst);
         BOOST_REQUIRE(sst->get_sstable_level() == 0);
     }
-    BOOST_REQUIRE(gens.empty());
+    BOOST_REQUIRE(expected_sstables.empty());
 
     cf.stop_and_keep_alive().get();
   });
@@ -597,22 +583,22 @@ SEASTAR_TEST_CASE(leveled_02) {
     // Generation 1 will overlap only with generation 2.
     // Remember that for level0, leveled strategy prefer choosing older sstables as candidates.
 
-    add_sstable_for_leveled_test(env, cf, /*gen*/1, max_sstable_size, /*level*/0, min_key.key(), keys[10].key());
+    auto sst1 = add_sstable_for_leveled_test(env, cf, max_sstable_size, /*level*/0, min_key.key(), keys[10].key());
     BOOST_REQUIRE(cf->get_sstables()->size() == 1);
 
-    add_sstable_for_leveled_test(env, cf, /*gen*/2, max_sstable_size, /*level*/0, min_key.key(), keys[20].key());
+    auto sst2 = add_sstable_for_leveled_test(env, cf, max_sstable_size, /*level*/0, min_key.key(), keys[20].key());
     BOOST_REQUIRE(cf->get_sstables()->size() == 2);
 
-    add_sstable_for_leveled_test(env, cf, /*gen*/3, max_sstable_size, /*level*/0, keys[30].key(), max_key.key());
+    auto sst3 = add_sstable_for_leveled_test(env, cf, max_sstable_size, /*level*/0, keys[30].key(), max_key.key());
     BOOST_REQUIRE(cf->get_sstables()->size() == 3);
 
     BOOST_REQUIRE(key_range_overlaps(cf, min_key, keys[10], min_key, keys[20]) == true);
     BOOST_REQUIRE(key_range_overlaps(cf, min_key, keys[20], keys[30], max_key) == false);
     BOOST_REQUIRE(key_range_overlaps(cf, min_key, keys[10], keys[30], max_key) == false);
-    BOOST_REQUIRE(sstable_overlaps(cf, 1, 2) == true);
-    BOOST_REQUIRE(sstable_overlaps(cf, 2, 1) == true);
-    BOOST_REQUIRE(sstable_overlaps(cf, 1, 3) == false);
-    BOOST_REQUIRE(sstable_overlaps(cf, 2, 3) == false);
+    BOOST_REQUIRE(sstable_overlaps(cf, sst1, sst2) == true);
+    BOOST_REQUIRE(sstable_overlaps(cf, sst2, sst1) == true);
+    BOOST_REQUIRE(sstable_overlaps(cf, sst1, sst3) == false);
+    BOOST_REQUIRE(sstable_overlaps(cf, sst2, sst3) == false);
 
     auto candidates = get_candidates_for_leveled_strategy(*cf);
     sstables::size_tiered_compaction_strategy_options stcs_options;
@@ -646,12 +632,12 @@ SEASTAR_TEST_CASE(leveled_03) {
     const auto& max_key = keys.back();
 
     // Creating two sstables of level 0 which overlap
-    add_sstable_for_leveled_test(env, cf, /*gen*/1, /*data_size*/1024*1024, /*level*/0, min_key.key(), keys[10].key());
-    add_sstable_for_leveled_test(env, cf, /*gen*/2, /*data_size*/1024*1024, /*level*/0, min_key.key(), keys[20].key());
+    auto sst1 = add_sstable_for_leveled_test(env, cf, /*data_size*/1024*1024, /*level*/0, min_key.key(), keys[10].key());
+    auto sst2 = add_sstable_for_leveled_test(env, cf, /*data_size*/1024*1024, /*level*/0, min_key.key(), keys[20].key());
     // Creating a sstable of level 1 which overlap with two sstables above.
-    add_sstable_for_leveled_test(env, cf, /*gen*/3, /*data_size*/1024*1024, /*level*/1, min_key.key(), keys[30].key());
+    auto sst3 = add_sstable_for_leveled_test(env, cf, /*data_size*/1024*1024, /*level*/1, min_key.key(), keys[30].key());
     // Creating a sstable of level 1 which doesn't overlap with any sstable.
-    add_sstable_for_leveled_test(env, cf, /*gen*/4, /*data_size*/1024*1024, /*level*/1, keys[40].key(), max_key.key());
+    auto sst4 = add_sstable_for_leveled_test(env, cf, /*data_size*/1024*1024, /*level*/1, keys[40].key(), max_key.key());
 
     BOOST_REQUIRE(cf->get_sstables()->size() == 4);
 
@@ -660,12 +646,12 @@ SEASTAR_TEST_CASE(leveled_03) {
     BOOST_REQUIRE(key_range_overlaps(cf, min_key, keys[20], min_key, keys[30]) == true);
     BOOST_REQUIRE(key_range_overlaps(cf, min_key, keys[10], keys[40], max_key) == false);
     BOOST_REQUIRE(key_range_overlaps(cf, min_key, keys[30], keys[40], max_key) == false);
-    BOOST_REQUIRE(sstable_overlaps(cf, 1, 2) == true);
-    BOOST_REQUIRE(sstable_overlaps(cf, 1, 3) == true);
-    BOOST_REQUIRE(sstable_overlaps(cf, 2, 3) == true);
-    BOOST_REQUIRE(sstable_overlaps(cf, 1, 4) == false);
-    BOOST_REQUIRE(sstable_overlaps(cf, 2, 4) == false);
-    BOOST_REQUIRE(sstable_overlaps(cf, 3, 4) == false);
+    BOOST_REQUIRE(sstable_overlaps(cf, sst1, sst2) == true);
+    BOOST_REQUIRE(sstable_overlaps(cf, sst1, sst3) == true);
+    BOOST_REQUIRE(sstable_overlaps(cf, sst2, sst3) == true);
+    BOOST_REQUIRE(sstable_overlaps(cf, sst1, sst4) == false);
+    BOOST_REQUIRE(sstable_overlaps(cf, sst2, sst4) == false);
+    BOOST_REQUIRE(sstable_overlaps(cf, sst3, sst4) == false);
 
     auto max_sstable_size_in_mb = 1;
     auto candidates = get_candidates_for_leveled_strategy(*cf);
@@ -706,27 +692,27 @@ SEASTAR_TEST_CASE(leveled_04) {
     auto max_sstable_size_in_bytes = max_sstable_size_in_mb*1024*1024;
 
     // add 1 level-0 sstable to cf.
-    add_sstable_for_leveled_test(env, cf, /*gen*/1, /*data_size*/max_sstable_size_in_bytes, /*level*/0, min_key.key(), max_key.key());
+    auto sst1 = add_sstable_for_leveled_test(env, cf, /*data_size*/max_sstable_size_in_bytes, /*level*/0, min_key.key(), max_key.key());
 
     // create two big sstables in level1 to force leveled compaction on it.
     auto max_bytes_for_l1 = leveled_manifest::max_bytes_for_level(1, max_sstable_size_in_bytes);
     // NOTE: SSTables in level1 cannot overlap.
-    add_sstable_for_leveled_test(env, cf, /*gen*/2, /*data_size*/max_bytes_for_l1, /*level*/1, min_key.key(), keys[25].key());
-    add_sstable_for_leveled_test(env, cf, /*gen*/3, /*data_size*/max_bytes_for_l1, /*level*/1, keys[26].key(), max_key.key());
+    auto sst2 = add_sstable_for_leveled_test(env, cf, /*data_size*/max_bytes_for_l1, /*level*/1, min_key.key(), keys[25].key());
+    auto sst3 = add_sstable_for_leveled_test(env, cf, /*data_size*/max_bytes_for_l1, /*level*/1, keys[26].key(), max_key.key());
 
     // Create SSTable in level2 that overlaps with the ones in level1,
     // so compaction in level1 will select overlapping sstables in
     // level2.
-    add_sstable_for_leveled_test(env, cf, /*gen*/4, /*data_size*/max_sstable_size_in_bytes, /*level*/2, min_key.key(), max_key.key());
+    auto sst4 = add_sstable_for_leveled_test(env, cf, /*data_size*/max_sstable_size_in_bytes, /*level*/2, min_key.key(), max_key.key());
 
     BOOST_REQUIRE(cf->get_sstables()->size() == 4);
 
     BOOST_REQUIRE(key_range_overlaps(cf, min_key, max_key, min_key, max_key) == true);
-    BOOST_REQUIRE(sstable_overlaps(cf, 1, 2) == true);
-    BOOST_REQUIRE(sstable_overlaps(cf, 1, 3) == true);
-    BOOST_REQUIRE(sstable_overlaps(cf, 2, 3) == false);
-    BOOST_REQUIRE(sstable_overlaps(cf, 3, 4) == true);
-    BOOST_REQUIRE(sstable_overlaps(cf, 2, 4) == true);
+    BOOST_REQUIRE(sstable_overlaps(cf, sst1, sst2) == true);
+    BOOST_REQUIRE(sstable_overlaps(cf, sst1, sst3) == true);
+    BOOST_REQUIRE(sstable_overlaps(cf, sst2, sst3) == false);
+    BOOST_REQUIRE(sstable_overlaps(cf, sst3, sst4) == true);
+    BOOST_REQUIRE(sstable_overlaps(cf, sst2, sst4) == true);
 
     auto candidates = get_candidates_for_leveled_strategy(*cf);
     sstables::size_tiered_compaction_strategy_options stcs_options;
@@ -792,7 +778,7 @@ SEASTAR_TEST_CASE(leveled_06) {
     auto max_bytes_for_l1 = leveled_manifest::max_bytes_for_level(1, max_sstable_size_in_bytes);
     // Create fake sstable that will be compacted into L2.
     const auto key = tests::generate_partition_key(cf.schema());
-    add_sstable_for_leveled_test(env, cf, /*gen*/1, /*data_size*/max_bytes_for_l1*2, /*level*/1, key.key(), key.key());
+    auto sst1 = add_sstable_for_leveled_test(env, cf, /*data_size*/max_bytes_for_l1*2, /*level*/1, key.key(), key.key());
     BOOST_REQUIRE(cf->get_sstables()->size() == 1);
 
     auto candidates = get_candidates_for_leveled_strategy(*cf);
@@ -809,7 +795,7 @@ SEASTAR_TEST_CASE(leveled_06) {
     BOOST_REQUIRE(candidate.sstables.size() == 1);
     auto& sst = (candidate.sstables)[0];
     BOOST_REQUIRE(sst->get_sstable_level() == 1);
-    BOOST_REQUIRE(generation_value(sst->generation()) == 1);
+    BOOST_REQUIRE(sst->generation() == sst1->generation());
 
     cf.stop_and_keep_alive().get();
   });
@@ -821,7 +807,7 @@ SEASTAR_TEST_CASE(leveled_07) {
 
     const auto key = tests::generate_partition_key(cf.schema());
     for (auto i = 0; i < leveled_manifest::MAX_COMPACTING_L0*2; i++) {
-        add_sstable_for_leveled_test(env, cf, i, 1024*1024, /*level*/0, key.key(), key.key(), i /* max timestamp */);
+        add_sstable_for_leveled_test(env, cf, 1024*1024, /*level*/0, key.key(), key.key(), i /* max timestamp */);
     }
     auto candidates = get_candidates_for_leveled_strategy(*cf);
     sstables::size_tiered_compaction_strategy_options stcs_options;
@@ -843,6 +829,7 @@ SEASTAR_TEST_CASE(leveled_07) {
 SEASTAR_TEST_CASE(leveled_invariant_fix) {
   return test_env::do_with_async([] (test_env& env) {
     auto cf = env.make_table_for_tests();
+    auto stop_cf = deferred_stop(cf);
 
     auto sstables_no = cf.schema()->max_compaction_threshold();
     auto keys = tests::generate_partition_keys(sstables_no, cf.schema());
@@ -851,13 +838,17 @@ SEASTAR_TEST_CASE(leveled_invariant_fix) {
     auto sstable_max_size = 1024*1024;
 
     // add non overlapping with min token to be discarded by strategy
-    add_sstable_for_leveled_test(env, cf, 0, sstable_max_size, /*level*/1, min_key.key(), min_key.key());
+    add_sstable_for_leveled_test(env, cf, sstable_max_size, /*level*/1, min_key.key(), min_key.key());
+
+    std::unordered_set<sstables::shared_sstable> expected_sstables;
 
     for (auto i = 1; i < sstables_no-1; i++) {
-        add_sstable_for_leveled_test(env, cf, i, sstable_max_size, /*level*/1, keys[i].key(), keys[i].key());
+        auto sst = add_sstable_for_leveled_test(env, cf, sstable_max_size, /*level*/1, keys[i].key(), keys[i].key());
+        expected_sstables.insert(sst);
     }
     // add large token span sstable into level 1, which overlaps with all sstables added in loop above.
-    add_sstable_for_leveled_test(env, cf, sstables_no, sstable_max_size, 1, keys[1].key(), max_key.key());
+    auto sst = add_sstable_for_leveled_test(env, cf, sstable_max_size, 1, keys[1].key(), max_key.key());
+    expected_sstables.insert(sst);
 
     auto candidates = get_candidates_for_leveled_strategy(*cf);
     sstables::size_tiered_compaction_strategy_options stcs_options;
@@ -868,11 +859,12 @@ SEASTAR_TEST_CASE(leveled_invariant_fix) {
     auto candidate = manifest.get_compaction_candidates(last_compacted_keys, compaction_counter);
     BOOST_REQUIRE(candidate.level == 1);
     BOOST_REQUIRE(candidate.sstables.size() == size_t(sstables_no-1));
-    BOOST_REQUIRE(boost::algorithm::all_of(candidate.sstables, [] (auto& sst) {
-        return generation_value(sst->generation()) != 0;
+    BOOST_REQUIRE(boost::algorithm::all_of(candidate.sstables, [&] (auto& sst) {
+        auto res = expected_sstables.contains(sst);
+        expected_sstables.erase(sst);
+        return res;
     }));
-
-    cf.stop_and_keep_alive().get();
+    BOOST_REQUIRE(expected_sstables.empty());
   });
 }
 
@@ -891,9 +883,13 @@ SEASTAR_TEST_CASE(leveled_stcs_on_L0) {
     // we don't want level 0 to be worth promoting.
     auto l0_sstables_size = (sstable_max_size_in_mb*1024*1024)/(l0_sstables_no+1);
 
-    add_sstable_for_leveled_test(env, cf, 0, sstable_max_size_in_mb*1024*1024, /*level*/1, keys[0].key(), keys[0].key());
+    add_sstable_for_leveled_test(env, cf, sstable_max_size_in_mb*1024*1024, /*level*/1, keys[0].key(), keys[0].key());
+
+    std::unordered_set<sstables::shared_sstable> expected_sstables;
+
     for (auto gen = 0; gen < l0_sstables_no; gen++) {
-        add_sstable_for_leveled_test(env, cf, gen+1, l0_sstables_size, /*level*/0, keys[0].key(), keys[0].key());
+        auto sst = add_sstable_for_leveled_test(env, cf, l0_sstables_size, /*level*/0, keys[0].key(), keys[0].key());
+        expected_sstables.insert(sst);
     }
     auto candidates = get_candidates_for_leveled_strategy(*cf);
     BOOST_REQUIRE(candidates.size() == size_t(l0_sstables_no+1));
@@ -909,9 +905,12 @@ SEASTAR_TEST_CASE(leveled_stcs_on_L0) {
         auto candidate = manifest.get_compaction_candidates(last_compacted_keys, compaction_counter);
         BOOST_REQUIRE(candidate.level == 0);
         BOOST_REQUIRE(candidate.sstables.size() == size_t(l0_sstables_no));
-        BOOST_REQUIRE(boost::algorithm::all_of(candidate.sstables, [] (auto& sst) {
-            return generation_value(sst->generation()) != 0;
+        BOOST_REQUIRE(boost::algorithm::all_of(candidate.sstables, [&] (auto& sst) {
+            auto res = expected_sstables.contains(sst);
+            expected_sstables.erase(sst);
+            return res;
         }));
+        BOOST_REQUIRE(expected_sstables.empty());
     }
     {
         candidates.resize(2);
@@ -938,9 +937,9 @@ SEASTAR_TEST_CASE(overlapping_starved_sstables_test) {
     // to bring a sstable from level 3 that theoretically wasn't compacted
     // for many rounds and won't introduce an overlap.
     auto max_bytes_for_l1 = leveled_manifest::max_bytes_for_level(1, max_sstable_size_in_bytes);
-    add_sstable_for_leveled_test(env, cf, /*gen*/1, max_bytes_for_l1*1.1, /*level*/1, min_key.key(), keys[2].key());
-    add_sstable_for_leveled_test(env, cf, /*gen*/2, max_sstable_size_in_bytes, /*level*/2, min_key.key(), keys[1].key());
-    add_sstable_for_leveled_test(env, cf, /*gen*/3, max_sstable_size_in_bytes, /*level*/3, min_key.key(), keys[1].key());
+    add_sstable_for_leveled_test(env, cf, max_bytes_for_l1*1.1, /*level*/1, min_key.key(), keys[2].key());
+    add_sstable_for_leveled_test(env, cf, max_sstable_size_in_bytes, /*level*/2, min_key.key(), keys[1].key());
+    add_sstable_for_leveled_test(env, cf, max_sstable_size_in_bytes, /*level*/3, min_key.key(), keys[1].key());
 
     std::vector<std::optional<dht::decorated_key>> last_compacted_keys(leveled_manifest::MAX_LEVELS);
     std::vector<int> compaction_counter(leveled_manifest::MAX_LEVELS);
@@ -966,10 +965,10 @@ SEASTAR_TEST_CASE(check_overlapping) {
     const auto& min_key = keys.front();
     const auto& max_key = keys.back();
 
-    auto sst1 = add_sstable_for_overlapping_test(env, cf, /*gen*/1, min_key.key(), keys[1].key());
-    auto sst2 = add_sstable_for_overlapping_test(env, cf, /*gen*/2, min_key.key(), keys[2].key());
-    auto sst3 = add_sstable_for_overlapping_test(env, cf, /*gen*/3, keys[3].key(), max_key.key());
-    auto sst4 = add_sstable_for_overlapping_test(env, cf, /*gen*/4, min_key.key(), max_key.key());
+    auto sst1 = add_sstable_for_overlapping_test(env, cf, min_key.key(), keys[1].key());
+    auto sst2 = add_sstable_for_overlapping_test(env, cf, min_key.key(), keys[2].key());
+    auto sst3 = add_sstable_for_overlapping_test(env, cf, keys[3].key(), max_key.key());
+    auto sst4 = add_sstable_for_overlapping_test(env, cf, min_key.key(), max_key.key());
     BOOST_REQUIRE(cf->get_sstables()->size() == 4);
 
     std::vector<shared_sstable> compacting = { sst1, sst2 };
@@ -1307,9 +1306,9 @@ SEASTAR_TEST_CASE(get_fully_expired_sstables_test) {
         auto cf = env.make_table_for_tests();
         auto close_cf = deferred_stop(cf);
 
-        auto sst1 = add_sstable_for_overlapping_test(env, cf, /*gen*/1, min_key.key(), keys[1].key(), build_stats(t0, t1, t1));
-        auto sst2 = add_sstable_for_overlapping_test(env, cf, /*gen*/2, min_key.key(), keys[2].key(), build_stats(t0, t1, std::numeric_limits<int32_t>::max()));
-        auto sst3 = add_sstable_for_overlapping_test(env, cf, /*gen*/3, min_key.key(), max_key.key(), build_stats(t3, t4, std::numeric_limits<int32_t>::max()));
+        auto sst1 = add_sstable_for_overlapping_test(env, cf, min_key.key(), keys[1].key(), build_stats(t0, t1, t1));
+        auto sst2 = add_sstable_for_overlapping_test(env, cf, min_key.key(), keys[2].key(), build_stats(t0, t1, std::numeric_limits<int32_t>::max()));
+        auto sst3 = add_sstable_for_overlapping_test(env, cf, min_key.key(), max_key.key(), build_stats(t3, t4, std::numeric_limits<int32_t>::max()));
         std::vector<sstables::shared_sstable> compacting = { sst1, sst2 };
         auto expired = get_fully_expired_sstables(cf.as_table_state(), compacting, /*gc before*/gc_clock::from_time_t(15) + cf->schema()->gc_grace_seconds());
         BOOST_REQUIRE(expired.size() == 0);
@@ -1319,9 +1318,9 @@ SEASTAR_TEST_CASE(get_fully_expired_sstables_test) {
         auto cf = env.make_table_for_tests();
         auto close_cf = deferred_stop(cf);
 
-        auto sst1 = add_sstable_for_overlapping_test(env, cf, /*gen*/1, min_key.key(), keys[1].key(), build_stats(t0, t1, t1));
-        auto sst2 = add_sstable_for_overlapping_test(env, cf, /*gen*/2, min_key.key(), keys[2].key(), build_stats(t2, t3, std::numeric_limits<int32_t>::max()));
-        auto sst3 = add_sstable_for_overlapping_test(env, cf, /*gen*/3, min_key.key(), max_key.key(), build_stats(t3, t4, std::numeric_limits<int32_t>::max()));
+        auto sst1 = add_sstable_for_overlapping_test(env, cf, min_key.key(), keys[1].key(), build_stats(t0, t1, t1));
+        auto sst2 = add_sstable_for_overlapping_test(env, cf, min_key.key(), keys[2].key(), build_stats(t2, t3, std::numeric_limits<int32_t>::max()));
+        auto sst3 = add_sstable_for_overlapping_test(env, cf, min_key.key(), max_key.key(), build_stats(t3, t4, std::numeric_limits<int32_t>::max()));
         std::vector<sstables::shared_sstable> compacting = { sst1, sst2 };
         auto expired = get_fully_expired_sstables(cf.as_table_state(), compacting, /*gc before*/gc_clock::from_time_t(25) + cf->schema()->gc_grace_seconds());
         BOOST_REQUIRE(expired.size() == 1);
@@ -1385,12 +1384,12 @@ SEASTAR_TEST_CASE(basic_date_tiered_strategy_test) {
 
     const auto key = tests::generate_partition_key(s);
     for (auto i = 1; i <= min_threshold; i++) {
-        auto sst = add_sstable_for_overlapping_test(env, cf, /*gen*/i, key.key(), key.key(),
+        auto sst = add_sstable_for_overlapping_test(env, cf, key.key(), key.key(),
             build_stats(timestamp_for_now, timestamp_for_now, std::numeric_limits<int32_t>::max()));
         candidates.push_back(sst);
     }
     // add sstable that belong to a different time tier.
-    auto sst = add_sstable_for_overlapping_test(env, cf, /*gen*/min_threshold + 1, key.key(), key.key(),
+    auto sst = add_sstable_for_overlapping_test(env, cf, key.key(), key.key(),
         build_stats(timestamp_for_past_hour, timestamp_for_past_hour, std::numeric_limits<int32_t>::max()));
     candidates.push_back(sst);
 
@@ -1425,21 +1424,21 @@ SEASTAR_TEST_CASE(date_tiered_strategy_test_2) {
     const auto key = tests::generate_partition_key(s);
     // add sstables that belong to same time window until min threshold is satisfied.
     for (auto i = 1; i <= min_threshold; i++) {
-        auto sst = add_sstable_for_overlapping_test(env, cf, /*gen*/i, key.key(), key.key(),
+        auto sst = add_sstable_for_overlapping_test(env, cf, key.key(), key.key(),
             build_stats(timestamp, timestamp, std::numeric_limits<int32_t>::max()));
         candidates.push_back(sst);
     }
     // belongs to the time window
     auto tp2 = tp + std::chrono::seconds(1800);
     timestamp = tp2.time_since_epoch().count() * 1000;
-    auto sst = add_sstable_for_overlapping_test(env, cf, /*gen*/min_threshold + 1, key.key(), key.key(),
+    auto sst = add_sstable_for_overlapping_test(env, cf, key.key(), key.key(),
         build_stats(timestamp, timestamp, std::numeric_limits<int32_t>::max()));
     candidates.push_back(sst);
 
     // doesn't belong to the time window above
     auto tp3 = tp + std::chrono::seconds(4000);
     timestamp = tp3.time_since_epoch().count() * 1000;
-    auto sst2 = add_sstable_for_overlapping_test(env, cf, /*gen*/min_threshold + 2, key.key(), key.key(),
+    auto sst2 = add_sstable_for_overlapping_test(env, cf, key.key(), key.key(),
         build_stats(timestamp, timestamp, std::numeric_limits<int32_t>::max()));
     candidates.push_back(sst2);
 
@@ -3574,14 +3573,17 @@ SEASTAR_TEST_CASE(test_bug_6472) {
 }
 
 SEASTAR_TEST_CASE(sstable_needs_cleanup_test) {
-  return test_env::do_with([] (test_env& env) {
+  return test_env::do_with_async([] (test_env& env) {
     auto s = make_shared_schema({}, some_keyspace, some_column_family,
         {{"p1", utf8_type}}, {}, {}, {}, utf8_type);
 
     const auto keys = tests::generate_partition_keys(10, s);
 
-    auto sst_gen = [&env, s, gen = sstables::generation_factory()] (const dht::decorated_key& first, const dht::decorated_key& last) mutable {
-        return sstable_for_overlapping_test(env, s, gen().value(), first.key(), last.key());
+    auto table = env.make_table_for_tests(s);
+    auto stop_table = deferred_stop(table);
+
+    auto sst_gen = [&] (const dht::decorated_key& first, const dht::decorated_key& last) mutable {
+        return sstable_for_overlapping_test(env, table, first.key(), last.key());
     };
     auto token_range = [&] (size_t first, size_t last) -> dht::token_range {
         return dht::token_range::make(keys[first].token(), keys[last].token());
@@ -3608,8 +3610,6 @@ SEASTAR_TEST_CASE(sstable_needs_cleanup_test) {
         auto sst5 = sst_gen(keys[7], keys[7]);
         BOOST_REQUIRE(needs_cleanup(sst5, local_ranges, s));
     }
-
-    return make_ready_future<>();
   });
 }
 
@@ -4305,11 +4305,14 @@ SEASTAR_TEST_CASE(max_ongoing_compaction_test) {
 }
 
 SEASTAR_TEST_CASE(compound_sstable_set_incremental_selector_test) {
-    return test_env::do_with([] (test_env& env) {
+    return test_env::do_with_async([] (test_env& env) {
         auto s = make_shared_schema({}, some_keyspace, some_column_family,
                                     {{"p1", utf8_type}}, {}, {}, {}, utf8_type);
         auto cs = sstables::make_compaction_strategy(sstables::compaction_strategy_type::leveled, s->compaction_strategy_options());
         const auto keys = tests::generate_partition_keys(8, s);
+
+        auto table = env.make_table_for_tests(s);
+        auto stop_table = deferred_stop(table);
 
         auto new_sstable = [&] (lw_shared_ptr<sstable_set> set, sstables::generation_type gen, size_t k0, size_t k1, uint32_t level) {
             auto key0 = keys[k0];
@@ -4317,7 +4320,7 @@ SEASTAR_TEST_CASE(compound_sstable_set_incremental_selector_test) {
             auto key1 = keys[k1];
             auto tok1 = key1.token();
             testlog.debug("creating sstable with k[{}] token={} k[{}] token={} level={}", k0, tok0, k1, tok1, level);
-            auto sst = sstable_for_overlapping_test(env, s, gen, key0.key(), key1.key(), level);
+            auto sst = sstable_for_overlapping_test(env, table, key0.key(), key1.key(), level);
             set->insert(sst);
             return sst;
         };
@@ -4414,8 +4417,6 @@ SEASTAR_TEST_CASE(compound_sstable_set_incremental_selector_test) {
             incremental_selection_test(strategy_param::ICS);
             incremental_selection_test(strategy_param::LCS);
         }
-
-        return make_ready_future<>();
     });
 }
 
