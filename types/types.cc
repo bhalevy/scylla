@@ -16,6 +16,7 @@
 #include "cql3/util.hh"
 #include "concrete_types.hh"
 #include <seastar/core/print.hh>
+#include <seastar/core/sstring.hh>
 #include "types/types.hh"
 #include "utils/exceptions.hh"
 #include "utils/serialization.hh"
@@ -1489,7 +1490,7 @@ list_type_impl::deserialize(View in) const {
 template data_value list_type_impl::deserialize<>(ser::buffer_view<bytes_ostream::fragment_iterator>) const;
 
 static sstring vector_to_string(const std::vector<data_value>& v, std::string_view sep) {
-    return utils::join(sstring(sep),
+    return utils::join(sep,
             v | boost::adaptors::transformed([] (const data_value& e) { return e.type()->to_string_impl(e); }));
 }
 
