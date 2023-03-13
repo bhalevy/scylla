@@ -8,19 +8,19 @@
 
 #pragma once
 
-#include <seastar/core/sstring.hh>
 #include <string>
-
-#include "seastarx.hh"
+#include <sstream>
+#include <optional>
 
 #include <boost/test/utils/basic_cstring/basic_cstring_fwd.hpp>
+#include <boost/range/adaptor/transformed.hpp>
 
 namespace utils {
 
 template <typename Iterator, typename Sentinel>
 requires std::same_as<Sentinel, Iterator> || std::sentinel_for<Sentinel, Iterator>
 static inline
-std::ostream& join(std::ostream& os, sstring delimiter, Iterator begin, Sentinel end) {
+std::ostream& join(std::ostream& os, std::string_view delimiter, Iterator begin, Sentinel end) {
     while (begin != end) {
         os << *begin;
         ++begin;
@@ -33,14 +33,14 @@ std::ostream& join(std::ostream& os, sstring delimiter, Iterator begin, Sentinel
 
 template<std::ranges::range Range>
 static inline
-std::ostream& join(std::ostream& os, sstring delimiter, const Range& items) {
+std::ostream& join(std::ostream& os, std::string_view delimiter, const Range& items) {
     return join(os, std::move(delimiter), items.begin(), items.end());
 }
 
 template <typename Iterator, typename Sentinel>
 requires std::same_as<Sentinel, Iterator> || std::sentinel_for<Sentinel, Iterator>
 static inline
-sstring join(sstring delimiter, Iterator begin, Sentinel end) {
+std::string join(std::string_view delimiter, Iterator begin, Sentinel end) {
     std::ostringstream oss;
     join(oss, delimiter, std::move(begin), std::move(end));
     return oss.str();
@@ -48,7 +48,7 @@ sstring join(sstring delimiter, Iterator begin, Sentinel end) {
 
 template<typename PrintableRange>
 static inline
-sstring join(sstring delimiter, const PrintableRange& items) {
+std::string join(std::string_view delimiter, const PrintableRange& items) {
     std::ostringstream oss;
     join(delimiter, items);
     return oss.str();
@@ -57,7 +57,7 @@ sstring join(sstring delimiter, const PrintableRange& items) {
 template <typename Iterator, typename Sentinel>
 requires std::same_as<Sentinel, Iterator> || std::sentinel_for<Sentinel, Iterator>
 static inline
-std::ostream& join(std::ostream& os, sstring open, sstring delimiter, sstring close, Iterator begin, Sentinel end) {
+std::ostream& join(std::ostream& os, std::string_view open, std::string_view delimiter, std::string_view close, Iterator begin, Sentinel end) {
     os << open;
     while (begin != end) {
         os << *begin;
@@ -72,7 +72,7 @@ std::ostream& join(std::ostream& os, sstring open, sstring delimiter, sstring cl
 
 template <std::ranges::range Range>
 static inline
-std::ostream& join(std::ostream& os, sstring open, sstring delimiter, sstring close, const Range& items) {
+std::ostream& join(std::ostream& os, std::string_view open, std::string_view delimiter, std::string_view close, const Range& items) {
     return join(os, std::move(open), std::move(delimiter), std::move(close), items.begin(), items.end());
 }
 
@@ -99,14 +99,14 @@ std::ostream& operator<<(std::ostream& os, const print_with_comma<NeedsComma, Pr
 namespace std {
 
 template <std::ranges::range Range>
-sstring
+std::string
 to_string(const Range& items) {
     return "{" + utils::join(", ", items) + "}";
 }
 
 template<typename Printable>
 static inline
-sstring
+std::string
 to_string(std::initializer_list<Printable> items) {
     return "[" + utils::join(", ", std::begin(items), std::end(items)) + "]";
 }
@@ -135,6 +135,11 @@ requires (
     && !std::same_as<Range, boost::unit_test::basic_cstring<const char>>
 )
 std::ostream& operator<<(std::ostream& os, const Range& items) {
+    return utils::join(os, "{", ", ", "}", items);
+}
+
+template <typename... Args>
+std::ostream& operator<<(std::ostream& os, const boost::transformed_range<Args...>& items) {
     return utils::join(os, "{", ", ", "}", items);
 }
 

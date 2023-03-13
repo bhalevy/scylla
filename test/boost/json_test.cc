@@ -221,3 +221,10 @@ BOOST_AUTO_TEST_CASE(test_optional_string_format) {
     s = format("{}", sopt);
     BOOST_TEST_MESSAGE(format("Engaged opt: {}", s));
 }
+
+BOOST_AUTO_TEST_CASE(test_boost_transformed_range_format) {
+    auto v= std::vector<int>({1, 2, 3});
+
+    test_format_range("boost::adaptors::transformed", v | boost::adaptors::transformed([] (int i) { return format("{}", i * 11); }),
+        std::vector<std::string>({"11", "22", "33"}));
+}
