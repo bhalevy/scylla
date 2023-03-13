@@ -41,9 +41,9 @@ std::ostream& operator<<(std::ostream& out, const specific_ranges& s);
 
 std::ostream& operator<<(std::ostream& out, const partition_slice& ps) {
     out << "{"
-        << "regular_cols=[" << join(", ", ps.regular_columns) << "]"
-        << ", static_cols=[" << join(", ", ps.static_columns) << "]"
-        << ", rows=[" << join(", ", ps._row_ranges) << "]"
+        << "regular_cols=[" << utils::join(", ", ps.regular_columns) << "]"
+        << ", static_cols=[" << utils::join(", ", ps.static_columns) << "]"
+        << ", rows=[" << utils::join(", ", ps._row_ranges) << "]"
         ;
     if (ps._specific_ranges) {
         out << ", specific=[" << *ps._specific_ranges << "]";
@@ -83,7 +83,7 @@ std::ostream& operator<<(std::ostream& out, const forward_request::reduction_typ
 std::ostream& operator<<(std::ostream& out, const forward_request::aggregation_info& a) {
     return out << "aggregation_info{"
         << ", name=" << a.name
-        << ", column_names=[" << join(",", a.column_names) << "]"
+        << ", column_names=[" << utils::join(",", a.column_names) << "]"
         << "}";
 }
 
@@ -91,9 +91,9 @@ std::ostream& operator<<(std::ostream& out, const forward_request& r) {
     auto ms = std::chrono::time_point_cast<std::chrono::milliseconds>(r.timeout).time_since_epoch().count();
 
     out << "forward_request{"
-        << "reductions=[" << join(",", r.reduction_types) << "]";
+        << "reductions=[" << utils::join(",", r.reduction_types) << "]";
     if(r.aggregation_infos) {
-        out << ", aggregation_infos=[" << join(",", r.aggregation_infos.value()) << "]";
+        out << ", aggregation_infos=[" << utils::join(",", r.aggregation_infos.value()) << "]";
     }
     return out << ", cmd=" << r.cmd
         << ", pr=" << r.pr
@@ -103,7 +103,7 @@ std::ostream& operator<<(std::ostream& out, const forward_request& r) {
 
 
 std::ostream& operator<<(std::ostream& out, const specific_ranges& s) {
-    return out << "{" << s._pk << " : " << join(", ", s._ranges) << "}";
+    return out << "{" << s._pk << " : " << utils::join(", ", s._ranges) << "}";
 }
 
 void trim_clustering_row_ranges_to(const schema& s, clustering_row_ranges& ranges, position_in_partition pos, bool reversed) {

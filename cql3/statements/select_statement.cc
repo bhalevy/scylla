@@ -2188,7 +2188,7 @@ std::unique_ptr<cql3::statements::raw::select_statement> build_select_statement(
         // as non alphanumeric characters.
         auto cols = boost::copy_range<std::vector<sstring>>(selected_columns
                 | boost::adaptors::transformed(std::mem_fn(&column_definition::name_as_cql_string)));
-        out << join(", ", cols);
+        out << utils::join(", ", cols);
     }
     // Note that cf_name may need to be quoted, just like column names above.
     out << " FROM " << util::maybe_quote(sstring(cf_name));

@@ -1833,7 +1833,7 @@ future<std::unordered_map<sstring, std::vector<sstring>>> storage_service::descr
         // we're done: the results map is ready to return to the client.  the rest is just debug logging:
         auto it_unreachable = results.find(UNREACHABLE);
         if (it_unreachable != results.end()) {
-            slogger.debug("Hosts not in agreement. Didn't get a response from everybody: {}", ::join( ",", it_unreachable->second));
+            slogger.debug("Hosts not in agreement. Didn't get a response from everybody: {}", utils::join( ",", it_unreachable->second));
         }
         auto my_version = get_schema_version();
         for (auto&& entry : results) {

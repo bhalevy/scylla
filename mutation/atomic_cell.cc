@@ -198,7 +198,7 @@ operator<<(std::ostream& os, const atomic_cell_view::printer& acvp) {
             } else {
                 cell_value_string_builder << "shards: ";
                 auto ccv = counter_cell_view(acv);
-                cell_value_string_builder << ::join(", ", ccv.shards());
+                cell_value_string_builder << utils::join(", ", ccv.shards());
             }
         } else {
             cell_value_string_builder << type.to_string(to_bytes(acv.value()));

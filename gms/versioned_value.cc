@@ -38,7 +38,7 @@ versioned_value versioned_value::network_version() {
 }
 
 sstring versioned_value::make_full_token_string(const std::unordered_set<dht::token>& tokens) {
-    return ::join(";", tokens | boost::adaptors::transformed([] (const dht::token& t) {
+    return utils::join(";", tokens | boost::adaptors::transformed([] (const dht::token& t) {
         return t.to_sstring(); })
     );
 }

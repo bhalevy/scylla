@@ -425,7 +425,7 @@ void range_tombstone_list::update_undo_op::undo(const schema& s, range_tombstone
 }
 
 std::ostream& operator<<(std::ostream& out, const range_tombstone_list& list) {
-    return out << "{" << ::join(", ", list) << "}";
+    return out << "{" << utils::join(", ", list) << "}";
 }
 
 std::ostream& operator<<(std::ostream& out, const range_tombstone_entry& rt) {

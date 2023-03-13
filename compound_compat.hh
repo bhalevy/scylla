@@ -626,7 +626,7 @@ public:
     bool operator!=(const composite_view& k) const { return !(k == *this); }
 
     friend inline std::ostream& operator<<(std::ostream& os, composite_view v) {
-        return os << "{" << ::join(", ", v.components()) << ", compound=" << v._is_compound << ", static=" << v.is_static() << "}";
+        return os << "{" << utils::join(", ", v.components()) << ", compound=" << v._is_compound << ", static=" << v.is_static() << "}";
     }
 };
 

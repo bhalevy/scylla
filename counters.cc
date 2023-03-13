@@ -18,7 +18,7 @@ std::ostream& operator<<(std::ostream& os, counter_shard_view csv) {
 }
 
 std::ostream& operator<<(std::ostream& os, counter_cell_view ccv) {
-    return os << "{counter_cell timestamp: " << ccv.timestamp() << " shards: {" << ::join(", ", ccv.shards()) << "}}";
+    return os << "{counter_cell timestamp: " << ccv.timestamp() << " shards: {" << utils::join(", ", ccv.shards()) << "}}";
 }
 
 void counter_cell_builder::do_sort_and_remove_duplicates()

@@ -1501,7 +1501,7 @@ SEASTAR_TEST_CASE(test_filter_with_type_cast) {
 SEASTAR_TEST_CASE(test_restrictions_on_all_types) {
     return do_with_cql_env_thread([] (auto& e) {
         e.execute_cql("create type myType (a int, b uuid, c set<text>)").get();
-        auto column_names = ::join(", ", std::vector<sstring>({
+        auto column_names = utils::join(", ", std::vector<sstring>({
             "asciival",
             "bigintval",
             "blobval",

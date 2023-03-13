@@ -111,9 +111,9 @@ std::ostream& operator<<(std::ostream& out, const column_mapping& cm) {
         return format("{{id={}, name=0x{}, type={}}}", i, e.name(), e.type()->name());
     };
 
-    return out << "{static=[" << ::join(", ", boost::irange<column_id>(0, n_static) |
+    return out << "{static=[" << utils::join(", ", boost::irange<column_id>(0, n_static) |
             boost::adaptors::transformed([&] (column_id i) { return pr_entry(i, cm.static_column_at(i)); }))
-        << "], regular=[" << ::join(", ", boost::irange<column_id>(0, n_regular) |
+        << "], regular=[" << utils::join(", ", boost::irange<column_id>(0, n_regular) |
             boost::adaptors::transformed([&] (column_id i) { return pr_entry(i, cm.regular_column_at(i)); }))
         << "]}";
 }
@@ -480,7 +480,7 @@ sstring schema::thrift_key_validator() const {
     if (partition_key_size() == 1) {
         return partition_key_columns().begin()->type->name();
     } else {
-        sstring type_params = ::join(", ", partition_key_columns()
+        sstring type_params = utils::join(", ", partition_key_columns()
                             | boost::adaptors::transformed(std::mem_fn(&column_definition::type))
                             | boost::adaptors::transformed(std::mem_fn(&abstract_type::name)));
         return "org.apache.cassandra.db.marshal.CompositeType(" + type_params + ")";

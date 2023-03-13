@@ -1007,7 +1007,7 @@ static sstring cql3_type_name_impl(const abstract_type& t) {
         sstring operator()(const time_type_impl&) { return "time"; }
         sstring operator()(const timeuuid_type_impl&) { return "timeuuid"; }
         sstring operator()(const tuple_type_impl& t) {
-            return format("tuple<{}>", ::join(", ", t.all_types() | boost::adaptors::transformed(std::mem_fn(
+            return format("tuple<{}>", utils::join(", ", t.all_types() | boost::adaptors::transformed(std::mem_fn(
                                                                             &abstract_type::as_cql3_type))));
         }
         sstring operator()(const user_type_impl& u) { return u.get_name_as_cql_string(); }
@@ -1176,7 +1176,7 @@ static sstring map_to_string(const std::vector<std::pair<data_value, data_value>
         out << "(";
     }
 
-    out << ::join(", ", v | boost::adaptors::transformed([] (const std::pair<data_value, data_value>& p) {
+    out << utils::join(", ", v | boost::adaptors::transformed([] (const std::pair<data_value, data_value>& p) {
         std::ostringstream out;
         const auto& k = p.first;
         const auto& v = p.second;
@@ -1489,7 +1489,7 @@ list_type_impl::deserialize(View in) const {
 template data_value list_type_impl::deserialize<>(ser::buffer_view<bytes_ostream::fragment_iterator>) const;
 
 static sstring vector_to_string(const std::vector<data_value>& v, std::string_view sep) {
-    return join(sstring(sep),
+    return utils::join(sstring(sep),
             v | boost::adaptors::transformed([] (const data_value& e) { return e.type()->to_string_impl(e); }));
 }
 
@@ -2963,7 +2963,7 @@ tuple_type_impl::make_name(const std::vector<data_type>& types) {
     // "org.apache.cassandra.db.marshal.FrozenType(...)".
     // Even when the tuple is frozen.
     // For more details see #4087
-    return format("org.apache.cassandra.db.marshal.TupleType({})", ::join(", ", types | boost::adaptors::transformed(std::mem_fn(&abstract_type::name))));
+    return format("org.apache.cassandra.db.marshal.TupleType({})", utils::join(", ", types | boost::adaptors::transformed(std::mem_fn(&abstract_type::name))));
 }
 
 static std::optional<std::vector<data_type>>
