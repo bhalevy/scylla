@@ -60,7 +60,7 @@ static mutation_source make_source(std::vector<mutation> mutations) {
             if (slice.__is_reversed()) {
                 assert(are_reversed(*m.schema(), *s));
             } else {
-                assert(m.schema() == s);
+                assert(m.schema() == s || are_reversed(*m.schema(), *s));
             }
         }
         return make_flat_mutation_reader_from_mutations_v2(s, std::move(permit), mutations, slice, fwd);
@@ -196,7 +196,7 @@ SEASTAR_TEST_CASE(test_cells_are_expired_according_to_query_timestamp) {
     });
 }
 
-SEASTAR_TEST_CASE(test_reverse_ordering_is_respected) {
+SEASTAR_TEST_CASE(test_legacy_reverse_ordering_is_respected) {
     return seastar::async([] {
         auto table_schema = make_schema();
         auto query_schema = table_schema->make_reversed();
@@ -377,6 +377,203 @@ SEASTAR_TEST_CASE(test_reverse_ordering_is_respected) {
             reconcilable_result result = mutation_query(query_schema, semaphore.make_permit(), src, query::full_partition_range, slice, 3, query::max_partitions, now);
 
             assert_that(to_result_set(result, table_schema, slice))
+                .has_only(a_row()
+                    .with_column("pk", data_value(bytes("key1")))
+                    .with_column("ck", data_value(bytes("B")))
+                    .with_column("v1", data_value(bytes("B_v1"))));
+        }
+    });
+}
+
+SEASTAR_TEST_CASE(test_native_reverse_ordering_is_respected) {
+    return seastar::async([] {
+        auto table_schema = make_schema();
+        auto query_schema = table_schema->make_reversed();
+        tests::reader_concurrency_semaphore_wrapper semaphore;
+        auto now = gc_clock::now();
+
+        mutation m1(table_schema, partition_key::from_single_value(*table_schema, "key1"));
+
+        m1.set_clustered_cell(clustering_key::from_single_value(*table_schema, bytes("A")), "v1", data_value(bytes("A_v1")), 1);
+        m1.set_clustered_cell(clustering_key::from_single_value(*table_schema, bytes("B")), "v1", data_value(bytes("B_v1")), 1);
+        m1.set_clustered_cell(clustering_key::from_single_value(*table_schema, bytes("C")), "v1", data_value(bytes("C_v1")), 1);
+        m1.set_clustered_cell(clustering_key::from_single_value(*table_schema, bytes("D")), "v1", data_value(bytes("D_v1")), 1);
+        m1.set_clustered_cell(clustering_key::from_single_value(*table_schema, bytes("E")), "v1", data_value(bytes("E_v1")), 1);
+
+        auto src = make_source({m1});
+
+        {
+            auto slice = partition_slice_builder(*query_schema)
+                .build();
+
+            reconcilable_result result = mutation_query(query_schema, semaphore.make_permit(), src, query::full_partition_range, slice, 1, query::max_partitions, now);
+
+            assert_that(to_result_set(result, query_schema, slice))
+                .has_size(1)
+                .has(a_row()
+                    .with_column("pk", data_value(bytes("key1")))
+                    .with_column("ck", data_value(bytes("E")))
+                    .with_column("v1", data_value(bytes("E_v1"))));
+        }
+
+        {
+            auto slice = partition_slice_builder(*query_schema)
+                .build();
+
+            reconcilable_result result = mutation_query(query_schema, semaphore.make_permit(), src, query::full_partition_range, slice, 3, query::max_partitions, now);
+
+            assert_that(to_result_set(result, query_schema, slice))
+                .has_size(3)
+                .has(a_row()
+                    .with_column("pk", data_value(bytes("key1")))
+                    .with_column("ck", data_value(bytes("E")))
+                    .with_column("v1", data_value(bytes("E_v1"))))
+                .has(a_row()
+                    .with_column("pk", data_value(bytes("key1")))
+                    .with_column("ck", data_value(bytes("D")))
+                    .with_column("v1", data_value(bytes("D_v1"))))
+                .has(a_row()
+                    .with_column("pk", data_value(bytes("key1")))
+                    .with_column("ck", data_value(bytes("C")))
+                    .with_column("v1", data_value(bytes("C_v1"))));
+        }
+
+        {
+            auto slice = partition_slice_builder(*query_schema)
+                .with_range(query::clustering_range::make_singular(
+                    clustering_key_prefix::from_single_value(*query_schema, bytes("E"))))
+                .with_range(query::clustering_range::make_singular(
+                    clustering_key_prefix::from_single_value(*query_schema, bytes("D"))))
+                .with_range(query::clustering_range::make_singular(
+                    clustering_key_prefix::from_single_value(*query_schema, bytes("C"))))
+                .build();
+
+            reconcilable_result result = mutation_query(query_schema, semaphore.make_permit(), src, query::full_partition_range, slice, 3, query::max_partitions, now);
+
+            assert_that(to_result_set(result, query_schema, slice))
+                .has_size(3)
+                .has(a_row()
+                    .with_column("pk", data_value(bytes("key1")))
+                    .with_column("ck", data_value(bytes("E")))
+                    .with_column("v1", data_value(bytes("E_v1"))))
+                .has(a_row()
+                    .with_column("pk", data_value(bytes("key1")))
+                    .with_column("ck", data_value(bytes("D")))
+                    .with_column("v1", data_value(bytes("D_v1"))))
+                .has(a_row()
+                    .with_column("pk", data_value(bytes("key1")))
+                    .with_column("ck", data_value(bytes("C")))
+                    .with_column("v1", data_value(bytes("C_v1"))));
+        }
+
+        {
+            auto slice = partition_slice_builder(*query_schema)
+                .with_range(query::clustering_range(
+                    {clustering_key_prefix::from_single_value(*query_schema, bytes("E"))},
+                    {clustering_key_prefix::from_single_value(*query_schema, bytes("C"))}))
+                .build();
+
+            {
+                reconcilable_result result = mutation_query(query_schema, semaphore.make_permit(), src, query::full_partition_range, slice, 10, query::max_partitions, now);
+
+                assert_that(to_result_set(result, query_schema, slice))
+                    .has_size(3)
+                    .has(a_row()
+                        .with_column("pk", data_value(bytes("key1")))
+                        .with_column("ck", data_value(bytes("E")))
+                        .with_column("v1", data_value(bytes("E_v1"))))
+                    .has(a_row()
+                        .with_column("pk", data_value(bytes("key1")))
+                        .with_column("ck", data_value(bytes("D")))
+                        .with_column("v1", data_value(bytes("D_v1"))))
+                    .has(a_row()
+                        .with_column("pk", data_value(bytes("key1")))
+                        .with_column("ck", data_value(bytes("C")))
+                        .with_column("v1", data_value(bytes("C_v1"))));
+            }
+
+            {
+                reconcilable_result result = mutation_query(query_schema, semaphore.make_permit(), src, query::full_partition_range, slice, 1, query::max_partitions, now);
+
+                assert_that(to_result_set(result, query_schema, slice))
+                    .has_size(1)
+                    .has(a_row()
+                        .with_column("pk", data_value(bytes("key1")))
+                        .with_column("ck", data_value(bytes("E")))
+                        .with_column("v1", data_value(bytes("E_v1"))));
+            }
+
+            {
+                reconcilable_result result = mutation_query(query_schema, semaphore.make_permit(), src, query::full_partition_range, slice, 2, query::max_partitions, now);
+
+                assert_that(to_result_set(result, query_schema, slice))
+                    .has_size(2)
+                    .has(a_row()
+                        .with_column("pk", data_value(bytes("key1")))
+                        .with_column("ck", data_value(bytes("E")))
+                        .with_column("v1", data_value(bytes("E_v1"))))
+                    .has(a_row()
+                        .with_column("pk", data_value(bytes("key1")))
+                        .with_column("ck", data_value(bytes("D")))
+                        .with_column("v1", data_value(bytes("D_v1"))));
+            }
+        }
+
+        {
+            auto slice = partition_slice_builder(*query_schema)
+                .with_range(query::clustering_range::make_singular(
+                    clustering_key_prefix::from_single_value(*query_schema, bytes("E"))))
+                .with_range(query::clustering_range::make_singular(
+                    clustering_key_prefix::from_single_value(*query_schema, bytes("D"))))
+                .with_range(query::clustering_range::make_singular(
+                    clustering_key_prefix::from_single_value(*query_schema, bytes("C"))))
+                .build();
+
+            reconcilable_result result = mutation_query(query_schema, semaphore.make_permit(), src, query::full_partition_range, slice, 2, query::max_partitions, now);
+
+            assert_that(to_result_set(result, query_schema, slice))
+                .has_size(2)
+                .has(a_row()
+                    .with_column("pk", data_value(bytes("key1")))
+                    .with_column("ck", data_value(bytes("E")))
+                    .with_column("v1", data_value(bytes("E_v1"))))
+                .has(a_row()
+                    .with_column("pk", data_value(bytes("key1")))
+                    .with_column("ck", data_value(bytes("D")))
+                    .with_column("v1", data_value(bytes("D_v1"))));
+        }
+
+        {
+            auto slice = partition_slice_builder(*query_schema)
+                .with_range(query::clustering_range::make_singular(
+                    clustering_key_prefix::from_single_value(*query_schema, bytes("E"))))
+                .with_range(query::clustering_range::make_singular(
+                    clustering_key_prefix::from_single_value(*query_schema, bytes("C"))))
+                .build();
+
+            reconcilable_result result = mutation_query(query_schema, semaphore.make_permit(), src, query::full_partition_range, slice, 3, query::max_partitions, now);
+
+            assert_that(to_result_set(result, query_schema, slice))
+                .has_size(2)
+                .has(a_row()
+                    .with_column("pk", data_value(bytes("key1")))
+                    .with_column("ck", data_value(bytes("E")))
+                    .with_column("v1", data_value(bytes("E_v1"))))
+                .has(a_row()
+                    .with_column("pk", data_value(bytes("key1")))
+                    .with_column("ck", data_value(bytes("C")))
+                    .with_column("v1", data_value(bytes("C_v1"))));
+        }
+
+        {
+            auto slice = partition_slice_builder(*query_schema)
+                .with_range(query::clustering_range::make_singular(
+                    clustering_key_prefix::from_single_value(*query_schema, bytes("B"))))
+                .build();
+
+            reconcilable_result result = mutation_query(query_schema, semaphore.make_permit(), src, query::full_partition_range, slice, 3, query::max_partitions, now);
+
+            assert_that(to_result_set(result, query_schema, slice))
                 .has_only(a_row()
                     .with_column("pk", data_value(bytes("key1")))
                     .with_column("ck", data_value(bytes("B")))
