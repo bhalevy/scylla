@@ -11,6 +11,8 @@
 #include "mutation/mutation_fragment_v2.hh"
 #include "range_tombstone_list.hh"
 
+extern logging::logger mplog;
+
 template<typename T>
 concept RangeTombstoneChangeConsumer = std::invocable<T, range_tombstone_change>;
 
@@ -141,6 +143,10 @@ public:
     }
 
     void consume(range_tombstone rt) {
+        position_in_partition::tri_compare cmp(_schema);
+        if (cmp(rt.end_position(), _lower_bound) <= 0) {
+            on_internal_error(mplog, format("range_tombstone_change_generator: range_tombstone={} consumed out of order: lower_bound={}", rt, _lower_bound));
+        }
         _range_tombstones.apply(_schema, std::move(rt));
     }
 
