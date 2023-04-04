@@ -3805,8 +3805,8 @@ SEASTAR_THREAD_TEST_CASE(test_clustering_order_merger_in_memory) {
 }
 
 
-static future<> do_test_clustering_order_merger_sstable_set(query::reversed reversed) {
-  return sstables::test_env::do_with_async([reversed] (sstables::test_env& env) {
+static future<> do_test_clustering_order_merger_sstable_set(query::reversed reversed, bool native_reversed = false) {
+  return sstables::test_env::do_with_async([reversed, native_reversed] (sstables::test_env& env) {
     auto pkeys = tests::generate_partition_keys(2, clustering_order_merger_test_generator::make_schema());
     clustering_order_merger_test_generator g(pkeys[0]);
     auto query_schema = g._s;
@@ -3815,8 +3815,7 @@ static future<> do_test_clustering_order_merger_sstable_set(query::reversed reve
     auto query_slice = query_schema->full_slice();
     if (reversed) {
         table_schema = table_schema->make_reversed();
-        query_slice.options.set(query::partition_slice::option::reversed);
-        query_slice = query::native_reverse_slice_to_legacy_reverse_slice(*table_schema, std::move(query_slice));
+        query_slice = native_reversed ? query::reverse_slice(*table_schema, std::move(query_slice)) : query::native_reverse_slice_to_legacy_reverse_slice(*table_schema, std::move(query_slice));
     }
 
     auto make_authority = [&env, &query_schema, &query_slice] (mutation mut, streamed_mutation::forwarding fwd) {
@@ -3899,8 +3898,12 @@ SEASTAR_TEST_CASE(test_clustering_order_merger_sstable_set) {
     return do_test_clustering_order_merger_sstable_set(query::reversed::no);
 }
 
-SEASTAR_TEST_CASE(test_clustering_order_merger_sstable_set_reversed) {
+SEASTAR_TEST_CASE(test_clustering_order_merger_sstable_set_legacy_reversed) {
     return do_test_clustering_order_merger_sstable_set(query::reversed::yes);
+}
+
+SEASTAR_TEST_CASE(test_clustering_order_merger_sstable_set_native_reversed) {
+    return do_test_clustering_order_merger_sstable_set(query::reversed::yes, true);
 }
 
 SEASTAR_THREAD_TEST_CASE(clustering_combined_reader_mutation_source_test) {
