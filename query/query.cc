@@ -158,7 +158,8 @@ partition_slice native_reverse_slice_to_legacy_reverse_slice(const schema& schem
 }
 
 partition_slice reverse_slice(const schema& schema, partition_slice slice) {
-    return partition_slice_builder(schema, std::move(slice))
+    auto before = slice;
+    auto after = partition_slice_builder(schema, std::move(slice))
         .mutate_ranges([] (clustering_row_ranges& ranges) {
             std::reverse(ranges.begin(), ranges.end());
             reverse_clustering_ranges_bounds(ranges);
@@ -169,6 +170,8 @@ partition_slice reverse_slice(const schema& schema, partition_slice slice) {
             reverse_clustering_ranges_bounds(ranges);
         })
         .build();
+    qlogger.debug("reverse_slice: schema={} before={} after={}", schema.version(), before, after);
+    return after;
 }
 
 partition_slice half_reverse_slice(const schema& schema, partition_slice slice) {
