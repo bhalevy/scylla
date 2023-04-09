@@ -1013,6 +1013,10 @@ lw_shared_ptr<const schema> make_shared_schema(std::optional<table_id> id, std::
 
 bool operator==(const schema&, const schema&);
 
+inline bool are_reversed(const schema& s1, const schema& s2) noexcept {
+    return are_reversed(s1.version(), s2.version());
+}
+
 /**
  * Wrapper for schema_ptr used by functions that expect an engaged view_info field.
  */

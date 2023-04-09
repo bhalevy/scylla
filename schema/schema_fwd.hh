@@ -42,3 +42,14 @@ using table_schema_version = utils::tagged_uuid<struct table_schema_version_tag>
 inline table_schema_version reversed(table_schema_version v) noexcept {
     return table_schema_version(utils::UUID_gen::negate(v.uuid()));
 }
+
+inline bool are_reversed(table_schema_version v1, table_schema_version v2) noexcept {
+    uint64_t msb1 = v1.uuid().get_most_significant_bits();
+    uint64_t msb2 = v2.uuid().get_most_significant_bits();
+    if (msb1 != msb2) {
+        return false;
+    }
+    uint64_t lsb1 = v1.uuid().get_least_significant_bits();
+    uint64_t lsb2 = v2.uuid().get_least_significant_bits();
+    return (lsb1 ^ lsb2) == utils::UUID_gen::clock_mask;
+}

@@ -58,7 +58,7 @@ static mutation_source make_source(std::vector<mutation> mutations) {
         assert(range.is_full()); // slicing not implemented yet
         for (auto&& m : mutations) {
             if (slice.is_reversed()) {
-                assert(m.schema()->make_reversed()->version() == s->version());
+                assert(are_reversed(*m.schema(), *s));
             } else {
                 assert(m.schema() == s);
             }
