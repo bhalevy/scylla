@@ -45,7 +45,7 @@ static sstring cannot_use_reason(can_use cu)
 
 static bool ring_position_matches(const schema& s, const dht::partition_range& range, const query::partition_slice& slice,
         full_position_view pos) {
-    const auto is_reversed = slice.is_reversed();
+    const auto is_reversed = slice.__is_reversed();
 
     const auto expected_start = dht::ring_position(dht::decorate_key(s, pos.partition));
     // If there are no clustering columns or the select is distinct we don't
@@ -86,7 +86,7 @@ static bool clustering_position_matches(const schema& s, const query::partition_
 
     clustering_key_prefix::equality eq(s);
 
-    const auto is_reversed = slice.is_reversed();
+    const auto is_reversed = slice.__is_reversed();
 
     // If the page ended mid-partition the first partition range should start
     // with the last clustering key (exclusive).

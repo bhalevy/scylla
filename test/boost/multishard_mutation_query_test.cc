@@ -302,7 +302,7 @@ read_partitions_with_generic_paged_scan(distributed<replica::database>& db, sche
 
         if (res_builder.last_ckey()) {
             auto ckranges = cmd.slice.default_row_ranges();
-            query::trim_clustering_row_ranges_to(*s, ckranges, *res_builder.last_ckey(), slice.is_reversed());
+            query::trim_clustering_row_ranges_to(*s, ckranges, *res_builder.last_ckey(), slice.__is_reversed());
             cmd.slice.clear_range(*s, res_builder.last_pkey().key());
             cmd.slice.clear_ranges();
             cmd.slice.set_range(*s, res_builder.last_pkey().key(), std::move(ckranges));
@@ -352,7 +352,7 @@ private:
         if (mut.partition().clustered_rows().empty()) {
             return std::nullopt;
         }
-        if (_slice.is_reversed()) {
+        if (_slice.__is_reversed()) {
             return mut.partition().clustered_rows().begin()->key();
         } else {
             return mut.partition().clustered_rows().rbegin()->key();

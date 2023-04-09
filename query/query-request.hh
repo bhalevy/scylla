@@ -251,6 +251,10 @@ public:
         return query::reversed(options.contains<query::partition_slice::option::reversed>());
     }
 
+    query::reversed __is_reversed() const noexcept {
+        return is_reversed();
+    }
+
     friend std::ostream& operator<<(std::ostream& out, const partition_slice& ps);
     friend std::ostream& operator<<(std::ostream& out, const specific_ranges& ps);
 };

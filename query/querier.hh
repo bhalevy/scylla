@@ -107,7 +107,7 @@ public:
     }
 
     query::reversed is_reversed() const noexcept {
-        return _slice->is_reversed();
+        return _slice->__is_reversed();
     }
 
     virtual std::optional<full_position_view> current_position() const = 0;

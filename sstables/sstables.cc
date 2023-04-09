@@ -2310,7 +2310,7 @@ sstable::make_reader(
         streamed_mutation::forwarding fwd,
         mutation_reader::forwarding fwd_mr,
         read_monitor& mon) {
-    const auto reversed = slice.is_reversed();
+    const auto reversed = slice.__is_reversed();
     if (_version >= version_types::mc && (!reversed || range.is_singular())) {
         return mx::make_reader(shared_from_this(), std::move(schema), std::move(permit), range, slice, pc, std::move(trace_state), fwd, fwd_mr, mon);
     }

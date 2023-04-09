@@ -1483,7 +1483,7 @@ static db::rate_limiter::can_proceed account_singular_ranges_to_rate_limit(
 future<std::tuple<lw_shared_ptr<query::result>, cache_temperature>>
 database::query(schema_ptr s, const query::read_command& cmd, query::result_options opts, const dht::partition_range_vector& ranges,
                 tracing::trace_state_ptr trace_state, db::timeout_clock::time_point timeout, db::per_partition_rate_limit::info rate_limit_info) {
-    const auto reversed = cmd.slice.is_reversed();
+    const auto reversed = cmd.slice.__is_reversed();
     if (reversed) {
         s = s->make_reversed();
     }
@@ -1554,7 +1554,7 @@ database::query(schema_ptr s, const query::read_command& cmd, query::result_opti
 future<std::tuple<reconcilable_result, cache_temperature>>
 database::query_mutations(schema_ptr s, const query::read_command& cmd, const dht::partition_range& range,
                           tracing::trace_state_ptr trace_state, db::timeout_clock::time_point timeout) {
-    const auto reversed = cmd.slice.is_reversed();
+    const auto reversed = cmd.slice.__is_reversed();
     if (reversed) {
         s = s->make_reversed();
     }

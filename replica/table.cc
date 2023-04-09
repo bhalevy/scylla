@@ -231,7 +231,7 @@ table::make_reader_v2(schema_ptr s,
         return (*_virtual_reader).make_reader_v2(s, std::move(permit), range, query_slice, pc, trace_state, fwd, fwd_mr);
     }
 
-    auto reversed = query_slice.is_reversed();
+    auto reversed = query_slice.__is_reversed();
     std::unique_ptr<query::partition_slice> unreversed_slice;
     if (reversed && !_config.enable_optimized_reversed_reads()) [[unlikely]] {
         // Make the code below perform a forward query. We'll wrap the result into `make_reversing_reader` at the end.
@@ -2466,7 +2466,7 @@ table::mutation_query(schema_ptr s,
   try {
     // Un-reverse the schema sent to the coordinator, it expects the
     // legacy format.
-    auto result_schema = cmd.slice.is_reversed() ? s->make_reversed() : s;
+    auto result_schema = cmd.slice.__is_reversed() ? s->make_reversed() : s;
     auto rrb = reconcilable_result_builder(*result_schema, cmd.slice, std::move(accounter));
     auto r = co_await q.consume_page(std::move(rrb), cmd.get_row_limit(), cmd.partition_limit, cmd.timestamp, trace_state);
 

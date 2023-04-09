@@ -913,7 +913,7 @@ make_flat_mutation_reader_from_mutations_v2(
         mutation m,
         const query::partition_slice& slice,
         streamed_mutation::forwarding fwd) {
-    const auto reversed = slice.is_reversed();
+    const auto reversed = slice.__is_reversed();
     auto sliced_mutation = reversed
         ? slice_mutation(s->make_reversed(), std::move(m), query::half_reverse_slice(*s, slice))
         : slice_mutation(s, std::move(m), slice);
@@ -988,7 +988,7 @@ make_flat_mutation_reader_from_mutations_v2(schema_ptr s, reader_permit permit, 
     if (mutations.empty()) {
         return make_empty_flat_reader_v2(std::move(s), std::move(permit));
     }
-    const auto reversed = query_slice.is_reversed();
+    const auto reversed = query_slice.__is_reversed();
     std::vector<mutation> sliced_mutations;
     if (reversed) {
         sliced_mutations = slice_mutations(s->make_reversed(), std::move(mutations), query::half_reverse_slice(*s, query_slice));
@@ -1120,7 +1120,7 @@ std::deque<mutation_fragment_v2> reverse_fragments(const schema& schema, reader_
 flat_mutation_reader_v2
 make_flat_mutation_reader_from_fragments(schema_ptr schema, reader_permit permit, std::deque<mutation_fragment_v2> fragments,
         const dht::partition_range& pr, const query::partition_slice& query_slice) {
-    const auto reversed = query_slice.is_reversed();
+    const auto reversed = query_slice.__is_reversed();
     if (reversed) {
         fragments = reverse_fragments(*schema, permit, std::move(fragments));
     }

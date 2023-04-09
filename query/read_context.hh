@@ -163,7 +163,7 @@ public:
         , _range_query(!query::is_single_partition(range))
         , _underlying(_cache, *this)
     {
-        if (_slice.is_reversed()) {
+        if (_slice.__is_reversed()) {
             _native_slice = query::legacy_reverse_slice_to_native_reverse_slice(*_schema, _slice);
         }
         ++_cache._tracker._stats.reads;
@@ -186,7 +186,7 @@ public:
     reader_permit permit() const { return _permit; }
     const dht::partition_range& range() const { return _range; }
     const query::partition_slice& slice() const { return _slice; }
-    query::reversed is_reversed() const noexcept { return _slice.is_reversed(); }
+    query::reversed is_reversed() const noexcept { return _slice.__is_reversed(); }
     // Returns a slice in the native format (for reversed reads, in native-reversed format).
     const query::partition_slice& native_slice() const { return is_reversed() ? *_native_slice : _slice; }
     const io_priority_class& pc() const { return _pc; }
