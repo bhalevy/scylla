@@ -1146,8 +1146,6 @@ SEASTAR_THREAD_TEST_CASE(test_reverse_reader_v2_is_mutation_source) {
                 selected_muts = &muts;
             } else {
                 reversed_slice = std::make_unique<query::partition_slice>(query::reverse_slice(*schema, slice));
-                // We don't want the memtable reader to read in reverse.
-                reversed_slice->options.remove(query::partition_slice::option::reversed);
                 selected_muts = &reverse_muts;
             }
 

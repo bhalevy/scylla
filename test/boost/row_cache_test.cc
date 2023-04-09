@@ -2041,8 +2041,9 @@ static range_tombstone_change end_change(const range_tombstone& rt) {
 }
 
 static query::partition_slice make_legacy_reversed(schema_ptr table_schema, query::partition_slice table_slice) {
-    return query::native_reverse_slice_to_legacy_reverse_slice(*table_schema->make_reversed(),
-                                                               query::reverse_slice(*table_schema, std::move(table_slice)));
+    auto reversed_slice = query::reverse_slice(*table_schema, std::move(table_slice));
+    reversed_slice.options.set<query::partition_slice::option::reversed>();
+    return query::native_reverse_slice_to_legacy_reverse_slice(*table_schema->make_reversed(), std::move(reversed_slice));
 }
 
 SEASTAR_TEST_CASE(test_scan_with_partial_partitions_reversed) {
