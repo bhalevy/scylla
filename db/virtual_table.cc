@@ -14,6 +14,8 @@
 #include "readers/forwardable_v2.hh"
 #include "readers/slicing_filtering.hh"
 
+extern logging::logger dblog;
+
 namespace db {
 
 void virtual_table::set_cell(row& cr, const bytes& column_name, data_value value) {
@@ -90,11 +92,16 @@ mutation_source streaming_virtual_table::as_mutation_source() {
         mutation_reader::forwarding fwd_mr) {
 
         std::unique_ptr<query::partition_slice> unreversed_slice;
-        auto reversed = query_slice.__is_reversed();
+        auto reversed = are_reversed(*schema(), *s);
         if (reversed) {
             s = s->make_reversed();
-            unreversed_slice = std::make_unique<query::partition_slice>(query::half_reverse_slice(*s, query_slice));
+            unreversed_slice = std::make_unique<query::partition_slice>(
+                query_slice.is_reversed() ? query::half_reverse_slice(*s, query_slice) : query::reverse_slice(*s, query_slice)
+            );
+        } else if (query_slice.is_reversed()) {
+            on_internal_error(dblog, "streaming_virtual_table::as_mutation_source: slice is reversed but schema matches table schema");
         }
+
         const auto& slice = reversed ? *unreversed_slice : query_slice;
 
         // We cannot pass the partition_range directly to execute()
