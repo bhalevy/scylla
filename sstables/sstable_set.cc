@@ -946,7 +946,10 @@ time_series_sstable_set::create_single_key_sstable_reader(
             return false;
     };
 
-    auto reversed = slice.__is_reversed();
+    query::reversed reversed(are_reversed(*cf->schema(), *schema));
+    if (!reversed && slice.is_reversed()) {
+        on_internal_error(sstlog, "time_series_sstable_set::create_single_key_sstable_reader: slice is reversed but schema matches table schema");
+    }
     // Note that `sstable_position_reader_queue` always includes a reader which emits a `partition_start` fragment,
     // guaranteeing that the reader we return emits it as well; this helps us avoid the problem from #3552.
     return make_clustering_combined_reader(
