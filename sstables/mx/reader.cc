@@ -223,16 +223,6 @@ public:
         _cells.reserve(std::max(_schema->static_columns_count(), _schema->regular_columns_count()));
     }
 
-    mp_row_consumer_m(mp_row_consumer_reader_mx* reader,
-                        const schema_ptr schema,
-                        reader_permit permit,
-                        const io_priority_class& pc,
-                        tracing::trace_state_ptr trace_state,
-                        streamed_mutation::forwarding fwd,
-                        const shared_sstable& sst)
-    : mp_row_consumer_m(reader, schema, std::move(permit), schema->full_slice(), pc, std::move(trace_state), fwd, sst)
-    { }
-
     ~mp_row_consumer_m() {}
 
     // See the RowConsumer concept
