@@ -1247,6 +1247,7 @@ class mx_sstable_mutation_reader : public mp_row_consumer_reader_mx {
     static_assert(RowConsumer<Consumer>);
     value_or_reference<query::partition_slice> _slice_holder;
     const query::partition_slice& _slice;
+    query::reversed _reversed;
     Consumer _consumer;
     bool _will_likely_slice = false;
     bool _read_enabled = true;
@@ -1277,6 +1278,7 @@ public:
             : mp_row_consumer_reader_mx(std::move(schema), permit, std::move(sst))
             , _slice_holder(std::move(slice))
             , _slice(_slice_holder.get())
+            , _reversed(are_reversed(*_schema, *_sst->get_schema()))
             , _consumer(this, _schema, std::move(permit), _slice, pc, std::move(trace_state), fwd, _sst)
             // FIXME: I want to add `&& fwd_mr == mutation_reader::forwarding::no` below
             // but can't because many call sites use the default value for
@@ -1295,6 +1297,8 @@ public:
             }
             // FIXME: if only the defaults were better...
             //assert(fwd_mr == mutation_reader::forwarding::no);
+        } else if (_slice.is_reversed()) {
+            on_internal_error(sstlog, "slice is reversed but schema matches sstable schema");
         }
     }
 
@@ -1540,7 +1544,7 @@ private:
         return _context->skip_to(begin);
     }
     query::reversed reversed() const noexcept {
-        return _slice.__is_reversed();
+        return _reversed;
     }
 public:
     void on_out_of_clustering_range() override {
