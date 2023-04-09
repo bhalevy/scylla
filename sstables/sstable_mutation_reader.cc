@@ -138,12 +138,12 @@ std::vector<column_translation::column_info> column_translation::state::build(
 
 
 
-position_in_partition_view get_slice_upper_bound(const schema& s, const query::partition_slice& slice, dht::ring_position_view key) {
+position_in_partition_view get_slice_upper_bound(const schema& s, const query::partition_slice& slice, dht::ring_position_view key, query::reversed reversed) {
     const auto& ranges = slice.row_ranges(s, *key.key());
     if (ranges.empty()) {
         return position_in_partition_view::for_static_row();
     }
-    if (slice.__is_reversed()) {
+    if (reversed) {
         return position_in_partition_view::for_range_end(ranges.front());
     }
     return position_in_partition_view::for_range_end(ranges.back());

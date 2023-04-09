@@ -1326,7 +1326,7 @@ private:
         if (_single_partition_read) {
             _sst->get_stats().on_single_partition_read();
             const auto& key = dht::ring_position_view(_pr.start()->value());
-            position_in_partition_view pos = get_slice_upper_bound(*_schema, _slice, key);
+            position_in_partition_view pos = get_slice_upper_bound(*_schema, _slice, key, _slice.is_reversed());
             const auto present = co_await get_index_reader().advance_lower_and_check_if_present(key, pos);
 
             if (!present) {
