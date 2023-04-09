@@ -55,6 +55,7 @@ public:
     mp_row_consumer_reader_mx* _reader;
     schema_ptr _schema;
     const query::partition_slice& _slice;
+    query::reversed _reversed;
     std::optional<mutation_fragment_filter> _mf_filter;
 
     bool _is_mutation_end = true;
@@ -205,6 +206,7 @@ public:
                         const schema_ptr schema,
                         reader_permit permit,
                         const query::partition_slice& slice,
+                        query::reversed reversed,
                         const io_priority_class& pc,
                         tracing::trace_state_ptr trace_state,
                         streamed_mutation::forwarding fwd,
@@ -216,6 +218,7 @@ public:
         , _reader(reader)
         , _schema(schema)
         , _slice(slice)
+        , _reversed(reversed)
         , _fwd(fwd)
         , _treat_static_row_as_regular(_schema->is_static_compact_table()
             && (!sst->has_scylla_component() || sst->features().is_enabled(sstable_feature::CorrectStaticCompact))) // See #4139
@@ -542,7 +545,7 @@ public:
             if (!_cells.empty()) {
                 fill_cells(column_kind::regular_column, _in_progress_row->cells());
             }
-            if (_slice.__is_reversed() &&
+            if (_reversed &&
                     // we always consume whole rows (i.e. `consume_row_end` is always called) when reading in reverse,
                     // even when `consume_row_start` requested to ignore the row. This happens because for reversed reads
                     // skipping is performed in the intermediary reversing data source (not in the reader) and the source
@@ -1279,7 +1282,7 @@ public:
             , _slice_holder(std::move(slice))
             , _slice(_slice_holder.get())
             , _reversed(are_reversed(*_schema, *_sst->get_schema()))
-            , _consumer(this, _schema, std::move(permit), _slice, pc, std::move(trace_state), fwd, _sst)
+            , _consumer(this, _schema, std::move(permit), _slice, reversed(), pc, std::move(trace_state), fwd, _sst)
             // FIXME: I want to add `&& fwd_mr == mutation_reader::forwarding::no` below
             // but can't because many call sites use the default value for
             // `mutation_reader::forwarding` which is `yes`.
@@ -1748,7 +1751,7 @@ public:
              tracing::trace_state_ptr trace_state,
              read_monitor& mon)
         : mp_row_consumer_reader_mx(std::move(schema), permit, std::move(sst))
-        , _consumer(this, _schema, std::move(permit), _schema->full_slice(), pc, std::move(trace_state), streamed_mutation::forwarding::no, _sst)
+        , _consumer(this, _schema, std::move(permit), _schema->full_slice(), query::reversed(are_reversed(*_sst->get_schema(), *_schema)), pc, std::move(trace_state), streamed_mutation::forwarding::no, _sst)
         , _context(data_consume_rows<DataConsumeRowsContext>(*_schema, _sst, _consumer))
         , _monitor(mon) {
         _monitor.on_read_started(_context->reader_position());
