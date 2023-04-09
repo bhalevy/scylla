@@ -34,6 +34,7 @@
 #include <seastar/coroutine/as_future.hh>
 
 #include "dht/sharder.hh"
+#include "seastar/core/on_internal_error.hh"
 #include "writer.hh"
 #include "m_format_read_helpers.hh"
 #include "open_info.hh"
@@ -2310,7 +2311,10 @@ sstable::make_reader(
         streamed_mutation::forwarding fwd,
         mutation_reader::forwarding fwd_mr,
         read_monitor& mon) {
-    const auto reversed = slice.__is_reversed();
+    const auto reversed = are_reversed(*get_schema(), *schema);
+    if (!reversed && slice.is_reversed()) {
+        on_internal_error(sstlog, "slice is reversed but schema matches sstable schema");
+    }
     if (_version >= version_types::mc && (!reversed || range.is_singular())) {
         return mx::make_reader(shared_from_this(), std::move(schema), std::move(permit), range, slice, pc, std::move(trace_state), fwd, fwd_mr, mon);
     }
@@ -2321,9 +2325,12 @@ sstable::make_reader(
     auto max_result_size = permit.max_result_size();
 
     if (_version >= version_types::mc) {
+        auto legacy_reversed = slice.is_reversed();
+        auto unreversed_slice = legacy_reversed ? half_reverse_slice(*schema, slice) : reverse_slice(*schema, slice);
+
         // The only mx case falling through here is reversed multi-partition reader
         auto rd = make_reversing_reader(mx::make_reader(shared_from_this(), schema->make_reversed(), std::move(permit),
-                range, half_reverse_slice(*schema, slice), pc, std::move(trace_state), streamed_mutation::forwarding::no, fwd_mr, mon),
+                range, std::move(unreversed_slice), pc, std::move(trace_state), streamed_mutation::forwarding::no, fwd_mr, mon),
             max_result_size);
         if (fwd) {
             rd = make_forwardable(std::move(rd));
