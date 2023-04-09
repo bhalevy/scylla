@@ -143,9 +143,6 @@ UUID UUID_gen::get_name_UUID(const unsigned char *s, size_t len) {
 UUID UUID_gen::negate(UUID o) {
     auto lsb = o.get_least_significant_bits();
 
-    static constexpr uint64_t clock_shift = 48;
-    static constexpr uint64_t clock_mask = 0x3FFFUL << clock_shift;
-
     // We flip the node-and-clock-seq octet of the UUID for time-UUIDs. This
     // creates a virtual node with a time which cannot be generated anymore, so
     // is safe against collisions.

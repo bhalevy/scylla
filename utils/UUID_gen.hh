@@ -370,6 +370,9 @@ public:
                 0x0000000000001000L); // sets the version to 1.
     }
 
+    static constexpr uint64_t clock_shift = 48;
+    static constexpr uint64_t clock_mask = 0x3FFFUL << clock_shift;
+
     // Produce an UUID which is derived from this UUID in a reversible manner
     //
     // Such that:
