@@ -913,10 +913,13 @@ make_flat_mutation_reader_from_mutations_v2(
         mutation m,
         const query::partition_slice& slice,
         streamed_mutation::forwarding fwd) {
-    const auto reversed = slice.__is_reversed();
-    auto sliced_mutation = reversed
-        ? slice_mutation(s->make_reversed(), std::move(m), query::half_reverse_slice(*s, slice))
-        : slice_mutation(s, std::move(m), slice);
+    // Read the mutation in reverse in 2 cases:
+    // 1. legacy reverse: when the slice is marked as reversed.
+    // 2. when the query schema is the reverse of the mutation schema.
+    const query::reversed reversed(are_reversed(*s, *m.schema()));  // this must be true iff slice.is_reversed()
+    auto sliced_mutation = !reversed ? slice_mutation(s, std::move(m), slice)
+        : /* native reverse */ !slice.is_reversed() ? slice_mutation(m.schema(), std::move(m), query::reverse_slice(*s, slice))
+        : /* legacy reverse */ slice_mutation(m.schema(), std::move(m), query::half_reverse_slice(*s, slice));
     return make_flat_mutation_reader_from_mutations_v2(std::move(s), std::move(permit), std::move(sliced_mutation), fwd, reversed);
 }
 
