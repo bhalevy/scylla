@@ -143,6 +143,7 @@ UUID UUID_gen::get_name_UUID(const unsigned char *s, size_t len) {
 UUID UUID_gen::negate(UUID o) {
     auto lsb = o.get_least_significant_bits();
 
+    static constexpr uint64_t clock_shift = 48;
     const long clock_mask = 0x0000000000003FFFL;
 
     // We flip the node-and-clock-seq octet of the UUID for time-UUIDs. This
@@ -150,11 +151,11 @@ UUID UUID_gen::negate(UUID o) {
     // is safe against collisions.
     // For name UUIDs we flip the same octet. Name UUIDs being an md5 hash over
     // a buffer, flipping any bit should be safe against collisions.
-    long clock = (lsb >> 48) & clock_mask;
+    long clock = (lsb >> clock_shift) & clock_mask;
     clock = ~clock & clock_mask;
 
-    lsb &= ~(clock_mask << 48); // zero current clock
-    lsb |= (clock << 48); // write new clock
+    lsb &= ~(clock_mask << clock_shift); // zero current clock
+    lsb |= (clock << clock_shift); // write new clock
 
     return UUID(o.get_most_significant_bits(), lsb);
 }
