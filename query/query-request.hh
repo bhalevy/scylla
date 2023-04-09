@@ -286,7 +286,7 @@ using is_first_page = bool_class<class is_first_page_tag>;
 class read_command {
 public:
     table_id cf_id;
-    table_schema_version schema_version; // TODO: This should be enough, drop cf_id
+    table_schema_version schema_version; // reversed table schema version for native reverse queries
     partition_slice slice;
     uint32_t row_limit_low_bits;
     gc_clock::time_point timestamp;
@@ -314,6 +314,7 @@ public:
     uint64_t tombstone_limit;
     api::timestamp_type read_timestamp; // not serialized
     db::allow_per_partition_rate_limit allow_limit; // not serialized
+    query::reversed reversed; // not serialized
 public:
     // IDL constructor
     read_command(table_id cf_id,
@@ -342,6 +343,7 @@ public:
         , tombstone_limit(tombstone_limit)
         , read_timestamp(api::new_timestamp())
         , allow_limit(db::allow_per_partition_rate_limit::no)
+        , reversed(are_reversed(schema_version, table_schema_version(cf_id.uuid())) || slice.is_reversed())
     { }
 
     read_command(table_id cf_id,
@@ -371,6 +373,7 @@ public:
         , tombstone_limit(static_cast<uint64_t>(tombstone_limit))
         , read_timestamp(rt)
         , allow_limit(allow_limit)
+        , reversed(are_reversed(schema_version, table_schema_version(cf_id.uuid())) || slice.is_reversed())
     { }
 
 

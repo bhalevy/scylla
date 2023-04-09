@@ -872,7 +872,7 @@ future<std::tuple<foreign_ptr<lw_shared_ptr<reconcilable_result>>, cache_tempera
         const dht::partition_range_vector& ranges,
         tracing::trace_state_ptr trace_state,
         db::timeout_clock::time_point timeout) {
-    schema_ptr query_schema = cmd.slice.__is_reversed() ? table_schema->make_reversed() : table_schema;
+    schema_ptr query_schema = cmd.reversed ? table_schema->make_reversed() : table_schema;
 
     return do_query_on_all_shards<mutation_query_result_builder>(db, query_schema, cmd, ranges, std::move(trace_state), timeout,
             [table_schema, &cmd] (query::result_memory_accounter&& accounter, const compact_for_query_state_v2& compaction_state) {
@@ -888,7 +888,7 @@ future<std::tuple<foreign_ptr<lw_shared_ptr<query::result>>, cache_temperature>>
         query::result_options opts,
         tracing::trace_state_ptr trace_state,
         db::timeout_clock::time_point timeout) {
-    schema_ptr query_schema = cmd.slice.__is_reversed() ? table_schema->make_reversed() : table_schema;
+    schema_ptr query_schema = cmd.reversed ? table_schema->make_reversed() : table_schema;
 
     return do_query_on_all_shards<data_query_result_builder>(db, query_schema, cmd, ranges, std::move(trace_state), timeout,
             [table_schema, &cmd, opts] (query::result_memory_accounter&& accounter, const compact_for_query_state_v2& compaction_state) {
