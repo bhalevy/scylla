@@ -57,6 +57,7 @@
 #include "readers/multi_range.hh"
 #include "readers/combined.hh"
 #include "readers/compacting.hh"
+#include "query/query_fwd.hh"
 
 namespace replica {
 
@@ -230,11 +231,11 @@ table::make_reader_v2(schema_ptr s,
         return (*_virtual_reader).make_reader_v2(s, std::move(permit), range, query_slice, pc, trace_state, fwd, fwd_mr);
     }
 
-    bool reversed = query_slice.is_reversed();
+    auto reversed = query_slice.is_reversed();
     std::unique_ptr<query::partition_slice> unreversed_slice;
     if (reversed && !_config.enable_optimized_reversed_reads()) [[unlikely]] {
         // Make the code below perform a forward query. We'll wrap the result into `make_reversing_reader` at the end.
-        reversed = false;
+        reversed = query::reversed::no;
         s = s->make_reversed();
         unreversed_slice = std::make_unique<query::partition_slice>(query::half_reverse_slice(*s, query_slice));
     }

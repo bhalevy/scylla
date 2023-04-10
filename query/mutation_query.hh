@@ -125,7 +125,7 @@ public:
 class reconcilable_result_builder {
     const schema& _schema;
     const query::partition_slice& _slice;
-    bool _reversed;
+    query::reversed _reversed;
 
     bool _return_static_content_on_partition_with_no_rows{};
     bool _static_row_is_alive{};

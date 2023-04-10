@@ -544,7 +544,7 @@ class sstable_position_reader_queue : public position_reader_queue {
     // returned reader.
     std::optional<flat_mutation_reader_v2> _dummy_reader;
 
-    bool _reversed;
+    query::reversed _reversed;
 
     flat_mutation_reader_v2 create_reader(sstable& sst) {
         return _create_reader(sst);
@@ -565,7 +565,7 @@ public:
             partition_key pk,
             reader_permit permit,
             streamed_mutation::forwarding fwd_sm,
-            bool reversed)
+            query::reversed reversed)
         : _query_schema(std::move(query_schema))
         , _sstables(reversed ? set._sstables_reversed : set._sstables)
         , _it(_sstables->begin())
@@ -651,7 +651,7 @@ std::unique_ptr<position_reader_queue> time_series_sstable_set::make_position_re
         std::function<flat_mutation_reader_v2(sstable&)> create_reader,
         std::function<bool(const sstable&)> filter,
         partition_key pk, schema_ptr query_schema, reader_permit permit,
-        streamed_mutation::forwarding fwd_sm, bool reversed) const {
+        streamed_mutation::forwarding fwd_sm, query::reversed reversed) const {
     return std::make_unique<sstable_position_reader_queue>(*this,
             std::move(query_schema), std::move(create_reader), std::move(filter),
             std::move(pk), std::move(permit), fwd_sm, reversed);

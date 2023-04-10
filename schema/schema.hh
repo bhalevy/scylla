@@ -32,6 +32,7 @@
 #include "db/per_partition_rate_limit_options.hh"
 #include "schema_fwd.hh"
 #include "data_dictionary/keyspace_element.hh"
+#include "query/query_fwd.hh"
 
 namespace dht {
 

@@ -106,7 +106,7 @@ public:
         return _permit;
     }
 
-    bool is_reversed() const {
+    query::reversed is_reversed() const noexcept {
         return _slice->is_reversed();
     }
 

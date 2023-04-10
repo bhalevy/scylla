@@ -4112,10 +4112,10 @@ class data_read_resolver : public abstract_read_resolver {
         std::optional<clustering_key> clustering;
 
         class less_compare_clustering {
-            bool _is_reversed;
+            query::reversed _is_reversed;
             clustering_key::less_compare _ck_cmp;
         public:
-            less_compare_clustering(const schema& s, bool is_reversed)
+            less_compare_clustering(const schema& s, query::reversed is_reversed)
                 : _is_reversed(is_reversed), _ck_cmp(s) { }
 
             bool operator()(const primary_key& a, const primary_key& b) const {
@@ -4137,7 +4137,7 @@ class data_read_resolver : public abstract_read_resolver {
             const schema& _schema;
             less_compare_clustering _ck_cmp;
         public:
-            less_compare(const schema& s, bool is_reversed)
+            less_compare(const schema& s, query::reversed is_reversed)
                 : _schema(s), _ck_cmp(s, is_reversed) { }
 
             bool operator()(const primary_key& a, const primary_key& b) const {
@@ -4204,7 +4204,7 @@ private:
         }
     }
 
-    static primary_key get_last_row(const schema& s, const partition& p, bool is_reversed) {
+    static primary_key get_last_row(const schema& s, const partition& p, query::reversed is_reversed) {
         return {p.mut().decorated_key(s), is_reversed ? p.mut().partition().first_row_key() : p.mut().partition().last_row_key()  };
     }
 
@@ -4212,7 +4212,7 @@ private:
     // the query.
     // versions is a table where rows are partitions in descending order and the columns identify the partition
     // sent by a particular replica.
-    static primary_key get_last_row(const schema& s, bool is_reversed, const std::vector<std::vector<version>>& versions, uint32_t replica) {
+    static primary_key get_last_row(const schema& s, query::reversed is_reversed, const std::vector<std::vector<version>>& versions, uint32_t replica) {
         const partition* last_partition = nullptr;
         // Versions are in the reversed order.
         for (auto&& pv : versions) {
@@ -4226,7 +4226,7 @@ private:
         return get_last_row(s, *last_partition, is_reversed);
     }
 
-    static primary_key get_last_reconciled_row(const schema& s, const mutation_and_live_row_count& m_a_rc, const query::read_command& cmd, uint64_t limit, bool is_reversed) {
+    static primary_key get_last_reconciled_row(const schema& s, const mutation_and_live_row_count& m_a_rc, const query::read_command& cmd, uint64_t limit, query::reversed is_reversed) {
         const auto& m = m_a_rc.mut;
         auto mp = mutation_partition(s, m.partition());
         auto&& ranges = cmd.slice.row_ranges(s, m.key());
@@ -4235,12 +4235,12 @@ private:
         return primary_key{m.decorated_key(), get_last_reconciled_row(s, mp, is_reversed)};
     }
 
-    static primary_key get_last_reconciled_row(const schema& s, const mutation_and_live_row_count& m_a_rc, bool is_reversed) {
+    static primary_key get_last_reconciled_row(const schema& s, const mutation_and_live_row_count& m_a_rc, query::reversed is_reversed) {
         const auto& m = m_a_rc.mut;
         return primary_key{m.decorated_key(), get_last_reconciled_row(s, m.partition(), is_reversed)};
     }
 
-    static std::optional<clustering_key> get_last_reconciled_row(const schema& s, const mutation_partition& mp, bool is_reversed) {
+    static std::optional<clustering_key> get_last_reconciled_row(const schema& s, const mutation_partition& mp, query::reversed is_reversed) {
         std::optional<clustering_key> ck;
         if (!mp.clustered_rows().empty()) {
             if (is_reversed) {
@@ -4252,7 +4252,7 @@ private:
         return ck;
     }
 
-    static bool got_incomplete_information_in_partition(const schema& s, const primary_key& last_reconciled_row, const std::vector<version>& versions, bool is_reversed) {
+    static bool got_incomplete_information_in_partition(const schema& s, const primary_key& last_reconciled_row, const std::vector<version>& versions, query::reversed is_reversed) {
         primary_key::less_compare_clustering ck_cmp(s, is_reversed);
         for (auto&& v : versions) {
             if (!v.par || v.reached_partition_end) {
@@ -4268,7 +4268,7 @@ private:
 
     bool got_incomplete_information_across_partitions(const schema& s, const query::read_command& cmd,
                                                       const primary_key& last_reconciled_row, std::vector<mutation_and_live_row_count>& rp,
-                                                      const std::vector<std::vector<version>>& versions, bool is_reversed) {
+                                                      const std::vector<std::vector<version>>& versions, query::reversed is_reversed) {
         bool short_reads_allowed = cmd.slice.options.contains<query::partition_slice::option::allow_short_read>();
         bool always_return_static_content = cmd.slice.options.contains<query::partition_slice::option::always_return_static_content>();
         primary_key::less_compare cmp(s, is_reversed);

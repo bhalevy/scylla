@@ -675,7 +675,7 @@ public:
     // If reversed is false, then the first position is actually the first row (can be the static one).
     // If reversed is true, then the first position is the last row (can be static if partition has a single static row).
     future<std::optional<position_in_partition>>
-    find_first_position_in_partition(reader_permit permit, const dht::decorated_key& key, bool reversed,
+    find_first_position_in_partition(reader_permit permit, const dht::decorated_key& key, query::reversed reversed,
             const io_priority_class& pc = default_priority_class());
 
     // Return an input_stream which reads exactly the specified byte range

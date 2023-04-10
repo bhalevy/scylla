@@ -3118,10 +3118,10 @@ SEASTAR_TEST_CASE(find_first_position_in_partition_from_sstable_test) {
                 BOOST_REQUIRE(sst->max_position().key() == last_position->key());
             }
 
-            auto first_position_opt = sst->find_first_position_in_partition(env.make_reader_permit(), sst->get_first_decorated_key(), false).get0();
+            auto first_position_opt = sst->find_first_position_in_partition(env.make_reader_permit(), sst->get_first_decorated_key(), query::reversed::no).get0();
             BOOST_REQUIRE(first_position_opt);
 
-            auto last_position_opt = sst->find_first_position_in_partition(env.make_reader_permit(), sst->get_last_decorated_key(), true).get0();
+            auto last_position_opt = sst->find_first_position_in_partition(env.make_reader_permit(), sst->get_last_decorated_key(), query::reversed::yes).get0();
             BOOST_REQUIRE(last_position_opt);
 
             BOOST_REQUIRE(eq(*first_position_opt, *first_position));

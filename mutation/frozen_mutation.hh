@@ -16,6 +16,7 @@
 #include "mutation_consumer_concepts.hh"
 #include "range_tombstone_change_generator.hh"
 #include "schema/schema.hh"
+#include "query/query_fwd.hh"
 
 class mutation;
 class flat_mutation_reader_v2;
@@ -242,14 +243,14 @@ struct frozen_mutation_and_schema {
 class streamed_mutation_freezer {
     const schema& _schema;
     partition_key _key;
-    bool _reversed;
+    query::reversed _reversed;
 
     tombstone _partition_tombstone;
     std::optional<static_row> _sr;
     std::deque<clustering_row> _crs;
     range_tombstone_list _rts;
 public:
-    streamed_mutation_freezer(const schema& s, const partition_key& key, bool reversed = false)
+    streamed_mutation_freezer(const schema& s, const partition_key& key, query::reversed reversed = query::reversed::no)
         : _schema(s), _key(key), _reversed(reversed), _rts(s) { }
 
     stop_iteration consume(tombstone pt);

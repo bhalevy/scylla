@@ -98,7 +98,7 @@ std::ostream& operator<<(std::ostream& out, const specific_ranges& s) {
     return out;
 }
 
-void trim_clustering_row_ranges_to(const schema& s, clustering_row_ranges& ranges, position_in_partition pos, bool reversed) {
+void trim_clustering_row_ranges_to(const schema& s, clustering_row_ranges& ranges, position_in_partition pos, reversed reversed) {
     auto cmp = [reversed, cmp = position_in_partition::composite_tri_compare(s)] (const auto& a, const auto& b) {
         return reversed ? cmp(b, a) : cmp(a, b);
     };
@@ -125,7 +125,7 @@ void trim_clustering_row_ranges_to(const schema& s, clustering_row_ranges& range
     }
 }
 
-void trim_clustering_row_ranges_to(const schema& s, clustering_row_ranges& ranges, const clustering_key& key, bool reversed) {
+void trim_clustering_row_ranges_to(const schema& s, clustering_row_ranges& ranges, const clustering_key& key, reversed reversed) {
     return trim_clustering_row_ranges_to(s, ranges,
             reversed ? position_in_partition::before_key(key) : position_in_partition::after_key(s, key), reversed);
 }

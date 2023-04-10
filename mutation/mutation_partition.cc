@@ -758,7 +758,7 @@ mutation_partition::upper_bound(const schema& schema, const query::clustering_ra
 }
 
 template<typename Func>
-void mutation_partition::for_each_row(const schema& schema, const query::clustering_range& row_range, bool reversed, Func&& func) const
+void mutation_partition::for_each_row(const schema& schema, const query::clustering_range& row_range, query::reversed reversed, Func&& func) const
 {
     check_schema(schema);
     auto r = range(schema, row_range);
@@ -1389,7 +1389,7 @@ uint32_t mutation_partition::do_compact(const schema& s,
     gc_clock::time_point query_time,
     const std::vector<query::clustering_range>& row_ranges,
     bool always_return_static_content,
-    bool reverse,
+    query::reversed reverse,
     uint64_t row_limit,
     can_gc_fn& can_gc,
     bool drop_tombstones_unconditionally,
@@ -1452,7 +1452,7 @@ mutation_partition::compact_for_query(
     gc_clock::time_point query_time,
     const std::vector<query::clustering_range>& row_ranges,
     bool always_return_static_content,
-    bool reverse,
+    query::reversed reverse,
     uint64_t row_limit)
 {
     check_schema(s);
@@ -1472,7 +1472,7 @@ void mutation_partition::compact_for_compaction(const schema& s,
     };
 
     bool drop_tombstones_unconditionally = false;
-    do_compact(s, dk, compaction_time, all_rows, true, false, query::partition_max_rows, can_gc, drop_tombstones_unconditionally, gc_state);
+    do_compact(s, dk, compaction_time, all_rows, true, query::reversed::no, query::partition_max_rows, can_gc, drop_tombstones_unconditionally, gc_state);
 }
 
 void mutation_partition::compact_for_compaction_drop_tombstones_unconditionally(const schema& s, const dht::decorated_key& dk)
@@ -1483,7 +1483,7 @@ void mutation_partition::compact_for_compaction_drop_tombstones_unconditionally(
     };
     bool drop_tombstones_unconditionally = true;
     auto compaction_time = gc_clock::time_point::max();
-    do_compact(s, dk, compaction_time, all_rows, true, false, query::partition_max_rows, always_gc, drop_tombstones_unconditionally, tombstone_gc_state(nullptr));
+    do_compact(s, dk, compaction_time, all_rows, true, query::reversed::no, query::partition_max_rows, always_gc, drop_tombstones_unconditionally, tombstone_gc_state(nullptr));
 }
 
 // Returns true if the mutation_partition represents no writes.

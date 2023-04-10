@@ -1549,7 +1549,7 @@ private:
         _context->reset(el);
         return _context->skip_to(begin);
     }
-    bool reversed() const {
+    query::reversed reversed() const noexcept {
         return _slice.is_reversed();
     }
 public:

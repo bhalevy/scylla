@@ -759,7 +759,7 @@ mutation_partition_v2::upper_bound(const schema& schema, const query::clustering
 }
 
 template<typename Func>
-void mutation_partition_v2::for_each_row(const schema& schema, const query::clustering_range& row_range, bool reversed, Func&& func) const
+void mutation_partition_v2::for_each_row(const schema& schema, const query::clustering_range& row_range, query::reversed reversed, Func&& func) const
 {
     check_schema(schema);
     auto r = range(schema, row_range);

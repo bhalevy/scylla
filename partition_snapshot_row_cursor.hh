@@ -143,7 +143,7 @@ class partition_snapshot_row_cursor final {
     bool _continuous{};
     bool _dummy{};
     const bool _unique_owner;
-    const bool _reversed;
+    const query::reversed _reversed;
     const bool _digest_requested;
     tombstone _range_tombstone;
     tombstone _range_tombstone_for_row;
@@ -368,7 +368,7 @@ public:
     // When reversed, s must be a reversed schema relative to snp->schema()
     // Positions and fragments accepted and returned by the cursor are from the domain of s.
     // Iterators are from the table's schema domain.
-    partition_snapshot_row_cursor(const schema& s, partition_snapshot& snp, bool unique_owner = false, bool reversed = false, bool digest_requested = false)
+    partition_snapshot_row_cursor(const schema& s, partition_snapshot& snp, bool unique_owner = false, query::reversed reversed = query::reversed::no, bool digest_requested = false)
         : _schema(s)
         , _snp(snp)
         , _unique_owner(unique_owner)

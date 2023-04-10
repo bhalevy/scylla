@@ -856,14 +856,14 @@ make_flat_mutation_reader_from_mutations_v2(
         reader_permit permit,
         mutation m,
         streamed_mutation::forwarding fwd,
-        bool reversed) {
+        query::reversed reversed) {
     class reader final : public reader_from_mutation_base {
         mutation _mutation;
-        bool _reversed;
+        query::reversed _reversed;
         std::optional<mutation_consume_cookie> _cookie;
 
     public:
-        reader(schema_ptr schema, reader_permit permit, mutation&& m, bool reversed) noexcept
+        reader(schema_ptr schema, reader_permit permit, mutation&& m, query::reversed reversed) noexcept
             : reader_from_mutation_base(std::move(schema), std::move(permit))
             , _mutation(std::move(m))
             , _reversed(reversed)
@@ -873,7 +873,7 @@ make_flat_mutation_reader_from_mutations_v2(
                 return make_ready_future<>();
             }
 
-            auto res = std::move(_mutation).consume(*this, consume_in_reverse(_reversed), _cookie ? std::move(*_cookie) : mutation_consume_cookie());
+            auto res = std::move(_mutation).consume(*this, consume_in_reverse(bool(_reversed)), _cookie ? std::move(*_cookie) : mutation_consume_cookie());
             if (res.stop == stop_iteration::yes) {
                 _cookie.emplace(std::move(res.cookie));
             } else {
@@ -930,7 +930,7 @@ make_flat_mutation_reader_from_mutations_v2(schema_ptr s, reader_permit permit, 
         std::optional<mutation_consume_cookie> _cookie;
 
     public:
-        reader(schema_ptr schema, reader_permit permit, std::vector<mutation> mutations, const dht::partition_range& pr, bool reversed)
+        reader(schema_ptr schema, reader_permit permit, std::vector<mutation> mutations, const dht::partition_range& pr, query::reversed reversed)
             : reader_from_mutation_base(std::move(schema), std::move(permit))
             , _mutations(std::move(mutations))
             , _pr(&pr)

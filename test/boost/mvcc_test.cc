@@ -480,7 +480,7 @@ SEASTAR_TEST_CASE(test_apply_to_incomplete_respects_continuity) {
 }
 
 // Call with region locked.
-static mutation_partition read_using_cursor(partition_snapshot& snap, bool reversed = false) {
+static mutation_partition read_using_cursor(partition_snapshot& snap, query::reversed reversed = query::reversed::no) {
     tests::reader_concurrency_semaphore_wrapper semaphore;
     auto s = snap.schema();
     if (reversed) {
@@ -514,7 +514,7 @@ void evict_with_consistency_check(mvcc_container& ms, mvcc_partition& e, const m
         testlog.trace("continuity: {}", cont);
 
         // Check that cursor view is the same.
-        auto p2 = read_using_cursor(*e.read(), false);
+        auto p2 = read_using_cursor(*e.read(), query::reversed::no);
         assert_that(ms.schema(), p2).is_equal_to_compacted(p);
 
         assert_that(ms.schema(), p)
@@ -563,7 +563,7 @@ SEASTAR_TEST_CASE(test_snapshot_cursor_is_consistent_with_merging) {
                 assert_that(s, actual).is_equal_to_compacted(expected);
 
                 // Reversed iteration
-                actual = read_using_cursor(*snap, true);
+                actual = read_using_cursor(*snap, query::reversed::yes);
                 auto rev_s = snap->schema()->make_reversed();
                 reverse(s, expected);
                 assert_that(rev_s, actual).is_equal_to_compacted(expected);
@@ -610,7 +610,7 @@ SEASTAR_TEST_CASE(test_snapshot_cursor_is_consistent_with_merging_for_nonevictab
 
                 // Reversed iteration
                 auto rev_s = snap->schema()->make_reversed();
-                actual = read_using_cursor(*snap, true);
+                actual = read_using_cursor(*snap, query::reversed::yes);
                 reverse(s, expected);
                 assert_that(rev_s, actual).is_equal_to_compacted(expected);
             }
@@ -865,7 +865,7 @@ SEASTAR_TEST_CASE(test_partition_snapshot_row_cursor_reversed) {
             auto snap2 = e.read(r, tracker.cleaner(), table.schema(), &tracker, 1);
 
             auto rev_s = s.make_reversed();
-            partition_snapshot_row_cursor cur(*rev_s, *snap2, false, true);
+            partition_snapshot_row_cursor cur(*rev_s, *snap2, false, query::reversed::yes);
             position_in_partition::equal_compare eq(s);
 
             {
@@ -1055,7 +1055,7 @@ SEASTAR_TEST_CASE(test_cursor_tracks_continuity_in_reversed_mode) {
             }
 
             auto rev_s = s.make_reversed();
-            partition_snapshot_row_cursor cur(*rev_s, *snap2, false, true);
+            partition_snapshot_row_cursor cur(*rev_s, *snap2, false, query::reversed::yes);
             position_in_partition::equal_compare eq(s);
 
             {
@@ -1252,7 +1252,7 @@ SEASTAR_TEST_CASE(test_ensure_in_latest_preserves_range_tombstones) {
             auto snap2_original = snap2->squashed();
 
             auto rev_s = s.make_reversed();
-            partition_snapshot_row_cursor rev_cur(*rev_s, *snap2, false, true);
+            partition_snapshot_row_cursor rev_cur(*rev_s, *snap2, false, query::reversed::yes);
             position_in_partition::equal_compare eq(s);
 
             BOOST_REQUIRE(rev_cur.advance_to(position_in_partition::before_all_clustered_rows()));
@@ -1557,7 +1557,7 @@ SEASTAR_TEST_CASE(test_ensure_entry_in_latest_in_reversed_mode) {
             }
 
             auto rev_s = s.make_reversed();
-            partition_snapshot_row_cursor cur(*rev_s, *snap2, false, true);
+            partition_snapshot_row_cursor cur(*rev_s, *snap2, false, query::reversed::yes);
             position_in_partition::equal_compare eq(s);
 
             {
@@ -1613,7 +1613,7 @@ SEASTAR_TEST_CASE(test_ensure_entry_in_latest_does_not_set_continuity_in_reverse
             }
 
             auto rev_s = s.make_reversed();
-            partition_snapshot_row_cursor cur(*rev_s, *snap2, false, true);
+            partition_snapshot_row_cursor cur(*rev_s, *snap2, false, query::reversed::yes);
             position_in_partition::equal_compare eq(s);
 
             {
@@ -1822,7 +1822,7 @@ SEASTAR_TEST_CASE(test_cursor_over_non_evictable_snapshot) {
             assert_that(snap->schema(), actual).is_equal_to_compacted(expected);
 
             // Reversed iteration
-            actual = read_using_cursor(*snap, true);
+            actual = read_using_cursor(*snap, query::reversed::yes);
             auto rev_s = snap->schema()->make_reversed();
             reverse(snap->schema(), expected);
             assert_that(rev_s, actual).is_equal_to_compacted(expected);
@@ -1878,7 +1878,7 @@ SEASTAR_TEST_CASE(test_reverse_cursor_refreshing_on_nonevictable_snapshot) {
             auto snap = e.snapshots[1];
 
             auto rev_s = s.make_reversed();
-            partition_snapshot_row_cursor cur(*rev_s, *snap, false, true);
+            partition_snapshot_row_cursor cur(*rev_s, *snap, false, query::reversed::yes);
             position_in_partition::equal_compare eq(*rev_s);
 
             logalloc::reclaim_lock rl(r); // To make cur stable
@@ -1929,7 +1929,7 @@ SEASTAR_TEST_CASE(test_reverse_cursor_refreshing_on_nonevictable_snapshot_with_e
             auto snap = e.snapshots[1];
 
             auto rev_s = s.make_reversed();
-            partition_snapshot_row_cursor cur(*rev_s, *snap, false, true);
+            partition_snapshot_row_cursor cur(*rev_s, *snap, false, query::reversed::yes);
             position_in_partition::equal_compare eq(*rev_s);
 
             logalloc::reclaim_lock rl(r); // To make cur stable

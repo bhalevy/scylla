@@ -83,7 +83,7 @@ class partition_snapshot_flat_reader : public flat_mutation_reader_v2::impl, pub
             , _snapshot(std::move(snp))
             , _region(region)
             , _read_section(read_section)
-            , _cursor(s, *_snapshot, false, Reversing, digest_requested)
+            , _cursor(s, *_snapshot, false, query::reversed(Reversing), digest_requested)
             , _digest_requested(digest_requested)
         { }
 

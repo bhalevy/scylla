@@ -1332,7 +1332,7 @@ SEASTAR_TEST_CASE(test_trim_clustering_row_ranges_to) {
             .with_column("v1", int32_type, column_kind::regular_column)
             .build();
 
-    const auto check = [&schema] (std::vector<range> ranges, key key, std::vector<range> output_ranges, bool reversed = false,
+    const auto check = [&schema] (std::vector<range> ranges, key key, std::vector<range> output_ranges, query::reversed reversed = query::reversed::no,
             std::source_location sl = std::source_location::current()) {
         auto actual_ranges = ranges::to<query::clustering_row_ranges>(ranges | boost::adaptors::transformed(
                     [&] (const range& r) { return r.to_clustering_range(*schema); }));
@@ -1349,9 +1349,9 @@ SEASTAR_TEST_CASE(test_trim_clustering_row_ranges_to) {
             BOOST_FAIL(fmt::format("Unexpected result\nexpected {}\ngot {}\ncalled from {}:{}", expected_ranges, actual_ranges, sl.file_name(), sl.line()));
         }
     };
-    const auto check_reversed = [&check] (std::vector<range> ranges, key key, std::vector<range> output_ranges, bool reversed = false,
+    const auto check_reversed = [&check] (std::vector<range> ranges, key key, std::vector<range> output_ranges,
             std::source_location sl = std::source_location::current()) {
-        return check(std::move(ranges), std::move(key), std::move(output_ranges), true, sl);
+        return check(std::move(ranges), std::move(key), std::move(output_ranges), query::reversed::yes, sl);
     };
 
     // We want to check the following cases:
@@ -3805,7 +3805,7 @@ SEASTAR_THREAD_TEST_CASE(test_clustering_order_merger_in_memory) {
 }
 
 
-static future<> do_test_clustering_order_merger_sstable_set(bool reversed) {
+static future<> do_test_clustering_order_merger_sstable_set(query::reversed reversed) {
   return sstables::test_env::do_with_async([reversed] (sstables::test_env& env) {
     auto pkeys = tests::generate_partition_keys(2, clustering_order_merger_test_generator::make_schema());
     clustering_order_merger_test_generator g(pkeys[0]);
@@ -3896,11 +3896,11 @@ static future<> do_test_clustering_order_merger_sstable_set(bool reversed) {
 }
 
 SEASTAR_TEST_CASE(test_clustering_order_merger_sstable_set) {
-    return do_test_clustering_order_merger_sstable_set(false);
+    return do_test_clustering_order_merger_sstable_set(query::reversed::no);
 }
 
 SEASTAR_TEST_CASE(test_clustering_order_merger_sstable_set_reversed) {
-    return do_test_clustering_order_merger_sstable_set(true);
+    return do_test_clustering_order_merger_sstable_set(query::reversed::yes);
 }
 
 SEASTAR_THREAD_TEST_CASE(clustering_combined_reader_mutation_source_test) {

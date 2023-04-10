@@ -195,7 +195,7 @@ public:
         , _upper_bound(position_in_partition_view::before_all_clustered_rows())
         , _read_context_holder()
         , _read_context(ctx)    // ctx is owned by the caller, who's responsible for closing it.
-        , _next_row(*_schema, *_snp, false, _read_context.is_reversed())
+        , _next_row(*_schema, *_snp, false, query::reversed(_read_context.is_reversed()))
     {
         clogger.trace("csm {}: table={}.{}, reversed={}, snap={}", fmt::ptr(this), _schema->ks_name(), _schema->cf_name(), _read_context.is_reversed(),
                       fmt::ptr(&*_snp));
@@ -484,7 +484,7 @@ bool cache_flat_mutation_reader::ensure_population_lower_bound() {
     // so we need to ensure we have an entry in the latest version.
     if (!_last_row.is_in_latest_version()) {
         rows_entry::tri_compare cmp(*_schema);
-        partition_snapshot_row_cursor cur(*_schema, *_snp, false, _read_context.is_reversed());
+        partition_snapshot_row_cursor cur(*_schema, *_snp, false, query::reversed(_read_context.is_reversed()));
 
         if (!cur.advance_to(_last_row.position())) {
             return false;

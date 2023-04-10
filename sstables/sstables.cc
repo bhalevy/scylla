@@ -1205,7 +1205,7 @@ void sstable::set_min_max_position_range() {
 }
 
 future<std::optional<position_in_partition>>
-sstable::find_first_position_in_partition(reader_permit permit, const dht::decorated_key& key, bool reversed, const io_priority_class& pc) {
+sstable::find_first_position_in_partition(reader_permit permit, const dht::decorated_key& key, query::reversed reversed, const io_priority_class& pc) {
     using position_in_partition_opt = std::optional<position_in_partition>;
     class position_finder {
         position_in_partition_opt& _pos;
@@ -1218,7 +1218,7 @@ sstable::find_first_position_in_partition(reader_permit permit, const dht::decor
             _pos = reverse_pos ? std::move(pos).reversed() : std::move(pos);
         }
     public:
-        position_finder(position_in_partition_opt& pos, bool reversed) noexcept : _pos(pos), _reversed(reversed) {}
+        position_finder(position_in_partition_opt& pos, query::reversed reversed) noexcept : _pos(pos), _reversed(reversed) {}
 
         void consume_new_partition(const dht::decorated_key& dk) {}
 
@@ -1291,8 +1291,8 @@ future<> sstable::load_first_and_last_position_in_partition() {
 
     auto& sem = _manager.sstable_metadata_concurrency_sem();
     reader_permit permit = co_await sem.obtain_permit(&*_schema, "sstable::load_first_and_last_position_range", sstable_buffer_size, db::no_timeout, {});
-    auto first_pos_opt = co_await find_first_position_in_partition(permit, get_first_decorated_key(), false);
-    auto last_pos_opt = co_await find_first_position_in_partition(permit, get_last_decorated_key(), true);
+    auto first_pos_opt = co_await find_first_position_in_partition(permit, get_first_decorated_key(), query::reversed::no);
+    auto last_pos_opt = co_await find_first_position_in_partition(permit, get_last_decorated_key(), query::reversed::yes);
 
     // Allow loading to proceed even if we were unable to load this metadata as the lack of it
     // will not affect correctness.

@@ -24,6 +24,7 @@
 #include "query/query_class_config.hh"
 #include "db/per_partition_rate_limit_info.hh"
 #include "query/query_id.hh"
+#include "query/query_fwd.hh"
 #include "utils/UUID.hh"
 #include "bytes.hh"
 #include "cql_serialization_format.hh"
@@ -81,7 +82,7 @@ typedef std::vector<clustering_range> clustering_row_ranges;
 /// partially overlap are trimmed.
 /// Result: each range will overlap fully with [pos, +inf), or (-int, pos] if
 /// reversed is true.
-void trim_clustering_row_ranges_to(const schema& s, clustering_row_ranges& ranges, position_in_partition pos, bool reversed = false);
+void trim_clustering_row_ranges_to(const schema& s, clustering_row_ranges& ranges, position_in_partition pos, query::reversed reversed = query::reversed::no);
 
 /// Trim the clustering ranges.
 ///
@@ -90,7 +91,7 @@ void trim_clustering_row_ranges_to(const schema& s, clustering_row_ranges& range
 /// not intersect are dropped. Ranges that partially overlap are trimmed.
 /// Result: each range will overlap fully with (key, +inf), or (-int, key) if
 /// reversed is true.
-void trim_clustering_row_ranges_to(const schema& s, clustering_row_ranges& ranges, const clustering_key& key, bool reversed = false);
+void trim_clustering_row_ranges_to(const schema& s, clustering_row_ranges& ranges, const clustering_key& key, query::reversed reversed = query::reversed::no);
 
 class specific_ranges {
 public:
@@ -246,8 +247,8 @@ public:
     }
 
     [[nodiscard]]
-    bool is_reversed() const {
-        return options.contains<query::partition_slice::option::reversed>();
+    query::reversed is_reversed() const noexcept {
+        return query::reversed(options.contains<query::partition_slice::option::reversed>());
     }
 
     friend std::ostream& operator<<(std::ostream& out, const partition_slice& ps);

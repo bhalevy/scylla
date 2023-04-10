@@ -13,12 +13,12 @@
 #include "mutation/mutation_fragment_fwd.hh"
 #include "readers/flat_mutation_reader_fwd.hh"
 #include "readers/flat_mutation_reader_v2.hh"
+#include "query/query_fwd.hh"
 
 class reader_permit;
 class mutation;
 
 namespace query {
-    class partition_slice;
     extern const dht::partition_range full_partition_range;
 }
 
@@ -29,7 +29,7 @@ make_flat_mutation_reader_from_mutations_v2(
     reader_permit permit,
     mutation m,
     streamed_mutation::forwarding fwd = streamed_mutation::forwarding::no,
-    bool reversed = false);
+    query::reversed reversed = query::reversed::no);
 
 // Reader optimized for a single mutation.
 flat_mutation_reader_v2

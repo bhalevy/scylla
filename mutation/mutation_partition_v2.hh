@@ -288,7 +288,7 @@ public:
     size_t external_memory_usage(const schema&) const;
 private:
     template<typename Func>
-    void for_each_row(const schema& schema, const query::clustering_range& row_range, bool reversed, Func&& func) const;
+    void for_each_row(const schema& schema, const query::clustering_range& row_range, query::reversed reversed, Func&& func) const;
     friend class counter_write_query_result_builder;
 
     void check_schema(const schema& s) const {

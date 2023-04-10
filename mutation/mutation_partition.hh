@@ -1345,7 +1345,7 @@ private:
         gc_clock::time_point now,
         const std::vector<query::clustering_range>& row_ranges,
         bool always_return_static_content,
-        bool reverse,
+        query::reversed reverse,
         uint64_t row_limit,
         can_gc_fn&,
         bool drop_tombstones_unconditionally,
@@ -1380,7 +1380,7 @@ public:
     //
     uint64_t compact_for_query(const schema& s, const dht::decorated_key& dk, gc_clock::time_point query_time,
         const std::vector<query::clustering_range>& row_ranges, bool always_return_static_content,
-        bool reversed, uint64_t row_limit);
+        query::reversed reversed, uint64_t row_limit);
 
     // Performs the following:
     //   - expires cells based on compaction_time
@@ -1465,7 +1465,7 @@ public:
     size_t external_memory_usage(const schema&) const;
 private:
     template<typename Func>
-    void for_each_row(const schema& schema, const query::clustering_range& row_range, bool reversed, Func&& func) const;
+    void for_each_row(const schema& schema, const query::clustering_range& row_range, query::reversed reversed, Func&& func) const;
     friend class counter_write_query_result_builder;
 
     void check_schema(const schema& s) const {
