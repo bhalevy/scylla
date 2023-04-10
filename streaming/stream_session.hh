@@ -22,7 +22,7 @@
 #include "streaming/stream_manager.hh"
 #include "streaming/stream_reason.hh"
 #include "streaming/session_info.hh"
-#include "query-request.hh"
+#include "query/query-request.hh"
 #include "dht/i_partitioner.hh"
 #include <map>
 #include <vector>

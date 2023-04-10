@@ -9,7 +9,7 @@
 
 #pragma once
 #include <variant>
-#include "query-result.hh"
+#include "query/query-result.hh"
 #include "service/paxos/proposal.hh"
 
 namespace service {

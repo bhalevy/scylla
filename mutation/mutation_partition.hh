@@ -23,7 +23,7 @@
 #include "keys.hh"
 #include "position_in_partition.hh"
 #include "atomic_cell_or_collection.hh"
-#include "query-result.hh"
+#include "query/query-result.hh"
 #include "hashing_partition_visitor.hh"
 #include "range_tombstone_list.hh"
 #include "utils/intrusive_btree.hh"

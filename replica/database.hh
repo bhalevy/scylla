@@ -50,7 +50,7 @@
 #include "dirty_memory_manager.hh"
 #include "reader_concurrency_semaphore.hh"
 #include "db/timeout_clock.hh"
-#include "querier.hh"
+#include "query/querier.hh"
 #include "cache_temperature.hh"
 #include <unordered_set>
 #include "utils/updateable_value.hh"

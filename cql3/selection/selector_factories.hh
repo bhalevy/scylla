@@ -15,7 +15,7 @@
 #include <vector>
 #include "cql3/selection/selector.hh"
 #include "schema/schema.hh"
-#include "query-request.hh"
+#include "query/query-request.hh"
 
 namespace cql3 {
 

@@ -8,7 +8,7 @@
 
 #include <seastar/core/coroutine.hh>
 
-#include "querier.hh"
+#include "query/querier.hh"
 
 #include "schema/schema.hh"
 #include "log.hh"

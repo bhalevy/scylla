@@ -14,8 +14,8 @@
 #include <seastar/core/shared_ptr.hh>
 
 #include "schema/schema_fwd.hh"
-#include "query-result.hh"
-#include "query-request.hh"
+#include "query/query-result.hh"
+#include "query/query-request.hh"
 #include "service/query_state.hh"
 #include "cql3/selection/selection.hh"
 #include "cql3/query_options.hh"

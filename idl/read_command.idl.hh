@@ -6,7 +6,7 @@
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
-#include "query-request.hh"
+#include "query/query-request.hh"
 
 #include "idl/keys.idl.hh"
 #include "idl/range.idl.hh"

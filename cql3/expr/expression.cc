@@ -29,7 +29,7 @@
 #include "types/map.hh"
 #include "types/set.hh"
 #include "utils/like_matcher.hh"
-#include "query-result-reader.hh"
+#include "query/query-result-reader.hh"
 #include "types/user.hh"
 #include "cql3/lists.hh"
 #include "cql3/sets.hh"

@@ -9,7 +9,7 @@
 #pragma once
 
 #include <seastar/core/distributed.hh>
-#include "query-result.hh"
+#include "query/query-result.hh"
 
 namespace query {
 

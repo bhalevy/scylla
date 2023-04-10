@@ -11,7 +11,7 @@
 #include <boost/range/adaptor/transformed.hpp>
 #include <boost/range/numeric.hpp>
 
-#include "query-result.hh"
+#include "query/query-result.hh"
 #include "utils/digest_algorithm.hh"
 #include "full_position.hh"
 

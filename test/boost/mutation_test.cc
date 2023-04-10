@@ -12,7 +12,7 @@
 #include <boost/range/algorithm/copy.hpp>
 #include <boost/range/algorithm_ext/push_back.hpp>
 #include <boost/range/combine.hpp>
-#include "mutation_query.hh"
+#include "query/mutation_query.hh"
 #include "utils/hashers.hh"
 #include "utils/xx_hasher.hh"
 
@@ -26,8 +26,8 @@
 #include "utils/UUID_gen.hh"
 #include "clustering_interval_set.hh"
 #include "schema/schema_builder.hh"
-#include "query-result-set.hh"
-#include "query-result-reader.hh"
+#include "query/query-result-set.hh"
+#include "query/query-result-reader.hh"
 #include "partition_slice_builder.hh"
 #include "test/lib/tmpdir.hh"
 #include "compaction/compaction_manager.hh"

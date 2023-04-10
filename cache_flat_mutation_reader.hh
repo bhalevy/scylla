@@ -11,10 +11,10 @@
 #include <vector>
 #include "row_cache.hh"
 #include "mutation/mutation_fragment.hh"
-#include "query-request.hh"
+#include "query/query-request.hh"
 #include "partition_snapshot_row_cursor.hh"
 #include "mutation/range_tombstone_assembler.hh"
-#include "read_context.hh"
+#include "query/read_context.hh"
 #include "readers/delegating_v2.hh"
 #include "clustering_key_filter.hh"
 

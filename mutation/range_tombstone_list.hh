@@ -10,7 +10,7 @@
 
 #include <seastar/util/defer.hh>
 #include "range_tombstone.hh"
-#include "query-request.hh"
+#include "query/query-request.hh"
 #include "utils/preempt.hh"
 #include "utils/chunked_vector.hh"
 #include <iosfwd>

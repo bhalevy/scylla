@@ -35,7 +35,7 @@
 #include "db/commitlog/commitlog.hh"
 #include "test/lib/tmpdir.hh"
 #include "db/data_listeners.hh"
-#include "multishard_mutation_query.hh"
+#include "query/multishard_mutation_query.hh"
 #include "transport/messages/result_message.hh"
 #include "db/snapshot-ctl.hh"
 

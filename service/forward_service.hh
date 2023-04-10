@@ -14,7 +14,7 @@
 
 #include "locator/token_metadata.hh"
 #include "message/messaging_service_fwd.hh"
-#include "query-request.hh"
+#include "query/query-request.hh"
 #include "replica/database_fwd.hh"
 #include "tracing/trace_state.hh"
 

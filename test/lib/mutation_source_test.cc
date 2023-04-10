@@ -18,7 +18,7 @@
 #include "test/lib/simple_schema.hh"
 #include "readers/flat_mutation_reader_v2.hh"
 #include "test/lib/flat_mutation_reader_assertions.hh"
-#include "mutation_query.hh"
+#include "query/mutation_query.hh"
 #include "mutation/mutation_rebuilder.hh"
 #include "test/lib/random_utils.hh"
 #include "cql3/cql3_type.hh"

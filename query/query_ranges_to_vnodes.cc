@@ -6,7 +6,7 @@
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
-#include "query_ranges_to_vnodes.hh"
+#include "query/query_ranges_to_vnodes.hh"
 
 static inline
 const dht::token& start_token(const dht::partition_range& r) {

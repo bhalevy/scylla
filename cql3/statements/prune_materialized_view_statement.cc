@@ -7,7 +7,7 @@
 #include "cql3/statements/prune_materialized_view_statement.hh"
 #include "transport/messages/result_message.hh"
 #include "cql3/selection/selection.hh"
-#include "query-result-reader.hh"
+#include "query/query-result-reader.hh"
 #include "view_info.hh"
 #include "timeout_config.hh"
 #include "service/pager/query_pagers.hh"

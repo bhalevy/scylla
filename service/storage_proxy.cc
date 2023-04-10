@@ -19,7 +19,7 @@
 #include "mutation/mutation.hh"
 #include "mutation/frozen_mutation.hh"
 #include "supervisor.hh"
-#include "query_result_merger.hh"
+#include "query/query_result_merger.hh"
 #include <seastar/core/do_with.hh>
 #include "message/messaging_service.hh"
 #include "gms/failure_detector.hh"
@@ -54,13 +54,13 @@
 #include <boost/outcome/result.hpp>
 #include "utils/latency.hh"
 #include "schema/schema.hh"
-#include "query_ranges_to_vnodes.hh"
+#include "query/query_ranges_to_vnodes.hh"
 #include "schema/schema_registry.hh"
 #include <seastar/util/lazy.hh>
 #include <seastar/core/metrics.hh>
 #include <seastar/core/execution_stage.hh>
 #include "db/timeout_clock.hh"
-#include "multishard_mutation_query.hh"
+#include "query/multishard_mutation_query.hh"
 #include "replica/database.hh"
 #include "db/consistency_level_validations.hh"
 #include "cdc/log.hh"

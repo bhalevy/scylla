@@ -16,7 +16,7 @@
 #include <chrono>
 #include <boost/version.hpp>
 #include <sys/sdt.h>
-#include "read_context.hh"
+#include "query/read_context.hh"
 #include "replica/dirty_memory_manager.hh"
 #include "real_dirty_memory_accounter.hh"
 #include "readers/delegating_v2.hh"

@@ -9,7 +9,7 @@
 #pragma once
 
 #include "dht/i_partitioner.hh"
-#include "query-request.hh"
+#include "query/query-request.hh"
 #include "service/migration_listener.hh"
 #include "utils/serialized_action.hh"
 #include "utils/UUID.hh"

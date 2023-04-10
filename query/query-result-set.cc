@@ -6,13 +6,13 @@
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
-#include "query-result-set.hh"
-#include "query-result-reader.hh"
+#include "query/query-result-set.hh"
+#include "query/query-result-reader.hh"
 #include "partition_slice_builder.hh"
 #include "mutation/mutation.hh"
 #include "types/map.hh"
 #include "utils/exceptions.hh"
-#include "mutation_query.hh"
+#include "query/mutation_query.hh"
 
 #include <fmt/format.h>
 

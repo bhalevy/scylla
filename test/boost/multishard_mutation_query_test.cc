@@ -6,13 +6,13 @@
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
-#include "multishard_mutation_query.hh"
+#include "query/multishard_mutation_query.hh"
 #include "schema/schema_registry.hh"
 #include "db/config.hh"
 #include "partition_slice_builder.hh"
 #include "serializer_impl.hh"
-#include "query-result-set.hh"
-#include "mutation_query.hh"
+#include "query/query-result-set.hh"
+#include "query/mutation_query.hh"
 #include "test/lib/cql_test_env.hh"
 #include "test/lib/eventually.hh"
 #include "test/lib/cql_assertions.hh"

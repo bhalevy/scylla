@@ -57,7 +57,7 @@
 #include "utils/error_injection.hh"
 #include "utils/exponential_backoff_retry.hh"
 #include "utils/fb_utilities.hh"
-#include "query-result-writer.hh"
+#include "query/query-result-writer.hh"
 #include "readers/from_fragments_v2.hh"
 #include "readers/evictable.hh"
 #include "delete_ghost_rows_visitor.hh"

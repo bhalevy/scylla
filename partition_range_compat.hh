@@ -12,7 +12,7 @@
 #include <vector>
 #include "range.hh"
 #include "dht/i_partitioner.hh"
-#include "query-request.hh"
+#include "query/query-request.hh"
 
 namespace compat {
 

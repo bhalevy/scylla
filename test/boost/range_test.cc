@@ -13,7 +13,7 @@
 #include "boost/icl/interval_map.hpp"
 #include <unordered_set>
 
-#include "query-request.hh"
+#include "query/query-request.hh"
 #include "schema/schema_builder.hh"
 
 #include "locator/token_metadata.hh"

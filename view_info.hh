@@ -9,7 +9,7 @@
 #pragma once
 
 #include "dht/i_partitioner.hh"
-#include "query-request.hh"
+#include "query/query-request.hh"
 #include "schema/schema_fwd.hh"
 #include "db/view/view.hh"
 

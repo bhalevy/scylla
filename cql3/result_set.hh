@@ -15,7 +15,7 @@
 #include "enum_set.hh"
 #include "service/pager/paging_state.hh"
 
-#include "query-result-reader.hh"
+#include "query/query-result-reader.hh"
 
 #include "result_generator.hh"
 

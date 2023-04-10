@@ -14,7 +14,7 @@
 #include "db/timeout_clock.hh"
 #include "schema/schema_fwd.hh"
 #include "tracing/trace_state.hh"
-#include "query_class_config.hh"
+#include "query/query_class_config.hh"
 
 namespace seastar {
     class file;

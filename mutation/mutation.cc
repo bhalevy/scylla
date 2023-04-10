@@ -7,7 +7,7 @@
  */
 
 #include "mutation.hh"
-#include "query-result-writer.hh"
+#include "query/query-result-writer.hh"
 #include "mutation_rebuilder.hh"
 
 mutation::data::data(dht::decorated_key&& key, schema_ptr&& schema)

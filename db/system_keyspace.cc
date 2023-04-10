@@ -44,7 +44,7 @@
 #include "gms/inet_address.hh"
 #include "index/secondary_index.hh"
 #include "message/messaging_service.hh"
-#include "mutation_query.hh"
+#include "query/mutation_query.hh"
 #include "db/size_estimates_virtual_reader.hh"
 #include "db/timeout_clock.hh"
 #include "sstables/sstables.hh"
@@ -58,7 +58,7 @@
 #include "service/paxos/paxos_state.hh"
 #include "service/raft/raft_group_registry.hh"
 #include "utils/build_id.hh"
-#include "query-result-set.hh"
+#include "query/query-result-set.hh"
 #include "idl/frozen_mutation.dist.hh"
 #include "idl/frozen_mutation.dist.impl.hh"
 #include <boost/algorithm/cxx11/any_of.hpp>

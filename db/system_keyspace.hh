@@ -15,9 +15,9 @@
 #include <vector>
 #include "schema/schema_fwd.hh"
 #include "utils/UUID.hh"
-#include "query-result-set.hh"
+#include "query/query-result-set.hh"
 #include "db_clock.hh"
-#include "mutation_query.hh"
+#include "query/mutation_query.hh"
 #include "system_keyspace_view_types.hh"
 #include <map>
 #include <seastar/core/distributed.hh>

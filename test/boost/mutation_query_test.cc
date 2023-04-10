@@ -12,8 +12,8 @@
 #include <boost/range/algorithm_ext/push_back.hpp>
 
 #include <boost/test/unit_test.hpp>
-#include "query-result-set.hh"
-#include "query-result-writer.hh"
+#include "query/query-result-set.hh"
+#include "query/query-result-writer.hh"
 
 #include "test/lib/scylla_test_case.hh"
 #include <seastar/testing/thread_test_case.hh>
@@ -22,8 +22,8 @@
 #include "test/lib/mutation_source_test.hh"
 #include "test/lib/reader_concurrency_semaphore.hh"
 
-#include "querier.hh"
-#include "mutation_query.hh"
+#include "query/querier.hh"
+#include "query/mutation_query.hh"
 #include <seastar/core/do_with.hh>
 #include <seastar/core/thread.hh>
 #include "schema/schema_builder.hh"

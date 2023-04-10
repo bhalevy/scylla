@@ -13,7 +13,7 @@
 #include "readers/flat_mutation_reader_v2.hh"
 #include "readers/range_tombstone_change_merger.hh"
 #include "clustering_key_filter.hh"
-#include "query-request.hh"
+#include "query/query-request.hh"
 #include "partition_snapshot_row_cursor.hh"
 #include <boost/range/algorithm/heap_algorithm.hpp>
 #include <any>

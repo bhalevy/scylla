@@ -43,7 +43,7 @@
 #include <boost/range/adaptor/uniqued.hpp>
 #include <boost/range/adaptor/reversed.hpp>
 #include <boost/range/adaptor/indirected.hpp>
-#include "query-result-reader.hh"
+#include "query/query-result-reader.hh"
 #include "thrift/server.hh"
 #include "db/config.hh"
 #include "locator/abstract_replication_strategy.hh"
