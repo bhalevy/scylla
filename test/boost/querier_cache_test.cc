@@ -109,6 +109,7 @@ private:
             _sem.make_tracking_only_permit(_s.schema().get(), "make-querier", db::no_timeout, {}),
             range,
             _s.schema()->full_slice(),
+            query::reversed::no,
             service::get_local_sstable_query_read_priority(),
             nullptr);
     }

@@ -66,28 +66,31 @@ protected:
     reader_permit _permit;
     lw_shared_ptr<const dht::partition_range> _range;
     std::unique_ptr<const query::partition_slice> _slice;
+    query::reversed _reversed;
     std::variant<flat_mutation_reader_v2, reader_concurrency_semaphore::inactive_read_handle> _reader;
     dht::partition_ranges_view _query_ranges;
     querier_config _qr_config;
 
 public:
     querier_base(reader_permit permit, lw_shared_ptr<const dht::partition_range> range,
-            std::unique_ptr<const query::partition_slice> slice, flat_mutation_reader_v2 reader, dht::partition_ranges_view query_ranges)
+            std::unique_ptr<const query::partition_slice> slice, query::reversed reversed, flat_mutation_reader_v2 reader, dht::partition_ranges_view query_ranges)
         : _schema(reader.schema())
         , _permit(std::move(permit))
         , _range(std::move(range))
         , _slice(std::move(slice))
+        , _reversed(reversed)
         , _reader(std::move(reader))
         , _query_ranges(query_ranges)
     { }
 
     querier_base(schema_ptr schema, reader_permit permit, dht::partition_range range,
-            query::partition_slice slice, const mutation_source& ms, const io_priority_class& pc, tracing::trace_state_ptr trace_ptr,
+            query::partition_slice slice, query::reversed reversed, const mutation_source& ms, const io_priority_class& pc, tracing::trace_state_ptr trace_ptr,
             querier_config config)
         : _schema(std::move(schema))
         , _permit(std::move(permit))
         , _range(make_lw_shared<const dht::partition_range>(std::move(range)))
         , _slice(std::make_unique<const query::partition_slice>(std::move(slice)))
+        , _reversed(reversed)
         , _reader(ms.make_reader_v2(_schema, _permit, *_range, *_slice, pc, std::move(trace_ptr), streamed_mutation::forwarding::no, mutation_reader::forwarding::no))
         , _query_ranges(*_range)
         , _qr_config(std::move(config))
@@ -107,7 +110,7 @@ public:
     }
 
     query::reversed is_reversed() const noexcept {
-        return _slice->__is_reversed();
+        return _reversed;
     }
 
     virtual std::optional<full_position_view> current_position() const = 0;
@@ -153,10 +156,11 @@ public:
             reader_permit permit,
             dht::partition_range range,
             query::partition_slice slice,
+            query::reversed reversed,
             const io_priority_class& pc,
             tracing::trace_state_ptr trace_ptr,
             querier_config config = {})
-        : querier_base(schema, permit, std::move(range), std::move(slice), ms, pc, std::move(trace_ptr), std::move(config))
+        : querier_base(schema, permit, std::move(range), std::move(slice), reversed, ms, pc, std::move(trace_ptr), std::move(config))
         , _compaction_state(make_lw_shared<compact_for_query_state_v2>(*schema, gc_clock::time_point{}, *_slice, 0, 0)) {
     }
 
@@ -225,10 +229,11 @@ private:
             std::unique_ptr<const dht::partition_range_vector> query_ranges,
             lw_shared_ptr<const dht::partition_range> reader_range,
             std::unique_ptr<const query::partition_slice> reader_slice,
+            query::reversed reversed,
             flat_mutation_reader_v2 reader,
             reader_permit permit,
             full_position nominal_pos)
-        : querier_base(permit, std::move(reader_range), std::move(reader_slice), std::move(reader), *query_ranges)
+        : querier_base(permit, std::move(reader_range), std::move(reader_slice), reversed, std::move(reader), *query_ranges)
         , _query_ranges(std::move(query_ranges))
         , _nominal_pos(std::move(nominal_pos)) {
     }
@@ -239,11 +244,12 @@ public:
             const dht::partition_range_vector query_ranges,
             lw_shared_ptr<const dht::partition_range> reader_range,
             std::unique_ptr<const query::partition_slice> reader_slice,
+            query::reversed reversed,
             flat_mutation_reader_v2 reader,
             reader_permit permit,
             full_position nominal_pos)
         : shard_mutation_querier(std::make_unique<const dht::partition_range_vector>(std::move(query_ranges)), std::move(reader_range),
-                std::move(reader_slice), std::move(reader), std::move(permit), std::move(nominal_pos)) {
+                std::move(reader_slice), reversed, std::move(reader), std::move(permit), std::move(nominal_pos)) {
     }
 
     virtual std::optional<full_position_view> current_position() const override {

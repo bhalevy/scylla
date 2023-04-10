@@ -83,13 +83,18 @@ query::result_set to_result_set(const reconcilable_result& r, schema_ptr s, cons
 }
 
 static reconcilable_result mutation_query(schema_ptr s, reader_permit permit, const mutation_source& source, const dht::partition_range& range,
-        const query::partition_slice& slice, uint64_t row_limit, uint32_t partition_limit, gc_clock::time_point query_time) {
+        const query::partition_slice& slice, query::reversed reversed, uint64_t row_limit, uint32_t partition_limit, gc_clock::time_point query_time) {
 
-    auto querier = query::querier(source, s, std::move(permit), range, slice, service::get_local_sstable_query_read_priority(), {});
+    auto querier = query::querier(source, s, std::move(permit), range, slice, reversed, service::get_local_sstable_query_read_priority(), {});
     auto close_querier = deferred_close(querier);
     auto table_schema = slice.__is_reversed() ? s->make_reversed() : s;
     auto rrb = reconcilable_result_builder(*table_schema, slice, make_accounter());
     return querier.consume_page(std::move(rrb), row_limit, partition_limit, query_time).get();
+}
+
+static reconcilable_result mutation_query(schema_ptr s, reader_permit permit, const mutation_source& source, const dht::partition_range& range,
+        const query::partition_slice& slice, uint64_t row_limit, uint32_t partition_limit, gc_clock::time_point query_time) {
+    return mutation_query(std::move(s), std::move(permit), source, range, slice, slice.is_reversed(), row_limit, partition_limit, query_time);
 }
 
 SEASTAR_TEST_CASE(test_reading_from_single_partition) {
@@ -213,7 +218,7 @@ SEASTAR_TEST_CASE(test_reverse_ordering_is_respected) {
                 .reversed()
                 .build();
 
-            reconcilable_result result = mutation_query(query_schema, semaphore.make_permit(), src, query::full_partition_range, slice, 3, query::max_partitions, now);
+            reconcilable_result result = mutation_query(query_schema, semaphore.make_permit(), src, query::full_partition_range, slice, query::reversed::yes, 3, query::max_partitions, now);
 
             assert_that(to_result_set(result, table_schema, slice))
                 .has_size(3)
@@ -538,11 +543,16 @@ SEASTAR_TEST_CASE(test_partition_limit) {
 }
 
 static void data_query(schema_ptr s, reader_permit permit, const mutation_source& source, const dht::partition_range& range,
-        const query::partition_slice& slice, query::result::builder& builder) {
-    auto querier = query::querier(source, s, std::move(permit), range, slice, service::get_local_sstable_query_read_priority(), {});
+        const query::partition_slice& slice, query::reversed reversed, query::result::builder& builder) {
+    auto querier = query::querier(source, s, std::move(permit), range, slice, reversed, service::get_local_sstable_query_read_priority(), {});
     auto close_querier = deferred_close(querier);
     auto qrb = query_result_builder(*s, builder);
     querier.consume_page(std::move(qrb), std::numeric_limits<uint32_t>::max(), std::numeric_limits<uint32_t>::max(), gc_clock::now()).get();
+}
+
+static void data_query(schema_ptr s, reader_permit permit, const mutation_source& source, const dht::partition_range& range,
+        const query::partition_slice& slice, query::result::builder& builder) {
+    return data_query(std::move(s), std::move(permit), source, range, slice, slice.is_reversed(), builder);
 }
 
 SEASTAR_THREAD_TEST_CASE(test_result_size_calculation) {
