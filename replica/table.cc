@@ -526,8 +526,9 @@ std::vector<std::unique_ptr<compaction_group>> table::make_compaction_groups() {
     std::vector<std::unique_ptr<compaction_group>> ret;
     auto&& ranges = dht::split_token_range_msb(_x_log2_compaction_groups);
     tlogger.debug("Created {} compaction groups for {}.{}", ranges.size(), _schema->ks_name(), _schema->cf_name());
+    compaction_group::idx_type idx = 0;
     for (auto&& range : ranges) {
-        ret.emplace_back(std::make_unique<compaction_group>(*this, std::move(range)));
+        ret.emplace_back(std::make_unique<compaction_group>(*this, idx++, std::move(range)));
     }
     return ret;
 }
@@ -1492,9 +1493,10 @@ table::make_memtable_list(compaction_group& cg) {
     return make_lw_shared<memtable_list>(std::move(seal), std::move(get_schema), _config.dirty_memory_manager, _stats, _config.memory_compaction_scheduling_group);
 }
 
-compaction_group::compaction_group(table& t, dht::token_range token_range)
+compaction_group::compaction_group(table& t, idx_type idx, dht::token_range token_range)
     : _t(t)
     , _table_state(std::make_unique<table_state>(t, *this))
+    , _idx(idx)
     , _token_range(std::move(token_range))
     , _compaction_strategy_state(compaction::compaction_strategy_state::make(_t._compaction_strategy))
     , _memtables(_t._config.enable_disk_writes ? _t.make_memtable_list(*this) : _t.make_memory_only_memtable_list())

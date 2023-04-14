@@ -28,9 +28,15 @@ using enable_backlog_tracker = bool_class<class enable_backlog_tracker_tag>;
 // Usually, a table T in shard S will own a single compaction group. With compaction_group, a
 // table T will be able to own as many groups as it wishes.
 class compaction_group {
+public:
+    // FIXME: use tagged_integer when available
+    using idx_type = size_t;
+
+private:
     table& _t;
     class table_state;
     std::unique_ptr<table_state> _table_state;
+    idx_type _idx;
     // Tokens included in this compaction_groups
     dht::token_range _token_range;
     compaction::compaction_strategy_state _compaction_strategy_state;
@@ -62,7 +68,11 @@ private:
 
     future<> delete_sstables_atomically(std::vector<sstables::shared_sstable> sstables_to_remove);
 public:
-    compaction_group(table& t, dht::token_range token_range);
+    compaction_group(table& t, idx_type idx, dht::token_range token_range);
+
+    idx_type idx() const noexcept {
+        return _idx;
+    }
 
     // Will stop ongoing compaction on behalf of this group, etc.
     future<> stop() noexcept;
