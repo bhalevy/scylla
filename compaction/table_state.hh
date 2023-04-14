@@ -11,6 +11,7 @@
 
 #include "schema/schema_fwd.hh"
 #include "compaction_descriptor.hh"
+#include "compaction/group_id.hh"
 
 class reader_permit;
 class compaction_backlog_tracker;
@@ -50,6 +51,7 @@ public:
     virtual bool is_auto_compaction_disabled_by_user() const noexcept = 0;
     virtual const tombstone_gc_state& get_tombstone_gc_state() const noexcept = 0;
     virtual compaction_backlog_tracker& get_backlog_tracker() = 0;
+    virtual const group_id& gid() const noexcept = 0;
 };
 
 }

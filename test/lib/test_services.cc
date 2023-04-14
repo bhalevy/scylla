@@ -48,6 +48,7 @@ class table_for_tests::table_state : public compaction::table_state {
     tombstone_gc_state _tombstone_gc_state;
     mutable compaction_backlog_tracker _backlog_tracker;
     compaction::compaction_strategy_state _compaction_strategy_state;
+    group_id _gid;
 private:
     replica::table& table() const noexcept {
         return *_data.cf;
@@ -115,6 +116,9 @@ public:
     }
     compaction_backlog_tracker& get_backlog_tracker() override {
         return _backlog_tracker;
+    }
+    const group_id& gid() const noexcept override {
+        return _gid;
     }
 };
 

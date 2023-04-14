@@ -12,6 +12,7 @@
 #include "compaction/compaction_strategy_state.hh"
 #include "sstables/sstable_set.hh"
 #include "compaction/compaction_fwd.hh"
+#include "compaction/group_id.hh"
 
 #pragma once
 
@@ -31,6 +32,7 @@ class compaction_group {
     table& _t;
     class table_state;
     std::unique_ptr<table_state> _table_state;
+    group_id _gid;
     // Tokens included in this compaction_groups
     dht::token_range _token_range;
     compaction::compaction_strategy_state _compaction_strategy_state;
@@ -62,7 +64,11 @@ private:
 
     future<> delete_sstables_atomically(std::vector<sstables::shared_sstable> sstables_to_remove);
 public:
-    compaction_group(table& t, dht::token_range token_range);
+    compaction_group(table& t, group_id gid, dht::token_range token_range);
+
+    const group_id& gid() const noexcept {
+        return _gid;
+    }
 
     // Will stop ongoing compaction on behalf of this group, etc.
     future<> stop() noexcept;
