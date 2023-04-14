@@ -1265,6 +1265,13 @@ protected:
             try {
                 table_state& t = *_compacting_table;
                 auto maintenance_sstables = t.maintenance_sstable_set().all();
+                auto size = maintenance_sstables->size();
+                if (!size) {
+                    cmlog.debug("Skipping off-strategy compaction for {}.{}, {} candidates were found",
+                            t.schema()->ks_name(), t.schema()->cf_name(), size);
+                    finish_compaction();
+                    co_return std::nullopt;
+                }
                 cmlog.info("Starting off-strategy compaction for {}.{}, {} candidates were found",
                         t.schema()->ks_name(), t.schema()->cf_name(), maintenance_sstables->size());
                 co_await run_offstrategy_compaction(_compaction_data);
