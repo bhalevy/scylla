@@ -1276,8 +1276,8 @@ future<bool> table::perform_offstrategy_compaction() {
     bool performed = false;
     co_await parallel_foreach_compaction_group([this, &performed] (compaction_group& cg) -> future<> {
         if (!cg.maintenance_sstables()->size()) {
-            tlogger.debug("Skipping off-strategy compaction for {}.{}, No candidates were found",
-                    schema()->ks_name(), schema()->cf_name());
+            tlogger.debug("Skipping off-strategy compaction for {}.{} compaction_group={}/{}, No candidates were found",
+                    schema()->ks_name(), schema()->cf_name(), cg.idx(), compaction_groups().size());
             co_return;
         }
         performed |= co_await _compaction_manager.perform_offstrategy(cg.as_table_state());
