@@ -162,11 +162,6 @@ bool operator<(const netw::msg_addr& x, const netw::msg_addr& y) noexcept {
     }
 }
 
-std::ostream& operator<<(std::ostream& os, const netw::msg_addr& x) {
-    fmt::print(os, "{}:{}", x.addr, x.cpu_id);
-    return os;
-}
-
 size_t netw::msg_addr::hash::operator()(const netw::msg_addr& id) const noexcept {
     // Ignore cpu id for now since we do not really support // shard to shard connections
     return std::hash<bytes_view>()(id.addr.bytes());
@@ -1306,3 +1301,12 @@ future<node_ops_cmd_response> messaging_service::send_node_ops_cmd(netw::msg_add
 }
 
 } // namespace net
+
+namespace std {
+
+std::ostream& operator<<(std::ostream& os, const netw::msg_addr& x) {
+    fmt::print(os, "{}", x);
+    return os;
+}
+
+} // namespace std
