@@ -162,11 +162,6 @@ bool operator<(const netw::msg_addr& x, const netw::msg_addr& y) noexcept {
     }
 }
 
-size_t netw::msg_addr::hash::operator()(const netw::msg_addr& id) const noexcept {
-    // Ignore cpu id for now since we do not really support // shard to shard connections
-    return std::hash<bytes_view>()(id.addr.bytes());
-}
-
 messaging_service::shard_info::shard_info(shared_ptr<rpc_protocol_client_wrapper>&& client, bool topo_ignored)
     : rpc_client(std::move(client))
     , topology_ignored(topo_ignored)
