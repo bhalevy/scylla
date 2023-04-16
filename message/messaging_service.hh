@@ -218,7 +218,7 @@ public:
     struct shard_info;
 
     using inet_address = gms::inet_address;
-    using clients_map = std::unordered_map<netw::msg_addr, shard_info, netw::msg_addr::hash>;
+    using clients_map = std::unordered_map<netw::msg_addr, shard_info>;
 
     // This should change only if serialization format changes
     static constexpr int32_t current_version = 0;
