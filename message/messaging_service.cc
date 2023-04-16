@@ -163,7 +163,7 @@ bool operator<(const netw::msg_addr& x, const netw::msg_addr& y) noexcept {
 }
 
 std::ostream& operator<<(std::ostream& os, const netw::msg_addr& x) {
-    fmt::print(os, "{}:{}", x.addr, x.cpu_id);
+    fmt::print(os, "{}", x);
     return os;
 }
 
