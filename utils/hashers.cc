@@ -12,6 +12,9 @@
 #include <cryptopp/md5.h>
 #include <cryptopp/sha.h>
 
+static_assert(Hasher<hasher>);
+static_assert(Hasher<basic_xx_hasher>);
+
 template <typename T> struct hasher_traits;
 template <> struct hasher_traits<md5_hasher> { using impl_type = CryptoPP::Weak::MD5; };
 template <> struct hasher_traits<sha256_hasher> { using impl_type = CryptoPP::SHA256; };

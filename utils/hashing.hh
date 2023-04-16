@@ -8,6 +8,11 @@
 
 #pragma once
 
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Warray-bounds"
+#include <xxhash.h>
+#pragma GCC diagnostic pop
+
 #include <chrono>
 #include <map>
 #include <optional>
@@ -41,7 +46,20 @@ public:
     virtual void update(const char* ptr, size_t size) noexcept = 0;
 };
 
-static_assert(Hasher<hasher>);
+class basic_xx_hasher : public hasher {
+protected:
+    XXH64_state_t _state;
+public:
+    basic_xx_hasher(uint64_t seed = 0) noexcept {
+        XXH64_reset(&_state, seed);
+    }
+    virtual void update(const char* ptr, size_t length) noexcept override {
+        XXH64_update(&_state, ptr, length);
+    }
+    size_t finalize() {
+        return static_cast<size_t>(XXH64_digest(&_state));
+    }
+};
 
 template<typename T>
 struct appending_hash;

@@ -102,3 +102,17 @@ SEASTAR_THREAD_TEST_CASE(mutation_fragment_sanity_check) {
         check_hash(f, 0x5092daca1b27ea26ull);
     }
 }
+
+BOOST_AUTO_TEST_CASE(basic_xx_hasher_sanity_check) {
+    basic_xx_hasher hasher1;
+    hasher1.update(reinterpret_cast<const char*>(std::data(text_part1)), std::size(text_part1));
+    hasher1.update(reinterpret_cast<const char*>(std::data(text_part2)), std::size(text_part2));
+    auto hash1 = hasher1.finalize();
+
+    bytes_view_hasher hasher2;
+    hasher2.update(reinterpret_cast<const char*>(std::data(text_part1)), std::size(text_part1));
+    hasher2.update(reinterpret_cast<const char*>(std::data(text_part2)), std::size(text_part2));
+    auto hash2 = hasher2.finalize();
+
+    BOOST_CHECK_EQUAL(hash1, hash2);
+}
