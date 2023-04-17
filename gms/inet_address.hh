@@ -69,9 +69,9 @@ public:
         using namespace std::rel_ops;
         return x._addr != y._addr;
     }
-    friend inline bool operator<(const inet_address& x, const inet_address& y) noexcept {
-        return x.bytes() < y.bytes();
-    }
+    friend inline auto operator<=>(const inet_address& x, const inet_address& y) noexcept {
+        return x.bytes() <=> y.bytes();
+    } 
     friend struct std::hash<inet_address>;
 
     using opt_family = std::optional<net::inet_address::family>;
