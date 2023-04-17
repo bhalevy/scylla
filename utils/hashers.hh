@@ -11,6 +11,12 @@
 #include "bytes.hh"
 #include "utils/hashing.hh"
 
+template<typename H>
+concept BytesHasher = Hasher<H> &&
+    requires (H& h) {
+        { h.finalize() } -> std::same_as<bytes>;
+    };
+
 class md5_hasher;
 
 template <typename T, size_t size> class cryptopp_hasher : public hasher {
