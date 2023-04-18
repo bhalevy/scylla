@@ -31,6 +31,12 @@ struct msg_addr {
     std::strong_ordering operator<=>(const msg_addr& o) const noexcept;
 };
 
+struct relaxed_msg_addr_equal_to {
+    bool operator()(const netw::msg_addr& x, const netw::msg_addr& y) const noexcept {
+        return x.addr == y.addr && (!x.host_id || !y.host_id || x.host_id == y.host_id);
+    }
+};
+
 std::ostream& operator<<(std::ostream& os, const netw::msg_addr& x);
 
 } // namespace netw
