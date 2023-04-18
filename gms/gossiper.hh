@@ -106,7 +106,7 @@ private:
     future<> handle_syn_msg(netw::msg_addr from, gossip_digest_syn syn_msg);
     future<> handle_ack_msg(netw::msg_addr from, gossip_digest_ack ack_msg);
     future<> handle_ack2_msg(netw::msg_addr from, gossip_digest_ack2 msg);
-    future<> handle_echo_msg(inet_address from, std::optional<int64_t> generation_number_opt);
+    future<> handle_echo_msg(netw::msg_addr from, std::optional<int64_t> generation_number_opt);
     future<> handle_shutdown_msg(inet_address from, std::optional<int64_t> generation_number_opt);
     future<> do_send_ack_msg(netw::msg_addr from, gossip_digest_syn syn_msg);
     future<> do_send_ack2_msg(netw::msg_addr from, utils::chunked_vector<gossip_digest> ack_msg_digest);

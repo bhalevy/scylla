@@ -404,17 +404,17 @@ future<> gossiper::handle_ack2_msg(netw::msg_addr from, gossip_digest_ack2 msg) 
     return apply_state_locally(std::move(remote_ep_state_map)).finally([mp = std::move(mp)] {});
 }
 
-future<> gossiper::handle_echo_msg(gms::inet_address from, std::optional<int64_t> generation_number_opt) {
+future<> gossiper::handle_echo_msg(netw::msg_addr from, std::optional<int64_t> generation_number_opt) {
     bool respond = true;
     if (!_advertise_myself) {
         respond = false;
     } else {
         if (!_advertise_to_nodes.empty()) {
-            auto it = _advertise_to_nodes.find(from);
+            auto it = _advertise_to_nodes.find(from.addr);
             if (it == _advertise_to_nodes.end()) {
                 respond = false;
             } else {
-                auto es = get_endpoint_state_for_endpoint_ptr(from);
+                auto es = get_endpoint_state_for_endpoint_ptr(from.addr);
                 if (es) {
                     int64_t saved_generation_number = it->second;
                     int64_t current_generation_number = generation_number_opt ?
@@ -510,7 +510,7 @@ void gossiper::init_messaging_service_handler() {
         });
     });
     _messaging.register_gossip_echo([this] (const rpc::client_info& cinfo, rpc::optional<int64_t> generation_number_opt) {
-        auto from = cinfo.retrieve_auxiliary<gms::inet_address>("baddr");
+        auto from = netw::messaging_service::get_source(cinfo);
         return handle_echo_msg(from, generation_number_opt);
     });
     _messaging.register_gossip_shutdown([this] (inet_address from, rpc::optional<int64_t> generation_number_opt) {
