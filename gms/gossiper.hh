@@ -100,6 +100,8 @@ public:
 private:
     using messaging_verb = netw::messaging_verb;
     using messaging_service = netw::messaging_service;
+    // Map node <address, host_id> and generation number
+    using generation_for_nodes_map = std::unordered_map<netw::msg_addr, int32_t>;
 
     void init_messaging_service_handler();
     future<> uninit_messaging_service_handler();
@@ -122,18 +124,17 @@ private:
     std::unordered_map<netw::msg_addr, syn_msg_pending> _syn_handlers;
     std::unordered_map<netw::msg_addr, ack_msg_pending> _ack_handlers;
     bool _advertise_myself = true;
-    // Map ip address and generation number
-    std::unordered_map<gms::inet_address, int32_t> _advertise_to_nodes;
+    generation_for_nodes_map _advertise_to_nodes;
     future<> _failure_detector_loop_done{make_ready_future<>()} ;
 
     rpc::no_wait_type background_msg(sstring type, noncopyable_function<future<>(gossiper&)> fn);
 
 public:
     // Get current generation number for the given nodes
-    future<std::unordered_map<gms::inet_address, int32_t>>
+    future<generation_for_nodes_map>
     get_generation_for_nodes(std::unordered_set<gms::inet_address> nodes);
     // Only respond echo message listed in nodes with the generation number
-    future<> advertise_to_nodes(std::unordered_map<gms::inet_address, int32_t> advertise_to_nodes = {});
+    future<> advertise_to_nodes(generation_for_nodes_map advertise_to_nodes = {});
     const sstring& get_cluster_name() const noexcept;
 
     const sstring& get_partitioner_name() const noexcept {

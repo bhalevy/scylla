@@ -407,22 +407,37 @@ future<> gossiper::handle_ack2_msg(netw::msg_addr from, gossip_digest_ack2 msg) 
 future<> gossiper::handle_echo_msg(netw::msg_addr from, std::optional<int64_t> generation_number_opt) {
     bool respond = true;
     if (!_advertise_myself) {
+        logger.trace("handle_echo_msg: from={}, do not advertise myself yet", from);
         respond = false;
     } else {
         if (!_advertise_to_nodes.empty()) {
-            auto it = _advertise_to_nodes.find(from.addr);
-            if (it == _advertise_to_nodes.end()) {
+            int64_t saved_generation_number = 0;
+            std::optional<netw::msg_addr> found;
+            for (auto it = _advertise_to_nodes.cbegin(); it != _advertise_to_nodes.cend(); ++it) {
+                if (it->first.addr == from.addr) {
+                    found = it->first;
+                    saved_generation_number = it->second;
+                    if (!it->first.host_id || !from.host_id || it->first.host_id == from.host_id) {
+                        break;
+                    }
+                }
+            }
+            if (!found) {
+                logger.debug("handle_echo_msg: from={}, not found in advertise_to_nodes", from);
+                respond = false;
+            } else if (found->host_id && from.host_id && found->host_id != from.host_id) {
+                logger.debug("handle_echo_msg: from={}, found={} host_id changed, do not advertise yet", from, *found);
                 respond = false;
             } else {
                 auto es = get_endpoint_state_for_endpoint_ptr(from.addr);
                 if (es) {
-                    int64_t saved_generation_number = it->second;
                     int64_t current_generation_number = generation_number_opt ?
                             generation_number_opt.value() : es->get_heart_beat_state().get_generation();
                     respond = saved_generation_number == current_generation_number;
                     logger.debug("handle_echo_msg: from={}, saved_generation_number={}, current_generation_number={}",
                             from, saved_generation_number, current_generation_number);
                 } else {
+                    logger.debug("handle_echo_msg: from={}, endpoint_state not found", from);
                     respond = false;
                 }
             }
@@ -1895,23 +1910,24 @@ future<> gossiper::start_gossiping(int generation_nbr, std::map<application_stat
     });
 }
 
-future<std::unordered_map<gms::inet_address, int32_t>>
+future<gossiper::generation_for_nodes_map>
 gossiper::get_generation_for_nodes(std::unordered_set<gms::inet_address> nodes) {
-    std::unordered_map<gms::inet_address, int32_t> ret;
+    generation_for_nodes_map ret;
     for (const auto& node : nodes) {
         auto es = get_endpoint_state_for_endpoint_ptr(node);
         if (es) {
             auto current_generation_number = es->get_heart_beat_state().get_generation();
             ret.emplace(node, current_generation_number);
         } else {
-            return make_exception_future<std::unordered_map<gms::inet_address, int32_t>>(
+            return make_exception_future<generation_for_nodes_map>(
                     std::runtime_error(format("Can not find generation number for node={}", node)));
         }
     }
-    return make_ready_future<std::unordered_map<gms::inet_address, int32_t>>(std::move(ret));
+    return make_ready_future<generation_for_nodes_map>(std::move(ret));
 }
 
-future<> gossiper::advertise_to_nodes(std::unordered_map<gms::inet_address, int32_t> advertise_to_nodes) {
+future<> gossiper::advertise_to_nodes(generation_for_nodes_map advertise_to_nodes) {
+    logger.info("advertise_to_nodes: {}", advertise_to_nodes);
     return container().invoke_on_all([advertise_to_nodes] (auto& g) {
         g._advertise_to_nodes = advertise_to_nodes;
         g._advertise_myself = true;
