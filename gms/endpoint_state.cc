@@ -32,6 +32,14 @@ const versioned_value* endpoint_state::get_application_state_ptr(application_sta
     }
 }
 
+locator::host_id endpoint_state::get_host_id() const noexcept {
+    if (auto eps = get_application_state_ptr(application_state::HOST_ID)) {
+        return locator::host_id(utils::UUID(eps->value));
+    } else {
+        return locator::host_id::create_null_id();
+    }
+}
+
 std::ostream& operator<<(std::ostream& os, const endpoint_state& x) {
     os << "HeartBeatState = " << x._heart_beat_state << ", AppStateMap =";
     for (auto&entry : x._application_state) {

@@ -565,9 +565,17 @@ future<> gossiper::do_apply_state_locally(gms::inet_address node, const endpoint
     auto es = this->get_endpoint_state_for_endpoint_ptr(node);
     if (es) {
         endpoint_state& local_state = *es;
+        auto local_host_id = local_state.get_host_id();
+        auto remote_host_id = remote_state.get_host_id();
         int local_generation = local_state.get_heart_beat_state().get_generation();
         int remote_generation = remote_state.get_heart_beat_state().get_generation();
-        logger.trace("{} local generation {}, remote generation {}", node, local_generation, remote_generation);
+        logger.trace("{} local host_id={} generation={}, remote host_id={} generation={}", node, local_host_id, local_generation, remote_host_id, remote_generation);
+        if (local_host_id != remote_host_id && local_host_id && remote_host_id) {
+            logger.info("Detected node {}/{} using the same ip address as {}/{}. Resetting endpoint state, generation={}", remote_host_id, node, local_host_id, node, remote_generation);
+            // major state change will handle the update by inserting the remote state directly
+            co_await this->handle_major_state_change(node, remote_state);
+            co_return;
+        }
         if (remote_generation > utils::get_generation_number() + MAX_GENERATION_DIFFERENCE) {
             // assume some peer has corrupted memory and is broadcasting an unbelievable generation about another peer (or itself)
             logger.warn("received an invalid gossip generation for peer {}; local generation = {}, received generation = {}",

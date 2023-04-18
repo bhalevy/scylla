@@ -94,6 +94,8 @@ public:
         return _application_state;
     }
 
+    locator::host_id get_host_id() const noexcept;
+
     void add_application_state(application_state key, versioned_value value) {
         _application_state[key] = std::move(value);
         update_is_normal();
