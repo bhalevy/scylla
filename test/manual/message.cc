@@ -94,8 +94,9 @@ public:
             return messaging_service::no_wait();
         });
 
-        ms.register_gossip_shutdown([] (inet_address from, rpc::optional<int64_t> generation_number_opt) {
-            fmt::print("Server got shutdown msg = {}\n", from);
+        ms.register_gossip_shutdown([] (const rpc::client_info& cinfo, gms::inet_address, rpc::optional<int64_t> generation_number_opt) {
+            auto from = netw::messaging_service::get_source(cinfo);
+            fmt::print("Server got shutdown msg from {} = {}\n", from, generation_number_opt);
             return messaging_service::no_wait();
         });
 

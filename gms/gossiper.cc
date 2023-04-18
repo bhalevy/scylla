@@ -449,15 +449,15 @@ future<> gossiper::handle_echo_msg(netw::msg_addr from, std::optional<int64_t> g
     return make_ready_future<>();
 }
 
-future<> gossiper::handle_shutdown_msg(inet_address from, std::optional<int64_t> generation_number_opt) {
+future<> gossiper::handle_shutdown_msg(netw::msg_addr from, std::optional<int64_t> generation_number_opt) {
     if (!is_enabled()) {
         logger.debug("Ignoring shutdown message from {} because gossip is disabled", from);
         co_return;
     }
 
-    auto permit = co_await this->lock_endpoint(from);
+    auto permit = co_await this->lock_endpoint(from.addr);
     if (generation_number_opt) {
-        auto es = this->get_endpoint_state_for_endpoint_ptr(from);
+        auto es = this->get_endpoint_state_for_endpoint_ptr(from.addr);
         if (es) {
             int local_generation = es->get_heart_beat_state().get_generation();
             logger.info("Got shutdown message from {}, received_generation={}, local_generation={}",
@@ -473,7 +473,7 @@ future<> gossiper::handle_shutdown_msg(inet_address from, std::optional<int64_t>
             co_return;
         }
     }
-    co_await this->mark_as_shutdown(from);
+    co_await this->mark_as_shutdown(from.addr);
 }
 
 future<gossip_get_endpoint_states_response>
@@ -528,7 +528,11 @@ void gossiper::init_messaging_service_handler() {
         auto from = netw::messaging_service::get_source(cinfo);
         return handle_echo_msg(from, generation_number_opt);
     });
-    _messaging.register_gossip_shutdown([this] (inet_address from, rpc::optional<int64_t> generation_number_opt) {
+    _messaging.register_gossip_shutdown([this] (const rpc::client_info& cinfo, inet_address from_addr, rpc::optional<int64_t> generation_number_opt) {
+        auto from = netw::messaging_service::get_source(cinfo);
+        if (from.addr != from_addr) {
+            on_internal_error(logger, format("gossip_shutdown handler: msg_addr={} mismatches from_addr={}", from, from_addr));
+        }
         return background_msg("GOSSIP_SHUTDOWN", [from, generation_number_opt] (gms::gossiper& gossiper) {
             return gossiper.handle_shutdown_msg(from, generation_number_opt);
         });
