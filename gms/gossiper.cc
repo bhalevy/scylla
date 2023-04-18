@@ -1928,7 +1928,7 @@ gossiper::get_generation_for_nodes(std::unordered_set<gms::inet_address> nodes) 
 
 future<> gossiper::advertise_to_nodes(generation_for_nodes_map advertise_to_nodes) {
     logger.info("advertise_to_nodes: {}", advertise_to_nodes);
-    return container().invoke_on_all([advertise_to_nodes] (auto& g) {
+    return container().invoke_on_all([advertise_to_nodes = std::move(advertise_to_nodes)] (auto& g) {
         g._advertise_to_nodes = advertise_to_nodes;
         g._advertise_myself = true;
     });
