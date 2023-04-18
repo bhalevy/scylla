@@ -19,12 +19,15 @@
 #include "utils/atomic_vector.hh"
 #include "utils/UUID.hh"
 #include "utils/fb_utilities.hh"
+#include "gms/inet_address.hh"
 #include "gms/failure_detector.hh"
 #include "gms/versioned_value.hh"
 #include "gms/application_state.hh"
 #include "gms/endpoint_state.hh"
 #include "gms/feature.hh"
 #include "gms/gossip_digest_syn.hh"
+#include "gms/gossip_digest_ack.hh"
+#include "gms/gossip_digest_ack2.hh"
 #include "gms/gossip_digest.hh"
 #include "utils/loading_shared_values.hh"
 #include "utils/updateable_value.hh"
@@ -48,11 +51,6 @@ class system_keyspace;
 
 namespace gms {
 
-class gossip_digest_syn;
-class gossip_digest_ack;
-class gossip_digest_ack2;
-class gossip_digest;
-class inet_address;
 class i_endpoint_state_change_subscriber;
 class gossip_get_endpoint_states_request;
 class gossip_get_endpoint_states_response;
