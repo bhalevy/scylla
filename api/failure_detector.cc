@@ -8,9 +8,94 @@
 
 #include "failure_detector.hh"
 #include "api/api-doc/failure_detector.json.hh"
-#include "gms/failure_detector.hh"
 #include "gms/application_state.hh"
 #include "gms/gossiper.hh"
+#include "utils/bounded_stats_deque.hh"
+#include "log.hh"
+
+extern logging::logger apilog;
+
+namespace gms {
+
+class arrival_window {
+public:
+    using clk = seastar::lowres_system_clock;
+private:
+    clk::time_point _tlast{clk::time_point::min()};
+    utils::bounded_stats_deque _arrival_intervals;
+    std::chrono::milliseconds _initial;
+    std::chrono::milliseconds _max_interval;
+    std::chrono::milliseconds _min_interval;
+
+    // this is useless except to provide backwards compatibility in phi_convict_threshold,
+    // because everyone seems pretty accustomed to the default of 8, and users who have
+    // already tuned their phi_convict_threshold for their own environments won't need to
+    // change.
+    static constexpr double PHI_FACTOR{M_LOG10El};
+
+public:
+    arrival_window(int size, std::chrono::milliseconds initial,
+            std::chrono::milliseconds max_interval, std::chrono::milliseconds min_interval)
+        : _arrival_intervals(size)
+        , _initial(initial)
+        , _max_interval(max_interval)
+        , _min_interval(min_interval) {
+    }
+
+    void add(clk::time_point value, const gms::inet_address& ep);
+
+    double mean() const;
+
+    // see CASSANDRA-2597 for an explanation of the math at work here.
+    double phi(clk::time_point tnow);
+
+    size_t size() { return _arrival_intervals.size(); }
+
+    clk::time_point last_update() const { return _tlast; }
+
+    friend std::ostream& operator<<(std::ostream& os, const arrival_window& w);
+
+};
+
+void arrival_window::add(clk::time_point value, const gms::inet_address& ep) {
+    if (_tlast > clk::time_point::min()) {
+        auto inter_arrival_time = value - _tlast;
+        if (inter_arrival_time <= _max_interval && inter_arrival_time >= _min_interval) {
+            _arrival_intervals.add(inter_arrival_time.count());
+        } else  {
+            apilog.debug("failure_detector: Ignoring interval time of {} for {}, mean={}, size={}", inter_arrival_time.count(), ep, mean(), size());
+        }
+    } else {
+        // We use a very large initial interval since the "right" average depends on the cluster size
+        // and it's better to err high (false negatives, which will be corrected by waiting a bit longer)
+        // than low (false positives, which cause "flapping").
+        _arrival_intervals.add(_initial.count());
+    }
+    _tlast = value;
+}
+
+double arrival_window::mean() const {
+    return _arrival_intervals.mean();
+}
+
+double arrival_window::phi(clk::time_point tnow) {
+    assert(_arrival_intervals.size() > 0 && _tlast > clk::time_point::min()); // should not be called before any samples arrive
+    auto t = (tnow - _tlast).count();
+    auto m = mean();
+    double phi = t / m;
+    apilog.debug("failure_detector: now={}, tlast={}, t={}, mean={}, phi={}",
+        tnow.time_since_epoch().count(), _tlast.time_since_epoch().count(), t, m, phi);
+    return phi;
+}
+
+std::ostream& operator<<(std::ostream& os, const arrival_window& w) {
+    for (auto& x : w._arrival_intervals.deque()) {
+        os << x << " ";
+    }
+    return os;
+}
+
+} // namespace gms
 
 namespace api {
 using namespace seastar::httpd;
