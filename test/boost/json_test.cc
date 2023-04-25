@@ -115,7 +115,7 @@ void test_format_range(const char* desc, Range x, std::vector<std::string> expec
     size_t num_elements = expected_strings.size();
 
     size_t paren_size = expect_parenthesis ? 2 : 0;
-    size_t min_size = paren_size + (x.empty() ? 0 : (num_elements - 1));
+    size_t min_size = paren_size + (x.begin() == x.end() ? 0 : (num_elements - 1));
     BOOST_REQUIRE_GE(str.size(), min_size);
 
     std::string_view sv = str;
@@ -201,6 +201,8 @@ BOOST_AUTO_TEST_CASE(test_vector_format) {
 
     auto unordered_set = std::unordered_set<int>({1, 2, 3});
     test_format_range("unordered_set", unordered_set, std::unordered_set<std::string>({"1", "2", "3"}));
+
+    test_format_range("initializer_list", std::initializer_list<std::string>{"1", "2", "3"}, std::vector<std::string>({"1", "2", "3"}));
 
     auto map = std::map<int, std::string>({{1, "one"}, {2, "two"}, {3, "three"}});
     test_format_range("map", map, std::vector<std::string>({"{1, one}", "{2, two}", "{3, three}"}));
