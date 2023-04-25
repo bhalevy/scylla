@@ -28,6 +28,7 @@
 
 #include "utils/rjson.hh"
 #include "utils/to_string.hh"
+#include "utils/small_vector.hh"
 
 using namespace seastar;
 
@@ -204,6 +205,9 @@ BOOST_AUTO_TEST_CASE(test_vector_format) {
 
     test_format_range("initializer_list", std::initializer_list<std::string>{"1", "2", "3"}, std::vector<std::string>({"1", "2", "3"}));
 
+    auto small_vector = utils::small_vector<int, 1>({1, 2, 3});
+    test_format_range("small_vector", small_vector, std::vector<std::string>({"1", "2", "3"}));
+
     auto map = std::map<int, std::string>({{1, "one"}, {2, "two"}, {3, "three"}});
     test_format_range("map", map, std::vector<std::string>({"{1, one}", "{2, two}", "{3, three}"}));
     test_format_range("map | boost::adaptors::map_keys", map | boost::adaptors::map_keys, std::vector<std::string>({"1", "2", "3"}));
@@ -235,4 +239,8 @@ BOOST_AUTO_TEST_CASE(test_boost_transformed_range_format) {
 
     test_format_range("boost::adaptors::transformed", v | boost::adaptors::transformed([] (int i) { return format("{}", i * 11); }),
         std::vector<std::string>({"11", "22", "33"}));
+
+    auto sv = utils::small_vector<int, 3>({1, 2, 3});
+    test_format_range("transformed vector", sv | boost::adaptors::transformed([] (int i) { return fmt::format("/{}", i); }),
+        std::vector<std::string>({"/1", "/2", "/3"}));
 }

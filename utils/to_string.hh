@@ -8,10 +8,7 @@
 
 #pragma once
 
-#include <seastar/core/sstring.hh>
 #include <string>
-
-#include "seastarx.hh"
 
 #include "bytes.hh"
 
@@ -19,26 +16,6 @@
 #include <boost/range/adaptor/transformed.hpp>
 
 namespace utils {
-
-template<typename Iterator>
-static inline
-sstring join(sstring delimiter, Iterator begin, Iterator end) {
-    std::ostringstream oss;
-    while (begin != end) {
-        oss << *begin;
-        ++begin;
-        if (begin != end) {
-            oss << delimiter;
-        }
-    }
-    return oss.str();
-}
-
-template<typename PrintableRange>
-static inline
-sstring join(sstring delimiter, const PrintableRange& items) {
-    return join(delimiter, items.begin(), items.end());
-}
 
 namespace internal {
 
