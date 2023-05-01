@@ -175,7 +175,8 @@ void gossiper::do_sort(utils::chunked_vector<gossip_digest>& g_digest_list) {
 
 // Depends on
 // - no external dependency
-future<> gossiper::handle_syn_msg(msg_addr from, gossip_digest_syn syn_msg) {
+future<> gossiper::handle_syn_msg(const rpc::client_info& cinfo, gossip_digest_syn syn_msg) {
+    auto from = netw::messaging_service::get_source(cinfo);
     logger.trace("handle_syn_msg():from={},cluster_name:peer={},local={},partitioner_name:peer={},local={}",
         from, syn_msg.cluster_id(), get_cluster_name(), syn_msg.partioner(), get_partitioner_name());
     if (!this->is_enabled()) {
@@ -282,7 +283,8 @@ static bool should_count_as_msg_processing(const std::map<inet_address, endpoint
 // - on_restart callbacks
 // - on_join callbacks
 // - on_alive
-future<> gossiper::handle_ack_msg(msg_addr id, gossip_digest_ack ack_msg) {
+future<> gossiper::handle_ack_msg(const rpc::client_info& cinfo, gossip_digest_ack ack_msg) {
+    auto id = netw::messaging_service::get_source(cinfo);
     logger.trace("handle_ack_msg():from={},msg={}", id, ack_msg);
 
     if (!this->is_enabled() && !this->is_in_shadow_round()) {
@@ -389,8 +391,9 @@ future<> gossiper::do_send_ack2_msg(msg_addr from, utils::chunked_vector<gossip_
 // - on_restart callbacks
 // - on_join callbacks
 // - on_alive callbacks
-future<> gossiper::handle_ack2_msg(msg_addr from, gossip_digest_ack2 msg) {
-    logger.trace("handle_ack2_msg():msg={}", msg);
+future<> gossiper::handle_ack2_msg(const rpc::client_info& cinfo, gossip_digest_ack2 msg) {
+    auto from = netw::messaging_service::get_source(cinfo);
+    logger.trace("handle_ack2_msg():from={},msg={}", from, msg);
     if (!is_enabled()) {
         co_return;
     }
@@ -412,7 +415,8 @@ future<> gossiper::handle_ack2_msg(msg_addr from, gossip_digest_ack2 msg) {
     co_await apply_state_locally(std::move(remote_ep_state_map));
 }
 
-future<> gossiper::handle_echo_msg(msg_addr from, std::optional<int64_t> generation_number_opt) {
+future<> gossiper::handle_echo_msg(const rpc::client_info& cinfo, std::optional<int64_t> generation_number_opt) {
+    auto from = netw::messaging_service::get_source(cinfo);
     bool respond = false;
     if (_advertise_myself) {
         if (!_advertise_to_nodes.empty()) {
@@ -444,7 +448,8 @@ future<> gossiper::handle_echo_msg(msg_addr from, std::optional<int64_t> generat
     return make_ready_future<>();
 }
 
-future<> gossiper::handle_shutdown_msg(msg_addr from, std::optional<int64_t> generation_number_opt) {
+future<> gossiper::handle_shutdown_msg(const rpc::client_info& cinfo, std::optional<int64_t> generation_number_opt) {
+    auto from = netw::messaging_service::get_source(cinfo);
     if (!is_enabled()) {
         logger.debug("Ignoring shutdown message from {} because gossip is disabled", from);
         co_return;
@@ -503,31 +508,26 @@ rpc::no_wait_type gossiper::background_msg(sstring type, noncopyable_function<fu
 
 void gossiper::init_messaging_service_handler() {
     _messaging.register_gossip_digest_syn([this] (const rpc::client_info& cinfo, gossip_digest_syn syn_msg) {
-        auto from = netw::messaging_service::get_source(cinfo);
-        return background_msg("GOSSIP_DIGEST_SYN", [from, syn_msg = std::move(syn_msg)] (gms::gossiper& gossiper) mutable {
-            return gossiper.handle_syn_msg(from, std::move(syn_msg));
+        return background_msg("GOSSIP_DIGEST_SYN", [cinfo = rpc::client_info(cinfo), syn_msg = std::move(syn_msg)] (gms::gossiper& gossiper) mutable {
+            return gossiper.handle_syn_msg(cinfo, std::move(syn_msg));
         });
     });
     _messaging.register_gossip_digest_ack([this] (const rpc::client_info& cinfo, gossip_digest_ack msg) {
-        auto from = netw::messaging_service::get_source(cinfo);
-        return background_msg("GOSSIP_DIGEST_ACK", [from, msg = std::move(msg)] (gms::gossiper& gossiper) mutable {
-            return gossiper.handle_ack_msg(from, std::move(msg));
+        return background_msg("GOSSIP_DIGEST_ACK", [cinfo = rpc::client_info(cinfo), msg = std::move(msg)] (gms::gossiper& gossiper) mutable {
+            return gossiper.handle_ack_msg(cinfo, std::move(msg));
         });
     });
     _messaging.register_gossip_digest_ack2([this] (const rpc::client_info& cinfo, gossip_digest_ack2 msg) {
-        auto from = netw::messaging_service::get_source(cinfo);
-        return background_msg("GOSSIP_DIGEST_ACK2", [from, msg = std::move(msg)] (gms::gossiper& gossiper) mutable {
-            return gossiper.handle_ack2_msg(from, std::move(msg));
+        return background_msg("GOSSIP_DIGEST_ACK2", [cinfo = rpc::client_info(cinfo), msg = std::move(msg)] (gms::gossiper& gossiper) mutable {
+            return gossiper.handle_ack2_msg(cinfo, std::move(msg));
         });
     });
     _messaging.register_gossip_echo([this] (const rpc::client_info& cinfo, rpc::optional<int64_t> generation_number_opt) {
-        auto from = netw::messaging_service::get_source(cinfo);
-        return handle_echo_msg(from, generation_number_opt);
+        return handle_echo_msg(cinfo, generation_number_opt);
     });
     _messaging.register_gossip_shutdown([this] (const rpc::client_info& cinfo, gms::inet_address, rpc::optional<int64_t> generation_number_opt) {
-        auto from = netw::messaging_service::get_source(cinfo);
-        return background_msg("GOSSIP_SHUTDOWN", [from, generation_number_opt] (gms::gossiper& gossiper) {
-            return gossiper.handle_shutdown_msg(from, generation_number_opt);
+        return background_msg("GOSSIP_SHUTDOWN", [cinfo = rpc::client_info(cinfo), generation_number_opt] (gms::gossiper& gossiper) {
+            return gossiper.handle_shutdown_msg(cinfo, generation_number_opt);
         });
     });
     _messaging.register_gossip_get_endpoint_states([this] (const rpc::client_info& cinfo, gossip_get_endpoint_states_request request) {
