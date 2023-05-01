@@ -410,17 +410,17 @@ future<> gossiper::handle_ack2_msg(msg_addr from, gossip_digest_ack2 msg) {
     co_await apply_state_locally(std::move(remote_ep_state_map));
 }
 
-future<> gossiper::handle_echo_msg(gms::inet_address from, std::optional<int64_t> generation_number_opt) {
+future<> gossiper::handle_echo_msg(msg_addr from, std::optional<int64_t> generation_number_opt) {
     bool respond = true;
     if (!_advertise_myself) {
         respond = false;
     } else {
         if (!_advertise_to_nodes.empty()) {
-            auto it = _advertise_to_nodes.find(from);
+            auto it = _advertise_to_nodes.find(from.addr);
             if (it == _advertise_to_nodes.end()) {
                 respond = false;
             } else {
-                auto es = get_endpoint_state_ptr(from);
+                auto es = get_endpoint_state_ptr(from.addr);
                 if (es) {
                     auto saved_generation_number = it->second;
                     auto current_generation_number = generation_number_opt ?
@@ -440,16 +440,16 @@ future<> gossiper::handle_echo_msg(gms::inet_address from, std::optional<int64_t
     return make_ready_future<>();
 }
 
-future<> gossiper::handle_shutdown_msg(inet_address from, std::optional<int64_t> generation_number_opt) {
+future<> gossiper::handle_shutdown_msg(msg_addr from, std::optional<int64_t> generation_number_opt) {
     if (!is_enabled()) {
         logger.debug("Ignoring shutdown message from {} because gossip is disabled", from);
         co_return;
     }
 
-    auto permit = co_await this->lock_endpoint(from, null_permit_id);
+    auto permit = co_await this->lock_endpoint(from.addr, null_permit_id);
     if (generation_number_opt) {
         debug_validate_gossip_generation(*generation_number_opt);
-        auto es = this->get_endpoint_state_ptr(from);
+        auto es = this->get_endpoint_state_ptr(from.addr);
         if (es) {
             auto local_generation = es->get_heart_beat_state().get_generation();
             logger.info("Got shutdown message from {}, received_generation={}, local_generation={}",
@@ -465,7 +465,7 @@ future<> gossiper::handle_shutdown_msg(inet_address from, std::optional<int64_t>
             co_return;
         }
     }
-    co_await this->mark_as_shutdown(from, permit.id());
+    co_await this->mark_as_shutdown(from.addr, permit.id());
 }
 
 future<gossip_get_endpoint_states_response>
@@ -515,11 +515,11 @@ void gossiper::init_messaging_service_handler() {
         });
     });
     _messaging.register_gossip_echo([this] (const rpc::client_info& cinfo, rpc::optional<int64_t> generation_number_opt) {
-        auto from = cinfo.retrieve_auxiliary<gms::inet_address>("baddr");
+        auto from = netw::messaging_service::get_source(cinfo);
         return handle_echo_msg(from, generation_number_opt);
     });
     _messaging.register_gossip_shutdown([this] (const rpc::client_info& cinfo, gms::inet_address, rpc::optional<int64_t> generation_number_opt) {
-        auto from = cinfo.retrieve_auxiliary<gms::inet_address>("baddr");
+        auto from = netw::messaging_service::get_source(cinfo);
         return background_msg("GOSSIP_SHUTDOWN", [from, generation_number_opt] (gms::gossiper& gossiper) {
             return gossiper.handle_shutdown_msg(from, generation_number_opt);
         });
