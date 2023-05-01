@@ -397,6 +397,9 @@ public:
     // removes ALL endpoint states; should only be called after shadow gossip
     future<> reset_endpoint_state_map();
 
+    size_t get_endpoint_states_size() const noexcept {
+        return _endpoint_state_map.size();
+    }
     const std::unordered_map<inet_address, endpoint_state>& get_endpoint_states() const noexcept;
 
     std::vector<inet_address> get_endpoints() const;

@@ -206,14 +206,13 @@ void migration_manager::schedule_schema_pull(const gms::inet_address& endpoint, 
 }
 
 bool migration_manager::have_schema_agreement() {
-    const auto known_endpoints = _gossiper.get_endpoint_states();
-    if (known_endpoints.size() == 1) {
+    if (_gossiper.get_endpoint_states_size() == 1) {
         // Us.
         return true;
     }
     auto our_version = _storage_proxy.get_db().local().get_version();
     bool match = false;
-    for (auto& x : known_endpoints) {
+    for (auto& x : _gossiper.get_endpoint_states()) {
         auto& endpoint = x.first;
         auto& eps = x.second;
         if (endpoint == utils::fb_utilities::get_broadcast_address() || !eps.is_alive()) {
