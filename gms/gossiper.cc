@@ -413,15 +413,11 @@ future<> gossiper::handle_ack2_msg(msg_addr from, gossip_digest_ack2 msg) {
 }
 
 future<> gossiper::handle_echo_msg(msg_addr from, std::optional<int64_t> generation_number_opt) {
-    bool respond = true;
-    if (!_advertise_myself) {
-        respond = false;
-    } else {
+    bool respond = false;
+    if (_advertise_myself) {
         if (!_advertise_to_nodes.empty()) {
             auto it = _advertise_to_nodes.find(from.addr);
-            if (it == _advertise_to_nodes.end()) {
-                respond = false;
-            } else {
+            if (it != _advertise_to_nodes.end()) {
                 auto es = get_endpoint_state_for_endpoint_ptr(from.addr);
                 if (es) {
                     auto saved_generation_number = it->second;
@@ -430,10 +426,10 @@ future<> gossiper::handle_echo_msg(msg_addr from, std::optional<int64_t> generat
                     respond = saved_generation_number == current_generation_number;
                     logger.debug("handle_echo_msg: from={}, saved_generation_number={}, current_generation_number={}",
                             from, saved_generation_number, current_generation_number);
-                } else {
-                    respond = false;
                 }
             }
+        } else {
+            respond = true;
         }
     }
     if (!respond) {
