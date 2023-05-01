@@ -27,6 +27,7 @@
 #include "gms/feature.hh"
 #include "gms/gossip_digest_syn.hh"
 #include "gms/gossip_digest.hh"
+#include "gms/endpoint_id.hh"
 #include "utils/loading_shared_values.hh"
 #include "utils/updateable_value.hh"
 #include "utils/in.hh"
@@ -101,6 +102,7 @@ private:
     using messaging_verb = netw::messaging_verb;
     using messaging_service = netw::messaging_service;
     using msg_addr = netw::msg_addr;
+    using throw_on_error = bool_class<struct throw_on_error_tag>;
 
     void init_messaging_service_handler();
     future<> uninit_messaging_service_handler();
@@ -230,7 +232,7 @@ private:
 
     future<> do_update_address_map(locator::host_id host_id, inet_address addr) noexcept;
 
-    future<> update_address_map(const rpc::client_info& cinfo) noexcept;
+    future<endpoint_id> get_endpoint_id(const rpc::client_info& cinfo) noexcept;
 
     future<> erase_address_mapping(locator::host_id host_id, inet_address addr) noexcept;
 
@@ -489,7 +491,7 @@ public:
     // Called function must not yield
     stop_iteration for_each_endpoint_state_until(std::function<stop_iteration(const inet_address&, const endpoint_state&)>) const;
 
-    locator::host_id get_host_id(inet_address endpoint) const;
+    locator::host_id get_host_id(inet_address addr, throw_on_error = throw_on_error::yes) const;
 
     std::set<gms::inet_address> get_nodes_with_host_id(locator::host_id host_id) const;
 
