@@ -54,6 +54,30 @@ constexpr std::chrono::milliseconds gossiper::INTERVAL;
 constexpr std::chrono::hours gossiper::A_VERY_LONG_TIME;
 constexpr generation_type::value_type gossiper::MAX_GENERATION_DIFFERENCE;
 
+gms::endpoint_id gossiper::get_endpoint_id(const rpc::client_info& cinfo) {
+    auto endpoint = endpoint_id(
+        cinfo.retrieve_auxiliary<locator::host_id>("host_id"),
+        cinfo.retrieve_auxiliary<gms::inet_address>("baddr")
+    );
+    if (!endpoint.host_id) {
+        auto tmptr = get_token_metadata_ptr();
+        const auto& topo = tmptr->get_topology();
+        const auto* node = topo.find_node(endpoint.addr);
+        if (!node) {
+            auto msg = format("Cannot find node {}", endpoint.addr);
+            logger.warn("{}", msg);
+            throw std::runtime_error(msg);
+        }
+        endpoint.host_id = node->host_id();
+        if (!endpoint.host_id) {
+            auto msg = format("Node {} has null host_id", endpoint.addr);
+            logger.warn("{}", msg);
+            throw std::runtime_error(msg);
+        }
+    }
+    return endpoint;
+}
+
 netw::msg_addr gossiper::get_msg_addr(inet_address to) const noexcept {
     return msg_addr{to, _default_cpuid};
 }
@@ -176,7 +200,7 @@ void gossiper::do_sort(utils::chunked_vector<gossip_digest>& g_digest_list) {
 // Depends on
 // - no external dependency
 future<> gossiper::handle_syn_msg(const rpc::client_info& cinfo, gossip_digest_syn syn_msg) {
-    auto from = netw::messaging_service::get_source(cinfo);
+    auto from = get_endpoint_id(cinfo);
     logger.trace("handle_syn_msg():from={},cluster_name:peer={},local={},partitioner_name:peer={},local={}",
         from, syn_msg.cluster_id(), get_cluster_name(), syn_msg.partioner(), get_partitioner_name());
     if (!this->is_enabled()) {
@@ -185,12 +209,12 @@ future<> gossiper::handle_syn_msg(const rpc::client_info& cinfo, gossip_digest_s
 
     /* If the message is from a different cluster throw it away. */
     if (syn_msg.cluster_id() != get_cluster_name()) {
-        logger.warn("ClusterName mismatch from {} {}!={}", from.addr, syn_msg.cluster_id(), get_cluster_name());
+        logger.warn("ClusterName mismatch from {} {}!={}", from, syn_msg.cluster_id(), get_cluster_name());
         co_return;
     }
 
     if (syn_msg.partioner() != "" && syn_msg.partioner() != get_partitioner_name()) {
-        logger.warn("Partitioner mismatch from {} {}!={}", from.addr, syn_msg.partioner(), get_partitioner_name());
+        logger.warn("Partitioner mismatch from {} {}!={}", from, syn_msg.partioner(), get_partitioner_name());
         co_return;
     }
 
@@ -210,7 +234,7 @@ future<> gossiper::handle_syn_msg(const rpc::client_info& cinfo, gossip_digest_s
     std::exception_ptr ep;
     for (;;) {
         try {
-            co_await do_send_ack_msg(from, std::move(syn_msg));
+            co_await do_send_ack_msg(msg_addr(from.addr), std::move(syn_msg));
             if (!_syn_handlers.contains(from.addr)) {
                 co_return;
             }
@@ -284,8 +308,8 @@ static bool should_count_as_msg_processing(const std::map<inet_address, endpoint
 // - on_join callbacks
 // - on_alive
 future<> gossiper::handle_ack_msg(const rpc::client_info& cinfo, gossip_digest_ack ack_msg) {
-    auto id = netw::messaging_service::get_source(cinfo);
-    logger.trace("handle_ack_msg():from={},msg={}", id, ack_msg);
+    auto from = get_endpoint_id(cinfo);
+    logger.trace("handle_ack_msg():from={},msg={}", from, ack_msg);
 
     if (!this->is_enabled() && !this->is_in_shadow_round()) {
         co_return;
@@ -310,7 +334,6 @@ future<> gossiper::handle_ack_msg(const rpc::client_info& cinfo, gossip_digest_a
         co_await this->apply_state_locally(std::move(ep_state_map));
     }
 
-    auto from = id;
     auto ack_msg_digest = std::move(g_digest_list);
     if (this->is_in_shadow_round()) {
         this->finish_shadow_round();
@@ -333,7 +356,7 @@ future<> gossiper::handle_ack_msg(const rpc::client_info& cinfo, gossip_digest_a
     std::exception_ptr ep;
     for (;;) {
         try {
-            co_await do_send_ack2_msg(from, std::move(ack_msg_digest));
+            co_await do_send_ack2_msg(msg_addr(from.addr), std::move(ack_msg_digest));
             if (!_ack_handlers.contains(from.addr)) {
                 co_return;
             }
@@ -392,7 +415,7 @@ future<> gossiper::do_send_ack2_msg(msg_addr from, utils::chunked_vector<gossip_
 // - on_join callbacks
 // - on_alive callbacks
 future<> gossiper::handle_ack2_msg(const rpc::client_info& cinfo, gossip_digest_ack2 msg) {
-    auto from = netw::messaging_service::get_source(cinfo);
+    auto from = get_endpoint_id(cinfo);
     logger.trace("handle_ack2_msg():from={},msg={}", from, msg);
     if (!is_enabled()) {
         co_return;
@@ -416,7 +439,7 @@ future<> gossiper::handle_ack2_msg(const rpc::client_info& cinfo, gossip_digest_
 }
 
 future<> gossiper::handle_echo_msg(const rpc::client_info& cinfo, std::optional<int64_t> generation_number_opt) {
-    auto from = netw::messaging_service::get_source(cinfo);
+    auto from = get_endpoint_id(cinfo);
     bool respond = false;
     if (_advertise_myself) {
         if (!_advertise_to_nodes.empty()) {
@@ -449,7 +472,7 @@ future<> gossiper::handle_echo_msg(const rpc::client_info& cinfo, std::optional<
 }
 
 future<> gossiper::handle_shutdown_msg(const rpc::client_info& cinfo, std::optional<int64_t> generation_number_opt) {
-    auto from = netw::messaging_service::get_source(cinfo);
+    auto from = get_endpoint_id(cinfo);
     if (!is_enabled()) {
         logger.debug("Ignoring shutdown message from {} because gossip is disabled", from);
         co_return;

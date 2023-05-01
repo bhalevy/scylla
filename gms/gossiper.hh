@@ -39,6 +39,7 @@
 #include <seastar/core/abort_source.hh>
 #include <seastar/core/scheduling.hh>
 #include "locator/token_metadata.hh"
+#include "gms/endpoint_id.hh"
 
 namespace db {
 class config;
@@ -113,6 +114,7 @@ private:
     future<> do_send_ack_msg(msg_addr from, gossip_digest_syn syn_msg);
     future<> do_send_ack2_msg(msg_addr from, utils::chunked_vector<gossip_digest> ack_msg_digest);
     future<gossip_get_endpoint_states_response> handle_get_endpoint_states_msg(gossip_get_endpoint_states_request request);
+    endpoint_id get_endpoint_id(const rpc::client_info& cinfo);
     static constexpr uint32_t _default_cpuid = 0;
     msg_addr get_msg_addr(inet_address to) const noexcept;
     void do_sort(utils::chunked_vector<gossip_digest>& g_digest_list);
