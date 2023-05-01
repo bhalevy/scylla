@@ -123,8 +123,8 @@ private:
     semaphore _callback_running{1};
     semaphore _apply_state_locally_semaphore{100};
     seastar::gate _background_msg;
-    std::unordered_map<gms::inet_address, syn_msg_pending> _syn_handlers;
-    std::unordered_map<gms::inet_address, ack_msg_pending> _ack_handlers;
+    std::unordered_map<locator::host_id, syn_msg_pending> _syn_handlers;
+    std::unordered_map<locator::host_id, ack_msg_pending> _ack_handlers;
     bool _advertise_myself = true;
     // Map ip address and generation number
     generation_for_nodes _advertise_to_nodes;
@@ -301,6 +301,7 @@ public:
     /**
      * Removes the endpoint from Gossip but retains endpoint state
      */
+    future<> remove_endpoint(endpoint_id endpoint);
     future<> remove_endpoint(inet_address endpoint);
     future<> force_remove_endpoint(inet_address endpoint);
 private:
@@ -427,6 +428,7 @@ public:
     bool uses_host_id(inet_address endpoint) const;
 
     locator::host_id get_host_id(inet_address endpoint) const;
+    endpoint_id get_endpoint_id(inet_address endpoint) const;
 
     std::set<gms::inet_address> get_nodes_with_host_id(locator::host_id host_id) const;
 

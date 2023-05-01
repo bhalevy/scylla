@@ -43,6 +43,7 @@
 #include "locator/token_metadata.hh"
 #include "seastar/coroutine/exception.hh"
 #include "utils/exceptions.hh"
+#include "utils/fb_utilities.hh"
 
 namespace gms {
 
@@ -218,7 +219,7 @@ future<> gossiper::handle_syn_msg(const rpc::client_info& cinfo, gossip_digest_s
         co_return;
     }
 
-    syn_msg_pending& p = _syn_handlers[from.addr];
+    syn_msg_pending& p = _syn_handlers[from.host_id];
     if (p.pending) {
         // The latest syn message from peer has the latest infomation, so
         // it is safe to drop the previous syn message and keep the latest
@@ -235,10 +236,10 @@ future<> gossiper::handle_syn_msg(const rpc::client_info& cinfo, gossip_digest_s
     for (;;) {
         try {
             co_await do_send_ack_msg(msg_addr(from.addr), std::move(syn_msg));
-            if (!_syn_handlers.contains(from.addr)) {
+            if (!_syn_handlers.contains(from.host_id)) {
                 co_return;
             }
-            syn_msg_pending& p = _syn_handlers[from.addr];
+            syn_msg_pending& p = _syn_handlers[from.host_id];
             if (p.syn_msg) {
                 // Process pending gossip syn msg and send ack msg back
                 logger.debug("Handle queued gossip syn msg from node {}, syn_msg={}, pending={}",
@@ -255,8 +256,8 @@ future<> gossiper::handle_syn_msg(const rpc::client_info& cinfo, gossip_digest_s
             }
         } catch (...) {
             ep = std::current_exception();
-            if (_syn_handlers.contains(from.addr)) {
-                syn_msg_pending& p = _syn_handlers[from.addr];
+            if (_syn_handlers.contains(from.host_id)) {
+                syn_msg_pending& p = _syn_handlers[from.host_id];
                 p.pending = false;
                 p.syn_msg = {};
             }
@@ -340,7 +341,7 @@ future<> gossiper::handle_ack_msg(const rpc::client_info& cinfo, gossip_digest_a
         // don't bother doing anything else, we have what we came for
         co_return;
     }
-    ack_msg_pending& p = _ack_handlers[from.addr];
+    ack_msg_pending& p = _ack_handlers[from.host_id];
     if (p.pending) {
         // The latest ack message digests from peer has the latest infomation, so
         // it is safe to drop the previous ack message digests and keep the latest
@@ -357,10 +358,10 @@ future<> gossiper::handle_ack_msg(const rpc::client_info& cinfo, gossip_digest_a
     for (;;) {
         try {
             co_await do_send_ack2_msg(msg_addr(from.addr), std::move(ack_msg_digest));
-            if (!_ack_handlers.contains(from.addr)) {
+            if (!_ack_handlers.contains(from.host_id)) {
                 co_return;
             }
-            ack_msg_pending& p = _ack_handlers[from.addr];
+            ack_msg_pending& p = _ack_handlers[from.host_id];
             if (p.ack_msg_digest) {
                 // Process pending gossip ack msg digests and send ack2 msg back
                 logger.debug("Handle queued gossip ack msg digests from node {}, ack_msg_digest={}, pending={}",
@@ -377,8 +378,8 @@ future<> gossiper::handle_ack_msg(const rpc::client_info& cinfo, gossip_digest_a
             }
         } catch (...) {
             ep = std::current_exception();
-            if (_ack_handlers.contains(from.addr)) {
-                ack_msg_pending& p = _ack_handlers[from.addr];
+            if (_ack_handlers.contains(from.host_id)) {
+                ack_msg_pending& p = _ack_handlers[from.host_id];
                 p.pending = false;
                 p.ack_msg_digest = {};
                 logger.warn("Failed to process gossip ack msg digests from node {}: {}", from, ep);
@@ -694,10 +695,16 @@ future<> gossiper::force_remove_endpoint(inet_address endpoint) {
     if (endpoint == get_broadcast_address()) {
         return make_exception_future<>(std::runtime_error(format("Can not force remove node {} itself", endpoint)));
     }
-    return container().invoke_on(0, [endpoint] (auto& gossiper) mutable -> future<> {
+    auto tmptr = get_token_metadata_ptr();
+    const auto& topo = tmptr->get_topology();
+    const auto* node = topo.find_node(endpoint);
+    if (!node) {
+        return make_exception_future<>(std::runtime_error(format("Could not find node {}", endpoint)));
+    }
+    return container().invoke_on(0, [endpoint = endpoint_id{node->host_id(), node->endpoint()}] (auto& gossiper) mutable -> future<> {
         try {
             co_await gossiper.remove_endpoint(endpoint);
-            co_await gossiper.evict_from_membership(endpoint);
+            co_await gossiper.evict_from_membership(endpoint.addr);
             logger.info("Finished to force remove node {}", endpoint);
         } catch (...) {
             logger.warn("Failed to force remove node {}: {}", endpoint, std::current_exception());
@@ -705,31 +712,42 @@ future<> gossiper::force_remove_endpoint(inet_address endpoint) {
     });
 }
 
-future<> gossiper::remove_endpoint(inet_address endpoint) {
+future<> gossiper::remove_endpoint(endpoint_id endpoint) {
     // do subscribers first so anything in the subscriber that depends on gossiper state won't get confused
     // We can not run on_remove callbacks here becasue on_remove in
     // storage_service might take the gossiper::timer_callback_lock
     (void)seastar::async([this, endpoint] {
         _subscribers.for_each([endpoint] (shared_ptr<i_endpoint_state_change_subscriber> subscriber) {
-            return subscriber->on_remove(endpoint);
+            return subscriber->on_remove(endpoint.addr);
         }).get();
     }).handle_exception([] (auto ep) {
         logger.warn("Fail to call on_remove callback: {}", ep);
     });
 
-    if(_seeds.contains(endpoint)) {
+    const auto& addr = endpoint.addr;
+    if(_seeds.contains(addr)) {
         build_seeds_list();
-        _seeds.erase(endpoint);
+        _seeds.erase(addr);
         logger.info("removed {} from _seeds, updated _seeds list = {}", endpoint, _seeds);
     }
 
-    _live_endpoints.resize(std::distance(_live_endpoints.begin(), std::remove(_live_endpoints.begin(), _live_endpoints.end(), endpoint)));
+    _live_endpoints.resize(std::distance(_live_endpoints.begin(), std::remove(_live_endpoints.begin(), _live_endpoints.end(), addr)));
     co_await update_live_endpoints_version();
-    _unreachable_endpoints.erase(endpoint);
-    _syn_handlers.erase(endpoint);
-    _ack_handlers.erase(endpoint);
-    quarantine_endpoint(endpoint);
-    logger.debug("removing endpoint {}", endpoint);
+    _unreachable_endpoints.erase(addr);
+    _syn_handlers.erase(endpoint.host_id);
+    _ack_handlers.erase(endpoint.host_id);
+    quarantine_endpoint(addr);
+    logger.debug("removed endpoint {}", endpoint);
+}
+
+future<> gossiper::remove_endpoint(inet_address endpoint) {
+    try {
+        return remove_endpoint(get_endpoint_id(endpoint));
+    } catch (const std::runtime_error& e) {
+        // This shouldn't happen
+        on_internal_error_noexcept(logger, format("remove_endpoint: {}", std::current_exception()));
+        return remove_endpoint(endpoint_id{locator::host_id::create_null_id(), endpoint});
+    }
 }
 
 future<> gossiper::do_status_check() {
@@ -752,11 +770,12 @@ future<> gossiper::do_status_check() {
 
         // check if this is a fat client. fat clients are removed automatically from
         // gossip after FatClientTimeout.  Do not remove dead states here.
+        auto node = get_endpoint_id(endpoint);
         if (is_gossip_only_member(endpoint)
             && !_just_removed_endpoints.contains(endpoint)
             && ((now - update_timestamp) > fat_client_timeout)) {
-            logger.info("FatClient {} has been silent for {}ms, removing from gossip", endpoint, fat_client_timeout.count());
-            co_await remove_endpoint(endpoint); // will put it in _just_removed_endpoints to respect quarantine delay
+            logger.info("FatClient {} has been silent for {}ms, removing from gossip", node, fat_client_timeout.count());
+            co_await remove_endpoint(node); // will put it in _just_removed_endpoints to respect quarantine delay
             co_await evict_from_membership(endpoint); // can get rid of the state immediately
         }
 
@@ -1443,6 +1462,10 @@ locator::host_id gossiper::get_host_id(inet_address endpoint) const {
         throw std::runtime_error(format("Host {} does not have HOST_ID application_state", endpoint));
     }
     return locator::host_id(utils::UUID(app_state->value()));
+}
+
+gms::endpoint_id gossiper::get_endpoint_id(inet_address endpoint) const {
+    return gms::endpoint_id{get_host_id(endpoint), endpoint};
 }
 
 std::set<gms::inet_address> gossiper::get_nodes_with_host_id(locator::host_id host_id) const {
