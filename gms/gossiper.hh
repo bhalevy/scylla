@@ -400,7 +400,25 @@ public:
     size_t get_endpoint_states_size() const noexcept {
         return _endpoint_state_map.size();
     }
-    const std::unordered_map<inet_address, endpoint_state>& get_endpoint_states() const noexcept;
+
+    template <typename Func>
+    requires std::same_as<std::invoke_result_t<Func, inet_address, endpoint_state>, void>
+    void for_each_endpoint_state(Func func) const {
+        for (const auto& [ep, eps] : _endpoint_state_map) {
+            func(ep, eps);
+        }
+    }
+
+    template <typename Func>
+    requires std::same_as<std::invoke_result_t<Func, inet_address, endpoint_state>, stop_iteration>
+    stop_iteration for_each_endpoint_state(Func func) const {
+        for (const auto& [ep, eps] : _endpoint_state_map) {
+            if (func(ep, eps) == stop_iteration::yes) {
+                return stop_iteration::yes;
+            }
+        }
+        return stop_iteration::no;
+    }
 
     std::vector<inet_address> get_endpoints() const;
 

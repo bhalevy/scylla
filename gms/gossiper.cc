@@ -1383,10 +1383,6 @@ future<> gossiper::reset_endpoint_state_map() {
     });
 }
 
-const std::unordered_map<inet_address, endpoint_state>& gms::gossiper::get_endpoint_states() const noexcept {
-    return _endpoint_state_map;
-}
-
 std::vector<inet_address> gossiper::get_endpoints() const {
     return boost::copy_range<std::vector<inet_address>>(_endpoint_state_map | boost::adaptors::map_keys);
 }
@@ -1428,7 +1424,7 @@ locator::host_id gossiper::get_host_id(inet_address endpoint) const {
 
 std::set<gms::inet_address> gossiper::get_nodes_with_host_id(locator::host_id host_id) const {
     std::set<gms::inet_address> nodes;
-    for (auto& x : get_endpoint_states()) {
+    for (auto& x : _endpoint_state_map) {
         auto node = x.first;
         auto app_state = get_application_state_ptr(node, application_state::HOST_ID);
         if (app_state && host_id == locator::host_id(utils::UUID(app_state->value()))) {

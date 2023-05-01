@@ -212,26 +212,27 @@ bool migration_manager::have_schema_agreement() {
     }
     auto our_version = _storage_proxy.get_db().local().get_version();
     bool match = false;
-    for (auto& x : _gossiper.get_endpoint_states()) {
-        auto& endpoint = x.first;
-        auto& eps = x.second;
+    _gossiper.for_each_endpoint_state([&] (const gms::inet_address& endpoint, const gms::endpoint_state& eps) {
         if (endpoint == utils::fb_utilities::get_broadcast_address() || !eps.is_alive()) {
-            continue;
+            return stop_iteration::no;
         }
         mlogger.debug("Checking schema state for {}.", endpoint);
         auto* schema = eps.get_application_state_ptr(gms::application_state::SCHEMA);
         if (!schema) {
             mlogger.debug("Schema state not yet available for {}.", endpoint);
-            return false;
+            match = false;
+            return stop_iteration::yes;
         }
         auto remote_version = table_schema_version(utils::UUID{schema->value()});
         if (our_version != remote_version) {
             mlogger.debug("Schema mismatch for {} ({} != {}).", endpoint, our_version, remote_version);
-            return false;
+            match = false;
+            return stop_iteration::yes;
         } else {
             match = true;
         }
-    }
+        return stop_iteration::no;
+    });
     return match;
 }
 
