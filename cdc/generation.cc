@@ -13,6 +13,7 @@
 #include <seastar/core/sleep.hh>
 #include <seastar/core/coroutine.hh>
 
+#include "gms/endpoint_state.hh"
 #include "keys.hh"
 #include "schema/schema_builder.hh"
 #include "replica/database.hh"
@@ -419,8 +420,9 @@ future<cdc::generation_id> generation_service::legacy_make_new_generation(const 
  * but if the cluster already supports CDC, then every newly joining node will propose a new CDC generation,
  * which means it will gossip the generation's timestamp.
  */
-static std::optional<cdc::generation_id> get_generation_id_for(const gms::inet_address& endpoint, const gms::gossiper& g) {
-    auto gen_id_string = g.get_application_state_value(endpoint, gms::application_state::CDC_GENERATION_ID);
+static std::optional<cdc::generation_id> get_generation_id_for(const gms::inet_address& endpoint, const gms::endpoint_state& eps) {
+    const auto* gen_id_ptr = eps.get_application_state_ptr(gms::application_state::CDC_GENERATION_ID);
+    auto gen_id_string = gen_id_ptr ? gen_id_ptr->value() : "";
     cdc_log.trace("endpoint={}, gen_id_string={}", endpoint, gen_id_string);
     return gms::versioned_value::cdc_generation_id_from_string(gen_id_string);
 }
@@ -799,7 +801,7 @@ future<> generation_service::check_and_repair_cdc_streams() {
                     " ({} is in state {})", addr, _gossiper.get_gossip_status(state)));
         }
 
-        const auto gen_id = get_generation_id_for(addr, _gossiper);
+        const auto gen_id = get_generation_id_for(addr, state);
         if (!latest || (gen_id && get_ts(*gen_id) > get_ts(*latest))) {
             latest = gen_id;
         }
@@ -1008,8 +1010,8 @@ future<> generation_service::legacy_scan_cdc_generations() {
     assert_shard_zero(__PRETTY_FUNCTION__);
 
     std::optional<cdc::generation_id> latest;
-    for (const auto& ep: _gossiper.get_endpoint_states()) {
-        auto gen_id = get_generation_id_for(ep.first, _gossiper);
+    for (const auto& [ep, state]: _gossiper.get_endpoint_states()) {
+        auto gen_id = get_generation_id_for(ep, state);
         if (!latest || (gen_id && get_ts(*gen_id) > get_ts(*latest))) {
             latest = gen_id;
         }
