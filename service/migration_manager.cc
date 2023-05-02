@@ -193,11 +193,11 @@ future<> migration_notifier::unregister_listener(migration_listener* listener)
     return _listeners.remove(listener);
 }
 
-void migration_manager::schedule_schema_pull(const gms::inet_address& endpoint, const gms::endpoint_state& state)
+void migration_manager::schedule_schema_pull(const gms::endpoint_id& endpoint, const gms::endpoint_state& state)
 {
     const auto* value = state.get_application_state_ptr(gms::application_state::SCHEMA);
 
-    if (endpoint != utils::fb_utilities::get_broadcast_address() && value) {
+    if (!_gossiper.is_me(endpoint) && value) {
         // FIXME: discarded future
         (void)maybe_schedule_schema_pull(table_schema_version(utils::UUID{value->value()}), endpoint).handle_exception([endpoint] (auto ep) {
             mlogger.warn("Fail to pull schema from {}: {}", endpoint, ep);
@@ -240,7 +240,7 @@ bool migration_manager::have_schema_agreement() {
  * If versions differ this node sends request with local migration list to the endpoint
  * and expecting to receive a list of migrations to apply locally.
  */
-future<> migration_manager::maybe_schedule_schema_pull(const table_schema_version& their_version, const gms::inet_address& endpoint)
+future<> migration_manager::maybe_schedule_schema_pull(const table_schema_version& their_version, const gms::endpoint_id& endpoint)
 {
     auto& proxy = _storage_proxy;
     auto& db = proxy.get_db().local();
@@ -253,7 +253,7 @@ future<> migration_manager::maybe_schedule_schema_pull(const table_schema_versio
     if (db.get_version() == replica::database::empty_version || runtime::get_uptime() < migration_delay) {
         // If we think we may be bootstrapping or have recently started, submit MigrationTask immediately
         mlogger.debug("Submitting migration task for {}", endpoint);
-        return submit_migration_task(endpoint);
+        return submit_migration_task(endpoint.addr);
     }
 
     return with_gate(_background_tasks, [this, &db, endpoint] {
@@ -277,7 +277,7 @@ future<> migration_manager::maybe_schedule_schema_pull(const table_schema_versio
                 return make_ready_future<>();
             }
             mlogger.debug("submitting migration task for {}", endpoint);
-            return submit_migration_task(endpoint);
+            return submit_migration_task(endpoint.addr);
         });
     }).finally([me = shared_from_this()] {});
 }
@@ -384,12 +384,12 @@ future<> migration_manager::merge_schema_from(netw::messaging_service::msg_addr 
     });
 }
 
-bool migration_manager::has_compatible_schema_tables_version(const gms::inet_address& endpoint) {
+bool migration_manager::has_compatible_schema_tables_version(const gms::endpoint_id& endpoint) {
     auto* version = _gossiper.get_application_state_ptr(endpoint, gms::application_state::SCHEMA_TABLES_VERSION);
     return version && version->value() == db::schema_tables::version;
 }
 
-bool migration_manager::should_pull_schema_from(const gms::inet_address& endpoint) {
+bool migration_manager::should_pull_schema_from(const gms::endpoint_id& endpoint) {
     return has_compatible_schema_tables_version(endpoint)
             && !_gossiper.is_gossip_only_member(endpoint);
 }
@@ -1211,26 +1211,26 @@ future<column_mapping> get_column_mapping(table_id table_id, table_schema_versio
     return db::schema_tables::get_column_mapping(table_id, v);
 }
 
-future<> migration_manager::on_join(gms::inet_address endpoint, gms::endpoint_state ep_state) {
+future<> migration_manager::on_join(gms::endpoint_id endpoint, gms::endpoint_state ep_state) {
     schedule_schema_pull(endpoint, ep_state);
     return make_ready_future();
 }
 
-future<> migration_manager::on_change(gms::inet_address endpoint, gms::application_state state, const gms::versioned_value& value) {
+future<> migration_manager::on_change(gms::endpoint_id endpoint, gms::application_state state, const gms::versioned_value& value) {
     if (state == gms::application_state::SCHEMA) {
         auto* ep_state = _gossiper.get_endpoint_state_for_endpoint_ptr(endpoint);
         if (!ep_state || _gossiper.is_dead_state(*ep_state)) {
             mlogger.debug("Ignoring state change for dead or unknown endpoint: {}", endpoint);
             return make_ready_future();
         }
-        if (_storage_proxy.get_token_metadata_ptr()->is_normal_token_owner(endpoint)) {
+        if (_storage_proxy.get_token_metadata_ptr()->is_normal_token_owner(endpoint.addr)) {
             schedule_schema_pull(endpoint, *ep_state);
         }
     }
     return make_ready_future();
 }
 
-future<> migration_manager::on_alive(gms::inet_address endpoint, gms::endpoint_state state) {
+future<> migration_manager::on_alive(gms::endpoint_id endpoint, gms::endpoint_state state) {
     schedule_schema_pull(endpoint, state);
     return make_ready_future();
 }

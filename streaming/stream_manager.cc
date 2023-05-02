@@ -299,10 +299,10 @@ stream_bytes stream_manager::get_progress_on_local_shard() const {
     return ret;
 }
 
-bool stream_manager::has_peer(inet_address endpoint) const {
+bool stream_manager::has_peer(const gms::endpoint_id& endpoint) const {
     for (auto sr : get_all_streams()) {
         for (auto session : sr->get_coordinator()->get_all_stream_sessions()) {
-            if (session->peer == endpoint) {
+            if (session->peer == endpoint.addr) {
                 return true;
             }
         }
@@ -310,10 +310,10 @@ bool stream_manager::has_peer(inet_address endpoint) const {
     return false;
 }
 
-void stream_manager::fail_sessions(inet_address endpoint) {
+void stream_manager::fail_sessions(const gms::endpoint_id& endpoint) {
     for (auto sr : get_all_streams()) {
         for (auto session : sr->get_coordinator()->get_all_stream_sessions()) {
-            if (session->peer == endpoint) {
+            if (session->peer == endpoint.addr) {
                 session->close_session(stream_session_state::FAILED);
             }
         }
@@ -328,7 +328,7 @@ void stream_manager::fail_all_sessions() {
     }
 }
 
-future<> stream_manager::on_remove(inet_address endpoint) {
+future<> stream_manager::on_remove(gms::endpoint_id endpoint) {
     if (has_peer(endpoint)) {
         sslog.info("stream_manager: Close all stream_session with peer = {} in on_remove", endpoint);
         //FIXME: discarded future.
@@ -341,7 +341,7 @@ future<> stream_manager::on_remove(inet_address endpoint) {
     return make_ready_future();
 }
 
-future<> stream_manager::on_restart(inet_address endpoint, endpoint_state ep_state) {
+future<> stream_manager::on_restart(gms::endpoint_id endpoint, endpoint_state ep_state) {
     if (has_peer(endpoint)) {
         sslog.info("stream_manager: Close all stream_session with peer = {} in on_restart", endpoint);
         //FIXME: discarded future.
@@ -354,7 +354,7 @@ future<> stream_manager::on_restart(inet_address endpoint, endpoint_state ep_sta
     return make_ready_future();
 }
 
-future<> stream_manager::on_dead(inet_address endpoint, endpoint_state ep_state) {
+future<> stream_manager::on_dead(gms::endpoint_id endpoint, endpoint_state ep_state) {
     if (has_peer(endpoint)) {
         sslog.info("stream_manager: Close all stream_session with peer = {} in on_dead", endpoint);
         //FIXME: discarded future.

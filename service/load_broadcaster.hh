@@ -35,14 +35,14 @@ public:
         assert(_stopped);
     }
 
-    virtual future<> on_change(gms::inet_address endpoint, gms::application_state state, const gms::versioned_value& value) override {
+    virtual future<> on_change(gms::endpoint_id endpoint, gms::application_state state, const gms::versioned_value& value) override {
         if (state == gms::application_state::LOAD) {
-            _load_info[endpoint] = std::stod(value.value());
+            _load_info[endpoint.addr] = std::stod(value.value());
         }
         return make_ready_future();
     }
 
-    virtual future<> on_join(gms::inet_address endpoint, gms::endpoint_state ep_state) override {
+    virtual future<> on_join(gms::endpoint_id endpoint, gms::endpoint_state ep_state) override {
         auto* local_value = ep_state.get_application_state_ptr(gms::application_state::LOAD);
         if (local_value) {
             return on_change(endpoint, gms::application_state::LOAD, *local_value);
@@ -50,16 +50,16 @@ public:
         return make_ready_future();
     }
     
-    virtual future<> before_change(gms::inet_address endpoint, gms::endpoint_state current_state, gms::application_state new_state_key, const gms::versioned_value& newValue) override { return make_ready_future(); }
+    virtual future<> before_change(gms::endpoint_id endpoint, gms::endpoint_state current_state, gms::application_state new_state_key, const gms::versioned_value& newValue) override { return make_ready_future(); }
 
-    future<> on_alive(gms::inet_address endpoint, gms::endpoint_state) override { return make_ready_future(); }
+    future<> on_alive(gms::endpoint_id endpoint, gms::endpoint_state) override { return make_ready_future(); }
 
-    future<> on_dead(gms::inet_address endpoint, gms::endpoint_state) override { return make_ready_future(); }
+    future<> on_dead(gms::endpoint_id endpoint, gms::endpoint_state) override { return make_ready_future(); }
 
-    future<> on_restart(gms::inet_address endpoint, gms::endpoint_state) override { return make_ready_future(); }
+    future<> on_restart(gms::endpoint_id endpoint, gms::endpoint_state) override { return make_ready_future(); }
 
-    virtual future<> on_remove(gms::inet_address endpoint) override {
-        _load_info.erase(endpoint);
+    virtual future<> on_remove(gms::endpoint_id endpoint) override {
+        _load_info.erase(endpoint.addr);
         return make_ready_future();
     }
 

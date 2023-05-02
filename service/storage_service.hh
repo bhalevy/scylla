@@ -413,8 +413,8 @@ public:
             locator::vnode_effective_replication_map_ptr erm,
             const dht::token_range_vector& ranges) const;
 public:
-    virtual future<> on_join(gms::inet_address endpoint, gms::endpoint_state ep_state) override;
-    virtual future<> before_change(gms::inet_address endpoint, gms::endpoint_state current_state, gms::application_state new_state_key, const gms::versioned_value& new_value) override;
+    virtual future<> on_join(gms::endpoint_id endpoint, gms::endpoint_state ep_state) override;
+    virtual future<> before_change(gms::endpoint_id endpoint, gms::endpoint_state current_state, gms::application_state new_state_key, const gms::versioned_value& new_value) override;
     /*
      * Handle the reception of a new particular ApplicationState for a particular endpoint. Note that the value of the
      * ApplicationState has not necessarily "changed" since the last known value, if we already received the same update
@@ -447,11 +447,11 @@ public:
      * Note: Any time a node state changes from STATUS_NORMAL, it will not be visible to new nodes. So it follows that
      * you should never bootstrap a new node during a removenode, decommission or move.
      */
-    virtual future<> on_change(inet_address endpoint, application_state state, const versioned_value& value) override;
-    virtual future<> on_alive(gms::inet_address endpoint, gms::endpoint_state state) override;
-    virtual future<> on_dead(gms::inet_address endpoint, gms::endpoint_state state) override;
-    virtual future<> on_remove(gms::inet_address endpoint) override;
-    virtual future<> on_restart(gms::inet_address endpoint, gms::endpoint_state state) override;
+    virtual future<> on_change(gms::endpoint_id endpoint, application_state state, const versioned_value& value) override;
+    virtual future<> on_alive(gms::endpoint_id endpoint, gms::endpoint_state state) override;
+    virtual future<> on_dead(gms::endpoint_id endpoint, gms::endpoint_state state) override;
+    virtual future<> on_remove(gms::endpoint_id endpoint) override;
+    virtual future<> on_restart(gms::endpoint_id endpoint, gms::endpoint_state state) override;
 
 public:
     // For migration_listener
@@ -479,7 +479,7 @@ public:
 private:
     template <typename T>
     future<> update_table(gms::inet_address endpoint, sstring col, T value);
-    future<> update_peer_info(inet_address endpoint);
+    future<> update_peer_info(gms::endpoint_id endpoint);
     future<> do_update_system_peers_table(gms::inet_address endpoint, const application_state& state, const versioned_value& value);
 
     std::unordered_set<token> get_tokens_for(inet_address endpoint);
@@ -496,7 +496,7 @@ private:
      *
      * @param endpoint bootstrapping node
      */
-    future<> handle_state_bootstrap(inet_address endpoint);
+    future<> handle_state_bootstrap(gms::endpoint_id endpoint);
 
     /**
      * Handle node move to normal state. That is, node is entering token ring and participating
@@ -504,14 +504,14 @@ private:
      *
      * @param endpoint node
      */
-    future<> handle_state_normal(inet_address endpoint);
+    future<> handle_state_normal(gms::endpoint_id endpoint);
 
     /**
      * Handle node preparing to leave the ring
      *
      * @param endpoint node
      */
-    future<> handle_state_leaving(inet_address endpoint);
+    future<> handle_state_leaving(gms::endpoint_id endpoint);
 
     /**
      * Handle node leaving the ring. This will happen when a node is decommissioned
@@ -519,7 +519,7 @@ private:
      * @param endpoint If reason for leaving is decommission, endpoint is the leaving node.
      * @param pieces STATE_LEFT,token
      */
-    future<> handle_state_left(inet_address endpoint, std::vector<sstring> pieces);
+    future<> handle_state_left(gms::endpoint_id endpoint, std::vector<sstring> pieces);
 
     /**
      * Handle node moving inside the ring.
@@ -527,7 +527,7 @@ private:
      * @param endpoint moving endpoint address
      * @param pieces STATE_MOVING, token
      */
-    void handle_state_moving(inet_address endpoint, std::vector<sstring> pieces);
+    void handle_state_moving(gms::endpoint_id endpoint, std::vector<sstring> pieces);
 
     /**
      * Handle notification that a node being actively removed from the ring via 'removenode'
@@ -535,19 +535,19 @@ private:
      * @param endpoint node
      * @param pieces either REMOVED_TOKEN (node is gone) or REMOVING_TOKEN (replicas need to be restored)
      */
-    future<> handle_state_removing(inet_address endpoint, std::vector<sstring> pieces);
+    future<> handle_state_removing(gms::endpoint_id endpoint, std::vector<sstring> pieces);
 
     future<>
     handle_state_replacing_update_pending_ranges(mutable_token_metadata_ptr tmptr, inet_address replacing_node);
 
 private:
-    future<> excise(std::unordered_set<token> tokens, inet_address endpoint);
-    future<> excise(std::unordered_set<token> tokens, inet_address endpoint, long expire_time);
+    future<> excise(std::unordered_set<token> tokens, gms::endpoint_id endpoint);
+    future<> excise(std::unordered_set<token> tokens, gms::endpoint_id endpoint, long expire_time);
 
     /** unlike excise we just need this endpoint gone without going through any notifications **/
-    future<> remove_endpoint(inet_address endpoint);
+    future<> remove_endpoint(gms::endpoint_id endpoint);
 
-    void add_expire_time_if_found(inet_address endpoint, int64_t expire_time);
+    void add_expire_time_if_found(const gms::endpoint_id& endpoint, int64_t expire_time);
 
     int64_t extract_expire_time(const std::vector<sstring>& pieces) const {
         return std::stoll(pieces[2]);
@@ -579,7 +579,7 @@ private:
      *
      * @param endpoint the node that left
      */
-    future<> restore_replica_count(inet_address endpoint, inet_address notify_endpoint);
+    future<> restore_replica_count(gms::endpoint_id endpoint, inet_address notify_endpoint);
     future<> removenode_with_stream(gms::inet_address leaving_node, shared_ptr<abort_source> as_ptr);
     future<> removenode_add_ranges(lw_shared_ptr<dht::range_streamer> streamer, gms::inet_address leaving_node);
 
@@ -749,11 +749,11 @@ private:
     void do_isolate_on_error(disk_error type);
     future<> isolate();
 
-    future<> notify_down(inet_address endpoint);
-    future<> notify_left(inet_address endpoint);
-    future<> notify_up(inet_address endpoint);
-    future<> notify_joined(inet_address endpoint);
-    future<> notify_cql_change(inet_address endpoint, bool ready);
+    future<> notify_down(gms::endpoint_id endpoint);
+    future<> notify_left(gms::endpoint_id endpoint);
+    future<> notify_up(gms::endpoint_id endpoint);
+    future<> notify_joined(gms::endpoint_id endpoint);
+    future<> notify_cql_change(gms::endpoint_id endpoint, bool ready);
 public:
     future<bool> is_cleanup_allowed(sstring keyspace);
     bool is_repair_based_node_ops_enabled(streaming::stream_reason reason);

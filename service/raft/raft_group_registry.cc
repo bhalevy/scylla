@@ -74,13 +74,9 @@ class gossiper_state_change_subscriber_proxy: public gms::i_endpoint_state_chang
     raft_address_map& _address_map;
 
     future<>
-    on_endpoint_change(gms::inet_address endpoint, gms::endpoint_state ep_state) {
-        auto app_state_ptr = ep_state.get_application_state_ptr(gms::application_state::HOST_ID);
-        if (app_state_ptr) {
-            raft::server_id id(utils::UUID(app_state_ptr->value()));
-            rslog.debug("gossiper_state_change_subscriber_proxy::on_endpoint_change() {} {}", endpoint, id);
-            _address_map.add_or_update_entry(id, endpoint);
-        }
+    on_endpoint_change(gms::endpoint_id endpoint, const gms::endpoint_state&) {
+        raft::server_id id(endpoint.host_id.uuid());
+        _address_map.add_or_update_entry(id, endpoint.addr);
         return make_ready_future<>();
     }
 
@@ -90,12 +86,12 @@ public:
     {}
 
     virtual future<>
-    on_join(gms::inet_address endpoint, gms::endpoint_state ep_state) override {
+    on_join(gms::endpoint_id endpoint, gms::endpoint_state ep_state) override {
         return on_endpoint_change(endpoint, ep_state);
     }
 
     virtual future<>
-    before_change(gms::inet_address endpoint,
+    before_change(gms::endpoint_id endpoint,
         gms::endpoint_state current_state, gms::application_state new_statekey,
         const gms::versioned_value& newvalue) override {
         // Raft server ID never changes - do nothing
@@ -103,24 +99,24 @@ public:
     }
 
     virtual future<>
-    on_change(gms::inet_address endpoint,
+    on_change(gms::endpoint_id endpoint,
         gms::application_state state, const gms::versioned_value& value) override {
         // Raft server ID never changes - do nothing
         return make_ready_future<>();
     }
 
     virtual future<>
-    on_alive(gms::inet_address endpoint, gms::endpoint_state ep_state) override {
+    on_alive(gms::endpoint_id endpoint, gms::endpoint_state ep_state) override {
         return on_endpoint_change(endpoint, ep_state);
     }
 
     virtual future<>
-    on_dead(gms::inet_address endpoint, gms::endpoint_state state) override {
+    on_dead(gms::endpoint_id endpoint, gms::endpoint_state state) override {
         return make_ready_future<>();
     }
 
     virtual future<>
-    on_remove(gms::inet_address endpoint) override {
+    on_remove(gms::endpoint_id endpoint) override {
         // The mapping is removed when the server is removed from
         // Raft configuration, not when it's dead or alive, or
         // removed
@@ -128,7 +124,7 @@ public:
     }
 
     virtual future<>
-    on_restart(gms::inet_address endpoint, gms::endpoint_state ep_state) override {
+    on_restart(gms::endpoint_id endpoint, gms::endpoint_state ep_state) override {
         return on_endpoint_change(endpoint, ep_state);
     }
 };

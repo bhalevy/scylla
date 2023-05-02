@@ -164,18 +164,18 @@ public:
     shared_ptr<stream_session> get_session(streaming::plan_id plan_id, gms::inet_address from, const char* verb, std::optional<table_id> cf_id = {});
 
 public:
-    virtual future<> on_join(inet_address endpoint, endpoint_state ep_state) override { return make_ready_future(); }
-    virtual future<> before_change(inet_address endpoint, endpoint_state current_state, application_state new_state_key, const versioned_value& new_value) override { return make_ready_future(); }
-    virtual future<> on_change(inet_address endpoint, application_state state, const versioned_value& value) override { return make_ready_future(); }
-    virtual future<> on_alive(inet_address endpoint, endpoint_state state) override { return make_ready_future(); }
-    virtual future<> on_dead(inet_address endpoint, endpoint_state state) override;
-    virtual future<> on_remove(inet_address endpoint) override;
-    virtual future<> on_restart(inet_address endpoint, endpoint_state ep_state) override;
+    virtual future<> on_join(gms::endpoint_id endpoint, endpoint_state ep_state) override { return make_ready_future(); }
+    virtual future<> before_change(gms::endpoint_id endpoint, endpoint_state current_state, application_state new_state_key, const versioned_value& new_value) override { return make_ready_future(); }
+    virtual future<> on_change(gms::endpoint_id endpoint, application_state state, const versioned_value& value) override { return make_ready_future(); }
+    virtual future<> on_alive(gms::endpoint_id endpoint, endpoint_state state) override { return make_ready_future(); }
+    virtual future<> on_dead(gms::endpoint_id endpoint, endpoint_state state) override;
+    virtual future<> on_remove(gms::endpoint_id endpoint) override;
+    virtual future<> on_restart(gms::endpoint_id endpoint, endpoint_state ep_state) override;
 
 private:
     void fail_all_sessions();
-    void fail_sessions(inet_address endpoint);
-    bool has_peer(inet_address endpoint) const;
+    void fail_sessions(const gms::endpoint_id& endpoint);
+    bool has_peer(const gms::endpoint_id& endpoint) const;
 
     void init_messaging_service_handler(abort_source& as);
     future<> uninit_messaging_service_handler();
