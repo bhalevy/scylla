@@ -13,7 +13,7 @@
 #include <map>
 #include <unordered_set>
 #include <unordered_map>
-#include "gms/inet_address.hh"
+#include "gms/endpoint_id.hh"
 #include "dht/ring_position.hh"
 #include "inet_address_vectors.hh"
 #include <optional>
@@ -168,6 +168,9 @@ public:
      * @param endpoint
      */
     void update_host_id(const locator::host_id& host_id, inet_address endpoint);
+    void update_host_id(const gms::endpoint_id& node) {
+        update_host_id(node.host_id, node.addr);
+    }
 
     /** Return the unique host ID for an end-point. */
     host_id get_host_id(inet_address endpoint) const;
