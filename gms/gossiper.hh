@@ -390,7 +390,11 @@ public:
     future<generation_type> get_current_generation_number(inet_address endpoint);
     future<version_type> get_current_heart_beat_version(inet_address endpoint);
 
+    bool is_gossip_only_member(const endpoint_id& endpoint) {
+        return is_gossip_only_member(endpoint.addr);
+    }
     bool is_gossip_only_member(inet_address endpoint);
+
     bool is_safe_for_bootstrap();
     bool is_safe_for_restart();
 private:
@@ -414,12 +418,29 @@ private:
 public:
     clk::time_point get_expire_time_for_endpoint(inet_address endpoint) const noexcept;
 
+    const endpoint_state* get_endpoint_state_for_endpoint_ptr(const endpoint_id& ep) const noexcept {
+        return get_endpoint_state_for_endpoint_ptr(ep.addr);
+    }
     const endpoint_state* get_endpoint_state_for_endpoint_ptr(inet_address ep) const noexcept;
+
+    endpoint_state& get_endpoint_state(const endpoint_id& ep) {
+        return get_endpoint_state(ep.addr);
+    }
     endpoint_state& get_endpoint_state(inet_address ep);
 
+    endpoint_state* get_endpoint_state_for_endpoint_ptr(const endpoint_id& ep) noexcept {
+        return get_endpoint_state_for_endpoint_ptr(ep.addr);
+    }
     endpoint_state* get_endpoint_state_for_endpoint_ptr(inet_address ep) noexcept;
 
+    const versioned_value* get_application_state_ptr(const endpoint_id& endpoint, application_state appstate) const noexcept {
+        return get_application_state_ptr(endpoint.addr, appstate);
+    }
     const versioned_value* get_application_state_ptr(inet_address endpoint, application_state appstate) const noexcept;
+
+    sstring get_application_state_value(const endpoint_id& endpoint, application_state appstate) const {
+        return get_application_state_value(endpoint.addr, appstate);
+    }
     sstring get_application_state_value(inet_address endpoint, application_state appstate) const;
 
     // removes ALL endpoint states; should only be called after shadow gossip
@@ -491,7 +512,11 @@ private:
     future<> handle_major_state_change(inet_address ep, const endpoint_state& eps);
 
 public:
+    bool is_alive(const endpoint_id& ep) const {
+        return is_alive(ep.addr);
+    }
     bool is_alive(inet_address ep) const;
+
     bool is_dead_state(const endpoint_state& eps) const;
     // Wait for nodes to be alive on all shards
     future<> wait_alive(std::vector<gms::inet_address> nodes, std::chrono::milliseconds timeout);
@@ -508,10 +533,10 @@ private:
     future<> apply_new_states(inet_address addr, endpoint_state& local_state, const endpoint_state& remote_state);
 
     // notify that a local application state is going to change (doesn't get triggered for remote changes)
-    future<> do_before_change_notifications(inet_address addr, const endpoint_state& ep_state, const application_state& ap_state, const versioned_value& new_value);
+    future<> do_before_change_notifications(endpoint_id addr, const endpoint_state& ep_state, const application_state& ap_state, const versioned_value& new_value);
 
     // notify that an application state has changed
-    future<> do_on_change_notifications(inet_address addr, const application_state& state, const versioned_value& value);
+    future<> do_on_change_notifications(endpoint_id addr, const application_state& state, const versioned_value& value);
     /* Request all the state for the endpoint in the g_digest */
 
     void request_all(gossip_digest& g_digest, utils::chunked_vector<gossip_digest>& delta_gossip_digest_list, generation_type remote_generation);
@@ -613,6 +638,9 @@ public:
     void goto_shadow_round();
 
 public:
+    void add_expire_time_for_endpoint(const endpoint_id& endpoint, clk::time_point expire_time) {
+        return add_expire_time_for_endpoint(endpoint.addr, expire_time);
+    }
     void add_expire_time_for_endpoint(inet_address endpoint, clk::time_point expire_time);
 
     static clk::time_point compute_expire_time();
@@ -620,18 +648,42 @@ public:
     void dump_endpoint_state_map();
 public:
     bool is_seed(const inet_address& endpoint) const;
+
+    bool is_shutdown(const endpoint_id& endpoint) const {
+        return is_shutdown(endpoint.addr);
+    }
     bool is_shutdown(const inet_address& endpoint) const;
+
+    bool is_normal(const endpoint_id& endpoint) const {
+        return is_normal(endpoint.addr);
+    }
     bool is_normal(const inet_address& endpoint) const;
+
+    bool is_left(const endpoint_id& endpoint) const {
+        return is_left(endpoint.addr);
+    }
     bool is_left(const inet_address& endpoint) const;
+
     // Check if a node is in NORMAL or SHUTDOWN status which means the node is
     // part of the token ring from the gossip point of view and operates in
     // normal status or was in normal status but is shutdown.
+    bool is_normal_ring_member(const endpoint_id& endpoint) const {
+        return is_normal_ring_member(endpoint.addr);
+    }
     bool is_normal_ring_member(const inet_address& endpoint) const;
+
+    bool is_cql_ready(const endpoint_id& endpoint) const {
+        return is_cql_ready(endpoint.addr);
+    }
     bool is_cql_ready(const inet_address& endpoint) const;
+
     bool is_silent_shutdown_state(const endpoint_state& ep_state) const;
     void force_newer_generation();
 public:
     std::string_view get_gossip_status(const endpoint_state& ep_state) const noexcept;
+    std::string_view get_gossip_status(const endpoint_id& endpoint) const noexcept {
+        return get_gossip_status(endpoint.addr);
+    }
     std::string_view get_gossip_status(const inet_address& endpoint) const noexcept;
 public:
     future<> wait_for_gossip_to_settle();

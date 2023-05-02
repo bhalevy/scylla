@@ -101,20 +101,20 @@ class feature_enabler : public i_endpoint_state_change_subscriber {
     gossiper& _g;
 public:
     feature_enabler(gossiper& g) : _g(g) {}
-    future<> on_join(inet_address ep, endpoint_state state) override {
+    future<> on_join(endpoint_id ep, endpoint_state state) override {
         return _g.maybe_enable_features();
     }
-    future<> on_change(inet_address ep, application_state state, const versioned_value&) override {
+    future<> on_change(endpoint_id ep, application_state state, const versioned_value&) override {
         if (state == application_state::SUPPORTED_FEATURES) {
             return _g.maybe_enable_features();
         }
         return make_ready_future();
     }
-    future<> before_change(inet_address, endpoint_state, application_state, const versioned_value&) override { return make_ready_future(); }
-    future<> on_alive(inet_address, endpoint_state) override { return make_ready_future(); }
-    future<> on_dead(inet_address, endpoint_state) override { return make_ready_future(); }
-    future<> on_remove(inet_address) override { return make_ready_future(); }
-    future<> on_restart(inet_address, endpoint_state) override { return make_ready_future(); }
+    future<> before_change(endpoint_id, endpoint_state, application_state, const versioned_value&) override { return make_ready_future(); }
+    future<> on_alive(endpoint_id, endpoint_state) override { return make_ready_future(); }
+    future<> on_dead(endpoint_id, endpoint_state) override { return make_ready_future(); }
+    future<> on_remove(endpoint_id) override { return make_ready_future(); }
+    future<> on_restart(endpoint_id, endpoint_state) override { return make_ready_future(); }
 };
 
 gossiper::gossiper(abort_source& as, feature_service& features, const locator::shared_token_metadata& stm, netw::messaging_service& ms, sharded<db::system_keyspace>& sys_ks, const db::config& cfg, gossip_config gcfg)
@@ -737,7 +737,7 @@ future<> gossiper::remove_endpoint(endpoint_id endpoint) {
     // storage_service might take the gossiper::timer_callback_lock
     (void)seastar::async([this, endpoint] {
         _subscribers.for_each([endpoint] (shared_ptr<i_endpoint_state_change_subscriber> subscriber) {
-            return subscriber->on_remove(endpoint.addr);
+            return subscriber->on_remove(endpoint);
         }).get();
     }).handle_exception([] (auto ep) {
         logger.warn("Fail to call on_remove callback: {}", ep);
@@ -1683,7 +1683,7 @@ future<> gossiper::real_mark_alive(inet_address addr, endpoint_state& local_stat
         logger.info("InetAddress {} is now UP, status = {}", addr, status);
     }
 
-    co_await _subscribers.for_each([addr, state] (shared_ptr<i_endpoint_state_change_subscriber> subscriber) -> future<> {
+    co_await _subscribers.for_each([addr = get_endpoint_id(addr), state] (shared_ptr<i_endpoint_state_change_subscriber> subscriber) -> future<> {
         co_await subscriber->on_alive(addr, state);
         logger.trace("Notified {}", fmt::ptr(subscriber.get()));
     });
@@ -1697,7 +1697,7 @@ future<> gossiper::mark_dead(inet_address addr, endpoint_state& local_state) {
     co_await update_live_endpoints_version();
     _unreachable_endpoints[addr] = now();
     logger.info("InetAddress {} is now DOWN, status = {}", addr, get_gossip_status(state));
-    co_await _subscribers.for_each([addr, state] (shared_ptr<i_endpoint_state_change_subscriber> subscriber) -> future<> {
+    co_await _subscribers.for_each([addr = get_endpoint_id(addr), state] (shared_ptr<i_endpoint_state_change_subscriber> subscriber) -> future<> {
         co_await subscriber->on_dead(addr, state);
         logger.trace("Notified {}", fmt::ptr(subscriber.get()));
     });
@@ -1732,7 +1732,7 @@ future<> gossiper::handle_major_state_change(inet_address ep, const endpoint_sta
 
     if (eps_old) {
         // the node restarted: it is up to the subscriber to take whatever action is necessary
-        co_await _subscribers.for_each([ep, eps_old] (shared_ptr<i_endpoint_state_change_subscriber> subscriber) {
+        co_await _subscribers.for_each([ep = get_endpoint_id(ep), eps_old] (shared_ptr<i_endpoint_state_change_subscriber> subscriber) {
             return subscriber->on_restart(ep, *eps_old);
         });
     }
@@ -1747,7 +1747,7 @@ future<> gossiper::handle_major_state_change(inet_address ep, const endpoint_sta
 
     auto* eps_new = get_endpoint_state_for_endpoint_ptr(ep);
     if (eps_new) {
-        co_await _subscribers.for_each([ep, eps_new] (shared_ptr<i_endpoint_state_change_subscriber> subscriber) {
+        co_await _subscribers.for_each([ep = get_endpoint_id(ep), eps_new] (shared_ptr<i_endpoint_state_change_subscriber> subscriber) {
             return subscriber->on_join(ep, *eps_new);
         });
     }
@@ -1844,19 +1844,19 @@ future<> gossiper::apply_new_states(inet_address addr, endpoint_state& local_sta
     // Some values are set only once, so listeners would never be re-run.
     // Listeners should decide which failures are non-fatal and swallow them.
     for (auto&& key : changed) {
-        co_await do_on_change_notifications(addr, key, remote_map.at(key));
+        co_await do_on_change_notifications(get_endpoint_id(addr), key, remote_map.at(key));
     }
 
     maybe_rethrow_exception(std::move(ep));
 }
 
-future<> gossiper::do_before_change_notifications(inet_address addr, const endpoint_state& ep_state, const application_state& ap_state, const versioned_value& new_value) {
+future<> gossiper::do_before_change_notifications(endpoint_id addr, const endpoint_state& ep_state, const application_state& ap_state, const versioned_value& new_value) {
     co_await _subscribers.for_each([addr, ep_state, ap_state, new_value] (shared_ptr<i_endpoint_state_change_subscriber> subscriber) {
         return subscriber->before_change(addr, ep_state, ap_state, new_value);
     });
 }
 
-future<> gossiper::do_on_change_notifications(inet_address addr, const application_state& state, const versioned_value& value) {
+future<> gossiper::do_on_change_notifications(endpoint_id addr, const application_state& state, const versioned_value& value) {
     co_await _subscribers.for_each([addr, state, value] (shared_ptr<i_endpoint_state_change_subscriber> subscriber) {
         return subscriber->on_change(addr, state, value);
     });
@@ -2184,12 +2184,13 @@ future<> gossiper::add_local_application_state(std::list<std::pair<application_s
 
             endpoint_state ep_state_before = *es;
 
+            auto endpoint = endpoint_id(gossiper.my_host_id(), ep_addr);
             for (auto& p : states) {
                 auto& state = p.first;
                 auto& value = p.second;
                 // Fire "before change" notifications:
                 // Not explicit, but apparently we allow this to defer (inside out implicit seastar::async)
-                gossiper.do_before_change_notifications(ep_addr, ep_state_before, state, value).get();
+                gossiper.do_before_change_notifications(endpoint, ep_state_before, state, value).get();
             }
 
             es = gossiper.get_endpoint_state_for_endpoint_ptr(ep_addr);
@@ -2215,7 +2216,7 @@ future<> gossiper::add_local_application_state(std::list<std::pair<application_s
                 // ensured the whole set of values are monotonically versioned and
                 // applied to endpoint state.
                 gossiper.replicate(ep_addr, state, value).get();
-                gossiper.do_on_change_notifications(ep_addr, state, value).get();
+                gossiper.do_on_change_notifications(endpoint, state, value).get();
             }
         }).handle_exception([] (auto ep) {
             logger.warn("Fail to apply application_state: {}", ep);
