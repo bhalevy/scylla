@@ -45,6 +45,7 @@
 #include <utility>
 #include "gms/generation-number.hh"
 #include "locator/token_metadata.hh"
+#include "repair/repair.hh"
 #include "utils/exceptions.hh"
 #include "utils/fb_utilities.hh"
 
@@ -579,7 +580,7 @@ future<> gossiper::do_apply_state_locally(gms::inet_address addr, endpoint_state
     locator::host_id remote_host_id = remote_state.get_host_id();
     locator::host_id local_host_id;
     auto node = endpoint_id(remote_host_id ? remote_host_id : get_host_id(addr), addr);
-    auto permit = co_await this->lock_endpoint(addr, null_permit_id);
+    auto permit = co_await this->lock_endpoint(node, null_permit_id);
     auto es = this->get_endpoint_state_ptr(node);
     if (es) {
         local_host_id = es->get_host_id();
@@ -599,6 +600,8 @@ future<> gossiper::do_apply_state_locally(gms::inet_address addr, endpoint_state
                     logger.warn("Node {} changed host_id from {} to {}", addr, local_host_id, remote_host_id);
                     co_return co_await this->handle_major_state_change(node, std::move(remote_state), permit.id());
                 }
+            } else if (local_host_id != node.host_id) {
+                throw std::runtime_error(fmt::format("Node {} changed local host_id from {} to {}", addr, node.host_id, local_host_id));
             }
         }
 
@@ -614,7 +617,7 @@ future<> gossiper::do_apply_state_locally(gms::inet_address addr, endpoint_state
                 co_await this->handle_major_state_change(node, std::move(remote_state), permit.id());
             } else {
                 logger.debug("Applying remote_state for node {} (remote generation > local generation)", node);
-                co_await replicate(node, std::move(remote_state), permit.id());
+                co_await replicate(addr, std::move(remote_state), permit.id());
             }
         } else if (remote_generation == local_generation) {
             if (listener_notification) {
@@ -719,41 +722,40 @@ future<> gossiper::force_remove_endpoint(inet_address endpoint, permit_id pid) {
 }
 
 future<> gossiper::remove_endpoint(endpoint_id node, permit_id pid) {
-    const auto& endpoint = node.addr;
-    auto permit = co_await lock_endpoint(node.addr, pid);
+    auto permit = co_await lock_endpoint(node, pid);
     pid = permit.id();
 
     // do subscribers first so anything in the subscriber that depends on gossiper state won't get confused
     try {
-        co_await _subscribers.for_each([endpoint, pid] (shared_ptr<i_endpoint_state_change_subscriber> subscriber) {
-            return subscriber->on_remove(endpoint, pid);
+        co_await _subscribers.for_each([node, pid] (shared_ptr<i_endpoint_state_change_subscriber> subscriber) {
+            return subscriber->on_remove(node.host_id, pid);
         });
     } catch (...) {
         logger.warn("Fail to call on_remove callback: {}", std::current_exception());
     }
 
-    if(_seeds.contains(endpoint)) {
+    if(_seeds.contains(node.addr)) {
         build_seeds_list();
-        _seeds.erase(endpoint);
+        _seeds.erase(node.addr);
         logger.info("removed {} from _seeds, updated _seeds list = {}", node, _seeds);
     }
 
     auto state = get_endpoint_state_ptr(node);
 
     bool was_alive;
-    co_await mutate_live_and_unreachable_endpoints([endpoint, &was_alive] (gossiper& g) {
+    co_await mutate_live_and_unreachable_endpoints([endpoint = node.addr, &was_alive] (gossiper& g) {
         was_alive = g._live_endpoints.erase(endpoint);
         g._unreachable_endpoints.erase(endpoint);
     });
-    _syn_handlers.erase(endpoint);
-    _ack_handlers.erase(endpoint);
-    quarantine_endpoint(endpoint);
+    _syn_handlers.erase(node.addr);
+    _ack_handlers.erase(node.addr);
+    quarantine_endpoint(node.addr);
     logger.info("Removed node {}", node);
 
     if (was_alive && state) {
         try {
             logger.info("Node {} is now DOWN, status = {}", node, get_gossip_status(*state));
-            co_await do_on_dead_notifications(endpoint, std::move(state), pid);
+            co_await do_on_dead_notifications(node, std::move(state), pid);
         } catch (...) {
             logger.warn("Fail to call on_dead callback: {}", std::current_exception());
         }
@@ -1638,6 +1640,18 @@ locator::host_id gossiper::get_host_id(inet_address endpoint, throw_on_error thr
     return host_id;
 }
 
+inet_address gossiper::get_address(locator::host_id host_id, throw_on_error throw_on_error) const {
+    auto addr = host_id_address(host_id);
+    if (addr == inet_address() && throw_on_error) {
+        auto msg = format("Host {} has no inet_address", host_id);
+        logger.warn("{}", msg);
+        if (throw_on_error) {
+            throw std::runtime_error(msg);
+        }
+    }
+    return addr;
+}
+
 std::set<gms::inet_address> gossiper::get_nodes_with_host_id(locator::host_id host_id) const {
     std::set<gms::inet_address> nodes;
     for (const auto& [node, eps] : get_endpoint_states()) {
@@ -1780,6 +1794,8 @@ future<> gossiper::real_mark_alive(endpoint_id node) {
         co_return;
     }
 
+    auto node = endpoint_id(es->get_host_id(), addr);
+
     // Do not mark a node with status shutdown as UP.
     auto status = sstring(get_gossip_status(*es));
     if (status == sstring(versioned_value::SHUTDOWN)) {
@@ -1815,8 +1831,8 @@ future<> gossiper::real_mark_alive(endpoint_id node) {
         logger.info("Node {} is now UP, status = {}", node, status);
     }
 
-    co_await _subscribers.for_each([addr = node.addr, es, pid = permit.id()] (shared_ptr<i_endpoint_state_change_subscriber> subscriber) -> future<> {
-        co_await subscriber->on_alive(addr, es, pid);
+    co_await _subscribers.for_each([node, es, pid = permit.id()] (shared_ptr<i_endpoint_state_change_subscriber> subscriber) -> future<> {
+        co_await subscriber->on_alive(node, es, pid);
         logger.trace("Notified {}", fmt::ptr(subscriber.get()));
     });
 }
@@ -1829,7 +1845,7 @@ future<> gossiper::mark_dead(endpoint_id node, endpoint_state_ptr state, permit_
         g._unreachable_endpoints[addr] = now();
     });
     logger.info("Node {} is now DOWN, status = {}", node, get_gossip_status(*state));
-    co_await do_on_dead_notifications(node.addr, std::move(state), pid);
+    co_await do_on_dead_notifications(node, std::move(state), pid);
 }
 
 future<> gossiper::handle_major_state_change(endpoint_id node, endpoint_state eps, permit_id pid) {
@@ -1859,8 +1875,8 @@ future<> gossiper::handle_major_state_change(endpoint_id node, endpoint_state ep
 
     if (eps_old) {
         // the node restarted: it is up to the subscriber to take whatever action is necessary
-        co_await _subscribers.for_each([ep = node.addr, eps_old, pid] (shared_ptr<i_endpoint_state_change_subscriber> subscriber) {
-            return subscriber->on_restart(ep, eps_old, pid);
+        co_await _subscribers.for_each([node, eps_old, pid] (shared_ptr<i_endpoint_state_change_subscriber> subscriber) {
+            return subscriber->on_restart(node, eps_old, pid);
         });
     }
 
@@ -1877,8 +1893,8 @@ future<> gossiper::handle_major_state_change(endpoint_id node, endpoint_state ep
 
     auto eps_new = get_endpoint_state_ptr(node);
     if (eps_new) {
-        co_await _subscribers.for_each([ep = node.addr, eps_new, pid] (shared_ptr<i_endpoint_state_change_subscriber> subscriber) {
-            return subscriber->on_join(ep, eps_new, pid);
+        co_await _subscribers.for_each([node, eps_new, pid] (shared_ptr<i_endpoint_state_change_subscriber> subscriber) {
+            return subscriber->on_join(node, eps_new, pid);
         });
     }
     // check this at the end so nodes will learn about the endpoint
@@ -1978,7 +1994,7 @@ future<> gossiper::apply_new_states(endpoint_id node, endpoint_state local_state
     // Listeners should decide which failures are non-fatal and swallow them.
     try {
         for (auto&& key: changed) {
-            co_await do_on_change_notifications(addr, key, remote_map.at(key), pid);
+            co_await do_on_change_notifications(node, key, remote_map.at(key), pid);
         }
     } catch (...) {
         auto msg = format("Gossip change listener failed: {}", std::current_exception());
@@ -1992,24 +2008,24 @@ future<> gossiper::apply_new_states(endpoint_id node, endpoint_state local_state
     maybe_rethrow_exception(std::move(ep));
 }
 
-future<> gossiper::do_before_change_notifications(inet_address addr, endpoint_state_ptr ep_state, const application_state& ap_state, const versioned_value& new_value) const {
-    co_await _subscribers.for_each([addr, ep_state, ap_state, new_value] (shared_ptr<i_endpoint_state_change_subscriber> subscriber) {
-        return subscriber->before_change(addr, ep_state, ap_state, new_value);
+future<> gossiper::do_before_change_notifications(endpoint_id node, endpoint_state_ptr ep_state, const application_state& ap_state, const versioned_value& new_value) const {
+    co_await _subscribers.for_each([node, ep_state, ap_state, new_value] (shared_ptr<i_endpoint_state_change_subscriber> subscriber) {
+        return subscriber->before_change(node.host_id, ep_state, ap_state, new_value);
     });
 }
 
-future<> gossiper::do_on_change_notifications(inet_address addr, const application_state& state, const versioned_value& value, permit_id pid) const {
-    co_await _subscribers.for_each([this, addr, state, value, pid] (shared_ptr<i_endpoint_state_change_subscriber> subscriber) {
+future<> gossiper::do_on_change_notifications(endpoint_id node, const application_state& state, const versioned_value& value, permit_id pid) const {
+    co_await _subscribers.for_each([this, node, state, value, pid] (shared_ptr<i_endpoint_state_change_subscriber> subscriber) {
         // Once _abort_source is aborted, don't attempt to process any further notifications
         // because that would violate monotonicity due to partially failed notification.
         _abort_source.check();
-        return subscriber->on_change(addr, state, value, pid);
+        return subscriber->on_change(node.host_id, state, value, pid);
     });
 }
 
-future<> gossiper::do_on_dead_notifications(inet_address addr, endpoint_state_ptr state, permit_id pid) const {
-    co_await _subscribers.for_each([addr, state = std::move(state), pid] (shared_ptr<i_endpoint_state_change_subscriber> subscriber) {
-        return subscriber->on_dead(addr, state, pid);
+future<> gossiper::do_on_dead_notifications(endpoint_id node, endpoint_state_ptr state, permit_id pid) const {
+    co_await _subscribers.for_each([node, state = std::move(state), pid] (shared_ptr<i_endpoint_state_change_subscriber> subscriber) {
+        return subscriber->on_dead(node.host_id, state, pid);
     });
 }
 
@@ -2263,11 +2279,12 @@ void gossiper::build_seeds_list() {
 }
 
 future<> gossiper::add_saved_endpoint(inet_address ep, locator::host_id host_id) {
+    auto node = endpoint_id(host_id, ep);
     if (ep == inet_address() || !host_id) {
-        on_internal_error(logger, format("Cannot add saved endpoint {}/{}", host_id, ep));
+        on_internal_error(logger, format("Cannot add saved endpoint {}", node));
     }
 
-    if (is_me(ep) || is_me(host_id)) {
+    if (is_me(node)) {
         logger.debug("Attempt to add self as saved endpoint");
         co_return;
     }
@@ -2348,7 +2365,7 @@ future<> gossiper::add_local_application_state(std::list<std::pair<application_s
                 auto& value = p.second;
                 // Fire "before change" notifications:
                 // Not explicit, but apparently we allow this to defer (inside out implicit seastar::async)
-                co_await gossiper.do_before_change_notifications(ep_addr, ep_state_before, state, value);
+                co_await gossiper.do_before_change_notifications(node_ops_cmd_request, ep_state_before, state, value);
             }
 
             auto es = gossiper.get_endpoint_state_ptr(node);
@@ -2381,7 +2398,7 @@ future<> gossiper::add_local_application_state(std::list<std::pair<application_s
                 // now we might defer again, so this could be reordered. But we've
                 // ensured the whole set of values are monotonically versioned and
                 // applied to endpoint state.
-                co_await gossiper.do_on_change_notifications(ep_addr, state, value, permit.id());
+                co_await gossiper.do_on_change_notifications(node, state, value, permit.id());
             }
         });
     } catch (...) {
