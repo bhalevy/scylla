@@ -147,6 +147,23 @@ public:
     inet_address get_broadcast_address() const noexcept {
         return utils::fb_utilities::get_broadcast_address();
     }
+    const locator::host_id& my_host_id() const noexcept {
+        return utils::fb_utilities::get_host_id();
+    }
+    endpoint_id my_endpoint_id() const noexcept {
+        return endpoint_id(my_host_id(), utils::fb_utilities::get_broadcast_address());
+    }
+
+    bool is_me(const endpoint_id& endpoint) const noexcept {
+        return is_me(endpoint.host_id) || is_me(endpoint.addr);
+    }
+    bool is_me(const locator::host_id& host_id) const noexcept {
+        return utils::fb_utilities::is_me(host_id);
+    }
+    bool is_me(const inet_address& addr) const noexcept {
+        return utils::fb_utilities::is_me(addr);
+    }
+
     const std::set<inet_address>& get_seeds() const noexcept;
 
 public:

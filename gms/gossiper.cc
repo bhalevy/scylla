@@ -675,7 +675,7 @@ future<> gossiper::apply_state_locally(std::map<inet_address, endpoint_state> ma
     logger.debug("apply_state_locally_endpoints={}", endpoints);
 
     co_await coroutine::parallel_for_each(endpoints, [this, &map] (auto&& ep) -> future<> {
-        if (ep == this->get_broadcast_address() && !this->is_in_shadow_round()) {
+        if (is_me(ep) && !this->is_in_shadow_round()) {
             return make_ready_future<>();
         }
         if (_just_removed_endpoints.contains(ep)) {
@@ -692,7 +692,7 @@ future<> gossiper::apply_state_locally(std::map<inet_address, endpoint_state> ma
 }
 
 future<> gossiper::force_remove_endpoint(inet_address endpoint) {
-    if (endpoint == get_broadcast_address()) {
+    if (is_me(endpoint)) {
         return make_exception_future<>(std::runtime_error(format("Can not force remove node {} itself", endpoint)));
     }
     auto tmptr = get_token_metadata_ptr();
@@ -756,7 +756,7 @@ future<> gossiper::do_status_check() {
     auto now = this->now();
 
     for (const auto& endpoint : get_endpoints()) {
-        if (endpoint == get_broadcast_address()) {
+        if (is_me(endpoint)) {
             continue;
         }
         auto eps = get_endpoint_state_for_endpoint_ptr(endpoint);
@@ -1526,7 +1526,7 @@ generation_type::value_type gossiper::compare_endpoint_startup(inet_address addr
 }
 
 sstring gossiper::get_rpc_address(const inet_address& endpoint) const {
-    if (endpoint != get_broadcast_address()) {
+    if (!is_me(endpoint)) {
         auto* v = get_application_state_ptr(endpoint, gms::application_state::RPC_ADDRESS);
         if (v) {
             return v->value();
@@ -2054,7 +2054,7 @@ future<> gossiper::do_shadow_round(std::unordered_set<gms::inet_address> nodes) 
 
 void gossiper::build_seeds_list() {
     for (inet_address seed : get_seeds() ) {
-        if (seed == get_broadcast_address()) {
+        if (is_me(seed)) {
             continue;
         }
         _seeds.emplace(seed);
@@ -2062,7 +2062,7 @@ void gossiper::build_seeds_list() {
 }
 
 future<> gossiper::add_saved_endpoint(inet_address ep) {
-    if (ep == get_broadcast_address()) {
+    if (is_me(ep)) {
         logger.debug("Attempt to add self as saved endpoint");
         co_return;
     }
@@ -2285,7 +2285,7 @@ void gossiper::dump_endpoint_state_map() {
 }
 
 bool gossiper::is_alive(inet_address ep) const {
-    if (ep == get_broadcast_address()) {
+    if (is_me(ep)) {
         return true;
     }
     auto* eps = get_endpoint_state_for_endpoint_ptr(std::move(ep));
@@ -2519,7 +2519,7 @@ std::set<sstring> gossiper::get_supported_features(const std::unordered_map<gms:
     for (auto& x : _endpoint_state_map) {
         auto endpoint = x.first;
         auto features = get_supported_features(endpoint);
-        if (ignore_local_node && endpoint == get_broadcast_address()) {
+        if (ignore_local_node && is_me(endpoint)) {
             logger.debug("Ignore SUPPORTED_FEATURES of local node: features={}", features);
             continue;
         }
