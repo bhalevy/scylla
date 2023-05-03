@@ -598,9 +598,14 @@ future<> gossiper::do_apply_state_locally(gms::inet_address node, const endpoint
     // If state does not exist just add it. If it does then add it if the remote generation is greater.
     // If there is a generation tie, attempt to break it by heartbeat version.
     auto permit = co_await this->lock_endpoint(node);
+
+    locator::host_id remote_host_id = remote_state.get_host_id();
+    locator::host_id local_host_id;
+
     auto es = this->get_endpoint_state_for_endpoint_ptr(node);
     if (es) {
         endpoint_state& local_state = *es;
+        local_host_id = local_state.get_host_id();
         auto local_generation = local_state.get_heart_beat_state().get_generation();
         auto remote_generation = remote_state.get_heart_beat_state().get_generation();
         logger.trace("{} local generation {}, remote generation {}", node, local_generation, remote_generation);
@@ -655,6 +660,18 @@ future<> gossiper::do_apply_state_locally(gms::inet_address node, const endpoint
             logger.debug("Applying remote_state for node {} (new node)", node);
             _endpoint_state_map[node] = remote_state;
         }
+    }
+
+    if (!remote_host_id) {
+        if (!local_host_id) {
+            logger.warn("Node {} sent null host_id in remote state", node);
+        }
+    } else if (local_host_id) {
+        if (local_host_id != remote_host_id) {
+            logger.warn("Node {} changed host_id from {} to {}", node, local_host_id, remote_host_id);
+        }
+    } else {
+        logger.info("Node {} host_id is {}", node, remote_host_id);
     }
 }
 
