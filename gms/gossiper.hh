@@ -182,6 +182,9 @@ private:
     // Used for serializing changes to _endpoint_state_map and running of associated change listeners.
     endpoint_locks_map _endpoint_locks;
 
+    std::unordered_map<inet_address, locator::host_id> _endpoint_to_host_id_map;
+    std::unordered_map<locator::host_id, inet_address> _host_id_to_endpoint_map;
+
 public:
     const std::vector<sstring> DEAD_STATES = {
         versioned_value::REMOVING_TOKEN,
@@ -251,6 +254,12 @@ private:
     future<> replicate_live_endpoints_on_change();
 
     void run();
+
+    void map_endpoint(const endpoint_id& ep) {
+        _host_id_to_endpoint_map[ep.host_id] = ep.addr;
+        _endpoint_to_host_id_map[ep.addr] = ep.host_id;
+    }
+
     // Replicates given endpoint_state to all other shards.
     // The state state doesn't have to be kept alive around until completes.
     future<> replicate(inet_address, const endpoint_state&);
@@ -442,7 +451,12 @@ public:
 
     std::vector<inet_address> get_endpoints() const;
 
+    // returns null host_id if not found
     locator::host_id get_host_id(inet_address endpoint) const;
+
+    // returns null inet_address if not found
+    inet_address get_address(const locator::host_id& host_id) const;
+
     endpoint_id get_endpoint_id(inet_address endpoint) const;
 
     std::set<gms::inet_address> get_nodes_with_host_id(locator::host_id host_id) const;

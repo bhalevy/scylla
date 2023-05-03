@@ -598,9 +598,14 @@ future<> gossiper::do_apply_state_locally(gms::inet_address node, const endpoint
     // If state does not exist just add it. If it does then add it if the remote generation is greater.
     // If there is a generation tie, attempt to break it by heartbeat version.
     auto permit = co_await this->lock_endpoint(node);
+
+    locator::host_id remote_host_id = remote_state.get_host_id();
+    locator::host_id local_host_id;
+
     auto es = this->get_endpoint_state_for_endpoint_ptr(node);
     if (es) {
         endpoint_state& local_state = *es;
+        local_host_id = local_state.get_host_id();
         auto local_generation = local_state.get_heart_beat_state().get_generation();
         auto remote_generation = remote_state.get_heart_beat_state().get_generation();
         logger.trace("{} local generation {}, remote generation {}", node, local_generation, remote_generation);
@@ -655,6 +660,20 @@ future<> gossiper::do_apply_state_locally(gms::inet_address node, const endpoint
             logger.debug("Applying remote_state for node {} (new node)", node);
             _endpoint_state_map[node] = remote_state;
         }
+    }
+
+    if (!remote_host_id) {
+        logger.warn("Node {} sent null host_id in remote state", node);
+    } else {
+        if (local_host_id) {
+            if (local_host_id != remote_host_id) {
+                logger.warn("Node {} changed host_id from {} to {}", node, local_host_id, remote_host_id);
+            }
+        } else {
+            logger.warn("Node {} host_id is {}", node, remote_host_id);
+        }
+        auto endpoint = endpoint_id(remote_host_id, node);
+        map_endpoint(endpoint);
     }
 }
 
@@ -1161,10 +1180,22 @@ version_type gossiper::get_max_endpoint_state_version(endpoint_state state) cons
 
 future<> gossiper::evict_from_membership(inet_address endpoint) {
     auto permit = co_await lock_endpoint(endpoint);
+    auto host_id = get_host_id(endpoint);
     _unreachable_endpoints.erase(endpoint);
     co_await container().invoke_on_all([endpoint] (auto& g) {
         g._endpoint_state_map.erase(endpoint);
     });
+    // unmap endpoint
+    if (auto it = _host_id_to_endpoint_map.find(host_id); it != _host_id_to_endpoint_map.end()) {
+        if (it->second == endpoint) {
+            _host_id_to_endpoint_map.erase(it);
+        }
+    }
+    if (auto it = _endpoint_to_host_id_map.find(endpoint); it != _endpoint_to_host_id_map.end()) {
+        if (it->second == host_id) {
+            _endpoint_to_host_id_map.erase(it);
+        }
+    }
     _expire_time_endpoint_map.erase(endpoint);
     quarantine_endpoint(endpoint);
     logger.debug("evicting {} from gossip", endpoint);
@@ -1210,23 +1241,32 @@ void gossiper::make_random_gossip_digest(utils::chunked_vector<gossip_digest>& g
 #endif
 }
 
-future<> gossiper::replicate(inet_address ep, const endpoint_state& es) {
+future<> gossiper::replicate(inet_address addr, const endpoint_state& es) {
+    auto ep = get_endpoint_id(addr);
+    map_endpoint(ep);
     return container().invoke_on_others([ep, es, self = shared_from_this()] (gossiper& g) {
-        g._endpoint_state_map[ep].add_application_state(es);
+        g.map_endpoint(ep);
+        g._endpoint_state_map[ep.addr].add_application_state(es);
     });
 }
 
-future<> gossiper::replicate(inet_address ep, const std::map<application_state, versioned_value>& src, const utils::chunked_vector<application_state>& changed) {
+future<> gossiper::replicate(inet_address addr, const std::map<application_state, versioned_value>& src, const utils::chunked_vector<application_state>& changed) {
+    auto ep = get_endpoint_id(addr);
+    map_endpoint(ep);
     return container().invoke_on_others([ep, &src, &changed, self = shared_from_this()] (gossiper& g) {
+        g.map_endpoint(ep);
         for (auto&& key : changed) {
-            g._endpoint_state_map[ep].add_application_state(key, src.at(key));
+            g._endpoint_state_map[ep.addr].add_application_state(key, src.at(key));
         }
     });
 }
 
-future<> gossiper::replicate(inet_address ep, application_state key, const versioned_value& value) {
+future<> gossiper::replicate(inet_address addr, application_state key, const versioned_value& value) {
+    auto ep = get_endpoint_id(addr);
+    map_endpoint(ep);
     return container().invoke_on_others([ep, key, &value, self = shared_from_this()] (gossiper& g) {
-        g._endpoint_state_map[ep].add_application_state(key, value);
+        g.map_endpoint(ep);
+        g._endpoint_state_map[ep.addr].add_application_state(key, value);
     });
 }
 
@@ -1447,7 +1487,27 @@ locator::host_id gossiper::get_host_id(inet_address endpoint) const {
     if (!app_state) {
         throw std::runtime_error(format("Host {} does not have HOST_ID application_state", endpoint));
     }
-    return locator::host_id(utils::UUID(app_state->value()));
+    auto host_id = locator::host_id(utils::UUID(app_state->value()));
+    if (!_endpoint_to_host_id_map.contains(endpoint)) {
+        logger.warn("get_host_id: node {}/{} has no mapped host_id", host_id, endpoint);
+    } else if (host_id != _endpoint_to_host_id_map.at(endpoint)) {
+        logger.warn("get_host_id: node {}/{} has mismatching mapped host_id{}", host_id, endpoint, _endpoint_to_host_id_map.at(endpoint));
+    }
+    return host_id;
+}
+
+inet_address gossiper::get_address(const locator::host_id& host_id) const {
+    if (auto it = _host_id_to_endpoint_map.find(host_id); it != _host_id_to_endpoint_map.end()) {
+        auto addr = it->second;
+        if (addr == inet_address()) {
+            on_internal_error(logger, format("address for {} is null", host_id));
+        }
+        return addr;
+    }
+    if (is_me(host_id)) {
+        return get_broadcast_address();
+    }
+    return inet_address();
 }
 
 gms::endpoint_id gossiper::get_endpoint_id(inet_address endpoint) const {
@@ -2072,9 +2132,10 @@ future<> gossiper::add_saved_endpoint(inet_address ep, locator::host_id host_id)
     ep_state.add_application_state(gms::application_state::HOST_ID, versioned_value::host_id(host_id));
     ep_state.mark_dead();
     _endpoint_state_map[ep] = ep_state;
+    map_endpoint(node);
     co_await replicate(ep, ep_state);
     _unreachable_endpoints[ep] = now();
-    logger.info("Adding saved endpoint {}: generation={}", ep, ep_state.get_heart_beat_state().get_generation());
+    logger.info("Adding saved endpoint {}: generation={}", node, ep_state.get_heart_beat_state().get_generation());
 }
 
 future<> gossiper::add_local_application_state(application_state state, versioned_value value) {
