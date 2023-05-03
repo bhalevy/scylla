@@ -424,13 +424,19 @@ future<> gossiper::handle_echo_msg(msg_addr from, std::optional<int64_t> generat
                     auto current_generation_number = generation_number_opt ?
                             generation_type(generation_number_opt.value()) : es->get_heart_beat_state().get_generation();
                     respond = saved_generation_number == current_generation_number;
-                    logger.debug("handle_echo_msg: from={}, saved_generation_number={}, current_generation_number={}",
+                    logger.log(respond ? log_level::debug : log_level::warn, "handle_echo_msg: from={}, saved_generation_number={}, current_generation_number={}",
                             from, saved_generation_number, current_generation_number);
+                } else {
+                    logger.warn("handle_echo_msg: endpoint_state not found for node {}", from);
                 }
+            } else {
+                logger.warn("handle_echo_msg: node {} is not in advertise_to_nodes={}", from, _advertise_to_nodes);
             }
         } else {
             respond = true;
         }
+    } else {
+        logger.warn("handle_echo_msg: advertise_myself=false");
     }
     if (!respond) {
         return make_exception_future(std::runtime_error("Not ready to respond gossip echo message"));
