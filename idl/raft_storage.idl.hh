@@ -9,7 +9,6 @@
 #include "raft/raft.hh"
 
 #include "idl/uuid.idl.hh"
-#include "idl/utils.idl.hh"
 
 namespace raft {
 
@@ -21,6 +20,18 @@ struct tagged_id {
 };
 
 } // namespace internal
+
+struct term_t {
+    uint64_t value();
+};
+
+struct index_t {
+    uint64_t value();
+};
+
+struct read_id {
+    uint64_t value();
+};
 
 struct server_address {
     raft::server_id id;
