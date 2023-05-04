@@ -20,6 +20,11 @@ struct tagged_id {
     utils::UUID id;
 };
 
+template<typename Tag>
+struct tagged_uint64 {
+    uint64_t value();
+};
+
 } // namespace internal
 
 struct server_address {
