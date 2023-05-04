@@ -347,7 +347,7 @@ private:
             sharded<db::system_distributed_keyspace>& sys_dist_ks,
             sharded<service::storage_proxy>& proxy,
             std::unordered_set<gms::inet_address> initial_contact_nodes,
-            std::unordered_set<gms::inet_address> loaded_endpoints,
+            std::unordered_map<gms::inet_address, locator::host_id> loaded_endpoints,
             std::unordered_map<gms::inet_address, sstring> loaded_peer_features,
             std::chrono::milliseconds, cql3::query_processor& qp);
     future<> start_sys_dist_ks();
