@@ -1429,11 +1429,6 @@ std::vector<inet_address> gossiper::get_endpoints() const {
     return boost::copy_range<std::vector<inet_address>>(_endpoint_state_map | boost::adaptors::map_keys);
 }
 
-bool gossiper::uses_host_id(inet_address endpoint) const {
-    return _messaging.knows_version(endpoint) ||
-            get_application_state_ptr(endpoint, application_state::NET_VERSION);
-}
-
 bool gossiper::is_cql_ready(const inet_address& endpoint) const {
     // Note:
     // - New scylla node always send application_state::RPC_READY = false when
@@ -1454,9 +1449,6 @@ bool gossiper::is_cql_ready(const inet_address& endpoint) const {
 }
 
 locator::host_id gossiper::get_host_id(inet_address endpoint) const {
-    if (!uses_host_id(endpoint)) {
-        throw std::runtime_error(format("Host {} does not use new-style tokens!", endpoint));
-    }
     auto app_state = get_application_state_ptr(endpoint, application_state::HOST_ID);
     if (!app_state) {
         throw std::runtime_error(format("Host {} does not have HOST_ID application_state", endpoint));

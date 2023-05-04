@@ -442,8 +442,6 @@ public:
 
     std::vector<inet_address> get_endpoints() const;
 
-    bool uses_host_id(inet_address endpoint) const;
-
     locator::host_id get_host_id(inet_address endpoint) const;
     endpoint_id get_endpoint_id(inet_address endpoint) const;
 
