@@ -3962,10 +3962,12 @@ future<> storage_service::join_cluster(sharded<db::system_distributed_keyspace>&
                 locator::host_id host_id;
                 if (loaded_host_ids.contains(ep)) {
                     host_id = loaded_host_ids.at(ep);
+                    if (!host_id) {
+                        on_internal_error(slogger, format("Cannot load node {}: null host_id in system.peers table", ep));
+                    }
                     tmptr->update_host_id(host_id, ep);
-                }
-                if (!host_id) {
-                    slogger.warn("Loaded node {} has null host_id", ep);
+                } else {
+                    on_internal_error(slogger, format("Cannot load node {}: host_id not found", ep));
                 }
                 loaded_endpoints.emplace(ep, host_id);
                 co_await _gossiper.add_saved_endpoint(ep);
