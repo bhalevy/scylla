@@ -1470,10 +1470,8 @@ gms::endpoint_id gossiper::get_endpoint_id(inet_address endpoint) const {
 
 std::set<gms::inet_address> gossiper::get_nodes_with_host_id(locator::host_id host_id) const {
     std::set<gms::inet_address> nodes;
-    for (auto& x : _endpoint_state_map) {
-        auto node = x.first;
-        auto app_state = get_application_state_ptr(node, application_state::HOST_ID);
-        if (app_state && host_id == locator::host_id(utils::UUID(app_state->value()))) {
+    for (const auto& [node, eps] : _endpoint_state_map) {
+        if (host_id == eps.get_host_id()) {
             nodes.insert(node);
         }
     }

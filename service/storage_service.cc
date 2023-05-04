@@ -1506,7 +1506,7 @@ future<> storage_service::join_token_ring(cdc::generation_service& cdc_gen_servi
         auto endpoint = get_broadcast_address();
         auto eps = _gossiper.get_endpoint_state_for_endpoint_ptr(endpoint);
         if (eps) {
-            auto replace_host_id = _gossiper.get_host_id(get_broadcast_address());
+            auto replace_host_id = eps->get_host_id();
             slogger.info("Host {}/{} is replacing {}/{} using the same address", local_host_id, endpoint, replace_host_id, endpoint);
         }
         tmptr->update_host_id(local_host_id, get_broadcast_address());
