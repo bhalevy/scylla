@@ -1464,7 +1464,7 @@ future<> storage_service::join_token_ring(cdc::generation_service& cdc_gen_servi
         }
         co_await _gossiper.reset_endpoint_state_map();
         for (const auto& [ep, host_id] : loaded_endpoints) {
-            co_await _gossiper.add_saved_endpoint(ep);
+            co_await _gossiper.add_saved_endpoint(ep, host_id);
         }
     }
     auto features = _feature_service.supported_feature_set();
@@ -2645,7 +2645,7 @@ future<> storage_service::join_cluster(cdc::generation_service& cdc_gen_service,
                         slogger.warn("Loaded node {} has null host_id", ep);
                     }
                     loaded_endpoints.emplace(ep, host_id);
-                    _gossiper.add_saved_endpoint(ep).get();
+                    _gossiper.add_saved_endpoint(ep, host_id).get();
                 }
             }
             replicate_to_all_cores(std::move(tmptr)).get();

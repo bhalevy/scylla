@@ -2051,18 +2051,22 @@ void gossiper::build_seeds_list() {
     }
 }
 
-future<> gossiper::add_saved_endpoint(inet_address ep) {
-    if (is_me(ep)) {
+future<> gossiper::add_saved_endpoint(inet_address ep, locator::host_id host_id) {
+    if (is_me(ep) || is_me(host_id)) {
         logger.debug("Attempt to add self as saved endpoint");
         co_return;
     }
+    if (ep == inet_address() || !host_id) {
+        on_internal_error(logger, format("Cannot add saved endpoint {}/{}", host_id, ep));
+    }
+    auto node = endpoint_id(host_id, ep);
 
     //preserve any previously known, in-memory data about the endpoint (such as DC, RACK, and so on)
     auto ep_state = endpoint_state();
     auto es = get_endpoint_state_for_endpoint_ptr(ep);
     if (es) {
         ep_state = *es;
-        logger.debug("not replacing a previous ep_state for {}, but reusing it: {}", ep, ep_state);
+        logger.debug("not replacing a previous ep_state for {}, but reusing it: {}", node, ep_state);
         ep_state.set_heart_beat_state_and_update_timestamp(heart_beat_state());
     }
     const auto tmptr = get_token_metadata_ptr();
@@ -2071,15 +2075,12 @@ future<> gossiper::add_saved_endpoint(inet_address ep) {
         std::unordered_set<dht::token> tokens_set(tokens.begin(), tokens.end());
         ep_state.add_application_state(gms::application_state::TOKENS, versioned_value::tokens(tokens_set));
     }
-    auto host_id = tmptr->get_host_id_if_known(ep);
-    if (host_id) {
-        ep_state.add_application_state(gms::application_state::HOST_ID, versioned_value::host_id(host_id.value()));
-    }
+    ep_state.add_application_state(gms::application_state::HOST_ID, versioned_value::host_id(host_id));
     ep_state.mark_dead();
     _endpoint_state_map[ep] = ep_state;
     co_await replicate(ep, ep_state);
     _unreachable_endpoints[ep] = now();
-    logger.trace("Adding saved endpoint {} {}", ep, ep_state.get_heart_beat_state().get_generation());
+    logger.info("Adding saved endpoint {}: generation={}", ep, ep_state.get_heart_beat_state().get_generation());
 }
 
 future<> gossiper::add_local_application_state(application_state state, versioned_value value) {
