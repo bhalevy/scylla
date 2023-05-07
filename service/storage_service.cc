@@ -1458,7 +1458,7 @@ future<> storage_service::join_token_ring(cdc::generation_service& cdc_gen_servi
         // Check if the node is already removed from the cluster
         auto local_host_id = _db.local().get_config().host_id;
         auto my_ip = get_broadcast_address();
-        if (!_gossiper.is_safe_for_restart(my_ip, local_host_id)) {
+        if (!_gossiper.is_safe_for_restart()) {
             throw std::runtime_error(::format("The node {} with host_id {} is removed from the cluster. Can not restart the removed node to join the cluster again!",
                     my_ip, local_host_id));
         }
@@ -2805,7 +2805,7 @@ future<> storage_service::check_for_endpoint_collision(std::unordered_set<gms::i
             _gossiper.check_knows_remote_features(local_features, loaded_peer_features);
             _gossiper.check_snitch_name_matches(_snitch.local()->get_name());
             auto addr = get_broadcast_address();
-            if (!_gossiper.is_safe_for_bootstrap(addr)) {
+            if (!_gossiper.is_safe_for_bootstrap()) {
                 throw std::runtime_error(::format("A node with address {} already exists, cancelling join. "
                     "Use replace_address if you want to replace this node.", addr));
             }
