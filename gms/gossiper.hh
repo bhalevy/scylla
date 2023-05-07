@@ -391,8 +391,8 @@ public:
     future<version_type> get_current_heart_beat_version(inet_address endpoint);
 
     bool is_gossip_only_member(inet_address endpoint);
-    bool is_safe_for_bootstrap(inet_address endpoint);
-    bool is_safe_for_restart(inet_address endpoint, locator::host_id host_id);
+    bool is_safe_for_bootstrap();
+    bool is_safe_for_restart();
 private:
     /**
      * Returns true if the chosen target was also a seed. False otherwise
