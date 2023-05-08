@@ -1602,6 +1602,51 @@ bool compaction_manager::requires_cleanup(table_state& t, const sstables::shared
 }
 
 future<> compaction_manager::perform_cleanup(owned_ranges_ptr sorted_owned_ranges, table_state& t) {
+    constexpr auto sleep_duration = std::chrono::seconds(1);
+    constexpr auto max_idle_duration = std::chrono::seconds(300);
+
+    size_t eligible = 1;    // try_perform_cleanup first time around
+    std::optional<seastar::lowres_clock::time_point> last_idle;
+
+    for (;;) {
+        if (eligible) {
+            co_await try_perform_cleanup(sorted_owned_ranges, t);
+        }
+
+        auto& cs = get_compaction_state(&t);
+        if (cs.sstables_requiring_cleanup.empty()) {
+            co_return;
+        }
+
+        eligible = 0;
+        for (const auto& sst : cs.sstables_requiring_cleanup) {
+            if (sstables::is_eligible_for_compaction(sst)) {
+                ++eligible;
+            }
+            co_await coroutine::maybe_yield();
+        }
+        if (!eligible) {
+            if (last_idle) {
+                auto idle = seastar::lowres_clock::now() - *last_idle;
+                if (idle >= max_idle_duration) {
+                    auto msg = ::format("Cleanup timed out after {} seconds of no progress", std::chrono::duration_cast<std::chrono::seconds>(idle).count());
+                    cmlog.warn("{}", msg);
+                    co_await coroutine::return_exception(std::runtime_error(msg));
+                }
+            } else {
+                last_idle = seastar::lowres_clock::now();
+            }
+
+            cmlog.debug("perform_cleanup: waiting for sstables to become eligible for cleanup");
+            // FIXME: wait for a signal from view update builder
+            co_await sleep(sleep_duration);
+        } else {
+            last_idle.reset();
+        }
+    }
+}
+
+future<> compaction_manager::try_perform_cleanup(owned_ranges_ptr sorted_owned_ranges, table_state& t) {
     auto check_for_cleanup = [this, &t] {
         return boost::algorithm::any_of(_tasks, [&t] (auto& task) {
             return task->compacting_table() == &t && task->type() == sstables::compaction_type::Cleanup;
