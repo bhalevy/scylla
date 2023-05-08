@@ -1615,17 +1615,26 @@ future<> compaction_manager::perform_cleanup(owned_ranges_ptr sorted_owned_range
         throw std::runtime_error("cleanup request failed: sorted_owned_ranges is empty");
     }
 
+    co_await run_with_compaction_disabled(t, [this, &t, sorted_owned_ranges] () -> future<> {
+        auto update_sstables_cleanup_state = [&] (const sstables::sstable_set& set) {
+            return set.for_each_sstable_gently([&] (const sstables::shared_sstable& sst) {
+                update_sstable_cleanup_state(t, sst, *sorted_owned_ranges);
+                return make_ready_future<>();
+            });
+        };
+        co_await update_sstables_cleanup_state(t.main_sstable_set());
+        co_await update_sstables_cleanup_state(t.maintenance_sstable_set());
+    });
+
+    auto& cs = get_compaction_state(&t);
+    if (cs.sstables_requiring_cleanup.empty()) {
+        cmlog.debug("perform_cleanup for {} found no sstables requiring cleanup", t);
+        co_return;
+    }
+
     // Called with compaction_disabled
     auto get_sstables = [this, &t, sorted_owned_ranges] () -> future<std::vector<sstables::shared_sstable>> {
         return seastar::async([this, &t, sorted_owned_ranges = std::move(sorted_owned_ranges)] {
-            auto update_sstables_cleanup_state = [&] (const sstables::sstable_set& set) {
-                set.for_each_sstable([&] (const sstables::shared_sstable& sst) {
-                    update_sstable_cleanup_state(t, sst, *sorted_owned_ranges);
-                    seastar::thread::maybe_yield();
-                });
-            };
-            update_sstables_cleanup_state(t.main_sstable_set());
-            update_sstables_cleanup_state(t.maintenance_sstable_set());
             // Some sstables may remain in sstables_requiring_cleanup
             // for later processing if they can't be cleaned up right now.
             // They are erased from sstables_requiring_cleanup by compacting.release_compacting
