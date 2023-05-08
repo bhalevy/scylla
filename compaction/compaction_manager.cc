@@ -1602,7 +1602,7 @@ bool compaction_manager::requires_cleanup(table_state& t, const sstables::shared
 }
 
 future<> compaction_manager::perform_cleanup(owned_ranges_ptr sorted_owned_ranges, table_state& t) {
-    constexpr auto sleep_duration = std::chrono::seconds(1);
+    constexpr auto sleep_duration = std::chrono::seconds(10);
     constexpr auto max_idle_duration = std::chrono::seconds(300);
 
     size_t eligible = 1;    // try_perform_cleanup first time around
@@ -1638,8 +1638,7 @@ future<> compaction_manager::perform_cleanup(owned_ranges_ptr sorted_owned_range
             }
 
             cmlog.debug("perform_cleanup: waiting for sstables to become eligible for cleanup");
-            // FIXME: wait for a signal from view update builder
-            co_await sleep(sleep_duration);
+            co_await t.get_staging_condition().when(sleep_duration);
         } else {
             last_idle.reset();
         }
