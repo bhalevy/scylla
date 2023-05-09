@@ -160,6 +160,15 @@ public:
         return host_id;
     }
 
+    inet_address get_address() const noexcept {
+        inet_address addr;
+        auto* app_state = get_application_state_ptr(application_state::RPC_ADDRESS);
+        if (app_state) {
+            addr = inet_address(app_state->value());
+        }
+        return addr;
+    }
+
     bool is_shutdown() const noexcept {
         return get_status() == versioned_value::SHUTDOWN;
     }
