@@ -629,7 +629,6 @@ public:
     bool is_normal_ring_member(const inet_address& endpoint) const;
     bool is_cql_ready(const inet_address& endpoint) const;
     bool is_silent_shutdown_state(const endpoint_state& ep_state) const;
-    future<> mark_as_shutdown(const inet_address& endpoint);
     void force_newer_generation();
 public:
     std::string_view get_gossip_status(const endpoint_state& ep_state) const noexcept;
@@ -638,6 +637,7 @@ public:
     future<> wait_for_gossip_to_settle();
     future<> wait_for_range_setup();
 private:
+    future<> mark_as_shutdown(const inet_address& endpoint);
     future<> wait_for_gossip(std::chrono::milliseconds, std::optional<int32_t> = {});
 
     uint64_t _nr_run = 0;
