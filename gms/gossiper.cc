@@ -1211,28 +1211,22 @@ void gossiper::make_random_gossip_digest(utils::chunked_vector<gossip_digest>& g
 }
 
 future<> gossiper::replicate(inet_address ep, const endpoint_state& es) {
-    return container().invoke_on_all([ep, es, orig = this_shard_id(), self = shared_from_this()] (gossiper& g) {
-        if (this_shard_id() != orig) {
+    return container().invoke_on_others([ep, es, self = shared_from_this()] (gossiper& g) {
             g._endpoint_state_map[ep].add_application_state(es);
-        }
     });
 }
 
 future<> gossiper::replicate(inet_address ep, const std::map<application_state, versioned_value>& src, const utils::chunked_vector<application_state>& changed) {
-    return container().invoke_on_all([ep, &src, &changed, orig = this_shard_id(), self = shared_from_this()] (gossiper& g) {
-        if (this_shard_id() != orig) {
+    return container().invoke_on_others([ep, &src, &changed, self = shared_from_this()] (gossiper& g) {
             for (auto&& key : changed) {
                 g._endpoint_state_map[ep].add_application_state(key, src.at(key));
             }
-        }
     });
 }
 
 future<> gossiper::replicate(inet_address ep, application_state key, const versioned_value& value) {
-    return container().invoke_on_all([ep, key, &value, orig = this_shard_id(), self = shared_from_this()] (gossiper& g) {
-        if (this_shard_id() != orig) {
+    return container().invoke_on_others([ep, key, &value, self = shared_from_this()] (gossiper& g) {
             g._endpoint_state_map[ep].add_application_state(key, value);
-        }
     });
 }
 
