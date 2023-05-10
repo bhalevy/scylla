@@ -123,6 +123,10 @@ public:
         return _bootstrap_tokens;
     }
 
+    void update_topology(host_id id, inet_address ep, endpoint_dc_rack dr, std::optional<node::state> opt_st) {
+        _topology.add_or_update_endpoint(id, ep, std::move(dr), std::move(opt_st));
+    }
+
     void update_topology(inet_address ep, endpoint_dc_rack dr, std::optional<node::state> opt_st) {
         _topology.add_or_update_endpoint(ep, std::move(dr), std::move(opt_st));
     }
@@ -1027,6 +1031,11 @@ token_metadata::get_leaving_endpoints() const {
 const std::unordered_map<token, inet_address>&
 token_metadata::get_bootstrap_tokens() const {
     return _impl->get_bootstrap_tokens();
+}
+
+void
+token_metadata::update_topology(host_id host_id, inet_address ep, endpoint_dc_rack dr, std::optional<node::state> opt_st) {
+    _impl->update_topology(host_id, ep, std::move(dr), std::move(opt_st));
 }
 
 void

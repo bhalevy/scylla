@@ -424,6 +424,26 @@ const node* topology::find_node(node::idx_type idx) const noexcept {
     return _nodes.at(idx).get();
 }
 
+const node* topology::add_or_update_endpoint(host_id id, std::optional<inet_address> opt_ep, std::optional<endpoint_dc_rack> opt_dr, std::optional<node::state> opt_st)
+{
+    if (tlogger.is_enabled(log_level::trace)) {
+        tlogger.trace("topology[{}]: add_or_update_endpoint: host_id={} ep={} dc={} rack={} state={}, at {}", fmt::ptr(this),
+            id, opt_ep.value_or(inet_address{}), opt_dr.value_or(endpoint_dc_rack{}).dc, opt_dr.value_or(endpoint_dc_rack{}).rack, opt_st.value_or(node::state::none),
+            current_backtrace());
+    }
+    auto n = find_node(id);
+    if (n) {
+        return update_node(make_mutable(n), std::nullopt, std::move(opt_ep), std::move(opt_dr), std::move(opt_st));
+    } else if (opt_ep && (n = find_node(*opt_ep))) {
+        return update_node(make_mutable(n), std::move(id), std::nullopt, std::move(opt_dr), std::move(opt_st));
+    } else {
+        if (!opt_ep) {
+            on_internal_error(tlogger, format("add_or_update_endpoint: host_id={}: opt_ep must be engaged", id));
+        }
+        return add_node(id, *opt_ep, opt_dr.value_or(endpoint_dc_rack::default_location), opt_st.value_or(node::state::normal));
+    }
+}
+
 const node* topology::add_or_update_endpoint(inet_address ep, std::optional<host_id> opt_id, std::optional<endpoint_dc_rack> opt_dr, std::optional<node::state> opt_st)
 {
     if (tlogger.is_enabled(log_level::trace)) {
