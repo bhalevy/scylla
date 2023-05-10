@@ -317,7 +317,11 @@ void topology::index_node(const node* node) {
     if (node->endpoint()) {
         auto eit = _nodes_by_endpoint.find(node->endpoint());
         if (eit != _nodes_by_endpoint.end()) {
-            if (eit->second->is_leaving() || eit->second->left()) {
+            // When replacing a node with the same address (and different host_id),
+            // erase the existing entry before emplacing the indexed `node` below.
+            if (eit->second->host_id() != node->host_id() && eit->second->host_id() && node->host_id()) {
+                _nodes_by_endpoint.erase(eit);
+            } else if (eit->second->is_leaving() || eit->second->left()) {
                 _nodes_by_endpoint.erase(node->endpoint());
             } else if (!node->is_leaving() && !node->left()) {
                 if (node->host_id()) {
@@ -448,7 +452,7 @@ const node* topology::add_or_update_endpoint(host_id id, std::optional<inet_addr
     auto n = find_node(id);
     if (n) {
         return update_node(make_mutable(n), std::nullopt, std::move(opt_ep), std::move(opt_dr), std::move(opt_st), std::move(shard_count));
-    } else if (opt_ep && (n = find_node(*opt_ep))) {
+    } else if (opt_ep && (n = find_node(*opt_ep)) && (n->host_id() == id || !n->host_id())) {
         return update_node(make_mutable(n), std::move(id), std::nullopt, std::move(opt_dr), std::move(opt_st), std::move(shard_count));
     } else {
         if (!opt_ep) {
