@@ -2367,7 +2367,7 @@ future<> storage_service::on_alive(gms::endpoint_id node, gms::endpoint_state st
             co_await handle_state_replacing_update_pending_ranges(tmptr, endpoint);
         }
         if (!is_normal_token_owner) {
-            tmptr->update_topology(endpoint, get_dc_rack_for(endpoint));
+            tmptr->update_topology(node.host_id, node.addr, get_dc_rack_for(endpoint));
         }
         co_await replicate_to_all_cores(std::move(tmptr));
     }
@@ -2639,16 +2639,17 @@ future<> storage_service::join_cluster(cdc::generation_service& cdc_gen_service,
                     // entry has been mistakenly added, delete it
                     _sys_ks.local().remove_endpoint(ep).get();
                 } else {
-                    tmptr->update_topology(ep, get_dc_rack(ep), locator::node::state::normal);
-                    tmptr->update_normal_tokens(tokens, ep).get();
                     locator::host_id host_id;
                     if (loaded_host_ids.contains(ep)) {
                         host_id = loaded_host_ids.at(ep);
-                        tmptr->update_host_id(host_id, ep);
                     }
                     if (!host_id) {
                         slogger.warn("Loaded node {} has null host_id", ep);
+                        tmptr->update_topology(ep, get_dc_rack(ep), locator::node::state::normal);
+                    } else {
+                        tmptr->update_topology(host_id, ep, get_dc_rack(ep), locator::node::state::normal);
                     }
+                    tmptr->update_normal_tokens(tokens, ep).get();
                     loaded_endpoints.emplace(ep, host_id);
                     _gossiper.add_saved_endpoint(ep, host_id).get();
                 }
