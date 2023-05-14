@@ -168,19 +168,10 @@ public:
 
 public:
     static clk::time_point inline now() noexcept { return clk::now(); }
-public:
-    using endpoint_locks_map = utils::loading_shared_values<inet_address, semaphore>;
-    struct endpoint_permit {
-        endpoint_locks_map::entry_ptr _ptr;
-        semaphore_units<> _units;
-    };
-    future<endpoint_permit> lock_endpoint(inet_address);
 
 private:
     /* map where key is the endpoint and value is the state associated with the endpoint */
-    std::unordered_map<inet_address, endpoint_state> _endpoint_state_map;
-    // Used for serializing changes to _endpoint_state_map and running of associated change listeners.
-    endpoint_locks_map _endpoint_locks;
+    endpoint_state_map _endpoint_state_map;
 
     std::unordered_map<inet_address, locator::host_id> _endpoint_to_host_id_map;
     std::unordered_map<locator::host_id, inet_address> _host_id_to_endpoint_map;
@@ -426,7 +417,9 @@ public:
     endpoint_state& get_endpoint_state(const endpoint_id& ep) {
         return get_endpoint_state(ep.addr);
     }
-    endpoint_state& get_endpoint_state(inet_address ep);
+    endpoint_state& get_endpoint_state(inet_address ep) {
+        return _endpoint_state_map.at(ep);
+    }
 
     endpoint_state* get_endpoint_state_for_endpoint_ptr(const endpoint_id& ep) noexcept {
         return get_endpoint_state_for_endpoint_ptr(ep.addr);
@@ -453,23 +446,18 @@ public:
     template <typename Func>
     requires std::same_as<std::invoke_result_t<Func, inet_address, endpoint_state>, void>
     void for_each_endpoint_state(Func func) const {
-        for (const auto& [ep, eps] : _endpoint_state_map) {
-            func(ep, eps);
-        }
+        _endpoint_state_map.do_for_each(std::forward<Func>(func));
     }
 
     template <typename Func>
     requires std::same_as<std::invoke_result_t<Func, inet_address, endpoint_state>, stop_iteration>
     stop_iteration for_each_endpoint_state(Func func) const {
-        for (const auto& [ep, eps] : _endpoint_state_map) {
-            if (func(ep, eps) == stop_iteration::yes) {
-                return stop_iteration::yes;
-            }
-        }
-        return stop_iteration::no;
+        return _endpoint_state_map.do_for_each(std::forward<Func>(func));
     }
 
-    std::vector<inet_address> get_endpoints() const;
+    std::vector<inet_address> get_endpoints() const {
+        return _endpoint_state_map.get_endpoints();
+    }
 
     // returns null host_id if not found
     locator::host_id get_host_id(inet_address endpoint) const;
@@ -706,6 +694,8 @@ private:
     utils::updateable_value<uint32_t> _failure_detector_timeout_ms;
     utils::updateable_value<int32_t> _force_gossip_generation;
     gossip_config _gcfg;
+    std::set<sstring> get_supported_features(const versioned_value* app_state) const;
+    std::set<sstring> get_supported_features(const endpoint_state* eps) const;
     // Get features supported by a particular node
     std::set<sstring> get_supported_features(inet_address endpoint) const;
     // Get features supported by all the nodes this node knows about

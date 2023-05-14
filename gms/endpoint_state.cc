@@ -8,6 +8,10 @@
  * SPDX-License-Identifier: (AGPL-3.0-or-later and Apache-2.0)
  */
 
+#include <boost/range/adaptors.hpp>
+
+#include <seastar/core/coroutine.hh>
+
 #include "gms/endpoint_state.hh"
 #include <optional>
 #include <ostream>
@@ -54,4 +58,72 @@ bool endpoint_state::is_cql_ready() const noexcept {
     }
 }
 
+std::vector<inet_address> endpoint_state_map::get_endpoints() const {
+    return boost::copy_range<std::vector<inet_address>>(_state_by_address | boost::adaptors::map_keys);
 }
+
+const endpoint_state* endpoint_state_map::get_ptr(inet_address addr) const noexcept {
+    auto it = _state_by_address.find(addr);
+    if (it != _state_by_address.end()) {
+        return &it->second;
+    }
+    return nullptr;
+}
+
+endpoint_state* endpoint_state_map::get_ptr(inet_address addr) noexcept {
+    auto it = _state_by_address.find(addr);
+    if (it != _state_by_address.end()) {
+        return &it->second;
+    }
+    return nullptr;
+}
+
+const endpoint_state& endpoint_state_map::at(inet_address addr) const {
+    auto it = _state_by_address.find(addr);
+    if (it != _state_by_address.end()) {
+        return it->second;
+    }
+    throw std::out_of_range(format("endpoint state not found for address={}", addr));
+}
+
+endpoint_state& endpoint_state_map::at(inet_address addr) {
+    auto it = _state_by_address.find(addr);
+    if (it != _state_by_address.end()) {
+        return it->second;
+    }
+    throw std::out_of_range(format("endpoint state not found for address={}", addr));
+}
+
+endpoint_state& endpoint_state_map::get_or_create(inet_address addr) {
+    auto it = _state_by_address.find(addr);
+    if (it == _state_by_address.end()) {
+        auto eps = endpoint_state();
+        it = _state_by_address.emplace(addr, std::move(eps)).first;
+    }
+    return it->second;
+}
+
+endpoint_state& endpoint_state_map::set(inet_address addr, endpoint_state&& eps) {
+    auto it = _state_by_address.find(addr);
+    if (it == _state_by_address.end()) {
+        it = _state_by_address.emplace(addr, std::move(eps)).first;
+    } else {
+        it->second = std::move(eps);
+    }
+    return it->second;
+}
+
+future<endpoint_state_map::endpoint_permit> endpoint_state_map::lock_endpoint(inet_address addr) {
+    endpoint_permit permit;
+
+    permit.global_holder = co_await _lock.hold_read_lock();
+    auto it = _address_locks.find(addr);
+    if (it == _address_locks.end()) {
+        it = _address_locks.emplace(addr, 1).first;
+    }
+    permit.address_lock_holder = co_await get_units(it->second, 1);
+
+    co_return permit;
+}
+
+} // namespace gms

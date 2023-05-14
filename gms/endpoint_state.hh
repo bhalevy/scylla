@@ -10,10 +10,14 @@
 
 #pragma once
 
+#include <seastar/core/coroutine.hh>
+#include <seastar/core/rwlock.hh>
+
 #include "utils/serialization.hh"
 #include "gms/heart_beat_state.hh"
 #include "gms/application_state.hh"
 #include "gms/versioned_value.hh"
+#include "utils/stall_free.hh"
 #include <optional>
 #include <chrono>
 
@@ -184,6 +188,103 @@ public:
     bool is_cql_ready() const noexcept;
 
     friend std::ostream& operator<<(std::ostream& os, const endpoint_state& x);
+};
+
+class endpoint_state_map {
+    std::unordered_map<inet_address, endpoint_state> _state_by_address;
+    rwlock _lock;
+
+    std::unordered_map<inet_address, semaphore> _address_locks;
+    struct endpoint_permit {
+        rwlock::holder global_holder;
+        semaphore_units<> address_lock_holder;
+    };
+
+public:
+    endpoint_state_map() = default;
+
+    size_t size() const noexcept {
+        return _state_by_address.size();
+    }
+
+    bool contains(inet_address addr) const noexcept {
+        return _state_by_address.contains(addr);
+    }
+
+    // Return std:out_of_range if not found
+    const endpoint_state* get_ptr(inet_address addr) const noexcept;
+    endpoint_state* get_ptr(inet_address addr) noexcept;
+
+    // Throw std:out_of_range if not found
+    const endpoint_state& at(inet_address addr) const;
+    endpoint_state& at(inet_address addr);
+
+    // Get an existing endpoint_state or create a new one and get it.
+    endpoint_state& get_or_create(inet_address addr);
+
+    // Set endpoint_state.
+    endpoint_state& set(inet_address addr, endpoint_state&& eps);
+
+    // Erase endpoint_state, return true iff found and erased.
+    bool erase(inet_address addr) {
+        return _state_by_address.erase(addr);
+    }
+
+    // Should be called with write lock
+    future<> clear_gently() noexcept {
+        co_await utils::clear_gently(_address_locks);
+        co_await utils::clear_gently(_state_by_address);
+    }
+
+    std::vector<inet_address> get_endpoints() const;
+
+    template <typename Func>
+    requires std::same_as<std::invoke_result_t<Func, inet_address, endpoint_state>, void>
+    void do_for_each(Func func) const {
+        for (const auto& [addr, eps] : _state_by_address) {
+            func(addr, eps);
+        }
+    }
+
+    template <typename Func>
+    requires std::same_as<std::invoke_result_t<Func, inet_address, endpoint_state>, stop_iteration>
+    stop_iteration do_for_each(Func func) const {
+        for (const auto& [addr, eps] : _state_by_address) {
+            if (auto stop = func(addr, eps)) {
+                return stop;
+            }
+        }
+        return stop_iteration::no;
+    }
+
+    // Holds no lock, the reader is responsible for acquiring a read lock.
+    template <typename Func>
+    requires std::same_as<typename futurize<std::invoke_result_t<Func, const inet_address&, const endpoint_state&>>::type, future<>>
+    future<> do_for_each_gently(Func func) const {
+        using futurator = futurize<std::invoke_result_t<Func, inet_address, endpoint_state>>;
+        for (const auto& [addr, eps] : _state_by_address) {
+            co_await futurator::invoke(func, addr, eps);
+        }
+    }
+
+    // Holds no lock, the reader is responsible for acquiring a read lock.
+    template <typename Func>
+    requires std::same_as<typename futurize<std::invoke_result_t<Func, inet_address, endpoint_state>>::type, future<stop_iteration>>
+    future<stop_iteration> do_for_each_gently(Func func) const {
+        using futurator = futurize<std::invoke_result_t<Func, inet_address, endpoint_state>>;
+        for (const auto& [addr, eps] : _state_by_address) {
+            if (auto stop = co_await futurator::invoke(func, addr, eps)) {
+                co_return stop;
+            }
+        }
+        co_return stop_iteration::no;
+    }
+
+    rwlock& get_lock() noexcept {
+        return _lock;
+    }
+
+    future<endpoint_permit> lock_endpoint(inet_address addr);
 };
 
 } // gms
