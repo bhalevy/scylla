@@ -168,19 +168,10 @@ public:
 
 public:
     static clk::time_point inline now() noexcept { return clk::now(); }
-public:
-    using endpoint_locks_map = utils::loading_shared_values<inet_address, semaphore>;
-    struct endpoint_permit {
-        endpoint_locks_map::entry_ptr _ptr;
-        semaphore_units<> _units;
-    };
-    future<endpoint_permit> lock_endpoint(inet_address);
 
 private:
     /* map where key is the endpoint and value is the state associated with the endpoint */
-    std::unordered_map<inet_address, endpoint_state> _endpoint_state_map;
-    // Used for serializing changes to _endpoint_state_map and running of associated change listeners.
-    endpoint_locks_map _endpoint_locks;
+    endpoint_state_map _endpoint_state_map;
 
 public:
     const std::vector<sstring> DEAD_STATES = {
@@ -410,29 +401,48 @@ public:
     clk::time_point get_expire_time_for_endpoint(inet_address endpoint) const noexcept;
 
     const endpoint_state* get_endpoint_state_for_endpoint_ptr(const endpoint_id& ep) const noexcept {
-        return get_endpoint_state_for_endpoint_ptr(ep.addr);
+        return _endpoint_state_map.get_ptr(ep.addr);
     }
-    const endpoint_state* get_endpoint_state_for_endpoint_ptr(inet_address ep) const noexcept;
+    const endpoint_state* get_endpoint_state_for_endpoint_ptr(inet_address ep) const noexcept {
+        return _endpoint_state_map.get_ptr(ep);
+    }
 
     endpoint_state& get_endpoint_state(const endpoint_id& ep) {
         return get_endpoint_state(ep.addr);
     }
-    endpoint_state& get_endpoint_state(inet_address ep);
+    endpoint_state& get_endpoint_state(inet_address ep) {
+        return _endpoint_state_map.at(ep);
+    }
 
     endpoint_state* get_endpoint_state_for_endpoint_ptr(const endpoint_id& ep) noexcept {
         return get_endpoint_state_for_endpoint_ptr(ep.addr);
     }
-    endpoint_state* get_endpoint_state_for_endpoint_ptr(inet_address ep) noexcept;
+    endpoint_state* get_endpoint_state_for_endpoint_ptr(inet_address ep) noexcept {
+        return _endpoint_state_map.get_ptr(ep);
+    }
+
 
     const versioned_value* get_application_state_ptr(const endpoint_id& endpoint, application_state appstate) const noexcept {
         return get_application_state_ptr(endpoint.addr, appstate);
     }
-    const versioned_value* get_application_state_ptr(inet_address endpoint, application_state appstate) const noexcept;
+    const versioned_value* get_application_state_ptr(inet_address endpoint, application_state appstate) const noexcept {
+        auto* eps = get_endpoint_state_for_endpoint_ptr(std::move(endpoint));
+        if (!eps) {
+            return nullptr;
+        }
+        return eps->get_application_state_ptr(appstate);
+    }
 
     sstring get_application_state_value(const endpoint_id& endpoint, application_state appstate) const {
         return get_application_state_value(endpoint.addr, appstate);
     }
-    sstring get_application_state_value(inet_address endpoint, application_state appstate) const;
+    sstring get_application_state_value(inet_address endpoint, application_state appstate) const {
+        auto v = get_application_state_ptr(endpoint, appstate);
+        if (!v) {
+            return {};
+        }
+        return v->value();
+    }
 
     // removes ALL endpoint states; should only be called after shadow gossip
     future<> reset_endpoint_state_map();
@@ -444,23 +454,18 @@ public:
     template <typename Func>
     requires std::same_as<std::invoke_result_t<Func, inet_address, endpoint_state>, void>
     void for_each_endpoint_state(Func func) const {
-        for (const auto& [ep, eps] : _endpoint_state_map) {
-            func(ep, eps);
-        }
+        _endpoint_state_map.do_for_each(std::forward<Func>(func));
     }
 
     template <typename Func>
     requires std::same_as<std::invoke_result_t<Func, inet_address, endpoint_state>, stop_iteration>
     stop_iteration for_each_endpoint_state(Func func) const {
-        for (const auto& [ep, eps] : _endpoint_state_map) {
-            if (func(ep, eps) == stop_iteration::yes) {
-                return stop_iteration::yes;
-            }
-        }
-        return stop_iteration::no;
+        return _endpoint_state_map.do_for_each(std::forward<Func>(func));
     }
 
-    std::vector<inet_address> get_endpoints() const;
+    std::vector<inet_address> get_endpoints() const {
+        return _endpoint_state_map.get_endpoints();
+    }
 
     locator::host_id get_host_id(inet_address endpoint) const;
     endpoint_id get_endpoint_id(inet_address endpoint) const;
@@ -692,6 +697,8 @@ private:
     utils::updateable_value<uint32_t> _failure_detector_timeout_ms;
     utils::updateable_value<int32_t> _force_gossip_generation;
     gossip_config _gcfg;
+    std::set<sstring> get_supported_features(const versioned_value* app_state) const;
+    std::set<sstring> get_supported_features(const endpoint_state* eps) const;
     // Get features supported by a particular node
     std::set<sstring> get_supported_features(inet_address endpoint) const;
     // Get features supported by all the nodes this node knows about
