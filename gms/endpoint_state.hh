@@ -19,6 +19,7 @@
 #include "gms/heart_beat_state.hh"
 #include "gms/application_state.hh"
 #include "gms/versioned_value.hh"
+#include "gms/endpoint_id.hh"
 #include "utils/stall_free.hh"
 
 #include <optional>
@@ -201,9 +202,11 @@ class endpoint_state_map {
     std::unordered_map<inet_address, endpoint_state> _state_by_address;
 
     std::unordered_map<inet_address, semaphore> _address_locks;
+    std::unordered_map<locator::host_id, semaphore> _host_id_locks;
     struct endpoint_permit {
         rwlock::holder global_holder;
         semaphore_units<> address_lock_holder;
+        semaphore_units<> host_id_lock_holder;
     };
 
 public:
@@ -293,7 +296,10 @@ public:
         co_return stop_iteration::no;
     }
 
-    future<endpoint_permit> lock_endpoint(inet_address addr);
+    future<endpoint_permit> lock_endpoint(endpoint_id ep);
+    future<endpoint_permit> lock_endpoint(inet_address addr) {
+        return lock_endpoint(endpoint_id(locator::host_id::create_null_id(), addr));
+    }
 };
 
 } // gms

@@ -113,14 +113,24 @@ endpoint_state& endpoint_state_map::set(inet_address addr, endpoint_state&& eps)
     return it->second;
 }
 
-future<endpoint_state_map::endpoint_permit> endpoint_state_map::lock_endpoint(inet_address addr) {
+future<endpoint_state_map::endpoint_permit> endpoint_state_map::lock_endpoint(endpoint_id ep) {
     endpoint_permit permit;
 
-    auto it = _address_locks.find(addr);
+    auto it = _address_locks.find(ep.addr);
     if (it == _address_locks.end()) {
-        it = _address_locks.emplace(addr, 1).first;
+        it = _address_locks.emplace(ep.addr, 1).first;
     }
     permit.address_lock_holder = co_await get_units(it->second, 1);
+    if (!ep.host_id) {
+        if (auto eps = get_ptr(ep.addr)) {
+            ep.host_id = eps->get_host_id();
+        }
+    }
+    auto hit = _host_id_locks.find(ep.host_id);
+    if (hit == _host_id_locks.end()) {
+        hit = _host_id_locks.emplace(ep.host_id, 1).first;
+    }
+    permit.host_id_lock_holder = co_await get_units(hit->second, 1);
 
     co_return permit;
 }
