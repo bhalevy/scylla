@@ -617,10 +617,10 @@ future<> gossiper::do_apply_state_locally(gms::inet_address node, endpoint_state
             if (listener_notification) {
                 logger.trace("Updating heartbeat state generation to {} from {} for {}", remote_generation, local_generation, node);
                 // major state change will handle the update by inserting the remote state directly
-                co_await this->handle_major_state_change(node, remote_state);
+                co_await this->handle_major_state_change(node, std::move(remote_state));
             } else {
                 logger.debug("Applying remote_state for node {} (remote generation > local generation)", node);
-                _endpoint_state_map[node] = remote_state;
+                _endpoint_state_map[node] = std::move(remote_state);
             }
         } else if (remote_generation == local_generation) {
             if (listener_notification) {
@@ -655,10 +655,10 @@ future<> gossiper::do_apply_state_locally(gms::inet_address node, endpoint_state
         }
     } else {
         if (listener_notification) {
-            co_await this->handle_major_state_change(node, remote_state);
+            co_await this->handle_major_state_change(node, std::move(remote_state));
         } else {
             logger.debug("Applying remote_state for node {} (new node)", node);
-            _endpoint_state_map[node] = remote_state;
+            _endpoint_state_map[node] = std::move(remote_state);
         }
     }
 
@@ -1335,7 +1335,7 @@ future<> gossiper::assassinate_endpoint(sstring address) {
             std::unordered_set<dht::token> tokens_set(tokens.begin(), tokens.end());
             auto expire_time = gossiper.compute_expire_time();
             ep_state.add_application_state(application_state::STATUS, versioned_value::left(tokens_set, expire_time.time_since_epoch().count()));
-            gossiper.handle_major_state_change(endpoint, ep_state).get();
+            gossiper.handle_major_state_change(endpoint, std::move(ep_state)).get();
             sleep_abortable(INTERVAL * 4, gossiper._abort_source).get();
             logger.warn("Finished assassinating {}", endpoint);
         });
@@ -1660,7 +1660,7 @@ future<> gossiper::mark_dead(inet_address addr, endpoint_state& local_state) {
     });
 }
 
-future<> gossiper::handle_major_state_change(inet_address ep, const endpoint_state& eps) {
+future<> gossiper::handle_major_state_change(inet_address ep, endpoint_state eps) {
     std::optional<endpoint_state> eps_old;
     if (auto* p = get_endpoint_state_for_endpoint_ptr(ep); p) {
         eps_old = *p;
@@ -1674,8 +1674,8 @@ future<> gossiper::handle_major_state_change(inet_address ep, const endpoint_sta
         }
     }
     logger.trace("Adding endpoint state for {}, status = {}", ep, get_gossip_status(eps));
-    _endpoint_state_map[ep] = eps;
-    co_await replicate(ep, eps);
+    _endpoint_state_map[ep] = std::move(eps);
+    co_await replicate(ep, _endpoint_state_map[ep]);
 
     if (is_in_shadow_round()) {
         // In shadow round, we only interested in the peer's endpoint_state,
