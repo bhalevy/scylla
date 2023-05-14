@@ -399,9 +399,12 @@ future<> gossiper::do_send_ack2_msg(msg_addr from, utils::chunked_vector<gossip_
         std::map<inet_address, endpoint_state> delta_ep_state_map;
         for (auto g_digest : ack_msg_digest) {
             inet_address addr = g_digest.get_endpoint();
-            auto local_ep_state_ptr = this->get_state_for_version_bigger_than(addr, version_type(g_digest.get_max_version()));
-            if (local_ep_state_ptr) {
-                delta_ep_state_map.emplace(addr, *local_ep_state_ptr);
+            auto eps = get_endpoint_state_for_endpoint_ptr(addr);
+            if (eps) {
+                auto local_ep_state_ptr = this->get_state_for_version_bigger_than(addr, *eps, version_type(g_digest.get_max_version()));
+                if (local_ep_state_ptr) {
+                    delta_ep_state_map.emplace(addr, std::move(*local_ep_state_ptr));
+                }
             }
         }
         gms::gossip_digest_ack2 ack2_msg(std::move(delta_ep_state_map));
@@ -1499,11 +1502,8 @@ std::set<gms::inet_address> gossiper::get_nodes_with_host_id(locator::host_id ho
     return nodes;
 }
 
-std::optional<endpoint_state> gossiper::get_state_for_version_bigger_than(inet_address for_endpoint, version_type version) {
+std::optional<endpoint_state> gossiper::get_state_for_version_bigger_than(inet_address for_endpoint, const endpoint_state& eps, version_type version) {
     std::optional<endpoint_state> reqd_endpoint_state;
-    auto es = get_endpoint_state_for_endpoint_ptr(for_endpoint);
-    if (es) {
-        auto& eps = *es;
         /*
              * Here we try to include the Heart Beat state only if it is
              * greater than the version passed in. It might happen that
@@ -1529,7 +1529,6 @@ std::optional<endpoint_state> gossiper::get_state_for_version_bigger_than(inet_a
                 reqd_endpoint_state->add_application_state(key, value);
             }
         }
-    }
     return reqd_endpoint_state;
 }
 
@@ -1849,9 +1848,12 @@ void gossiper::send_all(gossip_digest& g_digest,
     version_type max_remote_version) {
     auto ep = g_digest.get_endpoint();
     logger.trace("send_all(): ep={}, version > {}", ep, max_remote_version);
-    auto local_ep_state_ptr = get_state_for_version_bigger_than(ep, max_remote_version);
-    if (local_ep_state_ptr) {
-        delta_ep_state_map[ep] = *local_ep_state_ptr;
+    auto eps = get_endpoint_state_for_endpoint_ptr(ep);
+    if (eps) {
+        auto local_ep_state_ptr = get_state_for_version_bigger_than(ep, *eps, max_remote_version);
+        if (local_ep_state_ptr) {
+            delta_ep_state_map[ep] = std::move(*local_ep_state_ptr);
+        }
     }
 }
 
