@@ -962,10 +962,8 @@ future<> gossiper::replicate_live_endpoints_on_change() {
             _shadow_unreachable_endpoints = _unreachable_endpoints;
         }
 
-        co_await container().invoke_on_all([this, live_endpoint_changed, unreachable_endpoint_changed,
+        co_await container().invoke_on_others([this, live_endpoint_changed, unreachable_endpoint_changed,
                                    es = _endpoint_state_map] (gossiper& local_gossiper) {
-            // Don't copy gossiper(CPU0) maps into themselves!
-            if (this_shard_id() != 0) {
                 if (live_endpoint_changed) {
                     local_gossiper._live_endpoints = _shadow_live_endpoints;
                 }
@@ -977,7 +975,6 @@ future<> gossiper::replicate_live_endpoints_on_change() {
                 for (auto&& e : es) {
                     local_gossiper._endpoint_state_map[e.first].set_alive(e.second.is_alive());
                 }
-            }
         });
     }
 }
