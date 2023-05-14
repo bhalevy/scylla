@@ -481,7 +481,7 @@ future<> gossiper::handle_shutdown_msg(const rpc::client_info& cinfo, std::optio
     }
 
     assert(this_shard_id() == 0);
-    auto permit = co_await _endpoint_state_map.lock_endpoint(from.addr);
+    auto permit = co_await _endpoint_state_map.lock_endpoint(from);
     if (generation_number_opt) {
         debug_validate_gossip_generation(*generation_number_opt);
         auto es = this->get_endpoint_state_for_endpoint_ptr(from.addr);
@@ -2147,9 +2147,10 @@ future<> gossiper::add_local_application_state(std::list<std::pair<application_s
     return container().invoke_on(0, [states = std::move(states)] (gossiper& gossiper) mutable {
         return seastar::async([g = gossiper.shared_from_this(), states = std::move(states)]() mutable {
             auto& gossiper = *g;
-            inet_address ep_addr = gossiper.get_broadcast_address();
+            auto endpoint = gossiper.my_endpoint_id();
+            const auto& ep_addr = endpoint.addr;
             // for symmetry with other apply, use endpoint lock for our own address.
-            auto permit = gossiper._endpoint_state_map.lock_endpoint(ep_addr).get0();
+            auto permit = gossiper._endpoint_state_map.lock_endpoint(endpoint).get0();
             auto es = gossiper.get_endpoint_state_for_endpoint_ptr(ep_addr);
             if (!es) {
                 auto err = format("endpoint_state_map does not contain endpoint = {}, application_states = {}",
@@ -2159,7 +2160,6 @@ future<> gossiper::add_local_application_state(std::list<std::pair<application_s
 
             endpoint_state ep_state_before = *es;
 
-            auto endpoint = endpoint_id(gossiper.my_host_id(), ep_addr);
             for (auto& p : states) {
                 auto& state = p.first;
                 auto& value = p.second;
