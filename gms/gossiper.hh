@@ -244,13 +244,13 @@ private:
     void run();
     // Replicates given endpoint_state to all other shards.
     // The state state doesn't have to be kept alive around until completes.
-    future<> replicate(inet_address, const endpoint_state&);
+    future<> replicate(endpoint_id, const endpoint_state&);
     // Replicates "states" from "src" to all other shards.
     // "src" and "states" must be kept alive until completes and must not change.
-    future<> replicate(inet_address, const std::map<application_state, versioned_value>& src, const utils::chunked_vector<application_state>& states);
+    future<> replicate(endpoint_id, const std::map<application_state, versioned_value>& src, const utils::chunked_vector<application_state>& states);
     // Replicates given value to all other shards.
     // The value must be kept alive until completes and not change.
-    future<> replicate(inet_address, application_state key, const versioned_value& value);
+    future<> replicate(endpoint_id, application_state key, const versioned_value& value);
 public:
     explicit gossiper(abort_source& as, feature_service& features, const locator::shared_token_metadata& stm, netw::messaging_service& ms, sharded<db::system_keyspace>& sys_ks, const db::config& cfg, gossip_config gcfg);
 
@@ -288,7 +288,7 @@ private:
     /**
      * @param endpoint end point that is convicted.
      */
-    future<> convict(inet_address endpoint);
+    future<> convict(endpoint_id endpoint);
 
     /**
      * Return either: the greatest heartbeat or application state
@@ -303,7 +303,7 @@ private:
      *
      * @param endpoint endpoint to be removed from the current membership.
      */
-    future<> evict_from_membership(inet_address endpoint);
+    future<> evict_from_membership(endpoint_id endpoint);
 public:
     /**
      * Removes the endpoint from Gossip but retains endpoint state
@@ -390,21 +390,21 @@ public:
     clk::time_point get_expire_time_for_endpoint(inet_address endpoint) const noexcept;
 
     const endpoint_state* get_endpoint_state_for_endpoint_ptr(const endpoint_id& ep) const noexcept {
-        return _endpoint_state_map.get_ptr(ep.addr);
+        return _endpoint_state_map.get_ptr(ep);
     }
     const endpoint_state* get_endpoint_state_for_endpoint_ptr(inet_address ep) const noexcept {
         return _endpoint_state_map.get_ptr(ep);
     }
 
     endpoint_state& get_endpoint_state(const endpoint_id& ep) {
-        return get_endpoint_state(ep.addr);
+        return _endpoint_state_map.at(ep);
     }
     endpoint_state& get_endpoint_state(inet_address ep) {
         return _endpoint_state_map.at(ep);
     }
 
     endpoint_state* get_endpoint_state_for_endpoint_ptr(const endpoint_id& ep) noexcept {
-        return get_endpoint_state_for_endpoint_ptr(ep.addr);
+        return _endpoint_state_map.get_ptr(ep);
     }
     endpoint_state* get_endpoint_state_for_endpoint_ptr(inet_address ep) noexcept {
         return _endpoint_state_map.get_ptr(ep);
@@ -412,7 +412,11 @@ public:
 
 
     const versioned_value* get_application_state_ptr(const endpoint_id& endpoint, application_state appstate) const noexcept {
-        return get_application_state_ptr(endpoint.addr, appstate);
+        auto* eps = get_endpoint_state_for_endpoint_ptr(std::move(endpoint));
+        if (!eps) {
+            return nullptr;
+        }
+        return eps->get_application_state_ptr(appstate);
     }
     const versioned_value* get_application_state_ptr(inet_address endpoint, application_state appstate) const noexcept {
         auto* eps = get_endpoint_state_for_endpoint_ptr(std::move(endpoint));
@@ -423,7 +427,11 @@ public:
     }
 
     sstring get_application_state_value(const endpoint_id& endpoint, application_state appstate) const {
-        return get_application_state_value(endpoint.addr, appstate);
+        auto v = get_application_state_ptr(endpoint, appstate);
+        if (!v) {
+            return {};
+        }
+        return v->value();
     }
     sstring get_application_state_value(inet_address endpoint, application_state appstate) const {
         auto v = get_application_state_ptr(endpoint, appstate);
@@ -477,11 +485,11 @@ private:
 
     void update_timestamp_for_nodes(const std::map<inet_address, endpoint_state>& map);
 
-    void mark_alive(inet_address addr, endpoint_state& local_state);
+    void mark_alive(const endpoint_id& node, endpoint_state& local_state);
 
-    future<> real_mark_alive(inet_address addr, endpoint_state& local_state);
+    future<> real_mark_alive(endpoint_id node, endpoint_state& local_state);
 
-    future<> mark_dead(inet_address addr, endpoint_state& local_state);
+    future<> mark_dead(endpoint_id node, endpoint_state& local_state);
 
     /**
      * This method is called whenever there is a "big" change in ep state (a generation change for a known node).
@@ -489,7 +497,7 @@ private:
      * @param ep      endpoint
      * @param ep_state EndpointState for the endpoint
      */
-    future<> handle_major_state_change(inet_address ep, endpoint_state eps);
+    future<> handle_major_state_change(endpoint_id node, endpoint_state eps);
 
 public:
     bool is_alive(const endpoint_id& ep) const {
@@ -509,7 +517,7 @@ private:
     future<> do_apply_state_locally(gms::inet_address node, endpoint_state remote_state, bool listener_notification);
     future<> apply_state_locally_without_listener_notification(std::unordered_map<inet_address, endpoint_state> map);
 
-    future<> apply_new_states(inet_address addr, endpoint_state& local_state, const endpoint_state& remote_state);
+    future<> apply_new_states(endpoint_id node, endpoint_state& local_state, const endpoint_state& remote_state);
 
     // notify that a local application state is going to change (doesn't get triggered for remote changes)
     future<> do_before_change_notifications(endpoint_id addr, const endpoint_state& ep_state, const application_state& ap_state, const versioned_value& new_value);
@@ -668,7 +676,7 @@ public:
     future<> wait_for_gossip_to_settle();
     future<> wait_for_range_setup();
 private:
-    future<> mark_as_shutdown(const inet_address& endpoint);
+    future<> mark_as_shutdown(endpoint_id endpoint);
     future<> wait_for_gossip(std::chrono::milliseconds, std::optional<int32_t> = {});
 
     uint64_t _nr_run = 0;
