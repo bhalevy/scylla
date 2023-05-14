@@ -12,11 +12,15 @@
 
 #include <seastar/core/coroutine.hh>
 
+#include "gms/application_state.hh"
 #include "gms/endpoint_state.hh"
+#include "gms/versioned_value.hh"
 #include <optional>
 #include <ostream>
 
 namespace gms {
+
+extern logging::logger logger;
 
 static_assert(std::is_default_constructible_v<heart_beat_state>);
 static_assert(std::is_nothrow_copy_constructible_v<heart_beat_state>);
@@ -107,20 +111,24 @@ endpoint_state& endpoint_state_map::at(inet_address addr) {
 }
 
 endpoint_state& endpoint_state_map::get_or_create(const endpoint_id& node) {
-    const auto& addr = node.addr;
-    auto it = _state_by_address.find(addr);
+    if (!node.host_id || node.addr == inet_address()) {
+        on_internal_error(logger, format("endpoint_state_map::get_or_create: invalid endpoint {}", node));
+    }
+    auto it = _state_by_address.find(node.addr);
     if (it == _state_by_address.end()) {
         auto eps = endpoint_state();
-        it = _state_by_address.emplace(addr, std::move(eps)).first;
+        it = _state_by_address.emplace(node.addr, std::move(eps)).first;
     }
     return it->second;
 }
 
 endpoint_state& endpoint_state_map::set(const endpoint_id& node, endpoint_state&& eps) {
-    const auto& addr = node.addr;
-    auto it = _state_by_address.find(addr);
+    if (!node.host_id || node.addr == inet_address()) {
+        on_internal_error(logger, format("endpoint_state_map::get_or_create: invalid endpoint {}", node));
+    }
+    auto it = _state_by_address.find(node.addr);
     if (it == _state_by_address.end()) {
-        it = _state_by_address.emplace(addr, std::move(eps)).first;
+        it = _state_by_address.emplace(node.addr, std::move(eps)).first;
     } else {
         it->second = std::move(eps);
     }
