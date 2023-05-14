@@ -116,6 +116,10 @@ private:
     future<gossip_get_endpoint_states_response> handle_get_endpoint_states_msg(gossip_get_endpoint_states_request request);
     static constexpr uint32_t _default_cpuid = 0;
     msg_addr get_msg_addr(inet_address to) const noexcept;
+    netw::msg_addr get_msg_addr(const endpoint_id& node) const noexcept {
+        return get_msg_addr(node.addr);
+    }
+
     void do_sort(utils::chunked_vector<gossip_digest>& g_digest_list) const;
     timer<lowres_clock> _scheduled_gossip_task;
     bool _enabled = false;
@@ -151,12 +155,18 @@ public:
     const locator::host_id& my_host_id() const noexcept {
         return utils::fb_utilities::get_host_id();
     }
+    endpoint_id my_endpoint_id() const noexcept {
+        return endpoint_id(my_host_id(), get_broadcast_address());
+    }
 
     bool is_me(const locator::host_id& host_id) const noexcept {
         return utils::fb_utilities::is_me(host_id);
     }
     bool is_me(const inet_address& addr) const noexcept {
         return utils::fb_utilities::is_me(addr);
+    }
+    bool is_me(const endpoint_id& node) const noexcept {
+        return node.host_id ? is_me(node.host_id) : is_me(node.addr);
     }
 
     const std::set<inet_address>& get_seeds() const noexcept;
@@ -189,11 +199,18 @@ public:
     future<endpoint_permit> lock_endpoint(inet_address, permit_id pid, seastar::compat::source_location l = seastar::compat::source_location::current());
 
 private:
-    void permit_internal_error(const inet_address& addr, permit_id pid);
-    void verify_permit(const inet_address& addr, permit_id pid) {
+    future<endpoint_permit> lock_endpoint(endpoint_id node, permit_id pid, seastar::compat::source_location l = seastar::compat::source_location::current()) {
+        return lock_endpoint(node.addr, std::move(pid), std::move(l));
+    }
+
+    void permit_internal_error(const endpoint_id& addr, permit_id pid);
+    void verify_permit(const endpoint_id& node, permit_id pid) {
         if (!pid) {
-            permit_internal_error(addr, pid);
+            permit_internal_error(node, pid);
         }
+    }
+    void verify_permit(const inet_address& addr, permit_id pid) {
+        verify_permit(get_endpoint_id(addr), pid);
     }
 
     /* map where key is the endpoint and value is the state associated with the endpoint */
@@ -319,7 +336,7 @@ private:
     // Replicates given endpoint_state to all other shards.
     // The state state doesn't have to be kept alive around until completes.
     // Must be called under lock_endpoint.
-    future<> replicate(inet_address, endpoint_state, permit_id);
+    future<> replicate(endpoint_id node, endpoint_state ep_state, permit_id pid);
 public:
     explicit gossiper(abort_source& as, const locator::shared_token_metadata& stm, netw::messaging_service& ms, const db::config& cfg, gossip_config gcfg);
 
@@ -365,7 +382,7 @@ private:
     /**
      * @param endpoint end point that is convicted.
      */
-    future<> convict(inet_address endpoint);
+    future<> convict(endpoint_id node);
 
     /**
      * Removes the endpoint from gossip completely
@@ -374,14 +391,18 @@ private:
      *
      * Must be called under lock_endpoint.
      */
-    future<> evict_from_membership(inet_address endpoint, permit_id);
+    future<> evict_from_membership(endpoint_id endpoint, permit_id);
 public:
     /**
      * Removes the endpoint from Gossip but retains endpoint state
      */
-    future<> remove_endpoint(inet_address endpoint, permit_id);
+    future<> remove_endpoint(inet_address endpoint, permit_id pid) {
+        return remove_endpoint(get_endpoint_id(endpoint), pid);
+    }
     future<> force_remove_endpoint(inet_address endpoint, permit_id);
 private:
+    future<> remove_endpoint(endpoint_id node, permit_id);
+
     /**
      * Quarantines the endpoint for QUARANTINE_DELAY
      *
@@ -427,11 +448,22 @@ public:
      */
     future<> assassinate_endpoint(sstring address);
 
+    bool is_gossip_only_member(inet_address endpoint, endpoint_state_ptr eps) const;
+    bool is_gossip_only_member(const endpoint_id& node) const {
+        return is_gossip_only_member(node.addr, get_endpoint_state_ptr(node));
+    }
+
 public:
     future<generation_type> get_current_generation_number(inet_address endpoint) const;
     future<version_type> get_current_heart_beat_version(inet_address endpoint) const;
 
-    bool is_gossip_only_member(inet_address endpoint) const;
+    bool is_gossip_only_member(locator::host_id host_id) const {
+        return is_gossip_only_member(host_id_address(host_id), get_endpoint_state_ptr(host_id));
+    }
+    bool is_gossip_only_member(inet_address addr) const {
+        return is_gossip_only_member(addr, get_endpoint_state_ptr(addr));
+    }
+
     bool is_safe_for_bootstrap() const;
     bool is_safe_for_restart() const;
 private:
@@ -454,6 +486,16 @@ private:
 
     const std::unordered_map<inet_address, endpoint_state_ptr>& get_endpoint_states() const noexcept;
 
+    endpoint_state_ptr get_endpoint_state_ptr(const endpoint_id& node) const noexcept {
+        if (node.host_id) {
+            return get_endpoint_state_ptr(node.host_id);
+        } else {
+            return get_endpoint_state_ptr(node.addr);
+        }
+    }
+
+    const versioned_value* get_application_state_ptr(endpoint_state_ptr eps, application_state appstate) const noexcept;
+    sstring get_application_state_value(endpoint_state_ptr eps, application_state appstate) const noexcept;
 public:
     clk::time_point get_expire_time_for_endpoint(inet_address endpoint) const noexcept;
 
@@ -461,11 +503,22 @@ public:
     // Otherwise, returns a null ptr.
     // The endpoint_state is immutable (except for its update_timestamp), guaranteed not to change while
     // the endpoint_state_ptr is held.
+    endpoint_state_ptr get_endpoint_state_ptr(locator::host_id host_id) const noexcept;
     endpoint_state_ptr get_endpoint_state_ptr(inet_address ep) const noexcept;
 
-    const versioned_value* get_application_state_ptr(inet_address endpoint, application_state appstate) const noexcept;
-    sstring get_application_state_value(inet_address endpoint, application_state appstate) const;
+    const versioned_value* get_application_state_ptr(locator::host_id host_id, application_state appstate) const noexcept {
+        return get_application_state_ptr(get_endpoint_state_ptr(host_id), appstate);
+    }
+    const versioned_value* get_application_state_ptr(inet_address endpoint, application_state appstate) const noexcept {
+        return get_application_state_ptr(get_endpoint_state_ptr(endpoint), appstate);
+    }
 
+    sstring get_application_state_value(locator::host_id host_id, application_state appstate) const {
+        return get_application_state_value(get_endpoint_state_ptr(host_id), appstate);
+    }
+    sstring get_application_state_value(inet_address endpoint, application_state appstate) const {
+        return get_application_state_value(get_endpoint_state_ptr(endpoint), appstate);
+    }
     // removes ALL endpoint states; should only be called after shadow gossip.
     // Must be called on shard 0
     future<> reset_endpoint_state_map();
@@ -492,6 +545,10 @@ public:
 
     locator::host_id get_host_id(inet_address addr, throw_on_error = throw_on_error::yes) const;
 
+    endpoint_id get_endpoint_id(const inet_address& addr) {
+        return endpoint_id(get_host_id(addr, throw_on_error::no), addr);
+    }
+
     std::set<gms::inet_address> get_nodes_with_host_id(locator::host_id host_id) const;
 
     /**
@@ -517,18 +574,22 @@ private:
     // immutable, with one exception - the update_timestamp.
     void update_timestamp(const endpoint_state_ptr& eps) noexcept;
     const endpoint_state& get_endpoint_state(inet_address ep) const;
+    const endpoint_state& get_endpoint_state(endpoint_id node) const {
+        // FIXME: for now
+        return get_endpoint_state(node.addr);
+    }
 
     void update_timestamp_for_nodes(const std::map<inet_address, endpoint_state>& map);
 
-    void mark_alive(inet_address addr);
+    void mark_alive(const endpoint_id& node);
 
-    future<> real_mark_alive(inet_address addr);
-
-    // Must be called under lock_endpoint.
-    future<> mark_dead(inet_address addr, endpoint_state_ptr local_state, permit_id);
+    future<> real_mark_alive(endpoint_id node);
 
     // Must be called under lock_endpoint.
-    future<> mark_as_shutdown(const inet_address& endpoint, permit_id);
+    future<> mark_dead(endpoint_id node, endpoint_state_ptr local_state, permit_id);
+
+    // Must be called under lock_endpoint.
+    future<> mark_as_shutdown(endpoint_id node, permit_id);
 
     /**
      * This method is called whenever there is a "big" change in ep state (a generation change for a known node).
@@ -538,9 +599,14 @@ private:
      *
      * Must be called under lock_endpoint.
      */
-    future<> handle_major_state_change(inet_address ep, endpoint_state eps, permit_id);
+    future<> handle_major_state_change(endpoint_id node, endpoint_state eps, permit_id);
 
-    std::optional<endpoint_state> get_state_for_version_bigger_than(inet_address for_endpoint, const endpoint_state& ep_state, version_type version) const;
+    std::optional<endpoint_state> get_state_for_version_bigger_than(endpoint_id node, const endpoint_state& ep_state, version_type version) const;
+
+    bool is_alive(const endpoint_id& node) const {
+        // FIXME: for now
+        return is_alive(node.addr);
+    }
 
 public:
     bool is_alive(inet_address ep) const;
@@ -564,7 +630,7 @@ private:
     future<> apply_state_locally_without_listener_notification(std::unordered_map<inet_address, endpoint_state> map);
 
     // Must be called under lock_endpoint.
-    future<> apply_new_states(inet_address addr, endpoint_state local_state, const endpoint_state& remote_state, permit_id);
+    future<> apply_new_states(endpoint_id node, endpoint_state local_state, const endpoint_state& remote_state, permit_id);
 
     // notify that a local application state is going to change (doesn't get triggered for remote changes)
     // Must be called under lock_endpoint.
@@ -685,9 +751,49 @@ public:
     static clk::time_point compute_expire_time();
 public:
     bool is_seed(const inet_address& endpoint) const;
-    bool is_shutdown(const inet_address& endpoint) const;
-    bool is_normal(const inet_address& endpoint) const;
-    bool is_left(const inet_address& endpoint) const;
+
+    bool is_shutdown(const endpoint_state& ep_state) const noexcept;
+    bool is_shutdown(locator::host_id host_id) const noexcept {
+        if (auto eps = get_endpoint_state_ptr(host_id)) {
+            return is_shutdown(*eps);
+        }
+        return false;
+    }
+    bool is_shutdown(const inet_address& endpoint) const noexcept {
+        if (auto eps = get_endpoint_state_ptr(endpoint)) {
+            return is_shutdown(*eps);
+        }
+        return false;
+    }
+
+    bool is_normal(const endpoint_state& ep_state) const noexcept;
+    bool is_normal(locator::host_id host_id) const noexcept {
+        if (auto eps = get_endpoint_state_ptr(host_id)) {
+            return is_normal(*eps);
+        }
+        return false;
+    }
+    bool is_normal(const inet_address& endpoint) const noexcept {
+        if (auto eps = get_endpoint_state_ptr(endpoint)) {
+            return is_normal(*eps);
+        }
+        return false;
+    }
+
+    bool is_left(const endpoint_state& ep_state) const noexcept;
+    bool is_left(locator::host_id host_id) const noexcept {
+        if (auto eps = get_endpoint_state_ptr(host_id)) {
+            return is_normal(*eps);
+        }
+        return false;
+    }
+    bool is_left(const inet_address& endpoint) const noexcept {
+        if (auto eps = get_endpoint_state_ptr(endpoint)) {
+            return is_normal(*eps);
+        }
+        return false;
+    }
+
     // Check if a node is in NORMAL or SHUTDOWN status which means the node is
     // part of the token ring from the gossip point of view and operates in
     // normal status or was in normal status but is shutdown.
@@ -697,12 +803,32 @@ public:
     void force_newer_generation();
 public:
     std::string_view get_gossip_status(const endpoint_state& ep_state) const noexcept;
-    std::string_view get_gossip_status(const inet_address& endpoint) const noexcept;
+    std::string_view get_gossip_status(locator::host_id host_id) const noexcept {
+        return get_gossip_status(get_endpoint_state_ptr(host_id));
+    }
+    std::string_view get_gossip_status(const inet_address& endpoint) const noexcept {
+        return get_gossip_status(get_endpoint_state_ptr(endpoint));
+    }
 public:
     future<> wait_for_gossip_to_settle() const;
     future<> wait_for_range_setup() const;
 private:
     future<> wait_for_gossip(std::chrono::milliseconds, std::optional<int32_t> = {}) const;
+
+    std::string_view get_gossip_status(endpoint_state_ptr eps) const noexcept;
+    std::string_view get_gossip_status(const endpoint_id& node) const noexcept {
+        return get_gossip_status(get_endpoint_state_ptr(node));
+    }
+
+    bool is_shutdown(const endpoint_id& node) const noexcept {
+        return node.host_id ? is_shutdown(node.host_id) : is_shutdown(node.addr);
+    }
+    bool is_normal(const endpoint_id& node) const noexcept {
+        return node.host_id ? is_normal(node.host_id) : is_normal(node.addr);
+    }
+    bool is_left(const endpoint_id& node) const noexcept {
+        return node.host_id ? is_left(node.host_id) : is_left(node.addr);
+    }
 
     uint64_t _nr_run = 0;
     uint64_t _msg_processing = 0;
