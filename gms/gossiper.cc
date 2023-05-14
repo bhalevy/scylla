@@ -1267,7 +1267,6 @@ future<> gossiper::advertise_removing(inet_address endpoint, locator::host_id ho
     eps.get_heart_beat_state().force_newer_generation_unsafe();
     eps.add_application_state(application_state::STATUS, versioned_value::removing_nonlocal(host_id));
     eps.add_application_state(application_state::REMOVAL_COORDINATOR, versioned_value::removal_coordinator(local_host_id));
-    _endpoint_state_map[endpoint] = eps;
     co_await replicate(endpoint, eps);
 }
 
@@ -1279,7 +1278,6 @@ future<> gossiper::advertise_token_removed(inet_address endpoint, locator::host_
     eps.add_application_state(application_state::STATUS, versioned_value::removed_nonlocal(host_id, expire_time.time_since_epoch().count()));
     logger.info("Completing removal of {}", endpoint);
     add_expire_time_for_endpoint(endpoint, expire_time);
-    _endpoint_state_map[endpoint] = eps;
     co_await replicate(endpoint, eps);
     // ensure at least one gossip round occurs before returning
     co_await sleep_abortable(INTERVAL * 2, _abort_source);
