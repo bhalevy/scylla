@@ -512,9 +512,8 @@ public:
     // Get live members synchronized to all shards
     future<std::set<inet_address>> get_live_members_synchronized();
 
-    future<> apply_state_locally(std::map<inet_address, endpoint_state> map);
-
 private:
+    future<> apply_state_locally(std::map<inet_address, endpoint_state> map);
     future<> do_apply_state_locally(gms::inet_address node, endpoint_state remote_state, bool listener_notification);
     future<> apply_state_locally_without_listener_notification(std::unordered_map<inet_address, endpoint_state> map);
 
