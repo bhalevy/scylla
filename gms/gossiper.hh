@@ -472,8 +472,6 @@ public:
 
     std::set<gms::inet_address> get_nodes_with_host_id(locator::host_id host_id) const;
 
-    std::optional<endpoint_state> get_state_for_version_bigger_than(inet_address for_endpoint, version_type version);
-
     /**
      * determine which endpoint started up earlier
      */
@@ -486,6 +484,8 @@ public:
      */
     sstring get_rpc_address(const inet_address& endpoint) const;
 private:
+    std::optional<endpoint_state> get_state_for_version_bigger_than(inet_address for_endpoint, const endpoint_state& eps, version_type version);
+
     void update_timestamp_for_nodes(const std::map<inet_address, endpoint_state>& map);
 
     void mark_alive(inet_address addr, endpoint_state& local_state);
