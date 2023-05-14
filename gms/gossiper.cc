@@ -1518,16 +1518,20 @@ std::optional<endpoint_state> gossiper::get_state_for_version_bigger_than(inet_a
         logger.trace("local heartbeat version {} greater than {} for {}", local_hb_version, version, for_endpoint);
     }
     /* Accumulate all application states whose versions are greater than "version" variable */
-    for (auto& entry : eps.get_application_state_map()) {
-        auto& value = entry.second;
+    std::optional<versioned_value> host_id_opt;
+    for (const auto& [key, value] : eps.get_application_state_map()) {
         if (value.version() > version) {
             if (!reqd_endpoint_state) {
                 reqd_endpoint_state.emplace(eps.get_heart_beat_state());
             }
-            auto& key = entry.first;
             logger.trace("Adding state of {}, {}: {}" , for_endpoint, key, value.value());
             reqd_endpoint_state->add_application_state(key, value);
+        } else if (key == application_state::HOST_ID) {
+            host_id_opt = value;
         }
+    }
+    if (reqd_endpoint_state && host_id_opt) {
+        reqd_endpoint_state->add_application_state(application_state::HOST_ID, std::move(*host_id_opt));
     }
     return reqd_endpoint_state;
 }
