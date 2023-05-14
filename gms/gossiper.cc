@@ -594,7 +594,7 @@ future<> gossiper::send_gossip(gossip_digest_syn message, std::set<inet_address>
 }
 
 
-future<> gossiper::do_apply_state_locally(gms::inet_address node, const endpoint_state& remote_state, bool listener_notification) {
+future<> gossiper::do_apply_state_locally(gms::inet_address node, endpoint_state remote_state, bool listener_notification) {
     // If state does not exist just add it. If it does then add it if the remote generation is greater.
     // If there is a generation tie, attempt to break it by heartbeat version.
     auto permit = co_await this->lock_endpoint(node);
@@ -680,8 +680,8 @@ future<> gossiper::do_apply_state_locally(gms::inet_address node, const endpoint
 future<> gossiper::apply_state_locally_without_listener_notification(std::unordered_map<inet_address, endpoint_state> map) {
     for (auto& x : map) {
         const inet_address& node = x.first;
-        const endpoint_state& remote_state = x.second;
-        co_await do_apply_state_locally(node, remote_state, false);
+        endpoint_state& remote_state = x.second;
+        co_await do_apply_state_locally(node, std::move(remote_state), false);
     }
 }
 
