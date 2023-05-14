@@ -249,9 +249,7 @@ public:
     bool erase(const endpoint_id& ep) {
         return erase(ep.addr);
     }
-    bool erase(inet_address addr) {
-        return _state_by_address.erase(addr);
-    }
+    bool erase(inet_address addr);
 
     // Should be called with write lock
     future<> clear_gently() noexcept {

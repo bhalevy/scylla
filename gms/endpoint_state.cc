@@ -12,11 +12,15 @@
 
 #include <seastar/core/coroutine.hh>
 
+#include "gms/application_state.hh"
 #include "gms/endpoint_state.hh"
+#include "gms/versioned_value.hh"
 #include <optional>
 #include <ostream>
 
 namespace gms {
+
+extern logging::logger logger;
 
 static_assert(std::is_default_constructible_v<heart_beat_state>);
 static_assert(std::is_nothrow_copy_constructible_v<heart_beat_state>);
@@ -95,6 +99,9 @@ endpoint_state& endpoint_state_map::at(inet_address addr) {
 }
 
 endpoint_state& endpoint_state_map::get_or_create(const endpoint_id& node) {
+    if (!node.host_id) {
+        on_internal_error(logger, format("Cannot get_or_create state for endpoint {} with null host_id", node.addr));
+    }
     const auto& addr = node.addr;
     auto it = _state_by_address.find(addr);
     if (it == _state_by_address.end()) {
@@ -105,6 +112,9 @@ endpoint_state& endpoint_state_map::get_or_create(const endpoint_id& node) {
 }
 
 endpoint_state& endpoint_state_map::set(const endpoint_id& node, endpoint_state&& eps) {
+    if (!node.host_id) {
+        on_internal_error(logger, format("Cannot set state for endpoint {} with null host_id", node.addr));
+    }
     const auto& addr = node.addr;
     auto it = _state_by_address.find(addr);
     if (it == _state_by_address.end()) {
@@ -113,6 +123,11 @@ endpoint_state& endpoint_state_map::set(const endpoint_id& node, endpoint_state&
         it->second = std::move(eps);
     }
     return it->second;
+}
+
+bool endpoint_state_map::erase(inet_address addr) {
+    auto ret = _state_by_address.erase(addr);;
+    return ret;
 }
 
 future<endpoint_state_map::endpoint_permit> endpoint_state_map::lock_endpoint(endpoint_id ep) {
