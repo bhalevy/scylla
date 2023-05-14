@@ -2154,11 +2154,9 @@ future<> storage_service::handle_state_normal(inet_address endpoint) {
         if (!owned_tokens.empty()) {
             on_fatal_internal_error(slogger, ::format("endpoint={} is marked for removal but still owns {} tokens", endpoint, owned_tokens.size()));
         }
+    } else if (owned_tokens.empty()) {
+        slogger.warn("endpoint={} is not marked for removal but owns no tokens, ignored.", endpoint);
     } else {
-        if (owned_tokens.empty()) {
-            on_internal_error_noexcept(slogger, ::format("endpoint={} is not marked for removal but owns no tokens", endpoint));
-        }
-
         if (!is_normal_token_owner) {
             do_notify_joined = true;
         }
