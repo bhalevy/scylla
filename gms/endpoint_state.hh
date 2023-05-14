@@ -210,25 +210,45 @@ public:
         return _state_by_address.size();
     }
 
+    bool contains(const endpoint_id& ep) const noexcept {
+        return contains(ep.addr);
+    }
     bool contains(inet_address addr) const noexcept {
         return _state_by_address.contains(addr);
     }
 
     // Return std:out_of_range if not found
+    const endpoint_state* get_ptr(const endpoint_id& ep) const noexcept {
+        return get_ptr(ep.addr);
+    }
     const endpoint_state* get_ptr(inet_address addr) const noexcept;
+
+    endpoint_state* get_ptr(const endpoint_id& ep) noexcept {
+        return get_ptr(ep.addr);
+    }
     endpoint_state* get_ptr(inet_address addr) noexcept;
 
     // Throw std:out_of_range if not found
+    const endpoint_state& at(const endpoint_id& ep) const {
+        return at(ep.addr);
+    }
     const endpoint_state& at(inet_address addr) const;
+
+    endpoint_state& at(const endpoint_id& ep) {
+        return at(ep.addr);
+    }
     endpoint_state& at(inet_address addr);
 
     // Get an existing endpoint_state or create a new one and get it.
-    endpoint_state& get_or_create(inet_address addr);
+    endpoint_state& get_or_create(const endpoint_id& node);
 
     // Set endpoint_state.
-    endpoint_state& set(inet_address addr, endpoint_state&& eps);
+    endpoint_state& set(const endpoint_id& node, endpoint_state&& eps);
 
     // Erase endpoint_state, return true iff found and erased.
+    bool erase(const endpoint_id& ep) {
+        return erase(ep.addr);
+    }
     bool erase(inet_address addr) {
         return _state_by_address.erase(addr);
     }

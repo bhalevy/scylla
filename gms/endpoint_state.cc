@@ -94,7 +94,8 @@ endpoint_state& endpoint_state_map::at(inet_address addr) {
     throw std::out_of_range(format("endpoint state not found for address={}", addr));
 }
 
-endpoint_state& endpoint_state_map::get_or_create(inet_address addr) {
+endpoint_state& endpoint_state_map::get_or_create(const endpoint_id& node) {
+    const auto& addr = node.addr;
     auto it = _state_by_address.find(addr);
     if (it == _state_by_address.end()) {
         auto eps = endpoint_state();
@@ -103,7 +104,8 @@ endpoint_state& endpoint_state_map::get_or_create(inet_address addr) {
     return it->second;
 }
 
-endpoint_state& endpoint_state_map::set(inet_address addr, endpoint_state&& eps) {
+endpoint_state& endpoint_state_map::set(const endpoint_id& node, endpoint_state&& eps) {
+    const auto& addr = node.addr;
     auto it = _state_by_address.find(addr);
     if (it == _state_by_address.end()) {
         it = _state_by_address.emplace(addr, std::move(eps)).first;
