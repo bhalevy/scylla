@@ -13,6 +13,7 @@
 #include <seastar/core/coroutine.hh>
 #include <seastar/core/rwlock.hh>
 
+#include "seastar/core/shared_ptr.hh"
 #include "utils/serialization.hh"
 #include "gms/heart_beat_state.hh"
 #include "gms/application_state.hh"
@@ -28,7 +29,7 @@ namespace gms {
  * This abstraction represents both the HeartBeatState and the ApplicationState in an EndpointState
  * instance. Any state for a given endpoint can be retrieved from this instance.
  */
-class endpoint_state {
+class endpoint_state : public enable_lw_shared_from_this<endpoint_state> {
 public:
     using clk = seastar::lowres_system_clock;
 private:
@@ -68,6 +69,10 @@ public:
         , _update_timestamp(clk::now())
         , _is_alive(true) {
         update_is_normal();
+    }
+
+    future<> clear_gently() noexcept {
+        co_await utils::clear_gently(_application_state);
     }
 
     // Valid only on shard 0
@@ -192,7 +197,9 @@ public:
 };
 
 class endpoint_state_map {
-    std::unordered_map<inet_address, endpoint_state> _state_by_address;
+    using endpoint_state_ptr = lw_shared_ptr<endpoint_state>;
+    std::unordered_map<inet_address, endpoint_state_ptr> _state_by_address;
+    std::unordered_map<locator::host_id, endpoint_state_ptr> _state_by_host_id;
     rwlock _lock;
 
     std::unordered_map<inet_address, semaphore> _address_locks;
@@ -246,15 +253,13 @@ public:
     endpoint_state& set(const endpoint_id& node, endpoint_state&& eps);
 
     // Erase endpoint_state, return true iff found and erased.
-    bool erase(const endpoint_id& ep) {
-        return erase(ep.addr);
-    }
-    bool erase(inet_address addr);
+    bool erase(const endpoint_id& ep);
 
     // Should be called with write lock
     future<> clear_gently() noexcept {
         co_await utils::clear_gently(_address_locks);
         co_await utils::clear_gently(_state_by_address);
+        co_await utils::clear_gently(_state_by_host_id);
     }
 
     std::vector<inet_address> get_endpoints() const;
@@ -262,39 +267,37 @@ public:
     template <typename Func>
     requires std::same_as<std::invoke_result_t<Func, inet_address, endpoint_state>, void>
     void do_for_each(Func func) const {
-        for (const auto& [addr, eps] : _state_by_address) {
-            func(addr, eps);
+        for (const auto& [addr, epsp] : _state_by_address) {
+            func(addr, *epsp);
         }
     }
 
     template <typename Func>
     requires std::same_as<std::invoke_result_t<Func, inet_address, endpoint_state>, stop_iteration>
     stop_iteration do_for_each(Func func) const {
-        for (const auto& [addr, eps] : _state_by_address) {
-            if (auto stop = func(addr, eps)) {
+        for (const auto& [addr, epsp] : _state_by_address) {
+            if (auto stop = func(addr, *epsp)) {
                 return stop;
             }
         }
         return stop_iteration::no;
     }
 
-    // Holds no lock, the reader is responsible for acquiring a read lock.
     template <typename Func>
     requires std::same_as<typename futurize<std::invoke_result_t<Func, const inet_address&, const endpoint_state&>>::type, future<>>
     future<> do_for_each_gently(Func func) const {
         using futurator = futurize<std::invoke_result_t<Func, inet_address, endpoint_state>>;
-        for (const auto& [addr, eps] : _state_by_address) {
-            co_await futurator::invoke(func, addr, eps);
+        for (const auto& [addr, epsp] : _state_by_address) {
+            co_await futurator::invoke(func, addr, epsp);
         }
     }
 
-    // Holds no lock, the reader is responsible for acquiring a read lock.
     template <typename Func>
     requires std::same_as<typename futurize<std::invoke_result_t<Func, inet_address, endpoint_state>>::type, future<stop_iteration>>
     future<stop_iteration> do_for_each_gently(Func func) const {
         using futurator = futurize<std::invoke_result_t<Func, inet_address, endpoint_state>>;
-        for (const auto& [addr, eps] : _state_by_address) {
-            if (auto stop = co_await futurator::invoke(func, addr, eps)) {
+        for (const auto& [addr, epsp] : _state_by_address) {
+            if (auto stop = co_await futurator::invoke(func, addr, *epsp)) {
                 co_return stop;
             }
         }
