@@ -115,16 +115,32 @@ endpoint_state& endpoint_state_map::get_or_create(const endpoint_id& node) {
     if (!node.host_id || node.addr == inet_address()) {
         on_internal_error(logger, format("endpoint_state_map::get_or_create: invalid endpoint {}", node));
     }
-    if (node.addr == inet_address()) {
-        on_internal_error(logger, format("Cannot get_or_create state for endpoint {} with null address", node.host_id));
-    }
     auto it = _state_by_address.find(node.addr);
+    auto hit = _state_by_host_id.find(node.host_id);
     if (it == _state_by_address.end()) {
+        if (hit != _state_by_host_id.end()) {
+            auto& epsp = hit->second;
+            auto other_addr = epsp->get_address();
+            if (other_addr == node.addr) {
+                on_internal_error_noexcept(logger, fmt::format("endpoint_state_map::get_or_create found node {} in state_by_host_id map, but not in state_by_address", node));
+                _state_by_address.emplace(node.addr, epsp);
+                return *epsp;
+            } else {
+                logger.info("Node {} has changed its IP address, previous address was {}", node, other_addr);
+            }
+        }
         auto epsp = make_lw_shared<endpoint_state>();
         auto& eps = *epsp;
         eps.add_application_state(application_state::HOST_ID, versioned_value::host_id(node.host_id));
         eps.add_application_state(application_state::RPC_ADDRESS, versioned_value::rpcaddress(node.addr));
-        it = _state_by_address.emplace(node.addr, std::move(epsp)).first;
+        it = _state_by_address.emplace(node.addr, epsp).first;
+        _state_by_host_id[node.host_id] = epsp;
+    } else {
+        auto& epsp = it->second;
+        auto other_node = epsp->get_endpoint_id();
+        if (other_node.addr != node.addr) {
+            on_internal_error(logger, format("endpoint_state_map::get_or_create: found mismatching node {} when looking for {}", other_node, node));
+        }
     }
     return *it->second;
 }
@@ -151,19 +167,58 @@ endpoint_state& endpoint_state_map::set(const endpoint_id& node, endpoint_state&
     }
     auto epsp = make_lw_shared<endpoint_state>(std::move(eps));
     auto it = _state_by_address.find(node.addr);
+    auto hit = _state_by_host_id.find(node.host_id);
     if (it == _state_by_address.end()) {
-        it = _state_by_address.emplace(node.addr, std::move(epsp)).first;
+        if (hit != _state_by_host_id.end()) {
+            auto other_node = hit->second->get_endpoint_id();
+            if (other_node.host_id != node.host_id) {
+                on_internal_error(logger, format("endpoint_state_map::set found mismatching node {} in state_by_host_id while setting {}", other_node, node));
+            } else if (other_node.addr == node.addr) {
+                on_internal_error_noexcept(logger, format("endpoint_state_map::set found node {} in state_by_host_id while setting {}", other_node, node));
+            } else {
+                logger.info("Node {} has changed its IP address, previous address was {}", node, other_node.addr);
+            }
+        }
     } else {
-        it->second = std::move(epsp);
+        if (hit != _state_by_host_id.end()) {
+            auto other_addr = hit->second->get_address();
+            if (other_addr != node.addr) {
+                logger.info("Node {} has changed its IP address, previous address was {}", node, other_addr);
+            }
+        }
     }
-    return *it->second;
+    _state_by_address[node.addr] = epsp;
+    _state_by_host_id[node.host_id] = epsp;
+    return *epsp;
 }
 
-bool endpoint_state_map::erase(const endpoint_id& ep) {
-    return erase(ep.addr);
-}
-bool endpoint_state_map::erase(inet_address addr) {
-    return _state_by_address.erase(addr);
+bool endpoint_state_map::erase(const endpoint_id& node) {
+    lw_shared_ptr<endpoint_state> eps;
+
+    auto it = _state_by_address.find(node.addr);
+    auto hit = _state_by_host_id.find(node.host_id);
+
+    if (it != _state_by_address.end()) {
+        eps = it->second;
+
+        if (hit != _state_by_host_id.end()) {
+            if (eps != hit->second) {
+                logger.warn("erase found endpoint {} in state_by_address map, but found different endpoint_state for {} in state_by_host_id", node.addr, node.host_id);
+            } else {
+                _state_by_host_id.erase(hit);
+            }
+        } else {
+            logger.warn("erase found endpoint {} in state_by_address map, but did not find {} in state_by_host_id", node.addr, node.host_id);
+        }
+
+        _state_by_address.erase(it);
+        return true;
+    } else {
+        if (hit != _state_by_host_id.end()) {
+            logger.warn("erase did not find endpoint {} in state_by_address map, but found {} in state_by_host_id", node.addr, node.host_id);
+        }
+        return false;
+    }
 }
 
 future<endpoint_state_map::endpoint_permit> endpoint_state_map::lock_endpoint(endpoint_id ep) {

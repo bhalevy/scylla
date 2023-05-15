@@ -1184,7 +1184,7 @@ future<> gossiper::evict_from_membership(endpoint_id endpoint) {
     const auto& addr = endpoint.addr;
     auto permit = co_await _endpoint_state_map.lock_endpoint(endpoint);
     _unreachable_endpoints.erase(addr);
-    co_await container().invoke_on_all([endpoint = addr] (auto& g) {
+    co_await container().invoke_on_all([endpoint] (auto& g) {
         g._endpoint_state_map.erase(endpoint);
     });
     _expire_time_endpoint_map.erase(addr);

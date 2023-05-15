@@ -182,6 +182,10 @@ public:
         return addr;
     }
 
+    endpoint_id get_endpoint_id() const noexcept {
+        return endpoint_id(get_host_id(), get_address());
+    }
+
     bool is_shutdown() const noexcept {
         return get_status() == versioned_value::SHUTDOWN;
     }
@@ -202,6 +206,7 @@ public:
 class endpoint_state_map {
     using endpoint_state_ptr = lw_shared_ptr<endpoint_state>;
     std::unordered_map<inet_address, endpoint_state_ptr> _state_by_address;
+    std::unordered_map<locator::host_id, endpoint_state_ptr> _state_by_host_id;
 
     std::unordered_map<inet_address, semaphore> _address_locks;
     std::unordered_map<locator::host_id, semaphore> _host_id_locks;
@@ -247,11 +252,11 @@ public:
 
     // Erase endpoint_state, return true iff found and erased.
     bool erase(const endpoint_id& ep);
-    bool erase(inet_address addr);
 
     future<> clear_gently() noexcept {
         co_await utils::clear_gently(_address_locks);
         co_await utils::clear_gently(_state_by_address);
+        co_await utils::clear_gently(_state_by_host_id);
     }
 
     std::vector<inet_address> get_endpoints() const;
