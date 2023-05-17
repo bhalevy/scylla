@@ -126,6 +126,18 @@ endpoint_state& endpoint_state_map::set(const endpoint_id& node, endpoint_state&
     if (!node.host_id || node.addr == inet_address()) {
         on_internal_error(logger, format("endpoint_state_map::get_or_create: invalid endpoint {}", node));
     }
+    if (auto host_id_state = eps.get_application_state_ptr(application_state::HOST_ID)) {
+        auto state_host_id = locator::host_id(utils::UUID(host_id_state->value()));
+        if (state_host_id != node.host_id) {
+            on_internal_error(logger, format("endpoint_state_map::set: node {} has miamatching host_id={} in endpoint_state", node, state_host_id));
+        }
+    }
+    if (auto addr_state = eps.get_application_state_ptr(application_state::RPC_ADDRESS)) {
+        auto state_addr = inet_address(addr_state->value());
+        if (state_addr != node.addr) {
+            on_internal_error(logger, format("endpoint_state_map::set: node {} has miamatching address={} in endpoint_state", node, state_addr));
+        }
+    }
     auto it = _state_by_address.find(node.addr);
     if (it == _state_by_address.end()) {
         it = _state_by_address.emplace(node.addr, std::move(eps)).first;
