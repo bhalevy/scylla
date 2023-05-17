@@ -1427,7 +1427,7 @@ future<> gossiper::reset_endpoint_state_map() {
     _live_endpoints.clear();
     co_await update_live_endpoints_version();
     co_await container().invoke_on_all([] (gossiper& g) {
-        g._endpoint_state_map.clear();
+        return utils::clear_gently(g._endpoint_state_map);
     });
 }
 

@@ -14,6 +14,8 @@
 #include "gms/heart_beat_state.hh"
 #include "gms/application_state.hh"
 #include "gms/versioned_value.hh"
+#include "utils/stall_free.hh"
+
 #include <optional>
 #include <chrono>
 
@@ -63,6 +65,10 @@ public:
         , _update_timestamp(clk::now())
         , _is_alive(true) {
         update_is_normal();
+    }
+
+    future<> clear_gently() noexcept {
+        return utils::clear_gently(_application_state);
     }
 
     // Valid only on shard 0
