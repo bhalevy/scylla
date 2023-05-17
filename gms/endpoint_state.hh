@@ -232,16 +232,20 @@ public:
 
     // Return std:out_of_range if not found
     const endpoint_state* get_ptr(const endpoint_id& ep) const noexcept;
+    const endpoint_state* get_ptr(locator::host_id host_id) const noexcept;
     const endpoint_state* get_ptr(inet_address addr) const noexcept;
 
     endpoint_state* get_ptr(const endpoint_id& ep) noexcept;
+    endpoint_state* get_ptr(locator::host_id host_id) noexcept;
     endpoint_state* get_ptr(inet_address addr) noexcept;
 
     // Throw std:out_of_range if not found
     const endpoint_state& at(const endpoint_id& ep) const;
+    const endpoint_state& at(locator::host_id host_id) const;
     const endpoint_state& at(inet_address addr) const;
 
     endpoint_state& at(const endpoint_id& ep);
+    endpoint_state& at(locator::host_id host_id);
     endpoint_state& at(inet_address addr);
 
     // Get an existing endpoint_state or create a new one and get it.

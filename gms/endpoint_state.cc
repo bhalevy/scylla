@@ -68,7 +68,24 @@ std::vector<inet_address> endpoint_state_map::get_endpoints() const {
 }
 
 const endpoint_state* endpoint_state_map::get_ptr(const endpoint_id& ep) const noexcept {
+    if (ep.host_id) {
+        auto eps = get_ptr(ep.host_id);
+        if (!eps) {
+            logger.warn("Could not find endpoint_state for node {} by host_id", ep);
+        } else if (eps->get_address() != ep.addr) {
+            on_internal_error(logger, format("endpoint_state for node {} has mismatching address={}", ep, eps->get_address()));
+        } else {
+            return eps;
+        }
+    }
     return get_ptr(ep.addr);
+}
+const endpoint_state* endpoint_state_map::get_ptr(locator::host_id host_id) const noexcept {
+    auto it = _state_by_host_id.find(host_id);
+    if (it != _state_by_host_id.end()) {
+        return it->second.get();
+    }
+    return nullptr;
 }
 const endpoint_state* endpoint_state_map::get_ptr(inet_address addr) const noexcept {
     auto it = _state_by_address.find(addr);
@@ -79,7 +96,24 @@ const endpoint_state* endpoint_state_map::get_ptr(inet_address addr) const noexc
 }
 
 endpoint_state* endpoint_state_map::get_ptr(const endpoint_id& ep) noexcept {
+    if (ep.host_id) {
+        auto eps = get_ptr(ep.host_id);
+        if (!eps) {
+            logger.warn("Could not find endpoint_state for node {} by host_id", ep);
+        } else if (eps->get_address() != ep.addr) {
+            on_internal_error(logger, format("endpoint_state for node {} has mismatching address={}", ep, eps->get_address()));
+        } else {
+            return eps;
+        }
+    }
     return get_ptr(ep.addr);
+}
+endpoint_state* endpoint_state_map::get_ptr(locator::host_id host_id) noexcept {
+    auto it = _state_by_host_id.find(host_id);
+    if (it != _state_by_host_id.end()) {
+        return it->second.get();
+    }
+    return nullptr;
 }
 endpoint_state* endpoint_state_map::get_ptr(inet_address addr) noexcept {
     auto it = _state_by_address.find(addr);
@@ -90,7 +124,25 @@ endpoint_state* endpoint_state_map::get_ptr(inet_address addr) noexcept {
 }
 
 const endpoint_state& endpoint_state_map::at(const endpoint_id& ep) const {
-    return at(ep.addr);
+    if (ep.host_id) {
+        auto it = _state_by_host_id.find(ep.host_id);
+        if (it != _state_by_host_id.end()) {
+            return *it->second;
+        }
+    } else {
+        auto it = _state_by_address.find(ep.addr);
+        if (it != _state_by_address.end()) {
+            return *it->second;
+        }
+    }
+    throw std::out_of_range(format("endpoint state not found for node {}", ep));
+}
+const endpoint_state& endpoint_state_map::at(locator::host_id host_id) const {
+    auto it = _state_by_host_id.find(host_id);
+    if (it != _state_by_host_id.end()) {
+        return *it->second;
+    }
+    throw std::out_of_range(format("endpoint state not found for host_id={}", host_id));
 }
 const endpoint_state& endpoint_state_map::at(inet_address addr) const {
     auto it = _state_by_address.find(addr);
@@ -101,7 +153,25 @@ const endpoint_state& endpoint_state_map::at(inet_address addr) const {
 }
 
 endpoint_state& endpoint_state_map::at(const endpoint_id& ep) {
-    return at(ep.addr);
+    if (ep.host_id) {
+        auto it = _state_by_host_id.find(ep.host_id);
+        if (it != _state_by_host_id.end()) {
+            return *it->second;
+        }
+    } else {
+        auto it = _state_by_address.find(ep.addr);
+        if (it != _state_by_address.end()) {
+            return *it->second;
+        }
+    }
+    throw std::out_of_range(format("endpoint state not found for node {}", ep));
+}
+endpoint_state& endpoint_state_map::at(locator::host_id host_id) {
+    auto it = _state_by_host_id.find(host_id);
+    if (it != _state_by_host_id.end()) {
+        return *it->second;
+    }
+    throw std::out_of_range(format("endpoint state not found for host_id={}", host_id));
 }
 endpoint_state& endpoint_state_map::at(inet_address addr) {
     auto it = _state_by_address.find(addr);
@@ -208,14 +278,15 @@ bool endpoint_state_map::erase(const endpoint_id& node) {
                 _state_by_host_id.erase(hit);
             }
         } else {
-            logger.warn("erase found endpoint {} in state_by_address map, but did not find {} in state_by_host_id", node.addr, node.host_id);
+            // This may happen normall after a host changes its address
+            logger.debug("erase found endpoint {} in state_by_address map, but did not find {} in state_by_host_id", node.addr, node.host_id);
         }
 
         _state_by_address.erase(it);
         return true;
     } else {
         if (hit != _state_by_host_id.end()) {
-            logger.warn("erase did not find endpoint {} in state_by_address map, but found {} in state_by_host_id", node.addr, node.host_id);
+            logger.warn("erase did not find endpoint {} in state_by_address map, but found {}/{} in state_by_host_id", node.addr, node.host_id, hit->second->get_address());
         }
         return false;
     }
