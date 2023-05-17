@@ -14,6 +14,7 @@
 
 #include <seastar/core/coroutine.hh>
 #include <seastar/core/rwlock.hh>
+#include <seastar/core/shared_ptr.hh>
 
 #include "utils/serialization.hh"
 #include "gms/heart_beat_state.hh"
@@ -31,7 +32,7 @@ namespace gms {
  * This abstraction represents both the HeartBeatState and the ApplicationState in an EndpointState
  * instance. Any state for a given endpoint can be retrieved from this instance.
  */
-class endpoint_state {
+class endpoint_state : public enable_lw_shared_from_this<endpoint_state> {
 public:
     using clk = seastar::lowres_system_clock;
 private:
@@ -199,7 +200,8 @@ public:
 };
 
 class endpoint_state_map {
-    std::unordered_map<inet_address, endpoint_state> _state_by_address;
+    using endpoint_state_ptr = lw_shared_ptr<endpoint_state>;
+    std::unordered_map<inet_address, endpoint_state_ptr> _state_by_address;
 
     std::unordered_map<inet_address, semaphore> _address_locks;
     std::unordered_map<locator::host_id, semaphore> _host_id_locks;
@@ -257,16 +259,16 @@ public:
     template <typename Func>
     requires std::same_as<std::invoke_result_t<Func, inet_address, endpoint_state>, void>
     void do_for_each(Func func) const {
-        for (const auto& [addr, eps] : _state_by_address) {
-            func(addr, eps);
+        for (const auto& [addr, epsp] : _state_by_address) {
+            func(addr, *epsp);
         }
     }
 
     template <typename Func>
     requires std::same_as<std::invoke_result_t<Func, inet_address, endpoint_state>, stop_iteration>
     stop_iteration do_for_each(Func func) const {
-        for (const auto& [addr, eps] : _state_by_address) {
-            if (auto stop = func(addr, eps)) {
+        for (const auto& [addr, epsp] : _state_by_address) {
+            if (auto stop = func(addr, *epsp)) {
                 return stop;
             }
         }
@@ -282,7 +284,7 @@ public:
             auto it = _state_by_address.find(addr);
             if (it != _state_by_address.end()) {
                 const auto& eps = it->second;
-                co_await futurator::invoke(func, addr, eps);
+                co_await futurator::invoke(func, addr, *eps);
             }
         }
     }
@@ -296,7 +298,7 @@ public:
             auto it = _state_by_address.find(addr);
             if (it != _state_by_address.end()) {
                 const auto& eps = it->second;
-                if (auto stop = co_await futurator::invoke(func, addr, eps)) {
+                if (auto stop = co_await futurator::invoke(func, addr, *eps)) {
                     co_return stop;
                 }
             }

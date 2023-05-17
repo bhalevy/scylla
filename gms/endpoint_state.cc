@@ -73,7 +73,7 @@ const endpoint_state* endpoint_state_map::get_ptr(const endpoint_id& ep) const n
 const endpoint_state* endpoint_state_map::get_ptr(inet_address addr) const noexcept {
     auto it = _state_by_address.find(addr);
     if (it != _state_by_address.end()) {
-        return &it->second;
+        return it->second.get();
     }
     return nullptr;
 }
@@ -84,7 +84,7 @@ endpoint_state* endpoint_state_map::get_ptr(const endpoint_id& ep) noexcept {
 endpoint_state* endpoint_state_map::get_ptr(inet_address addr) noexcept {
     auto it = _state_by_address.find(addr);
     if (it != _state_by_address.end()) {
-        return &it->second;
+        return it->second.get();
     }
     return nullptr;
 }
@@ -95,7 +95,7 @@ const endpoint_state& endpoint_state_map::at(const endpoint_id& ep) const {
 const endpoint_state& endpoint_state_map::at(inet_address addr) const {
     auto it = _state_by_address.find(addr);
     if (it != _state_by_address.end()) {
-        return it->second;
+        return *it->second;
     }
     throw std::out_of_range(format("endpoint state not found for address={}", addr));
 }
@@ -106,7 +106,7 @@ endpoint_state& endpoint_state_map::at(const endpoint_id& ep) {
 endpoint_state& endpoint_state_map::at(inet_address addr) {
     auto it = _state_by_address.find(addr);
     if (it != _state_by_address.end()) {
-        return it->second;
+        return *it->second;
     }
     throw std::out_of_range(format("endpoint state not found for address={}", addr));
 }
@@ -120,12 +120,13 @@ endpoint_state& endpoint_state_map::get_or_create(const endpoint_id& node) {
     }
     auto it = _state_by_address.find(node.addr);
     if (it == _state_by_address.end()) {
-        auto eps = endpoint_state();
+        auto epsp = make_lw_shared<endpoint_state>();
+        auto& eps = *epsp;
         eps.add_application_state(application_state::HOST_ID, versioned_value::host_id(node.host_id));
         eps.add_application_state(application_state::RPC_ADDRESS, versioned_value::rpcaddress(node.addr));
-        it = _state_by_address.emplace(node.addr, std::move(eps)).first;
+        it = _state_by_address.emplace(node.addr, std::move(epsp)).first;
     }
-    return it->second;
+    return *it->second;
 }
 
 endpoint_state& endpoint_state_map::set(const endpoint_id& node, endpoint_state&& eps) {
@@ -148,13 +149,14 @@ endpoint_state& endpoint_state_map::set(const endpoint_id& node, endpoint_state&
     } else {
         eps.add_application_state(application_state::RPC_ADDRESS, versioned_value::rpcaddress(node.addr));
     }
+    auto epsp = make_lw_shared<endpoint_state>(std::move(eps));
     auto it = _state_by_address.find(node.addr);
     if (it == _state_by_address.end()) {
-        it = _state_by_address.emplace(node.addr, std::move(eps)).first;
+        it = _state_by_address.emplace(node.addr, std::move(epsp)).first;
     } else {
-        it->second = std::move(eps);
+        it->second = std::move(epsp);
     }
-    return it->second;
+    return *it->second;
 }
 
 bool endpoint_state_map::erase(const endpoint_id& ep) {
