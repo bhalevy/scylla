@@ -613,6 +613,8 @@ table::add_sstables_and_update_cache(const std::vector<sstables::shared_sstable>
 
 future<>
 table::update_cache(compaction_group& cg, lw_shared_ptr<memtable> m, std::vector<sstables::shared_sstable> ssts) {
+  std::exception_ptr ex;
+  try {
     auto permit = co_await seastar::get_units(_sstable_set_mutation_sem, 1);
     mutation_source_opt ms_opt;
     if (ssts.size() == 1) {
@@ -634,10 +636,19 @@ table::update_cache(compaction_group& cg, lw_shared_ptr<memtable> m, std::vector
         try_trigger_compaction(cg);
     });
     if (cache_enabled()) {
+        // co_return on successful update, as the memtable is merged
+        // into the cache in whole, and no clearing is needed below.
         co_return co_await _cache.update(std::move(adder), *m);
     } else {
-        co_return co_await _cache.invalidate(std::move(adder)).then([m] { return m->clear_gently(); });
+        co_await _cache.invalidate(std::move(adder));
     }
+  } catch (...) {
+    ex = std::current_exception();
+  }
+  co_await m->clear_gently();
+  if (ex) {
+    co_await coroutine::return_exception_ptr(std::move(ex));
+  }
 }
 
 // Handles permit management only, used for situations where we don't want to inform
