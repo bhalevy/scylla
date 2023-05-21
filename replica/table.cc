@@ -635,10 +635,19 @@ table::update_cache(compaction_group& cg, lw_shared_ptr<memtable> m, std::vector
         m->mark_flushed(std::move(new_ssts_ms));
         try_trigger_compaction(cg);
     });
+    std::exception_ptr ex;
     if (cache_enabled()) {
+      try {
         co_return co_await _cache.update(std::move(adder), *m);
-    } else {
-        co_return co_await _cache.invalidate(std::move(adder)).then([m] { return m->clear_gently(); });
+      } catch (...) {
+        ex = std::current_exception();
+      }
+    }
+    co_await _cache.invalidate(std::move(adder));
+    co_await m->clear_gently();
+    if (ex) {
+        // Just report the exception as invalidating the cache is fine as fallback.
+        tlogger.warn("Failed to update the row cache: {}", std::move(ex));
     }
   } catch (...) {
     std::invoke([&] () noexcept {
