@@ -178,6 +178,11 @@ sstable_set::insert(shared_sstable sst) {
 }
 
 void
+sstable_set::insert(const std::vector<shared_sstable>& ssts) {
+    _impl->insert(ssts);
+}
+
+void
 sstable_set::erase(shared_sstable sst) {
     _impl->erase(sst);
 }
@@ -363,6 +368,61 @@ void partitioned_sstable_set::insert(shared_sstable sst) {
     undo_all_runs_insert.cancel();
 }
 
+void partitioned_sstable_set::insert(const std::vector<shared_sstable>& ssts) {
+    auto undo_all_inserts = defer([&] () {
+        for (const auto& sst : ssts) {
+            _all->erase(sst);
+        }
+    });
+    _all->insert(ssts.begin(), ssts.end());
+
+    auto undo_all_runs_inserts = defer([&] () {
+        for (const auto& sst : ssts) {
+            _all_runs[sst->run_identifier()].erase(sst);
+        }
+    });
+    for (const auto& sst : ssts) {
+        // If sstable doesn't satisfy disjoint invariant, then place it in a new sstable run.
+        while (!_all_runs[sst->run_identifier()].insert(sst)) {
+            sstlog.warn("Generating a new run identifier for SSTable {} as overlapping was detected when inserting it into SSTable run {}",
+                        sst->get_filename(), sst->run_identifier());
+            sst->generate_new_run_identifier();
+        }
+    }
+
+    auto unleveled_sstables_size = _unleveled_sstables.size();
+    auto undo_leveled_inserts = defer([&] () {
+        _unleveled_sstables.resize(unleveled_sstables_size);
+        for (const auto& sst : ssts) {
+            if (!store_as_unleveled(sst)) {
+                _leveled_sstables.erase(make_interval(*sst));
+            }
+        }
+    });
+    size_t unleveled_cnt = 0;
+    size_t leveled_cnt = 0;
+    for (const auto& sst : ssts) {
+        if (store_as_unleveled(sst)) {
+            ++unleveled_cnt;
+        } else {
+            ++leveled_cnt;
+        }
+    }
+    _unleveled_sstables.reserve(unleveled_sstables_size + unleveled_cnt);
+    for (const auto& sst : ssts) {
+        if (store_as_unleveled(sst)) {
+            _unleveled_sstables.push_back(sst);
+        } else {
+            _leveled_sstables.add({make_interval(*sst), value_set({sst})});
+        }
+    }
+    _leveled_sstables_change_cnt += leveled_cnt;
+
+    undo_leveled_inserts.cancel();
+    undo_all_runs_inserts.cancel();
+    undo_all_inserts.cancel();
+}
+
 void partitioned_sstable_set::erase(shared_sstable sst) {
     _all_runs[sst->run_identifier()].erase(sst);
     _all->erase(sst);
@@ -503,6 +563,19 @@ void time_series_sstable_set::insert(shared_sstable sst) {
     erase(sst);
     throw;
   }
+}
+
+void time_series_sstable_set::insert(const std::vector<shared_sstable>& ssts) {
+    try {
+        for (const auto& sst : ssts) {
+            insert(sst);
+        }
+    } catch (...) {
+        for (const auto& sst : ssts) {
+            erase(sst);
+        }
+        throw;
+    }
 }
 
 // O(n) worst case, but should be close to O(log n) most of the time
@@ -1077,6 +1150,9 @@ future<stop_iteration> compound_sstable_set::for_each_sstable_gently_until(std::
 }
 
 void compound_sstable_set::insert(shared_sstable sst) {
+    throw_with_backtrace<std::bad_function_call>();
+}
+void compound_sstable_set::insert(const std::vector<shared_sstable>& ssts) {
     throw_with_backtrace<std::bad_function_call>();
 }
 void compound_sstable_set::erase(shared_sstable sst) {

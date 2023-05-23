@@ -63,6 +63,7 @@ public:
     virtual stop_iteration for_each_sstable_until(std::function<stop_iteration(const shared_sstable&)> func) const = 0;
     virtual future<stop_iteration> for_each_sstable_gently_until(std::function<future<stop_iteration>(const shared_sstable&)> func) const = 0;
     virtual void insert(shared_sstable sst) = 0;
+    virtual void insert(const std::vector<shared_sstable>& ssts) = 0;
     virtual void erase(shared_sstable sst) = 0;
     virtual size_t size() const noexcept = 0;
     virtual std::unique_ptr<incremental_selector_impl> make_incremental_selector() const = 0;
@@ -118,6 +119,7 @@ public:
         });
     }
     void insert(shared_sstable sst);
+    void insert(const std::vector<shared_sstable>& ssts);
     void erase(shared_sstable sst);
     size_t size() const noexcept;
 
