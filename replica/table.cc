@@ -429,8 +429,8 @@ void table::notify_bootstrap_or_replace_end() {
     trigger_offstrategy_compaction();
 }
 
-inline void table::add_sstable_to_backlog_tracker(compaction_backlog_tracker& tracker, sstables::shared_sstable sstable) {
-    tracker.replace_sstables({}, {std::move(sstable)});
+inline void table::add_sstables_to_backlog_tracker(compaction_backlog_tracker& tracker, const std::vector<sstables::shared_sstable>& new_sstables) {
+    tracker.replace_sstables({}, new_sstables);
 }
 
 inline void table::remove_sstable_from_backlog_tracker(compaction_backlog_tracker& tracker, sstables::shared_sstable sstable) {
