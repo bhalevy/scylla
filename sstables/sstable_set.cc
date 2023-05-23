@@ -177,6 +177,26 @@ sstable_set::insert(shared_sstable sst) {
     _impl->insert(sst);
 }
 
+// Default implementation for sstable_set_impl vector insert
+void
+sstable_set_impl::insert(const std::vector<shared_sstable>& ssts) {
+    try {
+        for (const auto& sst : ssts) {
+            insert(sst);
+        }
+    } catch (...) {
+        for (const auto& sst : ssts) {
+            erase(sst);
+        }
+        throw;
+    }
+}
+
+void
+sstable_set::insert(const std::vector<shared_sstable>& ssts) {
+    _impl->insert(ssts);
+}
+
 void
 sstable_set::erase(shared_sstable sst) {
     _impl->erase(sst);
@@ -1077,6 +1097,9 @@ future<stop_iteration> compound_sstable_set::for_each_sstable_gently_until(std::
 }
 
 void compound_sstable_set::insert(shared_sstable sst) {
+    throw_with_backtrace<std::bad_function_call>();
+}
+void compound_sstable_set::insert(const std::vector<shared_sstable>& ssts) {
     throw_with_backtrace<std::bad_function_call>();
 }
 void compound_sstable_set::erase(shared_sstable sst) {
