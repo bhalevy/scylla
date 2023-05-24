@@ -1121,6 +1121,7 @@ public:
 
     friend class distributed_loader;
     friend class table_populator;
+    friend class compaction_group_sstables_adder;
 
 private:
     timer<> _off_strategy_trigger;

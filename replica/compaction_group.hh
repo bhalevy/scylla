@@ -14,6 +14,7 @@
 #include "compaction/compaction_strategy_state.hh"
 #include "sstables/sstable_set.hh"
 #include "compaction/compaction_fwd.hh"
+#include "row_cache.hh"
 
 #pragma once
 
@@ -50,6 +51,8 @@ class compaction_group {
     uint64_t _main_set_disk_space_used = 0;
     uint64_t _maintenance_set_disk_space_used = 0;
     seastar::condition_variable _staging_done_condition;
+
+    friend class compaction_group_sstables_adder;
 private:
     // Adds new sstable to the set of sstables
     // Doesn't update the cache. The cache must be synchronized in order for reads to see
@@ -94,6 +97,7 @@ public:
     size_t memtable_count() const noexcept;
     // Returns minimum timestamp from memtable list
     api::timestamp_type min_memtable_timestamp() const;
+
     // Add sstable to main set
     void add_sstable(sstables::shared_sstable sstable);
     // Add sstable to maintenance set
