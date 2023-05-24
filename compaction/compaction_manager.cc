@@ -1880,9 +1880,9 @@ double compaction_backlog_tracker::backlog() const {
     return disabled() ? compaction_controller::disable_backlog : _impl->backlog(_ongoing_writes, _ongoing_compactions);
 }
 
-void compaction_backlog_tracker::replace_sstables(const std::vector<sstables::shared_sstable>& old_ssts, const std::vector<sstables::shared_sstable>& new_ssts) {
+future<> compaction_backlog_tracker::replace_sstables(const std::vector<sstables::shared_sstable>& old_ssts, const std::vector<sstables::shared_sstable>& new_ssts) {
     if (disabled()) {
-        return;
+        co_return;
     }
     auto filter_and_revert_charges = [this] (const std::vector<sstables::shared_sstable>& ssts) {
         std::vector<sstables::shared_sstable> ret;

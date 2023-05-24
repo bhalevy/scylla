@@ -10,6 +10,7 @@
 
 #include <unordered_set>
 #include <memory>
+#include <seastar/core/future.hh>
 #include <seastar/core/shared_ptr.hh>
 #include "sstables/shared_sstable.hh"
 #include "sstables/progress_monitor.hh"
@@ -72,7 +73,7 @@ public:
     ~compaction_backlog_tracker();
 
     double backlog() const;
-    void replace_sstables(const std::vector<sstables::shared_sstable>& old_ssts, const std::vector<sstables::shared_sstable>& new_ssts);
+    future<> replace_sstables(const std::vector<sstables::shared_sstable>& old_ssts, const std::vector<sstables::shared_sstable>& new_ssts);
     void register_partially_written_sstable(sstables::shared_sstable sst, backlog_write_progress_manager& wp);
     void register_compacting_sstable(sstables::shared_sstable sst, backlog_read_progress_manager& rp);
     void copy_ongoing_charges(compaction_backlog_tracker& new_bt, bool move_read_charges = true) const;

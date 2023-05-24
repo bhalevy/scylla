@@ -560,15 +560,34 @@ private:
     void update_stats_for_new_sstables(uint64_t bytes_on_disk, size_t count) noexcept;
     void update_stats_for_new_sstable(const sstables::shared_sstable& sst) noexcept;
 
+<<<<<<< HEAD
+=======
+    class sstables_adder : public compaction_group::sstables_adder {
+    protected:
+        table& t;
+    public:
+        sstables_adder(table& t, compaction_group& cg, std::vector<sstables::shared_sstable> sstables, is_main main);
+        // Exception safe
+        virtual future<> prepare() override;
+        // Never fails
+        virtual future<> execute() noexcept override;
+    };
+
+>>>>>>> b41f4269ba (table, compaction_group: futurize add_sstable path)
     future<> do_add_sstable_and_update_cache(sstables::shared_sstable sst, sstables::offstrategy offstrategy);
+<<<<<<< HEAD
     // Helpers which add sstable on behalf of a compaction group and refreshes compound set.
     void add_sstable(compaction_group& cg, sstables::shared_sstable sstable);
     void add_maintenance_sstable(compaction_group& cg, sstables::shared_sstable sst);
     static void add_sstable_to_backlog_tracker(compaction_backlog_tracker& tracker, sstables::shared_sstable sstable) {
         add_sstables_to_backlog_tracker(tracker, {std::move(sstable)});
+=======
+    static future<> add_sstable_to_backlog_tracker(compaction_backlog_tracker& tracker, sstables::shared_sstable sstable) {
+        return add_sstables_to_backlog_tracker(tracker, {std::move(sstable)});
+>>>>>>> 61a726fa02 (table, compaction_group: futurize add_sstable path)
     }
-    static void add_sstables_to_backlog_tracker(compaction_backlog_tracker& tracker, const std::vector<sstables::shared_sstable>& new_sstable);
-    static void remove_sstable_from_backlog_tracker(compaction_backlog_tracker& tracker, sstables::shared_sstable sstable);
+    static future<> add_sstables_to_backlog_tracker(compaction_backlog_tracker& tracker, const std::vector<sstables::shared_sstable>& new_sstable);
+    static future<> remove_sstable_from_backlog_tracker(compaction_backlog_tracker& tracker, sstables::shared_sstable sstable);
     lw_shared_ptr<memtable> new_memtable();
     future<> try_flush_memtable_to_sstable(compaction_group& cg, lw_shared_ptr<memtable> memt, sstable_write_permit&& permit);
     // Caller must keep m alive.

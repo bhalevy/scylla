@@ -55,17 +55,8 @@ class compaction_group {
 
     friend class compaction_group_sstables_adder;
 private:
-    // Adds new sstable to the set of sstables
-    // Doesn't update the cache. The cache must be synchronized in order for reads to see
-    // the writes contained in this sstable.
-    // Cache must be synchronized atomically with this, otherwise write atomicity may not be respected.
-    // Doesn't trigger compaction.
-    // Strong exception guarantees.
-    lw_shared_ptr<sstables::sstable_set>
-    do_add_sstable(lw_shared_ptr<sstables::sstable_set> sstables, sstables::shared_sstable sstable,
-                   enable_backlog_tracker backlog_tracker);
     // Update compaction backlog tracker with the same changes applied to the underlying sstable set.
-    void backlog_tracker_adjust_charges(const std::vector<sstables::shared_sstable>& old_sstables, const std::vector<sstables::shared_sstable>& new_sstables);
+    future<> backlog_tracker_adjust_charges(const std::vector<sstables::shared_sstable>& old_sstables, const std::vector<sstables::shared_sstable>& new_sstables);
     static uint64_t calculate_disk_space_used_for(const sstables::sstable_set& set);
 
     future<> delete_sstables_atomically(std::vector<sstables::shared_sstable> sstables_to_remove);
@@ -99,12 +90,32 @@ public:
     // Returns minimum timestamp from memtable list
     api::timestamp_type min_memtable_timestamp() const;
 
+<<<<<<< HEAD
+=======
+    using is_main = bool_class<struct is_main_tag>;
+
+    class sstables_adder : public row_cache::external_updater_impl {
+    protected:
+        compaction_group& cg;
+        std::vector<sstables::shared_sstable> sstables;
+        is_main main;
+    private:
+        lw_shared_ptr<sstables::sstable_set> new_sstable_set;
+    public:
+        sstables_adder(compaction_group& cg, std::vector<sstables::shared_sstable> sstables, is_main main);
+        // Exception safe
+        virtual future<> prepare() override;
+        // Never fails
+        virtual future<> execute() noexcept override;
+    };
+
+>>>>>>> 61a726fa02 (table, compaction_group: futurize add_sstable path)
     // Add sstable to main set
     // Exception safe
-    void add_sstable(sstables::shared_sstable sstable);
+    future<> add_sstable(sstables::shared_sstable sstable);
     // Add sstable to maintenance set
     // Exception safe
-    void add_maintenance_sstable(sstables::shared_sstable sst);
+    future<> add_maintenance_sstable(sstables::shared_sstable sst);
 
     // Update main sstable set based on info in completion descriptor, where input sstables
     // will be replaced by output ones, row cache ranges are possibly invalidated and
