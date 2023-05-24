@@ -512,14 +512,39 @@ void compaction_group::set_maintenance_sstables(lw_shared_ptr<sstables::sstable_
     _maintenance_set_disk_space_used = calculate_disk_space_used_for(*_maintenance_sstables);
 }
 
+table_sstables_adder::table_sstables_adder(table& t, compaction_group& cg, std::vector<sstables::shared_sstable> sstables, is_main main)
+    : compaction_group_sstables_adder(cg, std::move(sstables), main)
+    , _t(t)
+{}
+
+// Guarantees strong exception safety
+future<> table_sstables_adder::prepare() {
+    return compaction_group_sstables_adder::prepare();
+}
+
+void table_sstables_adder::execute() {
+    compaction_group_sstables_adder::execute();
+    // FIXME: the following isn't exception safe.
+    _t.refresh_compound_sstable_set();
+    uint64_t bytes_on_disk = 0;
+    for (const auto& sst : _sstables) {
+        bytes_on_disk += sst->bytes_on_disk();
+    }
+    _t.update_stats_for_new_sstables(bytes_on_disk, _sstables.size());
+}
+
 void table::add_sstable(compaction_group& cg, sstables::shared_sstable sstable) {
-    cg.add_sstable(std::move(sstable));
-    refresh_compound_sstable_set();
+    auto adder = table_sstables_adder(*this, cg, {std::move(sstable)}, is_main::yes);
+    // FIXME: for now, prepare is essentially synchronous
+    (void)adder.prepare();
+    adder.execute();
 }
 
 void table::add_maintenance_sstable(compaction_group& cg, sstables::shared_sstable sst) {
-    cg.add_maintenance_sstable(std::move(sst));
-    refresh_compound_sstable_set();
+    auto adder = table_sstables_adder(*this, cg, {std::move(sst)}, is_main::no);
+    // FIXME: for now, prepare is essentially synchronous
+    (void)adder.prepare();
+    adder.execute();
 }
 
 void table::do_update_off_strategy_trigger() {
@@ -596,6 +621,12 @@ future<> table::parallel_foreach_compaction_group(std::function<future<>(compact
     });
 }
 
+void table::update_stats_for_new_sstables(uint64_t bytes_on_disk, size_t count) noexcept {
+    _stats.live_disk_space_used += bytes_on_disk;
+    _stats.total_disk_space_used += bytes_on_disk;
+    _stats.live_sstable_count += count;
+}
+
 void table::update_stats_for_new_sstable(const sstables::shared_sstable& sst) noexcept {
     _stats.live_disk_space_used += sst->bytes_on_disk();
     _stats.total_disk_space_used += sst->bytes_on_disk();
@@ -605,17 +636,11 @@ void table::update_stats_for_new_sstable(const sstables::shared_sstable& sst) no
 future<>
 table::do_add_sstable_and_update_cache(sstables::shared_sstable sst, sstables::offstrategy offstrategy) {
     auto permit = co_await seastar::get_units(_sstable_set_mutation_sem, 1);
-    co_return co_await get_row_cache().invalidate(row_cache::external_updater([this, sst, offstrategy] () noexcept {
-        // FIXME: this is not really noexcept, but we need to provide strong exception guarantees.
-        // atomically load all opened sstables into column family.
-        compaction_group& cg = compaction_group_for_sstable(sst);
-        if (!offstrategy) {
-            add_sstable(cg, sst);
-        } else {
-            add_maintenance_sstable(cg, sst);
-        }
-        update_stats_for_new_sstable(sst);
-    }), dht::partition_range::make({sst->get_first_decorated_key(), true}, {sst->get_last_decorated_key(), true}));
+    auto& cg = compaction_group_for_sstable(sst);
+    auto sstables = std::vector<sstables::shared_sstable>({sst});
+    auto adder = row_cache::external_updater(std::make_unique<table_sstables_adder>(*this, cg, std::move(sstables), is_main(!bool(offstrategy))));
+    co_return co_await get_row_cache().invalidate(std::move(adder),
+            dht::partition_range::make({sst->get_first_decorated_key(), true}, {sst->get_last_decorated_key(), true}));
 }
 
 future<>
@@ -640,26 +665,38 @@ table::add_sstables_and_update_cache(const std::vector<sstables::shared_sstable>
 future<>
 table::update_cache(compaction_group& cg, lw_shared_ptr<memtable> m, std::vector<sstables::shared_sstable> ssts) {
     auto permit = co_await seastar::get_units(_sstable_set_mutation_sem, 1);
-    mutation_source_opt ms_opt;
-    if (ssts.size() == 1) {
-        ms_opt = ssts.front()->as_mutation_source();
-    } else {
-        std::vector<mutation_source> sources;
-        sources.reserve(ssts.size());
-        for (auto& sst : ssts) {
-            sources.push_back(sst->as_mutation_source());
+
+    class updater : public table_sstables_adder {
+        lw_shared_ptr<memtable> _m;
+        mutation_source_opt _ms_opt;
+    public:
+        updater(table& t, compaction_group& cg, lw_shared_ptr<memtable> m, std::vector<sstables::shared_sstable> ssts)
+            : table_sstables_adder(t, cg, std::move(ssts), is_main::yes)
+            , _m(std::move(m))
+        {
+            if (_sstables.size() == 1) {
+                _ms_opt = _sstables.front()->as_mutation_source();
+            } else {
+                std::vector<mutation_source> sources;
+                sources.reserve(_sstables.size());
+                for (const auto& sst : _sstables) {
+                    sources.emplace_back(sst->as_mutation_source());
+                }
+                _ms_opt = make_combined_mutation_source(std::move(sources));
+            }
         }
-        ms_opt = make_combined_mutation_source(std::move(sources));
-    }
-    auto adder = row_cache::external_updater([this, m, ssts = std::move(ssts), new_ssts_ms = std::move(*ms_opt), &cg] () mutable {
-        // FIXME: the following isn't exception safe.
-        for (auto& sst : ssts) {
-            add_sstable(cg, sst);
-            update_stats_for_new_sstable(sst);
+
+        virtual future<> prepare() override {
+            return table_sstables_adder::prepare();
         }
-        m->mark_flushed(std::move(new_ssts_ms));
-        try_trigger_compaction(cg);
-    });
+
+        virtual void execute() override {
+            table_sstables_adder::execute();
+            _m->mark_flushed(std::move(*_ms_opt));
+            _t.try_trigger_compaction(_cg);
+        }
+    };
+    auto adder = row_cache::external_updater(std::make_unique<updater>(*this, cg, m, std::move(ssts)));
     if (cache_enabled()) {
         co_return co_await _cache.update(std::move(adder), *m);
     } else {
