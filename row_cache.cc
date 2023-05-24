@@ -1344,8 +1344,12 @@ std::ostream& operator<<(std::ostream& out, row_cache& rc) {
 future<> row_cache::do_update(row_cache::external_updater eu, row_cache::internal_updater iu) noexcept {
     auto permit = co_await get_units(_update_sem, 1);
     co_await eu.prepare();
+    try {
+        co_await eu.execute();
+    } catch (...) {
+        on_fatal_internal_error(clogger, fmt::format("External updater failed during cache update: {}", std::current_exception()));
+    }
     auto pos = dht::ring_position::min();
-    eu.execute();
     [&] () noexcept {
         _prev_snapshot_pos = std::move(pos);
         _prev_snapshot = std::exchange(_underlying, _snapshot_source());

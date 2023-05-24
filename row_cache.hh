@@ -180,9 +180,9 @@ public:
     public:
         virtual ~external_updater_impl() {}
         virtual future<> prepare() { return make_ready_future<>(); }
-        // FIXME: make execute() noexcept, that will require every updater to make execution exception safe,
-        // also change function signature.
-        virtual void execute() = 0;
+        // Exceptions from execute fatal in row_cache::do_update
+        // prepare() should set up the stage to make execute() always succeed (as much as possible).
+        virtual future<> execute() = 0;
     };
 
     class external_updater {
@@ -191,8 +191,9 @@ public:
             Func _func;
         public:
             explicit non_prepared(Func func) : _func(std::move(func)) {}
-            virtual void execute() override {
+            virtual future<> execute() override {
                 _func();
+                return make_ready_future<>();
             }
         };
         std::unique_ptr<external_updater_impl> _impl;
@@ -201,7 +202,7 @@ public:
         external_updater(std::unique_ptr<external_updater_impl> impl) : _impl(std::move(impl)) {}
 
         future<> prepare() { return _impl->prepare(); }
-        void execute() { _impl->execute(); }
+        future<> execute() { return _impl->execute(); }
     };
 public:
     struct stats {

@@ -1170,12 +1170,13 @@ compaction_group::update_sstable_lists_on_off_strategy_completion(sstables::comp
             // removing old sstables, used as input by off-strategy, from the maintenance set
             _new_maintenance_list = co_await _builder.build_new_list(*_cg.maintenance_sstables(), std::move(*_t.make_maintenance_sstable_set()), empty, _old_maintenance);
         }
-        virtual void execute() override {
+        virtual future<> execute() override {
             _cg.set_main_sstables(std::move(_new_main_list));
             _cg.set_maintenance_sstables(std::move(_new_maintenance_list));
             _t.refresh_compound_sstable_set();
             // Input sstables aren't not removed from backlog tracker because they come from the maintenance set.
             _cg.backlog_tracker_adjust_charges({}, _new_main);
+            return make_ready_future<>();
         }
         static std::unique_ptr<row_cache::external_updater_impl> make(compaction_group& cg, table::sstable_list_builder::permit_t permit, const sstables_t& old_maintenance, const sstables_t& new_main) {
             return std::make_unique<sstable_lists_updater>(cg, std::move(permit), old_maintenance, new_main);
@@ -1257,10 +1258,11 @@ compaction_group::update_main_sstable_list_on_compaction_completion(sstables::co
         virtual future<> prepare() override {
             _new_sstables = co_await _builder.build_new_list(*_cg.main_sstables(), _t._compaction_strategy.make_sstable_set(_t._schema), _desc.new_sstables, _desc.old_sstables);
         }
-        virtual void execute() override {
+        virtual future<> execute() override {
             _cg.set_main_sstables(std::move(_new_sstables));
             _t.refresh_compound_sstable_set();
             _cg.backlog_tracker_adjust_charges(_desc.old_sstables, _desc.new_sstables);
+            return make_ready_future<>();
         }
         static std::unique_ptr<row_cache::external_updater_impl> make(compaction_group& cg, table::sstable_list_builder::permit_t permit, sstables::compaction_completion_desc& d) {
             return std::make_unique<sstable_list_updater>(cg, std::move(permit), d);
