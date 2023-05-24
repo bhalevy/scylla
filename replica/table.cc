@@ -48,6 +48,7 @@
 #include "dht/token.hh"
 #include "dht/i_partitioner.hh"
 #include "replica/global_table_ptr.hh"
+#include "replica/sstables_adder.hh"
 
 #include <boost/range/algorithm/remove_if.hpp>
 #include <boost/range/algorithm.hpp>
@@ -442,25 +443,48 @@ void compaction_group::backlog_tracker_adjust_charges(const std::vector<sstables
     tracker.replace_sstables(old_sstables, new_sstables);
 }
 
-lw_shared_ptr<sstables::sstable_set>
-compaction_group::do_add_sstable(lw_shared_ptr<sstables::sstable_set> sstables, sstables::shared_sstable sstable,
-        enable_backlog_tracker backlog_tracker) {
-    if (belongs_to_other_shard(sstable->get_shards_for_this_sstable())) {
-        on_internal_error(tlogger, format("Attempted to load the shared SSTable {} at table", sstable->get_filename()));
+compaction_group_sstables_adder::compaction_group_sstables_adder(compaction_group& cg, std::vector<sstables::shared_sstable> sstables, is_main main)
+    : cg(cg)
+    , sstables(std::move(sstables))
+    , main(main)
+{
+    for (const auto& sst : sstables) {
+        if (belongs_to_other_shard(sst->get_shards_for_this_sstable())) {
+            on_internal_error(tlogger, format("Attempted to load the shared SSTable {} at table", sst->get_filename()));
+        }
     }
+}
+
+// Exception safe
+future<> compaction_group_sstables_adder::prepare() {
     // allow in-progress reads to continue using old list
-    auto new_sstables = make_lw_shared<sstables::sstable_set>(*sstables);
-    new_sstables->insert(sstable);
-    if (backlog_tracker) {
-        table::add_sstable_to_backlog_tracker(get_backlog_tracker(), sstable);
+    auto cur = main ? cg.main_sstables() : cg.maintenance_sstables();
+    new_sstable_set = make_lw_shared<sstables::sstable_set>(*cur);
+    new_sstable_set->insert(sstables);
+    return make_ready_future<>();
+}
+
+void compaction_group_sstables_adder::execute() {
+    if (main) {
+        cg._main_sstables = std::move(new_sstable_set);
+        for (const auto& sst : sstables) {
+            cg._main_set_disk_space_used += sst->bytes_on_disk();
+        }
+        // FIXME: the following isn't exception safe.
+        table::add_sstables_to_backlog_tracker(cg.get_backlog_tracker(), sstables);
+    } else {
+        cg._maintenance_sstables = std::move(new_sstable_set);
+        for (const auto& sst : sstables) {
+            cg._maintenance_set_disk_space_used += sst->bytes_on_disk();
+        }
     }
-    return new_sstables;
 }
 
 void compaction_group::add_sstable(sstables::shared_sstable sstable) {
-    auto sstable_size = sstable->bytes_on_disk();
-    _main_sstables = do_add_sstable(_main_sstables, std::move(sstable), enable_backlog_tracker::yes);
-    _main_set_disk_space_used += sstable_size;
+    auto adder = compaction_group_sstables_adder(*this, {std::move(sstable)}, is_main::yes);
+    // FIXME: for now, prepare is essentially synchronous
+    (void)adder.prepare();
+    adder.execute();
 }
 
 const lw_shared_ptr<sstables::sstable_set>& compaction_group::main_sstables() const noexcept {
@@ -473,9 +497,10 @@ void compaction_group::set_main_sstables(lw_shared_ptr<sstables::sstable_set> ne
 }
 
 void compaction_group::add_maintenance_sstable(sstables::shared_sstable sst) {
-    auto sstable_size = sst->bytes_on_disk();
-    _maintenance_sstables = do_add_sstable(_maintenance_sstables, std::move(sst), enable_backlog_tracker::no);
-    _maintenance_set_disk_space_used += sstable_size;
+    auto adder = compaction_group_sstables_adder(*this, {std::move(sst)}, is_main::no);
+    // FIXME: for now, prepare is essentially synchronous
+    (void)adder.prepare();
+    adder.execute();
 }
 
 const lw_shared_ptr<sstables::sstable_set>& compaction_group::maintenance_sstables() const noexcept {
