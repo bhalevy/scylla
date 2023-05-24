@@ -20,6 +20,7 @@
 namespace replica {
 
 using enable_backlog_tracker = bool_class<class enable_backlog_tracker_tag>;
+using is_main = bool_class<struct is_main_tag>;
 
 // Compaction group is a set of SSTables which are eligible to be compacted together.
 // By this definition, we can say:
@@ -97,8 +98,10 @@ public:
     // Returns minimum timestamp from memtable list
     api::timestamp_type min_memtable_timestamp() const;
     // Add sstable to main set
+    // Exception safe
     void add_sstable(sstables::shared_sstable sstable);
     // Add sstable to maintenance set
+    // Exception safe
     void add_maintenance_sstable(sstables::shared_sstable sst);
 
     // Update main sstable set based on info in completion descriptor, where input sstables
