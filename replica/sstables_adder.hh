@@ -38,4 +38,15 @@ public:
     virtual void execute() override;
 };
 
+class table_sstables_adder : public compaction_group_sstables_adder {
+protected:
+    table& _t;
+public:
+    table_sstables_adder(table& t, compaction_group& cg, std::vector<sstables::shared_sstable> sstables, is_main main);
+    // Guarantees strong exception safety
+    virtual future<> prepare() override;
+    // FIXME: need to provide strong exception guarantees.
+    virtual void execute() override;
+};
+
 } // namespace replica

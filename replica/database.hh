@@ -557,7 +557,9 @@ private:
     bool cache_enabled() const {
         return _config.enable_cache && _schema->caching_options().enabled();
     }
+    void update_stats_for_new_sstables(uint64_t bytes_on_disk, size_t count) noexcept;
     void update_stats_for_new_sstable(const sstables::shared_sstable& sst) noexcept;
+
     future<> do_add_sstable_and_update_cache(sstables::shared_sstable sst, sstables::offstrategy offstrategy);
     // Helpers which add sstable on behalf of a compaction group and refreshes compound set.
     void add_sstable(compaction_group& cg, sstables::shared_sstable sstable);
@@ -1122,6 +1124,7 @@ public:
     friend class distributed_loader;
     friend class table_populator;
     friend class compaction_group_sstables_adder;
+    friend class table_sstables_adder;
 
 private:
     timer<> _off_strategy_trigger;
