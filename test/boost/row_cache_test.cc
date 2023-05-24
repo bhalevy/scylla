@@ -1223,7 +1223,7 @@ struct update_failure_tester {
             logalloc::reclaim_lock _(tracker.region());
             try {
                 while (true) {
-                    memory_hog.emplace_back(bytes(bytes::initialized_later(), 4 * 1024));
+                    memory_hog.emplace_back(bytes(bytes::initialized_later(), 127 * 1024));
                 }
             } catch (const std::bad_alloc&) {
                 // expected
