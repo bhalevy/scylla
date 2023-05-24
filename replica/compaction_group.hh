@@ -50,6 +50,8 @@ class compaction_group {
     uint64_t _main_set_disk_space_used = 0;
     uint64_t _maintenance_set_disk_space_used = 0;
     seastar::condition_variable _staging_done_condition;
+
+    friend class compaction_group_sstables_adder;
 private:
     // Adds new sstable to the set of sstables
     // Doesn't update the cache. The cache must be synchronized in order for reads to see
