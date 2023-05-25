@@ -2207,6 +2207,9 @@ future<db::replay_position> table::discard_sstables(db_clock::time_point truncat
                     }
                     pruned->insert(p);
                 });
+                if (remove.empty()) {
+                    pruned = {};
+                }
             };
             prune(st.pruned, cg.main_sstables(), st.remove);
             prune(st.maintenance_pruned, cg.maintenance_sstables(), st.maintenance_remove);
@@ -2227,8 +2230,12 @@ future<db::replay_position> table::discard_sstables(db_clock::time_point truncat
 
         virtual void execute() override {
             for (auto& [cg, st] : cg_map) {
-                cg->set_main_sstables(std::move(st.pruned));
-                cg->set_maintenance_sstables(std::move(st.maintenance_pruned));
+                if (st.pruned) {
+                    cg->set_main_sstables(std::move(st.pruned));
+                }
+                if (st.maintenance_pruned) {
+                    cg->set_maintenance_sstables(std::move(st.maintenance_pruned));
+                }
                 // FIXME: the following isn't exception safe
                 auto& bt = cg->get_backlog_tracker();
                 auto delete_sstable = [&] (sstables::shared_sstable sst, bool remove_from_backlog_tracker) {
