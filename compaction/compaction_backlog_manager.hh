@@ -89,6 +89,9 @@ public:
     void remove_sstables(const std::vector<sstables::shared_sstable>& sstables) {
         return replace_sstables(sstables, {});
     }
+    void adjust_charges(const std::vector<sstables::shared_sstable>& old_sstables, const std::vector<sstables::shared_sstable>& new_sstables) {
+        return replace_sstables(old_sstables, new_sstables);
+    }
 
     void disable() {
         _impl = {};
