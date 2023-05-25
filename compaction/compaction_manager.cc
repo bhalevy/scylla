@@ -268,6 +268,11 @@ void compaction_manager::deregister_compacting_sstables(Iterator first, Sentinel
 class user_initiated_backlog_tracker final : public compaction_backlog_tracker::impl {
 public:
     explicit user_initiated_backlog_tracker(float added_backlog, size_t available_memory) : _added_backlog(added_backlog), _available_memory(available_memory) {}
+
+    virtual future<std::unique_ptr<compaction_backlog_tracker::impl>> clone_async() const override {
+        auto ret = std::make_unique<user_initiated_backlog_tracker>(*this);
+        return make_ready_future<std::unique_ptr<compaction_backlog_tracker::impl>>(std::move(ret));
+    }
 private:
     float _added_backlog;
     size_t _available_memory;
@@ -1975,6 +1980,29 @@ compaction_backlog_tracker::operator=(compaction_backlog_tracker&& x) noexcept {
 compaction_backlog_tracker::~compaction_backlog_tracker() {
     if (_manager) {
         _manager->remove_backlog_tracker(this);
+    }
+}
+
+future<compaction_backlog_tracker> compaction_backlog_tracker::clone_async() const {
+    auto ret = compaction_backlog_tracker(co_await _impl->clone_async());
+    ret._ongoing_writes = _ongoing_writes;
+    ret._ongoing_compactions = _ongoing_compactions;
+    co_return ret;
+}
+
+future<> compaction_backlog_tracker::clear_gently() noexcept {
+    if (auto i = std::exchange(_impl, nullptr)) {
+        co_await i->clear_gently();
+    }
+    _ongoing_writes = {};
+    _ongoing_compactions = {};
+}
+
+void compaction_backlog_tracker::swap(compaction_backlog_tracker& x) noexcept {
+    if (this != &x) {
+        std::swap(_impl, x._impl);
+        std::swap(_ongoing_writes, x._ongoing_writes);
+        std::swap(_ongoing_compactions, x._ongoing_compactions);
     }
 }
 
