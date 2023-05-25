@@ -96,10 +96,6 @@ public:
     size_t memtable_count() const noexcept;
     // Returns minimum timestamp from memtable list
     api::timestamp_type min_memtable_timestamp() const;
-    // Add sstable to main set
-    void add_sstable(sstables::shared_sstable sstable);
-    // Add sstable to maintenance set
-    void add_maintenance_sstable(sstables::shared_sstable sst);
 
     // Update main sstable set based on info in completion descriptor, where input sstables
     // will be replaced by output ones, row cache ranges are possibly invalidated and
