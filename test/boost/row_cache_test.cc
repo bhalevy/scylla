@@ -16,6 +16,7 @@
 
 #include <seastar/testing/test_case.hh>
 #include <seastar/testing/thread_test_case.hh>
+#include <seastar/coroutine/exception.hh>
 #include "test/lib/mutation_assertions.hh"
 #include "test/lib/flat_mutation_reader_assertions.hh"
 #include "test/lib/mutation_source_test.hh"
@@ -1149,8 +1150,21 @@ mutation make_new_mutation(schema_ptr s, int key) {
     return make_new_mutation(s, partition_key::from_single_value(*s, to_bytes(format("key{:d}", key))));
 }
 
-SEASTAR_TEST_CASE(test_update_failure) {
-    return seastar::async([] {
+struct update_failure_tester {
+    enum class mode {
+        internal,
+        prepare,
+    };
+
+    const char* to_string(mode m) {
+        switch (m) {
+        case mode::internal: return "internal";
+        case mode::prepare: return "prepare";
+        }
+    }
+
+    future<> run(mode test_mode) {
+      return seastar::async([this, test_mode] {
         auto s = make_schema();
         tests::reader_concurrency_semaphore_wrapper semaphore;
         auto cache_mt = make_lw_shared<replica::memtable>(s);
@@ -1178,7 +1192,31 @@ SEASTAR_TEST_CASE(test_update_failure) {
             mt->apply(m);
         }
 
-        // fill all transient memory
+        struct updater_impl : public row_cache::external_updater_impl {
+            mode test_mode;
+            std::vector<bytes> memory;
+
+            updater_impl(mode test_mode) noexcept : test_mode(test_mode) {}
+
+            void allocate() {
+                while (true) {
+                    auto x = bytes(bytes::initialized_later(), 4 * 1024);
+                    memory.emplace_back(std::move(x));
+                }
+            }
+
+            virtual future<> prepare() override {
+                if (test_mode != mode::prepare) {
+                    co_return;
+                }
+                allocate();
+            }
+            virtual void execute() noexcept override {
+            }
+        };
+        auto updater = row_cache::external_updater(std::make_unique<updater_impl>(test_mode));
+
+        // fill transient memory, leaving one block free
         std::vector<bytes> memory_hog;
         {
             logalloc::reclaim_lock _(tracker.region());
@@ -1191,7 +1229,7 @@ SEASTAR_TEST_CASE(test_update_failure) {
             }
         }
 
-        auto ev = tracker.region().evictor();
+        auto& ev = tracker.region().evictor();
         int evicitons_left = 10;
         tracker.region().make_evictable([&] () mutable {
             if (evicitons_left == 0) {
@@ -1203,9 +1241,16 @@ SEASTAR_TEST_CASE(test_update_failure) {
 
         bool failed = false;
         try {
-            cache.update(row_cache::external_updater([] { }), *mt).get();
+            cache.update(std::move(updater), *mt).get();
         } catch (const std::bad_alloc&) {
             failed = true;
+        }
+        testlog.info("update with failure mode={} failed={} evicitons_left={}", to_string(test_mode), failed, evicitons_left);
+        // Failure in the external_updater::{prepare,execute} phases
+        // should propagte to the caller, and be exception safe,
+        // i.e. leave the cache unchanged.
+        if (test_mode != mode::internal) {
+            BOOST_REQUIRE(failed);
         }
         BOOST_REQUIRE(!evicitons_left); // should have happened
 
@@ -1231,7 +1276,18 @@ SEASTAR_TEST_CASE(test_update_failure) {
         } else {
             has_only(updated_partitions);
         }
-    });
+      });
+    }
+};
+
+SEASTAR_TEST_CASE(test_update_failure) {
+    update_failure_tester tester;
+    return tester.run(update_failure_tester::mode::internal);
+}
+
+SEASTAR_TEST_CASE(test_update_failure_in_prepare) {
+    update_failure_tester tester;
+    return tester.run(update_failure_tester::mode::prepare);
 }
 #endif
 
