@@ -563,9 +563,6 @@ private:
     void update_stats_for_new_sstable(const sstables::shared_sstable& sst) noexcept;
 
     future<> do_add_sstable_and_update_cache(sstables::shared_sstable sst, sstables::offstrategy offstrategy);
-    // Helpers which add sstable on behalf of a compaction group and refreshes compound set.
-    void add_sstable(compaction_group& cg, sstables::shared_sstable sstable);
-    void add_maintenance_sstable(compaction_group& cg, sstables::shared_sstable sst);
     static void add_sstable_to_backlog_tracker(compaction_backlog_tracker& tracker, sstables::shared_sstable sstable) {
         add_sstables_to_backlog_tracker(tracker, {std::move(sstable)});
     }

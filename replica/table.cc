@@ -480,13 +480,6 @@ void compaction_group_sstables_adder::execute() {
     }
 }
 
-void compaction_group::add_sstable(sstables::shared_sstable sstable) {
-    auto adder = compaction_group_sstables_adder(*this, {std::move(sstable)}, is_main::yes);
-    // FIXME: for now, prepare is essentially synchronous
-    (void)adder.prepare();
-    adder.execute();
-}
-
 const lw_shared_ptr<sstables::sstable_set>& compaction_group::main_sstables() const noexcept {
     return _main_sstables;
 }
@@ -494,13 +487,6 @@ const lw_shared_ptr<sstables::sstable_set>& compaction_group::main_sstables() co
 void compaction_group::set_main_sstables(lw_shared_ptr<sstables::sstable_set> new_main_sstables) {
     _main_sstables = std::move(new_main_sstables);
     _main_set_disk_space_used = calculate_disk_space_used_for(*_main_sstables);
-}
-
-void compaction_group::add_maintenance_sstable(sstables::shared_sstable sst) {
-    auto adder = compaction_group_sstables_adder(*this, {std::move(sst)}, is_main::no);
-    // FIXME: for now, prepare is essentially synchronous
-    (void)adder.prepare();
-    adder.execute();
 }
 
 const lw_shared_ptr<sstables::sstable_set>& compaction_group::maintenance_sstables() const noexcept {
@@ -531,20 +517,6 @@ void table_sstables_adder::execute() {
         bytes_on_disk += sst->bytes_on_disk();
     }
     _t.update_stats_for_new_sstables(bytes_on_disk, _sstables.size());
-}
-
-void table::add_sstable(compaction_group& cg, sstables::shared_sstable sstable) {
-    auto adder = table_sstables_adder(*this, cg, {std::move(sstable)}, is_main::yes);
-    // FIXME: for now, prepare is essentially synchronous
-    (void)adder.prepare();
-    adder.execute();
-}
-
-void table::add_maintenance_sstable(compaction_group& cg, sstables::shared_sstable sst) {
-    auto adder = table_sstables_adder(*this, cg, {std::move(sst)}, is_main::no);
-    // FIXME: for now, prepare is essentially synchronous
-    (void)adder.prepare();
-    adder.execute();
 }
 
 void table::do_update_off_strategy_trigger() {
