@@ -431,11 +431,7 @@ void table::notify_bootstrap_or_replace_end() {
 }
 
 inline void table::add_sstable_to_backlog_tracker(compaction_backlog_tracker& tracker, sstables::shared_sstable sstable) {
-    tracker.replace_sstables({}, {std::move(sstable)});
-}
-
-inline void table::add_sstables_to_backlog_tracker(compaction_backlog_tracker& tracker, const std::vector<sstables::shared_sstable>& new_sstables) {
-    tracker.replace_sstables({}, new_sstables);
+    tracker.add_sstables({std::move(sstable)});
 }
 
 inline void table::remove_sstable_from_backlog_tracker(compaction_backlog_tracker& tracker, sstables::shared_sstable sstable) {
@@ -466,7 +462,7 @@ future<> compaction_group_sstables_adder::prepare() {
     _new_sstable_set = make_lw_shared<sstables::sstable_set>(*cur);
     _new_sstable_set->insert(_sstables);
     _new_backlog_tracker.emplace(_cg.get_backlog_tracker().clone());
-    table::add_sstables_to_backlog_tracker(*_new_backlog_tracker, _sstables);
+    _new_backlog_tracker->add_sstables(_sstables);
     return make_ready_future<>();
 }
 

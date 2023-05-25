@@ -562,7 +562,6 @@ private:
 
     future<> do_add_sstable_and_update_cache(sstables::shared_sstable sst, sstables::offstrategy offstrategy);
     static void add_sstable_to_backlog_tracker(compaction_backlog_tracker& tracker, sstables::shared_sstable sstable);
-    static void add_sstables_to_backlog_tracker(compaction_backlog_tracker& tracker, const std::vector<sstables::shared_sstable>& new_sstable);
     static void remove_sstable_from_backlog_tracker(compaction_backlog_tracker& tracker, sstables::shared_sstable sstable);
     lw_shared_ptr<memtable> new_memtable();
     future<> try_flush_memtable_to_sstable(compaction_group& cg, lw_shared_ptr<memtable> memt, sstable_write_permit&& permit);
