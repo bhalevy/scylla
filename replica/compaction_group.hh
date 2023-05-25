@@ -56,9 +56,6 @@ class compaction_group {
     using list_hook_t = boost::intrusive::list_member_hook<boost::intrusive::link_mode<boost::intrusive::auto_unlink>>;
     list_hook_t _list_hook;
 private:
-    // Update compaction backlog tracker with the same changes applied to the underlying sstable set.
-    void backlog_tracker_adjust_charges(const std::vector<sstables::shared_sstable>& old_sstables, const std::vector<sstables::shared_sstable>& new_sstables);
-
     future<> delete_sstables_atomically(std::vector<sstables::shared_sstable> sstables_to_remove);
     // Input SSTables that weren't added to any SSTable set, are considered unused and can be unlinked.
     // An input SSTable remains linked if it wasn't actually compacted, yet compaction manager wants

@@ -470,11 +470,6 @@ inline void table::remove_sstable_from_backlog_tracker(compaction_backlog_tracke
     tracker.replace_sstables({std::move(sstable)}, {});
 }
 
-void compaction_group::backlog_tracker_adjust_charges(const std::vector<sstables::shared_sstable>& old_sstables, const std::vector<sstables::shared_sstable>& new_sstables) {
-    auto& tracker = get_backlog_tracker();
-    tracker.replace_sstables(old_sstables, new_sstables);
-}
-
 const lw_shared_ptr<sstables::sstable_set>& compaction_group::main_sstables() const noexcept {
     return _main_sstables;
 }
@@ -790,6 +785,7 @@ class table_sstables_adder : public row_cache::external_updater_impl {
     lw_shared_ptr<memtable> _mut;
 
     lw_shared_ptr<sstables::sstable_set> _new_sstable_set;
+    std::optional<compaction_backlog_tracker> _new_backlog_tracker;
     mutation_source_opt _ms_opt;
 public:
     table_sstables_adder(table& t, compaction_group& cg, std::vector<sstables::shared_sstable> sstables, is_main main, lw_shared_ptr<memtable> m)
@@ -826,6 +822,9 @@ public:
         if (inserted.size() != _sstables.size()) {
             on_internal_error(tlogger, fmt::format("table_sstables_adder: some sstables are already in the table: candidates={} inserted={}", _sstables, inserted));
         }
+        if (_is_main) {
+            _new_backlog_tracker.emplace(_cg.get_backlog_tracker().clone_and_replace_sstables({}, _sstables));
+        }
         return make_ready_future<>();
     }
 
@@ -835,8 +834,7 @@ public:
     virtual void execute() override {
         if (_is_main) {
             _cg.set_main_sstables(std::move(_new_sstable_set));
-            // FIXME: replace_sstables may throw
-            _cg.get_backlog_tracker().replace_sstables({}, _sstables);
+            _t._compaction_manager.register_backlog_tracker(_cg.as_table_state(), std::move(*_new_backlog_tracker));
         } else {
             _cg.set_maintenance_sstables(std::move(_new_sstable_set));
         }
@@ -1377,6 +1375,7 @@ compaction_group::update_sstable_lists_on_off_strategy_completion(sstables::comp
         const sstables_t& _new_main;
         lw_shared_ptr<sstables::sstable_set> _new_maintenance_list;
         lw_shared_ptr<sstables::sstable_set> _new_main_list;
+        std::optional<compaction_backlog_tracker> _new_backlog_tracker;
     public:
         explicit sstable_lists_updater(compaction_group& cg, table::sstable_list_builder::permit_t permit, const sstables_t& old_maintenance, const sstables_t& new_main)
                 : _t(cg._t), _cg(cg), _builder(std::move(permit)), _old_maintenance(old_maintenance), _new_main(new_main) {
@@ -1387,14 +1386,15 @@ compaction_group::update_sstable_lists_on_off_strategy_completion(sstables::comp
             _new_main_list = co_await _builder.build_new_list(*_cg.main_sstables(), _t._compaction_strategy.make_sstable_set(_t._schema), _new_main, empty);
             // removing old sstables, used as input by off-strategy, from the maintenance set
             _new_maintenance_list = co_await _builder.build_new_list(*_cg.maintenance_sstables(), std::move(*_t.make_maintenance_sstable_set()), empty, _old_maintenance);
+            // Input sstables aren't not removed from backlog tracker because they come from the maintenance set.
+            _new_backlog_tracker.emplace(_cg.get_backlog_tracker().clone_and_replace_sstables({}, _new_main));
         }
         virtual void execute() override {
             _cg.set_main_sstables(std::move(_new_main_list));
             _cg.set_maintenance_sstables(std::move(_new_maintenance_list));
             // FIXME: the following is not exception safe
             _t.refresh_compound_sstable_set();
-            // Input sstables aren't not removed from backlog tracker because they come from the maintenance set.
-            _cg.backlog_tracker_adjust_charges({}, _new_main);
+            _t._compaction_manager.register_backlog_tracker(_cg.as_table_state(), std::move(*_new_backlog_tracker));
         }
         static std::unique_ptr<row_cache::external_updater_impl> make(compaction_group& cg, table::sstable_list_builder::permit_t permit, const sstables_t& old_maintenance, const sstables_t& new_main) {
             return std::make_unique<sstable_lists_updater>(cg, std::move(permit), old_maintenance, new_main);
@@ -1464,6 +1464,7 @@ compaction_group::update_main_sstable_list_on_compaction_completion(sstables::co
         struct replacement_desc {
             sstables::compaction_completion_desc desc;
             lw_shared_ptr<sstables::sstable_set> new_sstables;
+            std::optional<compaction_backlog_tracker> new_backlog_tracker;
         };
         std::unordered_map<compaction_group*, replacement_desc> _cg_desc;
     public:
@@ -1481,6 +1482,7 @@ compaction_group::update_main_sstable_list_on_compaction_completion(sstables::co
             for (auto& [cg, d] : _cg_desc) {
                 d.new_sstables = co_await _builder.build_new_list(*cg->main_sstables(), _t._compaction_strategy.make_sstable_set(_t._schema),
                                                                   d.desc.new_sstables, d.desc.old_sstables);
+                d.new_backlog_tracker.emplace(_cg.get_backlog_tracker().clone_and_replace_sstables(d.desc.old_sstables, d.desc.new_sstables));
             }
         }
         virtual void execute() override {
@@ -1490,7 +1492,7 @@ compaction_group::update_main_sstable_list_on_compaction_completion(sstables::co
             // FIXME: the following is not exception safe
             _t.refresh_compound_sstable_set();
             for (auto& [cg, d] : _cg_desc) {
-                cg->backlog_tracker_adjust_charges(d.desc.old_sstables, d.desc.new_sstables);
+                _t.get_compaction_manager().register_backlog_tracker(cg->as_table_state(), std::move(*d.new_backlog_tracker));
             }
         }
         static std::unique_ptr<row_cache::external_updater_impl> make(compaction_group& cg, table::sstable_list_builder::permit_t permit, sstables::compaction_completion_desc& d) {
