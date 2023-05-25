@@ -92,6 +92,10 @@ public:
     void copy_ongoing_charges(compaction_backlog_tracker& new_bt, bool move_read_charges = true) const;
     void revert_charges(sstables::shared_sstable sst);
 
+    void add_sstables(const std::vector<sstables::shared_sstable>& sstables) {
+        return replace_sstables({}, sstables);
+    }
+
     void disable() {
         _impl = {};
         _ongoing_writes = {};
