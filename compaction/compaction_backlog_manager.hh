@@ -86,6 +86,9 @@ public:
     void add_sstables(const std::vector<sstables::shared_sstable>& sstables) {
         return replace_sstables({}, sstables);
     }
+    void remove_sstables(const std::vector<sstables::shared_sstable>& sstables) {
+        return replace_sstables(sstables, {});
+    }
 
     void disable() {
         _impl = {};

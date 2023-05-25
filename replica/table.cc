@@ -434,10 +434,6 @@ inline void table::add_sstable_to_backlog_tracker(compaction_backlog_tracker& tr
     tracker.add_sstables({std::move(sstable)});
 }
 
-inline void table::remove_sstable_from_backlog_tracker(compaction_backlog_tracker& tracker, sstables::shared_sstable sstable) {
-    tracker.replace_sstables({std::move(sstable)}, {});
-}
-
 void compaction_group::backlog_tracker_adjust_charges(const std::vector<sstables::shared_sstable>& old_sstables, const std::vector<sstables::shared_sstable>& new_sstables) {
     auto& tracker = get_backlog_tracker();
     tracker.replace_sstables(old_sstables, new_sstables);
@@ -1920,6 +1916,7 @@ future<db::replay_position> table::discard_sstables(db_clock::time_point truncat
         struct cg_state {
             cg_sstables main;
             cg_sstables maintenance;
+            std::optional<compaction_backlog_tracker> new_backlog_tracker;
         };
         std::unordered_map<compaction_group*, cg_state> cg_map;
 
@@ -1949,6 +1946,10 @@ future<db::replay_position> table::discard_sstables(db_clock::time_point truncat
                 }
             };
             prune(st.main);
+            if (!st.main.remove.empty()) {
+                st.new_backlog_tracker.emplace(cg.get_backlog_tracker().clone());
+                st.new_backlog_tracker->remove_sstables(st.main.remove);
+            }
             prune(st.maintenance);
 
             if (!st.main.remove.empty() || !st.maintenance.remove.empty()) {
@@ -1984,6 +1985,9 @@ future<db::replay_position> table::discard_sstables(db_clock::time_point truncat
                 if (st.maintenance.pruned) {
                     cg->set_maintenance_sstables(std::move(st.maintenance.pruned));
                 }
+                if (st.new_backlog_tracker) {
+                    cg->get_backlog_tracker() = std::move(*st.new_backlog_tracker);
+                }
             }
             // FIXME: the following isn't exception safe.
             t.refresh_compound_sstable_set();
@@ -1997,7 +2001,6 @@ future<db::replay_position> table::discard_sstables(db_clock::time_point truncat
     rebuild_statistics();
     for (const auto& [cg, st] : p->cg_map) {
         for (const auto& sst : st.main.remove) {
-            remove_sstable_from_backlog_tracker(cg->get_backlog_tracker(), sst);
             co_await get_sstables_manager().delete_atomically({sst});
             erase_sstable_cleanup_state(sst);
         }
