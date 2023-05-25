@@ -564,7 +564,6 @@ private:
     static void add_sstable_to_backlog_tracker(compaction_backlog_tracker& tracker, sstables::shared_sstable sstable) {
         tracker.add_sstables({std::move(sstable)});
     }
-    static void remove_sstable_from_backlog_tracker(compaction_backlog_tracker& tracker, sstables::shared_sstable sstable);
     lw_shared_ptr<memtable> new_memtable();
     future<> try_flush_memtable_to_sstable(compaction_group& cg, lw_shared_ptr<memtable> memt, sstable_write_permit&& permit);
     // Caller must keep m alive.
