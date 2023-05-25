@@ -13,6 +13,7 @@
 #include "row_cache.hh"
 #include "sstables/shared_sstable.hh"
 #include "sstables/sstable_set.hh"
+#include "compaction/compaction_backlog_manager.hh"
 
 using namespace seastar;
 
@@ -28,14 +29,16 @@ protected:
     compaction_group& _cg;
     std::vector<sstables::shared_sstable> _sstables;
     is_main _main;
+    std::optional<compaction_backlog_tracker> _new_backlog_tracker;
 private:
     lw_shared_ptr<sstables::sstable_set> _new_sstable_set;
 public:
     compaction_group_sstables_adder(compaction_group& cg, std::vector<sstables::shared_sstable> sstables, is_main main);
     // Guarantees strong exception safety
     virtual future<> prepare() override;
-    // FIXME: this is not really noexcept, but we need to provide strong exception guarantees.
+    // Never fails
     virtual void execute() override;
+    virtual future<> cleanup() noexcept override;
 };
 
 class table_sstables_adder : public compaction_group_sstables_adder {
@@ -47,6 +50,7 @@ public:
     virtual future<> prepare() override;
     // FIXME: this is not really noexcept, but we need to provide strong exception guarantees.
     virtual void execute() override;
+    virtual future<> cleanup() noexcept override;
 };
 
 } // namespace replica

@@ -461,7 +461,8 @@ future<> compaction_group_sstables_adder::prepare() {
     auto cur = _main ? _cg.main_sstables() : _cg.maintenance_sstables();
     _new_sstable_set = make_lw_shared<sstables::sstable_set>(*cur);
     _new_sstable_set->insert(_sstables);
-    return make_ready_future<>();
+    _new_backlog_tracker.emplace(co_await _cg.get_backlog_tracker().clone_async());
+    table::add_sstables_to_backlog_tracker(*_new_backlog_tracker, _sstables);
 }
 
 void compaction_group_sstables_adder::execute() {
@@ -470,13 +471,18 @@ void compaction_group_sstables_adder::execute() {
         for (const auto& sst : _sstables) {
             _cg._main_set_disk_space_used += sst->bytes_on_disk();
         }
-        // FIXME: the following isn't exception safe.
-        table::add_sstables_to_backlog_tracker(_cg.get_backlog_tracker(), _sstables);
+        _cg.get_backlog_tracker().swap(*_new_backlog_tracker);
     } else {
         _cg._maintenance_sstables = std::move(_new_sstable_set);
         for (const auto& sst : _sstables) {
             _cg._maintenance_set_disk_space_used += sst->bytes_on_disk();
         }
+    }
+}
+
+future<> compaction_group_sstables_adder::cleanup() noexcept {
+    if (_new_backlog_tracker) {
+        co_await _new_backlog_tracker->clear_gently();
     }
 }
 
@@ -517,6 +523,10 @@ void table_sstables_adder::execute() {
         bytes_on_disk += sst->bytes_on_disk();
     }
     _t.update_stats_for_new_sstables(bytes_on_disk, _sstables.size());
+}
+
+future<> table_sstables_adder::cleanup() noexcept {
+    return compaction_group_sstables_adder::cleanup();
 }
 
 void table::do_update_off_strategy_trigger() {
