@@ -430,10 +430,6 @@ void table::notify_bootstrap_or_replace_end() {
     trigger_offstrategy_compaction();
 }
 
-inline void table::add_sstables_to_backlog_tracker(compaction_backlog_tracker& tracker, const std::vector<sstables::shared_sstable>& new_sstables) {
-    tracker.replace_sstables({}, new_sstables);
-}
-
 inline void table::remove_sstable_from_backlog_tracker(compaction_backlog_tracker& tracker, sstables::shared_sstable sstable) {
     tracker.replace_sstables({std::move(sstable)}, {});
 }
@@ -462,7 +458,7 @@ future<> compaction_group_sstables_adder::prepare() {
     new_sstable_set = make_lw_shared<sstables::sstable_set>(*cur);
     new_sstable_set->insert(sstables);
     new_backlog_tracker.emplace(co_await cg.get_backlog_tracker().clone_async());
-    table::add_sstables_to_backlog_tracker(*new_backlog_tracker, sstables);
+    new_backlog_tracker->add_sstables(sstables);
 }
 
 void compaction_group_sstables_adder::execute() {
