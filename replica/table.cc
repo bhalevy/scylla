@@ -2160,56 +2160,100 @@ future<db::replay_position> table::discard_sstables(db_clock::time_point truncat
         return _compaction_manager.compaction_disabled(cg.as_table_state());
     }));
 
-    db::replay_position rp;
-    struct removed_sstable {
-        compaction_group& cg;
-        sstables::shared_sstable sst;
-        replica::enable_backlog_tracker enable_backlog_tracker;
+    struct cg_prune_state {
+        lw_shared_ptr<sstables::sstable_set> pruned;
+        lw_shared_ptr<sstables::sstable_set> maintenance_pruned;
+        std::vector<sstables::shared_sstable> remove;
+        std::vector<sstables::shared_sstable> maintenance_remove;
     };
-    std::vector<removed_sstable> remove;
+    db::replay_position rp;
+    std::unordered_map<compaction_group*, cg_prune_state> cg_map;
+    std::vector<sstables::shared_sstable> del;
 
-    co_await _cache.invalidate(row_cache::external_updater([this, &rp, &remove, truncated_at] {
-        // FIXME: the following isn't exception safe.
-        for (compaction_group& cg : compaction_groups()) {
+    struct updater_impl : public row_cache::external_updater_impl {
+        table& t;
+        db_clock::time_point truncated_at;
+        db::replay_position& rp;
+        std::unordered_map<compaction_group*, cg_prune_state>& cg_map;
+        std::vector<sstables::shared_sstable>& del;
+
+        updater_impl(table& t, db_clock::time_point truncated_at,
+                db::replay_position& rp,
+                std::unordered_map<compaction_group*, cg_prune_state>& cg_map,
+                std::vector<sstables::shared_sstable>& del) noexcept
+            : t(t)
+            , truncated_at(truncated_at)
+            , rp(rp)
+            , cg_map(cg_map)
+            , del(del)
+        {}
+
+        void prepare_compaction_group(const compaction_group& cg, cg_prune_state& st) {
             auto gc_trunc = to_gc_clock(truncated_at);
 
-            auto pruned = make_lw_shared<sstables::sstable_set>(_compaction_strategy.make_sstable_set(_schema));
-            auto maintenance_pruned = make_maintenance_sstable_set();
+            st.pruned = make_lw_shared<sstables::sstable_set>(t.get_compaction_strategy().make_sstable_set(t.schema()));
+            st.maintenance_pruned = t.make_maintenance_sstable_set();
 
             auto prune = [&] (lw_shared_ptr<sstables::sstable_set>& pruned,
-                                            const lw_shared_ptr<sstables::sstable_set>& pruning,
-                                            replica::enable_backlog_tracker enable_backlog_tracker) mutable {
+                              const lw_shared_ptr<sstables::sstable_set>& pruning,
+                              std::vector<sstables::shared_sstable>& remove) mutable {
                 pruning->for_each_sstable([&] (const sstables::shared_sstable& p) mutable {
                     if (p->max_data_age() <= gc_trunc) {
                         if (p->originated_on_this_node().value_or(false) && p->get_stats_metadata().position.shard_id() == this_shard_id()) {
                             rp = std::max(p->get_stats_metadata().position, rp);
                         }
-                        remove.emplace_back(removed_sstable{cg, p, enable_backlog_tracker});
+                        remove.emplace_back(p);
                         return;
                     }
                     pruned->insert(p);
                 });
             };
-            prune(pruned, cg.main_sstables(), enable_backlog_tracker::yes);
-            prune(maintenance_pruned, cg.maintenance_sstables(), enable_backlog_tracker::no);
+            prune(st.pruned, cg.main_sstables(), st.remove);
+            prune(st.maintenance_pruned, cg.maintenance_sstables(), st.maintenance_remove);
+        };
 
-            cg.set_main_sstables(std::move(pruned));
-            cg.set_maintenance_sstables(std::move(maintenance_pruned));
+        virtual future<> prepare() override {
+            size_t del_size = 0;
+            for (compaction_group& cg : t.compaction_groups()) {
+                cg_prune_state st;
+                prepare_compaction_group(cg, st);
+                del_size += st.remove.size();
+                del_size += st.maintenance_remove.size();
+                cg_map[&cg] = std::move(st);
+                co_await coroutine::maybe_yield();
+            }
+            del.resize(del_size);
         }
-        refresh_compound_sstable_set();
-        tlogger.debug("cleaning out row cache");
-    }));
+
+        virtual void execute() override {
+            for (auto& [cg, st] : cg_map) {
+                cg->set_main_sstables(std::move(st.pruned));
+                cg->set_maintenance_sstables(std::move(st.maintenance_pruned));
+                // FIXME: the following isn't exception safe
+                auto& bt = cg->get_backlog_tracker();
+                auto delete_sstable = [&] (sstables::shared_sstable sst, bool remove_from_backlog_tracker) {
+                    if (remove_from_backlog_tracker) {
+                        remove_sstable_from_backlog_tracker(bt, sst);
+                    }
+                    t.get_compaction_manager().erase_sstable_cleanup_state(cg->as_table_state(), sst);
+                    del.emplace_back(std::move(sst));
+                };
+                for (auto& sst : st.remove) {
+                    delete_sstable(sst, true);
+                }
+                for (const auto& sst : st.maintenance_remove) {
+                    delete_sstable(sst, false);
+                }
+            }
+            // FIXME: the following isn't exception safe.
+            t.refresh_compound_sstable_set();
+        }
+    };
+
+    auto updater = row_cache::external_updater(std::make_unique<updater_impl>(*this, truncated_at, rp, cg_map, del));
+    co_await _cache.invalidate(std::move(updater));
     rebuild_statistics();
 
-    std::vector<sstables::shared_sstable> del;
-    del.reserve(remove.size());
-    for (auto& r : remove) {
-        if (r.enable_backlog_tracker) {
-            remove_sstable_from_backlog_tracker(r.cg.get_backlog_tracker(), r.sst);
-        }
-        erase_sstable_cleanup_state(r.sst);
-        del.emplace_back(r.sst);
-    };
     co_await get_sstables_manager().delete_atomically(std::move(del));
     co_return rp;
 }
