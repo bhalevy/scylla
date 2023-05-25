@@ -10,10 +10,13 @@
 
 #include <unordered_set>
 #include <memory>
+#include <seastar/core/future.hh>
 #include <seastar/core/shared_ptr.hh>
 #include "sstables/shared_sstable.hh"
 #include "sstables/progress_monitor.hh"
 #include "timestamp.hh"
+
+using namespace seastar;
 
 class compaction_backlog_manager;
 class compaction_controller;
@@ -63,6 +66,9 @@ public:
         virtual void replace_sstables(std::vector<sstables::shared_sstable> old_ssts, std::vector<sstables::shared_sstable> new_ssts) = 0;
         virtual double backlog(const ongoing_writes& ow, const ongoing_compactions& oc) const = 0;
         virtual ~impl() { }
+
+        virtual future<std::unique_ptr<impl>> clone_async() const = 0;
+        virtual future<> clear_gently() noexcept { return make_ready_future<>(); }
     };
 
     compaction_backlog_tracker(std::unique_ptr<impl> impl) : _impl(std::move(impl)) {}
@@ -70,6 +76,14 @@ public:
     compaction_backlog_tracker& operator=(compaction_backlog_tracker&&) noexcept;
     compaction_backlog_tracker(const compaction_backlog_tracker&) = delete;
     ~compaction_backlog_tracker();
+
+    // Clone the tracker and return an unregistered, mutable copy of it.
+    future<compaction_backlog_tracker> clone_async() const;
+    // Clear the tracker gently
+    future<> clear_gently() noexcept;
+    // Swap the tracker content with another one (typically a cloned one that was changed)
+    // Tracker registration of both objects is unaffected.
+    void swap(compaction_backlog_tracker&) noexcept;
 
     double backlog() const;
     void replace_sstables(const std::vector<sstables::shared_sstable>& old_ssts, const std::vector<sstables::shared_sstable>& new_ssts);

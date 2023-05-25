@@ -12,6 +12,7 @@
 #include <vector>
 #include <chrono>
 #include <seastar/core/shared_ptr.hh>
+#include "seastar/coroutine/maybe_yield.hh"
 #include "sstables/sstables.hh"
 #include "compaction.hh"
 #include "compaction_strategy.hh"
@@ -205,7 +206,7 @@ extern logging::logger clogger;
 class time_window_backlog_tracker final : public compaction_backlog_tracker::impl {
     time_window_compaction_strategy_options _twcs_options;
     size_tiered_compaction_strategy_options _stcs_options;
-    std::unordered_map<api::timestamp_type, size_tiered_backlog_tracker> _windows;
+    std::unordered_map<api::timestamp_type, std::unique_ptr<size_tiered_backlog_tracker>> _windows;
 
     api::timestamp_type lower_bound_of(api::timestamp_type timestamp) const {
         timestamp_type ts = time_window_compaction_strategy::to_timestamp_type(_twcs_options.timestamp_resolution, timestamp);
@@ -216,6 +217,19 @@ public:
         : _twcs_options(twcs_options)
         , _stcs_options(stcs_options)
     {}
+
+    virtual future<std::unique_ptr<compaction_backlog_tracker::impl>> clone_async() const override {
+        auto ret = std::make_unique<time_window_backlog_tracker>(_twcs_options, _stcs_options);
+        for (const auto& [ts, tracker] : _windows) {
+            auto* p = dynamic_cast<size_tiered_backlog_tracker*>((co_await tracker->clone_async()).release());
+            ret->_windows.emplace(ts, std::unique_ptr<size_tiered_backlog_tracker>(p));
+        }
+        co_return ret;
+    }
+
+    virtual future<> clear_gently() noexcept override {
+        co_await utils::clear_gently(_windows);
+    }
 
     virtual double backlog(const compaction_backlog_tracker::ongoing_writes& ow, const compaction_backlog_tracker::ongoing_compactions& oc) const override {
         std::unordered_map<api::timestamp_type, compaction_backlog_tracker::ongoing_writes> writes_per_window;
@@ -248,7 +262,7 @@ public:
             if (itc != compactions_per_window.end()) {
                 oc_this_window = &itc->second;
             }
-            b += windows.second.backlog(*ow_this_window, *oc_this_window);
+            b += windows.second->backlog(*ow_this_window, *oc_this_window);
             if (itw != writes_per_window.end()) {
                 // We will erase here so we can keep track of which
                 // writes belong to existing windows. Writes that don't belong to any window
@@ -275,7 +289,7 @@ public:
         for (auto& sst : new_ssts) {
             auto bound = lower_bound_of(sst->get_stats_metadata().max_timestamp);
             if (!_windows.contains(bound)) {
-                _windows.emplace(bound, size_tiered_backlog_tracker(_stcs_options));
+                _windows.emplace(bound, std::make_unique<size_tiered_backlog_tracker>(_stcs_options));
             }
             per_window_replacement[bound].new_ssts.push_back(std::move(sst));
         }
@@ -290,8 +304,8 @@ public:
             // All windows must exist here, as windows are created for new files and will
             // remain alive as long as there's a single file in them
             auto& w = _windows.at(bound);
-            w.replace_sstables(std::move(r.old_ssts), std::move(r.new_ssts));
-            if (w.total_bytes() <= 0) {
+            w->replace_sstables(std::move(r.old_ssts), std::move(r.new_ssts));
+            if (w->total_bytes() <= 0) {
                 _windows.erase(bound);
             }
         }
@@ -310,6 +324,11 @@ public:
         , _size_per_level(leveled_manifest::MAX_LEVELS, uint64_t(0))
         , _max_sstable_size(max_sstable_size_in_mb * 1024 * 1024)
     {}
+
+    virtual future<std::unique_ptr<compaction_backlog_tracker::impl>> clone_async() const override {
+        auto ret = std::make_unique<leveled_compaction_backlog_tracker>(*this);
+        return make_ready_future<std::unique_ptr<compaction_backlog_tracker::impl>>(std::move(ret));
+    }
 
     virtual double backlog(const compaction_backlog_tracker::ongoing_writes& ow, const compaction_backlog_tracker::ongoing_compactions& oc) const override {
         std::vector<uint64_t> effective_size_per_level = _size_per_level;
@@ -417,6 +436,10 @@ public:
 };
 
 struct unimplemented_backlog_tracker final : public compaction_backlog_tracker::impl {
+    virtual future<std::unique_ptr<compaction_backlog_tracker::impl>> clone_async() const override {
+        auto ret = std::make_unique<unimplemented_backlog_tracker>(*this);
+        return make_ready_future<std::unique_ptr<compaction_backlog_tracker::impl>>(std::move(ret));
+    }
     virtual double backlog(const compaction_backlog_tracker::ongoing_writes& ow, const compaction_backlog_tracker::ongoing_compactions& oc) const override {
         return compaction_controller::disable_backlog;
     }
@@ -424,6 +447,10 @@ struct unimplemented_backlog_tracker final : public compaction_backlog_tracker::
 };
 
 struct null_backlog_tracker final : public compaction_backlog_tracker::impl {
+    virtual future<std::unique_ptr<compaction_backlog_tracker::impl>> clone_async() const override {
+        auto ret = std::make_unique<null_backlog_tracker>(*this);
+        return make_ready_future<std::unique_ptr<compaction_backlog_tracker::impl>>(std::move(ret));
+    }
     virtual double backlog(const compaction_backlog_tracker::ongoing_writes& ow, const compaction_backlog_tracker::ongoing_compactions& oc) const override {
         return 0;
     }

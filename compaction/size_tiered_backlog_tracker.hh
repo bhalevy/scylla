@@ -7,7 +7,10 @@
 
 #pragma once
 #include "compaction_backlog_manager.hh"
+#include "seastar/coroutine/maybe_yield.hh"
 #include "size_tiered_compaction_strategy.hh"
+#include "utils/stall_free.hh"
+
 #include <cmath>
 #include <ctgmath>
 
@@ -85,6 +88,26 @@ class size_tiered_backlog_tracker final : public compaction_backlog_tracker::imp
     void refresh_sstables_backlog_contribution();
 public:
     size_tiered_backlog_tracker(sstables::size_tiered_compaction_strategy_options stcs_options) : _stcs_options(stcs_options) {}
+
+    virtual future<std::unique_ptr<compaction_backlog_tracker::impl>> clone_async() const override {
+        auto ret = std::make_unique<size_tiered_backlog_tracker>(_stcs_options);
+        ret->_sstables_contributing_backlog.reserve(_sstables_contributing_backlog.size());
+        for (const auto& sst : _sstables_contributing_backlog) {
+            ret->_sstables_contributing_backlog.insert(sst);
+            co_await coroutine::maybe_yield();
+        }
+        ret->_all.reserve(_all.size());
+        for (const auto& sst : _all) {
+            ret->_all.insert(sst);
+            co_await coroutine::maybe_yield();
+        }
+        co_return ret;
+    }
+
+    virtual future<> clear_gently() noexcept override {
+        co_await utils::clear_gently(_sstables_contributing_backlog);
+        co_await utils::clear_gently(_all);
+    }
 
     virtual double backlog(const compaction_backlog_tracker::ongoing_writes& ow, const compaction_backlog_tracker::ongoing_compactions& oc) const override;
 
