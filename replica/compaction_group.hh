@@ -110,10 +110,10 @@ public:
     future<> update_sstable_lists_on_off_strategy_completion(sstables::compaction_completion_desc desc);
 
     const lw_shared_ptr<sstables::sstable_set>& main_sstables() const noexcept;
-    void set_main_sstables(lw_shared_ptr<sstables::sstable_set> new_main_sstables);
+    void swap_main_sstables(lw_shared_ptr<sstables::sstable_set> new_main_sstables) noexcept;
 
     const lw_shared_ptr<sstables::sstable_set>& maintenance_sstables() const noexcept;
-    void set_maintenance_sstables(lw_shared_ptr<sstables::sstable_set> new_maintenance_sstables);
+    void swap_maintenance_sstables(lw_shared_ptr<sstables::sstable_set> new_maintenance_sstables) noexcept;
 
     // Makes a compound set, which includes main and maintenance sets
     lw_shared_ptr<sstables::sstable_set> make_compound_sstable_set();
