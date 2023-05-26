@@ -60,6 +60,7 @@ public:
         bool use_level_metadata);
 
     virtual std::unique_ptr<sstable_set_impl> clone() const override;
+    virtual future<> clear_gently() noexcept override;
     virtual std::vector<shared_sstable> select(const dht::partition_range& range) const override;
     virtual std::vector<sstable_run> select_sstable_runs(const std::vector<shared_sstable>& sstables) const override;
     virtual lw_shared_ptr<const sstable_list> all() const override;
@@ -90,6 +91,7 @@ public:
     time_series_sstable_set(const time_series_sstable_set& s);
 
     virtual std::unique_ptr<sstable_set_impl> clone() const override;
+    virtual future<> clear_gently() noexcept override;
     virtual std::vector<shared_sstable> select(const dht::partition_range& range = query::full_partition_range) const override;
     virtual lw_shared_ptr<const sstable_list> all() const override;
     virtual stop_iteration for_each_sstable_until(std::function<stop_iteration(const shared_sstable&)> func) const override;
@@ -131,6 +133,7 @@ public:
     compound_sstable_set(schema_ptr schema, std::vector<lw_shared_ptr<sstable_set>> sets);
 
     virtual std::unique_ptr<sstable_set_impl> clone() const override;
+    virtual future<> clear_gently() noexcept override;
     virtual std::vector<shared_sstable> select(const dht::partition_range& range = query::full_partition_range) const override;
     virtual std::vector<sstable_run> select_sstable_runs(const std::vector<shared_sstable>& sstables) const override;
     virtual lw_shared_ptr<const sstable_list> all() const override;
