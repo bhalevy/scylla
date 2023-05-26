@@ -1340,7 +1340,13 @@ std::ostream& operator<<(std::ostream& out, row_cache& rc) {
 
 future<> row_cache::do_update(row_cache::external_updater eu, row_cache::internal_updater iu) noexcept {
     auto permit = co_await get_units(_update_sem, 1);
-    co_await eu.prepare();
+    auto f = co_await coroutine::as_future(futurize_invoke([&eu] {
+        return eu.prepare();
+    }));
+    if (f.failed()) {
+        co_await eu.cleanup();
+        co_await coroutine::return_exception_ptr(f.get_exception());
+    }
     [&] () noexcept {
         // Any error from execute is considered fatal
         // to enforce exception safety.
@@ -1350,7 +1356,8 @@ future<> row_cache::do_update(row_cache::external_updater eu, row_cache::interna
         _prev_snapshot = std::exchange(_underlying, _snapshot_source());
         ++_underlying_phase;
     }();
-    auto f = co_await coroutine::as_future(futurize_invoke([&iu] {
+    co_await eu.cleanup();
+    f = co_await coroutine::as_future(futurize_invoke([&iu] {
         return iu();
     }));
     _prev_snapshot_pos = {};
