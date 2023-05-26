@@ -101,16 +101,9 @@ public:
     void adjust_charges(const std::vector<sstables::shared_sstable>& old_sstables, const std::vector<sstables::shared_sstable>& new_sstables) {
         return replace_sstables(old_sstables, new_sstables);
     }
-
-    void disable() {
-        _impl = {};
-        _ongoing_writes = {};
-        _ongoing_compactions = {};
-    }
 private:
     // Returns true if this SSTable can be added or removed from the tracker.
     bool sstable_belongs_to_tracker(const sstables::shared_sstable& sst);
-    bool disabled() const noexcept { return !_impl; }
     std::unique_ptr<impl> _impl;
     // We keep track of this so that we can transfer to a new tracker if the compaction strategy is
     // changed in the middle of a compaction.
