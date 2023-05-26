@@ -13,6 +13,7 @@
 #include "sstables/progress_monitor.hh"
 #include "shared_sstable.hh"
 #include "dht/i_partitioner.hh"
+#include "utils/stall_free.hh"
 #include <seastar/core/shared_ptr.hh>
 #include <seastar/core/io_priority_class.hh>
 #include <type_traits>
@@ -45,6 +46,9 @@ public:
     uint64_t data_size() const;
     const sstable_set& all() const { return _all; }
     double estimate_droppable_tombstone_ratio(gc_clock::time_point gc_before) const;
+    future<> clear_gently() noexcept {
+        co_await utils::clear_gently(_all);
+    }
 };
 
 class incremental_selector_impl {
@@ -57,6 +61,7 @@ class sstable_set_impl {
 public:
     virtual ~sstable_set_impl() {}
     virtual std::unique_ptr<sstable_set_impl> clone() const = 0;
+    virtual future<> clear_gently() noexcept = 0;
     virtual std::vector<shared_sstable> select(const dht::partition_range& range) const = 0;
     virtual std::vector<sstable_run> select_sstable_runs(const std::vector<shared_sstable>& sstables) const;
     virtual lw_shared_ptr<const sstable_list> all() const = 0;
@@ -122,6 +127,11 @@ public:
     void insert(const std::vector<shared_sstable>& ssts);
     void erase(shared_sstable sst);
     size_t size() const noexcept;
+    future<> clear_gently() noexcept {
+        if (auto i = std::exchange(_impl, nullptr)) {
+            co_await i->clear_gently();
+        }
+    }
 
     // Used to incrementally select sstables from sstable set using ring-position.
     // sstable set must be alive during the lifetime of the selector.

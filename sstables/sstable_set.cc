@@ -325,6 +325,13 @@ std::unique_ptr<sstable_set_impl> partitioned_sstable_set::clone() const {
     return std::make_unique<partitioned_sstable_set>(_schema, _unleveled_sstables, _leveled_sstables, _all, _all_runs, _use_level_metadata);
 }
 
+future<> partitioned_sstable_set::clear_gently() noexcept {
+    co_await utils::clear_gently(_unleveled_sstables);
+    co_await utils::clear_gently(_leveled_sstables);
+    co_await utils::clear_gently(_all);
+    co_await utils::clear_gently(_all_runs);
+}
+
 std::vector<shared_sstable> partitioned_sstable_set::select(const dht::partition_range& range) const {
     auto ipair = query(range);
     auto b = std::move(ipair.first);
@@ -478,6 +485,11 @@ time_series_sstable_set::time_series_sstable_set(const time_series_sstable_set& 
 
 std::unique_ptr<sstable_set_impl> time_series_sstable_set::clone() const {
     return std::make_unique<time_series_sstable_set>(*this);
+}
+
+future<> time_series_sstable_set::clear_gently() noexcept {
+    co_await utils::clear_gently(_sstables);
+    co_await utils::clear_gently(_sstables_reversed);
 }
 
 std::vector<shared_sstable> time_series_sstable_set::select(const dht::partition_range& range) const {
@@ -1024,6 +1036,10 @@ std::unique_ptr<sstable_set_impl> compound_sstable_set::clone() const {
         cloned_sets.push_back(std::move(cloned_set));
     }
     return std::make_unique<compound_sstable_set>(_schema, std::move(cloned_sets));
+}
+
+future<> compound_sstable_set::clear_gently() noexcept {
+    co_await utils::clear_gently(_sets);
 }
 
 std::vector<shared_sstable> compound_sstable_set::select(const dht::partition_range& range) const {
