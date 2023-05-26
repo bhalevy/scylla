@@ -183,6 +183,8 @@ public:
         // Updaters that are exception safe should handle all exceptions in prepare
         // Any exceptions from execute() are fatal.
         virtual void execute() = 0;
+        // Cleanup must never fail
+        virtual future<> cleanup() noexcept { return make_ready_future<>(); }
     };
 
     class external_updater {
@@ -202,6 +204,7 @@ public:
 
         future<> prepare() { return _impl->prepare(); }
         void execute() { _impl->execute(); }
+        future<> cleanup() noexcept { return _impl->cleanup(); }
     };
 public:
     struct stats {
