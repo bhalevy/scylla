@@ -454,13 +454,13 @@ future<> compaction_group_sstables_adder::prepare() {
 
 void compaction_group_sstables_adder::execute() {
     if (_main) {
-        _cg._main_sstables = std::move(_new_sstable_set);
+        std::swap(*_cg._main_sstables, *_new_sstable_set);
         for (const auto& sst : _sstables) {
             _cg._main_set_disk_space_used += sst->bytes_on_disk();
         }
         _cg.get_backlog_tracker().swap(*_new_backlog_tracker);
     } else {
-        _cg._maintenance_sstables = std::move(_new_sstable_set);
+        std::swap(*_cg._maintenance_sstables, *_new_sstable_set);
         for (const auto& sst : _sstables) {
             _cg._maintenance_set_disk_space_used += sst->bytes_on_disk();
         }
@@ -468,6 +468,7 @@ void compaction_group_sstables_adder::execute() {
 }
 
 future<> compaction_group_sstables_adder::cleanup() noexcept {
+    // FIXME: clear_gently swapped sstable sets
     if (_new_backlog_tracker) {
         co_await _new_backlog_tracker->clear_gently();
     }
@@ -477,8 +478,10 @@ const lw_shared_ptr<sstables::sstable_set>& compaction_group::main_sstables() co
     return _main_sstables;
 }
 
-void compaction_group::set_main_sstables(lw_shared_ptr<sstables::sstable_set> new_main_sstables) {
-    _main_sstables = std::move(new_main_sstables);
+void compaction_group::swap_main_sstables(lw_shared_ptr<sstables::sstable_set> new_main_sstables) noexcept {
+    // Swapping the sstable_set will be reflected in the containing table's
+    // compound_sstable_set that keeps a lw_shared_ptr of the _main_sstables
+    std::swap(*_main_sstables, *new_main_sstables);
     _main_set_disk_space_used = calculate_disk_space_used_for(*_main_sstables);
 }
 
@@ -486,8 +489,10 @@ const lw_shared_ptr<sstables::sstable_set>& compaction_group::maintenance_sstabl
     return _maintenance_sstables;
 }
 
-void compaction_group::set_maintenance_sstables(lw_shared_ptr<sstables::sstable_set> new_maintenance_sstables) {
-    _maintenance_sstables = std::move(new_maintenance_sstables);
+void compaction_group::swap_maintenance_sstables(lw_shared_ptr<sstables::sstable_set> new_maintenance_sstables) noexcept {
+    // Swapping the sstable_set will be reflected in the containing table's
+    // compound_sstable_set that keeps a lw_shared_ptr of the _maintenance_sstables
+    std::swap(*_maintenance_sstables, *new_maintenance_sstables);
     _maintenance_set_disk_space_used = calculate_disk_space_used_for(*_maintenance_sstables);
 }
 
@@ -503,8 +508,6 @@ future<> table_sstables_adder::prepare() {
 
 void table_sstables_adder::execute() {
     compaction_group_sstables_adder::execute();
-    // FIXME: the following isn't exception safe.
-    _t.refresh_compound_sstable_set();
     uint64_t bytes_on_disk = 0;
     for (const auto& sst : _sstables) {
         bytes_on_disk += sst->bytes_on_disk();
@@ -1151,13 +1154,12 @@ compaction_group::update_sstable_lists_on_off_strategy_completion(sstables::comp
             _new_backlog_tracker->adjust_charges({}, _new_main);
         }
         virtual void execute() override {
-            _cg.set_main_sstables(std::move(_new_main_list));
-            _cg.set_maintenance_sstables(std::move(_new_maintenance_list));
-            // FIXME: the following is not exception safe
-            _t.refresh_compound_sstable_set();
+            _cg.swap_main_sstables(_new_main_list);
+            _cg.swap_maintenance_sstables(_new_maintenance_list);
             _cg.get_backlog_tracker().swap(*_new_backlog_tracker);
         }
         virtual future<> cleanup() noexcept override {
+            // FIXME: clear_gently swapped sstable sets
             if (_new_backlog_tracker) {
                 co_await _new_backlog_tracker->clear_gently();
             }
@@ -1246,12 +1248,11 @@ compaction_group::update_main_sstable_list_on_compaction_completion(sstables::co
             _new_backlog_tracker->adjust_charges(_desc.old_sstables, _desc.new_sstables);
         }
         virtual void execute() override {
-            _cg.set_main_sstables(std::move(_new_sstables));
-            // FIXME: the following is not exception safe
-            _t.refresh_compound_sstable_set();
+            _cg.swap_main_sstables(_new_sstables);
             _cg.get_backlog_tracker().swap(*_new_backlog_tracker);
         }
         virtual future<> cleanup() noexcept override {
+            // FIXME: clear_gently swapped sstable_set
             if (_new_backlog_tracker) {
                 co_await _new_backlog_tracker->clear_gently();
             }
@@ -1419,7 +1420,7 @@ void table::set_compaction_strategy(sstables::compaction_strategy_type strategy)
 
         void execute() noexcept {
             t._compaction_manager.register_backlog_tracker(cg.as_table_state(), std::move(new_bt));
-            cg.set_main_sstables(std::move(new_sstables));
+            cg.swap_main_sstables(new_sstables);
             cg.set_compaction_strategy_state(std::move(new_cs_state));
         }
     };
@@ -1995,22 +1996,21 @@ future<db::replay_position> table::discard_sstables(db_clock::time_point truncat
         virtual void execute() override {
             for (auto& [cg, st] : p.cg_map) {
                 if (st.main.pruned) {
-                    cg->set_main_sstables(std::move(st.main.pruned));
+                    cg->swap_main_sstables(st.main.pruned);
                 }
                 if (st.maintenance.pruned) {
-                    cg->set_maintenance_sstables(std::move(st.maintenance.pruned));
+                    cg->swap_maintenance_sstables(st.maintenance.pruned);
                 }
                 if (st.new_backlog_tracker) {
                     cg->get_backlog_tracker().swap(*st.new_backlog_tracker);
                 }
             }
-            // FIXME: the following isn't exception safe.
-            t.refresh_compound_sstable_set();
             tlogger.debug("cleaning out row cache");
         }
 
         virtual future<> cleanup() noexcept override {
             for (auto& [cg, st] : p.cg_map) {
+                // FIXME: clear_gently swapped sstable sets
                 if (st.new_backlog_tracker) {
                     co_await st.new_backlog_tracker->clear_gently();
                 }

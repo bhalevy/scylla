@@ -48,7 +48,7 @@ public:
     table_sstables_adder(table& t, compaction_group& cg, std::vector<sstables::shared_sstable> sstables, is_main main);
     // Guarantees strong exception safety
     virtual future<> prepare() override;
-    // FIXME: this is not really noexcept, but we need to provide strong exception guarantees.
+    // Never fails
     virtual void execute() override;
     virtual future<> cleanup() noexcept override;
 };
