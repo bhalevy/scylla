@@ -468,7 +468,9 @@ void compaction_group_sstables_adder::execute() {
 }
 
 future<> compaction_group_sstables_adder::cleanup() noexcept {
-    // FIXME: clear_gently swapped sstable sets
+    if (new_sstable_set) {
+        co_await new_sstable_set->clear_gently();
+    }
     if (new_backlog_tracker) {
         co_await new_backlog_tracker->clear_gently();
     }
@@ -1153,7 +1155,12 @@ compaction_group::update_sstable_lists_on_off_strategy_completion(sstables::comp
             _cg.get_backlog_tracker().swap(*_new_backlog_tracker);
         }
         virtual future<> cleanup() noexcept override {
-            // FIXME: clear_gently swapped sstable sets
+            if (_new_main_list) {
+                co_await _new_main_list->clear_gently();
+            }
+            if (_new_maintenance_list) {
+                co_await _new_maintenance_list->clear_gently();
+            }
             if (_new_backlog_tracker) {
                 co_await _new_backlog_tracker->clear_gently();
             }
@@ -1246,7 +1253,9 @@ compaction_group::update_main_sstable_list_on_compaction_completion(sstables::co
             _cg.get_backlog_tracker().swap(*_new_backlog_tracker);
         }
         virtual future<> cleanup() noexcept override {
-            // FIXME: clear_gently swapped sstable_set
+            if (_new_sstables) {
+                co_await _new_sstables->clear_gently();
+            }
             if (_new_backlog_tracker) {
                 co_await _new_backlog_tracker->clear_gently();
             }
@@ -2004,7 +2013,12 @@ future<db::replay_position> table::discard_sstables(db_clock::time_point truncat
 
         virtual future<> cleanup() noexcept override {
             for (auto& [cg, st] : p.cg_map) {
-                // FIXME: clear_gently swapped sstable sets
+                if (st.main.pruned) {
+                    co_await utils::clear_gently(st.main.pruned);
+                }
+                if (st.maintenance.pruned) {
+                    co_await utils::clear_gently(st.maintenance.pruned);
+                }
                 if (st.new_backlog_tracker) {
                     co_await st.new_backlog_tracker->clear_gently();
                 }
@@ -2016,7 +2030,7 @@ future<db::replay_position> table::discard_sstables(db_clock::time_point truncat
     auto updater = row_cache::external_updater(std::make_unique<updater_impl>(*this, *p, truncated_at));
     co_await _cache.invalidate(std::move(updater));
     rebuild_statistics();
-    for (const auto& [cg, st] : p->cg_map) {
+    for (auto& [cg, st] : p->cg_map) {
         for (const auto& sst : st.main.remove) {
             co_await get_sstables_manager().delete_atomically({sst});
             erase_sstable_cleanup_state(sst);
@@ -2025,6 +2039,8 @@ future<db::replay_position> table::discard_sstables(db_clock::time_point truncat
             co_await get_sstables_manager().delete_atomically({sst});
             erase_sstable_cleanup_state(sst);
         }
+        co_await utils::clear_gently(st.main.remove);
+        co_await utils::clear_gently(st.maintenance.remove);
     }
     co_return p->rp;
 }
