@@ -1777,8 +1777,6 @@ future<> compaction_manager::remove(table_state& t) noexcept {
     // and prevent new tasks from entering the gate.
     co_await seastar::when_all_succeed(stop_ongoing_compactions("table removal", &t), c_state.gate.close()).discard_result();
 
-    c_state.backlog_tracker.disable();
-
     _compaction_state.erase(&t);
 
 #ifdef DEBUG
@@ -1881,13 +1879,10 @@ void compaction_manager::unplug_system_keyspace() noexcept {
 }
 
 double compaction_backlog_tracker::backlog() const {
-    return disabled() ? compaction_controller::disable_backlog : _impl->backlog(_ongoing_writes, _ongoing_compactions);
+    return _impl->backlog(_ongoing_writes, _ongoing_compactions);
 }
 
 void compaction_backlog_tracker::replace_sstables(const std::vector<sstables::shared_sstable>& old_ssts, const std::vector<sstables::shared_sstable>& new_ssts) {
-    if (disabled()) {
-        return;
-    }
     auto filter_and_revert_charges = [this] (const std::vector<sstables::shared_sstable>& ssts) {
         std::vector<sstables::shared_sstable> ret;
         for (auto& sst : ssts) {
@@ -1907,9 +1902,6 @@ bool compaction_backlog_tracker::sstable_belongs_to_tracker(const sstables::shar
 }
 
 void compaction_backlog_tracker::register_partially_written_sstable(sstables::shared_sstable sst, backlog_write_progress_manager& wp) {
-    if (disabled()) {
-        return;
-    }
     try {
         _ongoing_writes.emplace(sst, &wp);
     } catch (...) {
@@ -1922,10 +1914,6 @@ void compaction_backlog_tracker::register_partially_written_sstable(sstables::sh
 }
 
 void compaction_backlog_tracker::register_compacting_sstable(sstables::shared_sstable sst, backlog_read_progress_manager& rp) {
-    if (disabled()) {
-        return;
-    }
-
     try {
         _ongoing_compactions.emplace(sst, &rp);
     } catch (...) {
