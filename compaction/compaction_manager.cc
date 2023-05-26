@@ -1962,7 +1962,7 @@ compaction_backlog_tracker::compaction_backlog_tracker(compaction_backlog_tracke
 compaction_backlog_tracker&
 compaction_backlog_tracker::operator=(compaction_backlog_tracker&& x) noexcept {
     if (this != &x) {
-        if (auto manager = std::exchange(_manager, x._manager)) {
+        if (auto manager = std::exchange(_manager, nullptr)) {
             manager->remove_backlog_tracker(this);
         }
         _impl = std::move(x._impl);
