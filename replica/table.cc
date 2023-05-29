@@ -454,17 +454,15 @@ future<> compaction_group_sstables_adder::prepare() {
 }
 
 void compaction_group_sstables_adder::execute() {
+    int64_t delta_disk_space_used = 0;
+    for (const auto& sst : _sstables) {
+        delta_disk_space_used += sst->bytes_on_disk();
+    }
     if (_main) {
-        _cg._main_sstables = std::move(_new_sstable_set);
-        for (const auto& sst : _sstables) {
-            _cg._main_set_disk_space_used += sst->bytes_on_disk();
-        }
+        _cg.set_main_sstables(std::move(_new_sstable_set), delta_disk_space_used);
         _cg.get_backlog_tracker() = std::move(*_new_backlog_tracker);
     } else {
-        _cg._maintenance_sstables = std::move(_new_sstable_set);
-        for (const auto& sst : _sstables) {
-            _cg._maintenance_set_disk_space_used += sst->bytes_on_disk();
-        }
+        _cg.set_maintenance_sstables(std::move(_new_sstable_set), delta_disk_space_used);
     }
 }
 
@@ -472,18 +470,26 @@ const lw_shared_ptr<sstables::sstable_set>& compaction_group::main_sstables() co
     return _main_sstables;
 }
 
-void compaction_group::set_main_sstables(lw_shared_ptr<sstables::sstable_set> new_main_sstables) {
+void compaction_group::set_main_sstables(lw_shared_ptr<sstables::sstable_set> new_main_sstables, std::optional<int64_t> delta_disk_space_used) {
     _main_sstables = std::move(new_main_sstables);
-    _main_set_disk_space_used = calculate_disk_space_used_for(*_main_sstables);
+    if (delta_disk_space_used) {
+        _main_set_disk_space_used += *delta_disk_space_used;
+    } else {
+        _main_set_disk_space_used = calculate_disk_space_used_for(*_main_sstables);
+    }
 }
 
 const lw_shared_ptr<sstables::sstable_set>& compaction_group::maintenance_sstables() const noexcept {
     return _maintenance_sstables;
 }
 
-void compaction_group::set_maintenance_sstables(lw_shared_ptr<sstables::sstable_set> new_maintenance_sstables) {
+void compaction_group::set_maintenance_sstables(lw_shared_ptr<sstables::sstable_set> new_maintenance_sstables, std::optional<int64_t> delta_disk_space_used) {
     _maintenance_sstables = std::move(new_maintenance_sstables);
-    _maintenance_set_disk_space_used = calculate_disk_space_used_for(*_maintenance_sstables);
+    if (delta_disk_space_used) {
+        _maintenance_set_disk_space_used += *delta_disk_space_used;
+    } else {
+        _maintenance_set_disk_space_used = calculate_disk_space_used_for(*_maintenance_sstables);
+    }
 }
 
 table_sstables_adder::table_sstables_adder(table& t, compaction_group& cg, std::vector<sstables::shared_sstable> sstables, is_main main)
@@ -1223,16 +1229,24 @@ compaction_group::update_main_sstable_list_on_compaction_completion(sstables::co
         const sstables::compaction_completion_desc& _desc;
         lw_shared_ptr<sstables::sstable_set> _new_sstables;
         std::optional<compaction_backlog_tracker> _new_backlog_tracker;
+        int64_t delta_disk_space_used;
     public:
         explicit sstable_list_updater(compaction_group& cg, table::sstable_list_builder::permit_t permit, sstables::compaction_completion_desc& d)
             : _t(cg._t), _cg(cg), _builder(std::move(permit)), _desc(d) {}
         virtual future<> prepare() override {
+            delta_disk_space_used = 0;
+            for (const auto& sst : _desc.new_sstables) {
+                delta_disk_space_used += sst->bytes_on_disk();
+            }
+            for (const auto& sst : _desc.old_sstables) {
+                delta_disk_space_used -= sst->bytes_on_disk();
+            }
             _new_sstables = co_await _builder.build_new_list(*_cg.main_sstables(), _t._compaction_strategy.make_sstable_set(_t._schema), _desc.new_sstables, _desc.old_sstables);
             _new_backlog_tracker = _cg.get_backlog_tracker().clone();
             _new_backlog_tracker->adjust_charges(_desc.old_sstables, _desc.new_sstables);
         }
         virtual void execute() override {
-            _cg.set_main_sstables(std::move(_new_sstables));
+            _cg.set_main_sstables(std::move(_new_sstables), delta_disk_space_used);
             // FIXME: the following is not exception safe
             _t.refresh_compound_sstable_set();
             _cg.get_backlog_tracker() = std::move(*_new_backlog_tracker);
