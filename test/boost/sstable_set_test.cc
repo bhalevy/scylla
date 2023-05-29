@@ -20,7 +20,7 @@
 using namespace sstables;
 
 static sstables::sstable_set make_sstable_set(schema_ptr schema, lw_shared_ptr<sstable_list> all = {}, bool use_level_metadata = true) {
-    auto ret = sstables::sstable_set(std::make_unique<partitioned_sstable_set>(schema, use_level_metadata), schema);
+    auto ret = sstables::sstable_set(seastar::make_shared<partitioned_sstable_set>(schema, use_level_metadata), schema);
     for (auto& sst : *all) {
         ret.insert(sst);
     }
