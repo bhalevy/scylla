@@ -595,8 +595,6 @@ private:
 
     lw_shared_ptr<sstables::sstable_set> make_maintenance_sstable_set() const;
     lw_shared_ptr<sstables::sstable_set> make_compound_sstable_set();
-    // Compound sstable set must be refreshed whenever any of its managed sets are changed
-    void refresh_compound_sstable_set();
 
     snapshot_source sstables_as_snapshot_source();
     partition_presence_checker make_partition_presence_checker(lw_shared_ptr<sstables::sstable_set>);
