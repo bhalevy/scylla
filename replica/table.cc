@@ -126,7 +126,6 @@ lw_shared_ptr<sstables::sstable_set> table::make_compound_sstable_set() {
         return cg->make_compound_sstable_set();
     }
     // TODO: switch to a specialized set for groups which assumes disjointness across compound sets and incrementally read from them.
-    // FIXME: avoid recreation of compound_set for groups which had no change. usually, only one group will be changed at a time.
     auto sstable_sets = boost::copy_range<std::vector<lw_shared_ptr<sstables::sstable_set>>>(compaction_groups()
         | boost::adaptors::transformed(std::mem_fn(&compaction_group::make_compound_sstable_set)));
     return make_lw_shared(sstables::make_compound_sstable_set(schema(), std::move(sstable_sets)));
@@ -137,10 +136,6 @@ lw_shared_ptr<sstables::sstable_set> table::make_maintenance_sstable_set() const
     bool use_level_metadata = false;
     return make_lw_shared<sstables::sstable_set>(
             sstables::make_partitioned_sstable_set(_schema, use_level_metadata));
-}
-
-void table::refresh_compound_sstable_set() {
-    _sstables = make_compound_sstable_set();
 }
 
 // Exposed for testing, not performance critical.
@@ -471,7 +466,9 @@ const lw_shared_ptr<sstables::sstable_set>& compaction_group::main_sstables() co
 }
 
 void compaction_group::set_main_sstables(lw_shared_ptr<sstables::sstable_set> new_main_sstables, std::optional<int64_t> delta_disk_space_used) {
-    _main_sstables = std::move(new_main_sstables);
+    // Readers hold a shared_ptr of the sstable_set_impl
+    // so it's safe to update the sstable_set
+    *_main_sstables = std::move(*new_main_sstables);
     if (delta_disk_space_used) {
         _main_set_disk_space_used += *delta_disk_space_used;
     } else {
@@ -484,7 +481,9 @@ const lw_shared_ptr<sstables::sstable_set>& compaction_group::maintenance_sstabl
 }
 
 void compaction_group::set_maintenance_sstables(lw_shared_ptr<sstables::sstable_set> new_maintenance_sstables, std::optional<int64_t> delta_disk_space_used) {
-    _maintenance_sstables = std::move(new_maintenance_sstables);
+    // Readers hold a shared_ptr of the sstable_set_impl
+    // so it's safe to update the sstable_set
+    *_maintenance_sstables = std::move(*new_maintenance_sstables);
     if (delta_disk_space_used) {
         _maintenance_set_disk_space_used += *delta_disk_space_used;
     } else {
@@ -504,8 +503,6 @@ future<> table_sstables_adder::prepare() {
 
 void table_sstables_adder::execute() {
     compaction_group_sstables_adder::execute();
-    // FIXME: the following isn't exception safe.
-    _t.refresh_compound_sstable_set();
     uint64_t bytes_on_disk = 0;
     for (const auto& sst : _sstables) {
         bytes_on_disk += sst->bytes_on_disk();
@@ -1150,8 +1147,6 @@ compaction_group::update_sstable_lists_on_off_strategy_completion(sstables::comp
         virtual void execute() override {
             _cg.set_main_sstables(std::move(_new_main_list));
             _cg.set_maintenance_sstables(std::move(_new_maintenance_list));
-            // FIXME: the following is not exception safe
-            _t.refresh_compound_sstable_set();
             _cg.get_backlog_tracker() = std::move(*_new_backlog_tracker);
         }
         static std::unique_ptr<row_cache::external_updater_impl> make(compaction_group& cg, table::sstable_list_builder::permit_t permit, const sstables_t& old_maintenance, const sstables_t& new_main) {
@@ -1247,8 +1242,6 @@ compaction_group::update_main_sstable_list_on_compaction_completion(sstables::co
         }
         virtual void execute() override {
             _cg.set_main_sstables(std::move(_new_sstables), delta_disk_space_used);
-            // FIXME: the following is not exception safe
-            _t.refresh_compound_sstable_set();
             _cg.get_backlog_tracker() = std::move(*_new_backlog_tracker);
         }
         static std::unique_ptr<row_cache::external_updater_impl> make(compaction_group& cg, table::sstable_list_builder::permit_t permit, sstables::compaction_completion_desc& d) {
@@ -1430,7 +1423,6 @@ void table::set_compaction_strategy(sstables::compaction_strategy_type strategy)
     for (auto& updater : cg_sstable_set_updaters) {
         updater.execute();
     }
-    refresh_compound_sstable_set();
 }
 
 size_t table::sstables_count() const {
@@ -2000,8 +1992,6 @@ future<db::replay_position> table::discard_sstables(db_clock::time_point truncat
                     cg->get_backlog_tracker() = std::move(*st.new_backlog_tracker);
                 }
             }
-            // FIXME: the following isn't exception safe.
-            t.refresh_compound_sstable_set();
             tlogger.debug("cleaning out row cache");
         }
     };
