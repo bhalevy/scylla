@@ -12,6 +12,7 @@
 #include <vector>
 #include <chrono>
 #include <seastar/core/shared_ptr.hh>
+#include "seastar/core/on_internal_error.hh"
 #include "sstables/shared_sstable.hh"
 #include "sstables/sstables.hh"
 #include "compaction.hh"
@@ -283,19 +284,17 @@ public:
         return b;
     }
 
-    // FIXME: Should provide strong exception safety guarantees
+    // Provides strong exception safety guarantees
     virtual void replace_sstables(const std::vector<sstables::shared_sstable>& old_ssts, const std::vector<sstables::shared_sstable>& new_ssts) override {
         struct replacement {
             std::vector<sstables::shared_sstable> old_ssts;
             std::vector<sstables::shared_sstable> new_ssts;
+            bool do_erase = false;
         };
         std::unordered_map<api::timestamp_type, replacement> per_window_replacement;
 
         for (auto& sst : new_ssts) {
             auto bound = lower_bound_of(sst->get_stats_metadata().max_timestamp);
-            if (!_windows.contains(bound)) {
-                _windows.emplace(bound, size_tiered_backlog_tracker(_stcs_options));
-            }
             per_window_replacement[bound].new_ssts.push_back(std::move(sst));
         }
         for (auto& sst : old_ssts) {
@@ -305,15 +304,53 @@ public:
             }
         }
 
-        for (auto& [bound, r] : per_window_replacement) {
-            // All windows must exist here, as windows are created for new files and will
-            // remain alive as long as there's a single file in them
-            auto& w = _windows.at(bound);
-            w.replace_sstables(std::move(r.old_ssts), std::move(r.new_ssts));
-            if (w.total_bytes() <= 0) {
-                _windows.erase(bound);
+        ssize_t undo_count = 0;
+        auto undo = defer([&] () noexcept {
+            clogger.warn("time_window_backlog_tracker: replace_sstables failed. Rolling back...");
+            for (const auto& [bound, r] : per_window_replacement) {
+                if (undo_count-- <= 0) {
+                    break;
+                }
+                // All windows must exist here.
+                // 1. for new_ssts, the window is created before undo_count is incremented.
+                // 2. for old_ssts:
+                //    a. if the window did not exist when entring, they would not be registered in per_window_replacement.
+                //    b. if the window exists and no sstables remain in it after w.replace_sstables, it is only marked with r.do_erase
+                //       and the window is erased only after this deferred undo function is canceled.
+                auto it = _windows.find(bound);
+                if (it == _windows.end()) {
+                    on_fatal_internal_error(clogger, fmt::format("No window found when undoing replace_sstables for bound={} old_ssts={} new_ssts={}", bound, old_ssts, new_ssts));
+                }
+                auto& w = it->second;
+                w.replace_sstables(r.new_ssts, r.old_ssts);
             }
+        });
+
+        for (auto& [bound, r] : per_window_replacement) {
+            auto it = _windows.find(bound);
+            if (it == _windows.end()) {
+                if (!r.new_ssts.empty()) {
+                    it = _windows.emplace(bound, size_tiered_backlog_tracker(_stcs_options)).first;
+                } else {
+                    on_internal_error(clogger, fmt::format("window for bound {} not found", bound));
+                }
+            }
+            auto& w = it->second;
+            w.replace_sstables(r.old_ssts, r.new_ssts);
+            // Empty windows are erased only later, after all of them were updated,
+            // to simplify undo().
+            r.do_erase = w.total_bytes() <= 0;
+            ++undo_count;
         }
+        undo.cancel();
+        std::invoke([&] () noexcept {
+            // Erase empty windows
+            for (const auto& [bound, r] : per_window_replacement) {
+                if (r.do_erase) {
+                    _windows.erase(bound);
+                }
+            }
+        });
     }
 };
 
