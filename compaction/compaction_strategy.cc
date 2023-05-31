@@ -120,10 +120,10 @@ size_tiered_backlog_tracker::compacted_backlog(const compaction_backlog_tracker:
     return in;
 }
 
-void size_tiered_backlog_tracker::refresh_sstables_backlog_contribution() {
+size_tiered_backlog_tracker::contribution size_tiered_backlog_tracker::calculate_sstables_backlog_contribution(const std::unordered_set<sstables::shared_sstable>& all, const sstables::size_tiered_compaction_strategy_options& stcs_options) {
     contribution contrib;
-    if (_all.empty()) {
-        return;
+    if (all.empty()) {
+        return contrib;
     }
     using namespace sstables;
 
@@ -133,10 +133,10 @@ void size_tiered_backlog_tracker::refresh_sstables_backlog_contribution() {
     // in efficient jobs acting more aggressive than they really have to.
     // TODO: potentially switch to compaction manager's fan-in threshold, so to account for the dynamic
     //  fan-in threshold behavior.
-    const auto& newest_sst = std::ranges::max(_all, std::less<generation_type>(), std::mem_fn(&sstable::generation));
+    const auto& newest_sst = std::ranges::max(all, std::less<generation_type>(), std::mem_fn(&sstable::generation));
     auto threshold = newest_sst->get_schema()->min_compaction_threshold();
 
-    for (auto& bucket : size_tiered_compaction_strategy::get_buckets(boost::copy_range<std::vector<shared_sstable>>(_all), _stcs_options)) {
+    for (auto& bucket : size_tiered_compaction_strategy::get_buckets(boost::copy_range<std::vector<shared_sstable>>(all), stcs_options)) {
         if (!size_tiered_compaction_strategy::is_bucket_interesting(bucket, threshold)) {
             continue;
         }
@@ -147,7 +147,7 @@ void size_tiered_backlog_tracker::refresh_sstables_backlog_contribution() {
         contrib.sstables.insert(bucket.begin(), bucket.end());
     }
 
-    _contrib = std::move(contrib);
+    return contrib;
 }
 
 double size_tiered_backlog_tracker::backlog(const compaction_backlog_tracker::ongoing_writes& ow, const compaction_backlog_tracker::ongoing_compactions& oc) const {
@@ -178,19 +178,28 @@ double size_tiered_backlog_tracker::backlog(const compaction_backlog_tracker::on
 
 // FIXME: Should provide strong exception safety guarantees
 void size_tiered_backlog_tracker::replace_sstables(const std::vector<sstables::shared_sstable>& old_ssts, const std::vector<sstables::shared_sstable>& new_ssts) {
+    int64_t delta_bytes = 0;
+    auto all = _all;
+    all.reserve(_all.size() - old_ssts.size() + new_ssts.size());
+
     for (auto& sst : old_ssts) {
         if (sst->data_size() > 0) {
-            _total_bytes -= sst->data_size();
-            _all.erase(sst);
+            delta_bytes -= sst->data_size();
+            all.erase(sst);
         }
     }
     for (auto& sst : new_ssts) {
         if (sst->data_size() > 0) {
-            _total_bytes += sst->data_size();
-            _all.insert(std::move(sst));
+            delta_bytes += sst->data_size();
+            all.insert(std::move(sst));
         }
     }
-    refresh_sstables_backlog_contribution();
+    auto contrib = calculate_sstables_backlog_contribution(all, _stcs_options);
+    std::invoke([&] () noexcept {
+        _total_bytes += delta_bytes;
+        _contrib = std::move(contrib);
+        _all = std::move(all);
+    });
 }
 
 namespace sstables {
