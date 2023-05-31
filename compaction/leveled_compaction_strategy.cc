@@ -9,6 +9,7 @@
 #include "leveled_compaction_strategy.hh"
 #include "leveled_manifest.hh"
 #include "compaction_strategy_state.hh"
+#include "utils/math.hh"
 #include <algorithm>
 
 #include <boost/range/algorithm/remove_if.hpp>
@@ -237,9 +238,8 @@ leveled_compaction_strategy::get_cleanup_compaction_jobs(table_state& table_s, s
 }
 
 unsigned leveled_compaction_strategy::ideal_level_for_input(const std::vector<sstables::shared_sstable>& input, uint64_t max_sstable_size) {
-    auto log_fanout = [fanout = leveled_manifest::leveled_fan_out] (double x) {
-        double inv_log_fanout = 1.0f / std::log(fanout);
-        return log(x) * inv_log_fanout;
+    auto log_fanout = [] (double x) {
+        return utils::log_base<leveled_manifest::leveled_fan_out>(x);
     };
     uint64_t total_bytes = std::max(leveled_manifest::get_total_bytes(input), max_sstable_size);
     return std::ceil(log_fanout((total_bytes + max_sstable_size - 1) / max_sstable_size));

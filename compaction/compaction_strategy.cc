@@ -31,6 +31,7 @@
 #include "compaction_backlog_manager.hh"
 #include "size_tiered_backlog_tracker.hh"
 #include "leveled_manifest.hh"
+#include "utils/math.hh"
 
 logging::logger date_tiered_manifest::logger = logging::logger("DateTieredCompactionStrategy");
 logging::logger leveled_manifest::logger("LeveledManifest");
@@ -114,7 +115,7 @@ size_tiered_backlog_tracker::compacted_backlog(const compaction_backlog_tracker:
         }
         auto compacted = crp.second->compacted();
         in.total_bytes += compacted;
-        in.contribution += compacted * log4(crp.first->data_size());
+        in.contribution += compacted * utils::log_base<4>(crp.first->data_size());
     }
     return in;
 }
@@ -140,8 +141,8 @@ void size_tiered_backlog_tracker::refresh_sstables_backlog_contribution() {
         if (!size_tiered_compaction_strategy::is_bucket_interesting(bucket, threshold)) {
             continue;
         }
-        _sstables_backlog_contribution += boost::accumulate(bucket | boost::adaptors::transformed([this] (const shared_sstable& sst) -> double {
-            return sst->data_size() * log4(sst->data_size());
+        _sstables_backlog_contribution += boost::accumulate(bucket | boost::adaptors::transformed([] (const shared_sstable& sst) -> double {
+            return sst->data_size() * utils::log_base<4>(sst->data_size());
         }), double(0.0f));
         // Controller is disabled if exception is caught during add / remove calls, so not making any effort to make this exception safe
         _sstables_contributing_backlog.insert(bucket.begin(), bucket.end());
@@ -170,7 +171,7 @@ double size_tiered_backlog_tracker::backlog(const compaction_backlog_tracker::on
     // Sum of (Si - Ci) * log (Si) for all SSTables contributing backlog
     auto sstables_contribution = _sstables_backlog_contribution - compacted.contribution;
     // This is subtracting ((Si - Ci) * log (Si)) from ((Si - Ci) * log(T)), yielding the final backlog
-    auto b = (effective_backlog_bytes * log4(_total_bytes)) - sstables_contribution;
+    auto b = (effective_backlog_bytes * utils::log_base<4>(_total_bytes)) - sstables_contribution;
     return b > 0 ? b : 0;
 }
 

@@ -73,6 +73,7 @@
 #include "readers/from_mutations_v2.hh"
 #include "readers/from_fragments_v2.hh"
 #include "readers/combined.hh"
+#include "utils/math.hh"
 
 namespace fs = std::filesystem;
 
@@ -4563,9 +4564,11 @@ SEASTAR_TEST_CASE(simple_backlog_controller_test) {
         auto get_size_for_tier = [&] (int tier) -> uint64_t {
             return std::pow(fan_out, tier) * estimated_flush_size;
         };
+        auto log_fan_out = compaction_strategy_type == sstables::compaction_strategy_type::leveled
+            ? [] (double x) { return utils::log_base<leveled_manifest::leveled_fan_out>(x); }
+            : [] (double x) { return utils::log_base<4>(x); };
         auto get_total_tiers = [&] (uint64_t target_size) -> unsigned {
-            double inv_log_n = 1.0f / std::log(fan_out);
-            return std::ceil(std::log(double(target_size) / estimated_flush_size) * inv_log_n);
+            return std::ceil(log_fan_out(double(target_size) / estimated_flush_size));
         };
         auto normalize_backlog = [&] (double backlog) -> double {
             return backlog / available_memory;

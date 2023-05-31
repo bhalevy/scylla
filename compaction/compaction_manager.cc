@@ -21,6 +21,7 @@
 #include "locator/abstract_replication_strategy.hh"
 #include "utils/fb_utilities.hh"
 #include "utils/UUID_gen.hh"
+#include "utils/math.hh"
 #include "db/system_keyspace.hh"
 #include <cmath>
 #include <boost/algorithm/cxx11/any_of.hpp>
@@ -145,7 +146,7 @@ static inline int calculate_weight(uint64_t total_size) {
     static constexpr int fixed_size_tax = 1024*1024;
 
     // computes the logarithm (base WEIGHT_LOG_BASE) of total_size.
-    return int(std::log(total_size + fixed_size_tax) / std::log(WEIGHT_LOG_BASE));
+    return int(utils::log_base<WEIGHT_LOG_BASE>(total_size + fixed_size_tax));
 }
 
 static inline int calculate_weight(const sstables::compaction_descriptor& descriptor) {
