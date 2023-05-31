@@ -277,19 +277,17 @@ public:
         return b;
     }
 
-    // FIXME: Should provide strong exception safety guarantees
+    // Provides strong exception safety guarantees
     virtual void replace_sstables(const std::vector<sstables::shared_sstable>& old_ssts, const std::vector<sstables::shared_sstable>& new_ssts) override {
         struct replacement {
             std::vector<sstables::shared_sstable> old_ssts;
             std::vector<sstables::shared_sstable> new_ssts;
+            bool do_erase = false;
         };
         std::unordered_map<api::timestamp_type, replacement> per_window_replacement;
 
         for (auto& sst : new_ssts) {
             auto bound = lower_bound_of(sst->get_stats_metadata().max_timestamp);
-            if (!_windows.contains(bound)) {
-                _windows.emplace(bound, size_tiered_backlog_tracker(_stcs_options));
-            }
             per_window_replacement[bound].new_ssts.push_back(std::move(sst));
         }
         for (auto& sst : old_ssts) {
@@ -299,15 +297,54 @@ public:
             }
         }
 
-        for (auto& [bound, r] : per_window_replacement) {
-            // All windows must exist here, as windows are created for new files and will
-            // remain alive as long as there's a single file in them
-            auto& w = _windows.at(bound);
-            w.replace_sstables(std::move(r.old_ssts), std::move(r.new_ssts));
-            if (w.total_bytes() <= 0) {
-                _windows.erase(bound);
+        size_t undo = 0;
+        try {
+            for (auto& [bound, r] : per_window_replacement) {
+                auto it = _windows.find(bound);
+                if (it == _windows.end()) {
+                    if (!r.new_ssts.empty()) {
+                        it = _windows.emplace(bound, size_tiered_backlog_tracker(_stcs_options)).first;
+                    } else {
+                        on_internal_error(clogger, fmt::format("window for bound {} not found", bound));
+                    }
+                }
+                auto& w = it->second;
+                w.replace_sstables(r.old_ssts, r.new_ssts);
+                // windows are erased only later, after all of them were updated,
+                // to simplify rollback on exception.
+                r.do_erase = w.total_bytes() <= 0;
+                ++undo;
             }
+        } catch (...) {
+            clogger.warn("time_window_backlog_tracker: replace_sstables failed: {}. Rolling back...");
+            std::invoke([&] () noexcept {
+                for (const auto& [bound, r] : per_window_replacement) {
+                    if (!undo--) {
+                        break;
+                    }
+                    // All windows should exist here, as windows are created for new files and will
+                    // remain alive as long as there's a single file in them
+                    auto it = _windows.find(bound);
+                    if (it == _windows.end()) {
+                        if (r.old_ssts.empty()) {
+                            continue;
+                        }
+                        it = _windows.emplace(bound, size_tiered_backlog_tracker(_stcs_options)).first;
+                    }
+                    auto& w = it->second;
+                    w.replace_sstables(r.new_ssts, r.old_ssts);
+                }
+            });
+            throw;
         }
+        std::invoke([&] () noexcept {
+            // Erase up empty windows
+            for (const auto& [bound, r] : per_window_replacement) {
+                if (r.do_erase) {
+                    _windows.erase(bound);
+                }
+            }
+        });
     }
 };
 
