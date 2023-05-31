@@ -56,15 +56,6 @@ class compaction_group {
     using list_hook_t = boost::intrusive::list_member_hook<boost::intrusive::link_mode<boost::intrusive::auto_unlink>>;
     list_hook_t _list_hook;
 private:
-    // Adds new sstable to the set of sstables
-    // Doesn't update the cache. The cache must be synchronized in order for reads to see
-    // the writes contained in this sstable.
-    // Cache must be synchronized atomically with this, otherwise write atomicity may not be respected.
-    // Doesn't trigger compaction.
-    // Strong exception guarantees.
-    lw_shared_ptr<sstables::sstable_set>
-    do_add_sstable(lw_shared_ptr<sstables::sstable_set> sstables, sstables::shared_sstable sstable,
-                   enable_backlog_tracker backlog_tracker);
     // Update compaction backlog tracker with the same changes applied to the underlying sstable set.
     void backlog_tracker_adjust_charges(const std::vector<sstables::shared_sstable>& old_sstables, const std::vector<sstables::shared_sstable>& new_sstables);
 
@@ -114,10 +105,6 @@ public:
     size_t memtable_count() const noexcept;
     // Returns minimum timestamp from memtable list
     api::timestamp_type min_memtable_timestamp() const;
-    // Add sstable to main set
-    void add_sstable(sstables::shared_sstable sstable);
-    // Add sstable to maintenance set
-    void add_maintenance_sstable(sstables::shared_sstable sst);
 
     // Update main sstable set based on info in completion descriptor, where input sstables
     // will be replaced by output ones, row cache ranges are possibly invalidated and
