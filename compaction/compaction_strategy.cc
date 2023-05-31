@@ -176,21 +176,44 @@ double size_tiered_backlog_tracker::backlog(const compaction_backlog_tracker::on
     return b > 0 ? b : 0;
 }
 
-// FIXME: Should provide strong exception safety guarantees
+// Provides strong exception safety guarantees.
 void size_tiered_backlog_tracker::replace_sstables(const std::vector<sstables::shared_sstable>& old_ssts, const std::vector<sstables::shared_sstable>& new_ssts) {
+    std::vector<sstables::shared_sstable> undo_erase;
+    std::vector<sstables::shared_sstable> undo_insert;
+    undo_erase.reserve(old_ssts.size());
+    undo_insert.reserve(new_ssts.size());
+    auto undo = defer([&] () noexcept {
+        clogger.warn("size_tiered_backlog_tracker: replace_sstables failed. Rolling back...");
+        for (auto& sst : undo_insert) {
+            _total_bytes -= sst->data_size();
+            _all.erase(std::move(sst));
+        }
+        for (auto& sst : undo_erase) {
+            _total_bytes += sst->data_size();
+            _all.insert(std::move(sst));
+        }
+    });
+
     for (auto& sst : old_ssts) {
         if (sst->data_size() > 0) {
-            _total_bytes -= sst->data_size();
-            _all.erase(sst);
+            auto erased = _all.erase(sst);
+            if (erased) {
+                _total_bytes -= sst->data_size();
+                undo_erase.emplace_back(std::move(sst));
+            }
         }
     }
     for (auto& sst : new_ssts) {
         if (sst->data_size() > 0) {
-            _total_bytes += sst->data_size();
-            _all.insert(std::move(sst));
+            auto [_, inserted] = _all.insert(sst);
+            if (inserted) {
+                _total_bytes += sst->data_size();
+                undo_insert.emplace_back(std::move(sst));
+            }
         }
     }
     refresh_sstables_backlog_contribution();
+    undo.cancel();
 }
 
 namespace sstables {
