@@ -64,10 +64,14 @@
 // certain point in time, whose size is the amount of bytes currently written. So all we need
 // to do is keep track of them too, and add the current estimate to the static part of (4).
 class size_tiered_backlog_tracker final : public compaction_backlog_tracker::impl {
+    struct contribution {
+        double value = 0.0f;
+        std::unordered_set<sstables::shared_sstable> sstables;
+    };
+
     sstables::size_tiered_compaction_strategy_options _stcs_options;
     int64_t _total_bytes = 0;
-    double _sstables_backlog_contribution = 0.0f;
-    std::unordered_set<sstables::shared_sstable> _sstables_contributing_backlog;
+    contribution _contrib;
     std::unordered_set<sstables::shared_sstable> _all;
 
     struct inflight_component {
