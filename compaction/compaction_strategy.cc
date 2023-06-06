@@ -136,7 +136,7 @@ void size_tiered_backlog_tracker::refresh_sstables_backlog_contribution() {
     const auto& newest_sst = std::ranges::max(_all, std::less<generation_type>(), std::mem_fn(&sstable::generation));
     auto threshold = newest_sst->get_schema()->min_compaction_threshold();
 
-    for (auto& bucket : size_tiered_compaction_strategy::get_buckets(boost::copy_range<std::vector<shared_sstable>>(_all), _stcs_options)) {
+    for (auto& bucket : size_tiered_compaction_strategy::get_buckets(_all, _stcs_options)) {
         if (!size_tiered_compaction_strategy::is_bucket_interesting(bucket, threshold)) {
             continue;
         }
