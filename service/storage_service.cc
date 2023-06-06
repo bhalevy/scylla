@@ -4814,13 +4814,19 @@ future<> storage_service::update_topology_change_info(sstring reason, acquire_me
 }
 
 future<> storage_service::keyspace_changed(const sstring& ks_name) {
+    if (this_shard_id() != 0) {
+        co_return;
+    }
     // Update pending ranges since keyspace can be changed after we calculate pending ranges.
     sstring reason = ::format("keyspace {}", ks_name);
-    return container().invoke_on(0, [reason = std::move(reason)] (auto& ss) mutable {
-        return ss.update_topology_change_info(reason, acquire_merge_lock::no).handle_exception([reason = std::move(reason)] (auto ep) {
-            slogger.warn("Failure to update pending ranges for {} ignored", reason);
-        });
-    });
+    try {
+        co_await update_topology_change_info(reason, acquire_merge_lock::no);
+    } catch (...) {
+        // FIXME: this is a serious error
+        // Currently migration_notifier::update_keyspace will ignore any exception we throw here anyhow
+        // but we need a way to propagate the error back, or abort instead.
+        slogger.error("Failed to update pending ranges for {}: {}. Ignored", reason, std::current_exception());
+    }
 }
 
 void storage_service::on_update_tablet_metadata() {
