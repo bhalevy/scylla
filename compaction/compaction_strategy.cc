@@ -12,6 +12,7 @@
 #include <vector>
 #include <chrono>
 #include <seastar/core/shared_ptr.hh>
+#include "sstables/shared_sstable.hh"
 #include "sstables/sstables.hh"
 #include "compaction.hh"
 #include "compaction_strategy.hh"
@@ -120,10 +121,10 @@ size_tiered_backlog_tracker::compacted_backlog(const compaction_backlog_tracker:
 }
 
 // Provides strong exception safety guarantees.
-void size_tiered_backlog_tracker::refresh_sstables_backlog_contribution() {
+size_tiered_backlog_tracker::sstables_backlog_contribution size_tiered_backlog_tracker::calculate_sstables_backlog_contribution(const std::unordered_set<sstables::shared_sstable>& all, const sstables::size_tiered_compaction_strategy_options& stcs_options) {
     sstables_backlog_contribution contrib;
-    if (_all.empty()) {
-        return;
+    if (all.empty()) {
+        return contrib;
     }
     using namespace sstables;
 
@@ -133,21 +134,21 @@ void size_tiered_backlog_tracker::refresh_sstables_backlog_contribution() {
     // in efficient jobs acting more aggressive than they really have to.
     // TODO: potentially switch to compaction manager's fan-in threshold, so to account for the dynamic
     //  fan-in threshold behavior.
-    const auto& newest_sst = std::ranges::max(_all, std::less<generation_type>(), std::mem_fn(&sstable::generation));
+    const auto& newest_sst = std::ranges::max(all, std::less<generation_type>(), std::mem_fn(&sstable::generation));
     auto threshold = newest_sst->get_schema()->min_compaction_threshold();
 
-    for (auto& bucket : size_tiered_compaction_strategy::get_buckets(_all, _stcs_options)) {
+    for (auto& bucket : size_tiered_compaction_strategy::get_buckets(all, stcs_options)) {
         if (!size_tiered_compaction_strategy::is_bucket_interesting(bucket, threshold)) {
             continue;
         }
-        contrib.value += boost::accumulate(bucket | boost::adaptors::transformed([this] (const shared_sstable& sst) -> double {
+        contrib.value += boost::accumulate(bucket | boost::adaptors::transformed([] (const shared_sstable& sst) -> double {
             return sst->data_size() * log4(sst->data_size());
         }), double(0.0f));
         // Controller is disabled if exception is caught during add / remove calls, so not making any effort to make this exception safe
         contrib.sstables.insert(bucket.begin(), bucket.end());
     }
 
-    _contrib = std::move(contrib);
+    return contrib;
 }
 
 double size_tiered_backlog_tracker::backlog(const compaction_backlog_tracker::ongoing_writes& ow, const compaction_backlog_tracker::ongoing_compactions& oc) const {
@@ -194,7 +195,7 @@ void size_tiered_backlog_tracker::replace_sstables(const std::vector<sstables::s
             }
         }
     }
-    refresh_sstables_backlog_contribution();
+    _contrib = calculate_sstables_backlog_contribution(_all, _stcs_options);
 }
 
 namespace sstables {

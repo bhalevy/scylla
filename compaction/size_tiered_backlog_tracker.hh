@@ -81,13 +81,12 @@ class size_tiered_backlog_tracker final : public compaction_backlog_tracker::imp
 
     inflight_component compacted_backlog(const compaction_backlog_tracker::ongoing_compactions& ongoing_compactions) const;
 
-    double log4(double x) const {
+    static double log4(double x) {
         double inv_log_4 = 1.0f / std::log(4);
         return log(x) * inv_log_4;
     }
 
-    // Provides strong exception safety guarantees.
-    void refresh_sstables_backlog_contribution();
+    static sstables_backlog_contribution calculate_sstables_backlog_contribution(const std::unordered_set<sstables::shared_sstable>& all, const sstables::size_tiered_compaction_strategy_options& stcs_options);
 public:
     size_tiered_backlog_tracker(sstables::size_tiered_compaction_strategy_options stcs_options) : _stcs_options(stcs_options) {}
 
