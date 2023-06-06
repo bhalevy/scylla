@@ -10,6 +10,8 @@
 #include "db/schema_tables.hh"
 
 #include <seastar/core/on_internal_error.hh>
+#include <seastar/core/smp.hh>
+#include "service/migration_listener.hh"
 #include "service/migration_manager.hh"
 #include "service/storage_proxy.hh"
 #include "gms/feature_service.hh"
@@ -960,6 +962,17 @@ static future<> update_database(sharded<replica::database>& db, Func func) {
     }
 }
 
+template <typename Func, typename Notifier>
+requires (std::same_as<futurize_t<std::invoke_result_t<Func, replica::database&>>, future<>>
+        && std::same_as<futurize_t<std::invoke_result_t<Notifier, service::migration_notifier&>>, future<>>)
+static future<> update_database(sharded<replica::database>& db, Func func, Notifier notify) {
+    co_await update_database(db, std::forward<Func>(func));
+    co_await db.invoke_on_all([&] (replica::database& db) -> future<> {
+        using futurator = futurize<std::invoke_result_t<Notifier, service::migration_notifier&>>;
+        co_await futurator::invoke(notify, db.get_notifier());
+    });
+}
+
 static
 future<> update_schema_version_and_announce(sharded<db::system_keyspace>& sys_ks, distributed<service::storage_proxy>& proxy, schema_features features) {
     auto uuid = co_await calculate_schema_digest(proxy, features);
@@ -1317,11 +1330,14 @@ static future<> do_merge_schema(distributed<service::storage_proxy>& proxy, std:
     co_await merge_aggregates(proxy, std::move(old_aggregates), std::move(new_aggregates), std::move(old_scylla_aggregates), std::move(new_scylla_aggregates));
     co_await types_to_drop.drop();
 
-    co_await update_database(proxy.local().get_db(), [&] (replica::database& db) -> future<> {
+    co_await update_database(proxy.local().get_db(), [&] (replica::database& db) {
         // it is safe to drop a keyspace only when all nested ColumnFamilies where deleted
         for (auto keyspace_to_drop : keyspaces_to_drop) {
             db.drop_keyspace(keyspace_to_drop);
-            co_await db.get_notifier().drop_keyspace(keyspace_to_drop);
+        }
+    }, [&] (service::migration_notifier& notifier) -> future<> {
+        for (auto keyspace_to_drop : keyspaces_to_drop) {
+            co_await notifier.drop_keyspace(keyspace_to_drop);
         }
     });
 }
@@ -1346,6 +1362,7 @@ future<std::set<sstring>> merge_keyspaces(distributed<service::storage_proxy>& p
     std::vector<schema_result_value_type> created;
     std::vector<sstring> altered;
     std::set<sstring> dropped;
+    std::unordered_map<shard_id, std::vector<foreign_ptr<lw_shared_ptr<keyspace_metadata>>>> ksms;
 
     /*
      * - we don't care about entriesOnlyOnLeft() or entriesInCommon(), because only the changes are of interest to us
@@ -1376,14 +1393,27 @@ future<std::set<sstring>> merge_keyspaces(distributed<service::storage_proxy>& p
         for (auto&& val : created) {
             auto scylla_specific_rs = co_await extract_scylla_specific_keyspace_info(proxy, val);
             auto ksm = create_keyspace_from_schema_partition(val, std::move(scylla_specific_rs));
+            ksms[this_shard_id()].emplace_back(make_foreign<lw_shared_ptr<keyspace_metadata>>(ksm));
             co_await db.create_keyspace(ksm, proxy.local().get_erm_factory());
-            co_await db.get_notifier().create_keyspace(ksm);
+        }
+    }, [&] (service::migration_notifier& notifier) -> future<> {
+        for (auto& foreign_ksm : ksms[this_shard_id()]) {
+            auto ksm = foreign_ksm.release();
+            co_await notifier.create_keyspace(ksm);
         }
     });
+    ksms.clear();
     co_await update_database(proxy.local().get_db(), [&] (replica::database& db) -> future<> {
         for (auto& name : altered) {
             co_await db.update_keyspace(proxy, name);
+            auto& ks = db.find_keyspace(name);
+            ksms[this_shard_id()].emplace_back(make_foreign<lw_shared_ptr<keyspace_metadata>>(ks.metadata()));
         };
+    }, [&] (service::migration_notifier& notifier) -> future<> {
+        for (auto& foreign_ksm : ksms[this_shard_id()]) {
+            auto ksm = foreign_ksm.release();
+            co_await notifier.update_keyspace(ksm);
+        }
     });
     co_return dropped;
 }
