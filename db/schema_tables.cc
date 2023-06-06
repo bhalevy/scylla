@@ -9,6 +9,7 @@
 
 #include "db/schema_tables.hh"
 
+#include <seastar/core/on_internal_error.hh>
 #include "service/migration_manager.hh"
 #include "service/storage_proxy.hh"
 #include "gms/feature_service.hh"
@@ -947,11 +948,23 @@ static future<> with_merge_lock(noncopyable_function<future<> ()> func) {
     }
 }
 
+template <typename Func>
+requires std::same_as<futurize_t<std::invoke_result_t<Func, replica::database&>>, future<>>
+static future<> update_database(sharded<replica::database>& db, Func func) {
+    using futurator = futurize<std::invoke_result_t<Func, replica::database&>>;
+    co_await futurator::invoke(func, db.local());
+    try {
+        co_await db.invoke_on_others(func);
+    } catch (...) {
+        on_fatal_internal_error(slogger, fmt::format("Updating database schema on all shards failed: {}", std::current_exception()));
+    }
+}
+
 static
 future<> update_schema_version_and_announce(sharded<db::system_keyspace>& sys_ks, distributed<service::storage_proxy>& proxy, schema_features features) {
     auto uuid = co_await calculate_schema_digest(proxy, features);
     co_await sys_ks.local().update_schema_version(uuid);
-    co_await proxy.local().get_db().invoke_on_all([uuid] (replica::database& db) {
+    co_await update_database(proxy.local().get_db(), [uuid] (replica::database& db) {
         db.update_version(uuid);
     });
     slogger.info("Schema version changed to {}", uuid);
@@ -1290,7 +1303,7 @@ static future<> do_merge_schema(distributed<service::storage_proxy>& proxy, std:
 
     if (has_tablet_mutations) {
         slogger.info("Tablet metadata changed");
-        co_await proxy.local().get_db().invoke_on_all([&] (replica::database& db) -> future<> {
+        co_await update_database(proxy.local().get_db(), [&] (replica::database& db) -> future<> {
             co_await db.get_notifier().update_tablet_metadata();
         });
     }
@@ -1304,7 +1317,7 @@ static future<> do_merge_schema(distributed<service::storage_proxy>& proxy, std:
     co_await merge_aggregates(proxy, std::move(old_aggregates), std::move(new_aggregates), std::move(old_scylla_aggregates), std::move(new_scylla_aggregates));
     co_await types_to_drop.drop();
 
-    co_await proxy.local().get_db().invoke_on_all([&] (replica::database& db) -> future<> {
+    co_await update_database(proxy.local().get_db(), [&] (replica::database& db) -> future<> {
         // it is safe to drop a keyspace only when all nested ColumnFamilies where deleted
         for (auto keyspace_to_drop : keyspaces_to_drop) {
             db.drop_keyspace(keyspace_to_drop);
@@ -1359,7 +1372,7 @@ future<std::set<sstring>> merge_keyspaces(distributed<service::storage_proxy>& p
         slogger.info("Altering keyspace {}", key);
         altered.emplace_back(key);
     }
-    co_await proxy.local().get_db().invoke_on_all([&] (replica::database& db) -> future<> {
+    co_await update_database(proxy.local().get_db(), [&] (replica::database& db) -> future<> {
         for (auto&& val : created) {
             auto scylla_specific_rs = co_await extract_scylla_specific_keyspace_info(proxy, val);
             auto ksm = create_keyspace_from_schema_partition(val, std::move(scylla_specific_rs));
@@ -1497,7 +1510,7 @@ static future<> merge_tables_and_views(distributed<service::storage_proxy>& prox
         return replica::database::drop_table_on_all_shards(db, s.ks_name(), s.cf_name());
     });
 
-    co_await db.invoke_on_all([&] (replica::database& db) -> future<> {
+    co_await update_database(db, [&] (replica::database& db) -> future<> {
         // In order to avoid possible races we first create the tables and only then the views.
         // That way if a view seeks information about its base table it's guarantied to find it.
         co_await max_concurrent_for_each(tables_diff.created, max_concurrent, [&] (global_schema_ptr& gs) -> future<> {
@@ -1768,7 +1781,7 @@ static future<user_types_to_drop> merge_types(distributed<service::storage_proxy
     // use those types. Similarly, defer dropping until after tables/views that may use
     // some of these user types are dropped.
 
-    co_await proxy.local().get_db().invoke_on_all([&] (replica::database& db) -> future<> {
+    co_await update_database(proxy.local().get_db(), [&] (replica::database& db) -> future<> {
         for (auto&& user_type : create_types(db, diff.created)) {
             db.find_keyspace(user_type->_keyspace).add_user_type(user_type);
             co_await db.get_notifier().create_user_type(user_type);
@@ -1780,7 +1793,7 @@ static future<user_types_to_drop> merge_types(distributed<service::storage_proxy
     });
 
     co_return user_types_to_drop{[&proxy, before = std::move(before), rows = std::move(diff.dropped)] () mutable -> future<> {
-        co_await proxy.local().get_db().invoke_on_all([&] (replica::database& db) -> future<> {
+        co_await update_database(proxy.local().get_db(), [&] (replica::database& db) -> future<> {
             auto dropped = create_types(db, rows);
             for (auto& user_type : dropped) {
                 db.find_keyspace(user_type->_keyspace).remove_user_type(user_type);
@@ -1962,7 +1975,7 @@ static void drop_cached_func(replica::database& db, const query::result_set_row&
 static future<> merge_functions(distributed<service::storage_proxy>& proxy, schema_result before, schema_result after) {
     auto diff = diff_rows(before, after);
 
-    co_await proxy.local().get_db().invoke_on_all(coroutine::lambda([&] (replica::database& db) -> future<> {
+    co_await update_database(proxy.local().get_db(), coroutine::lambda([&] (replica::database& db) -> future<> {
         for (const auto& val : diff.created) {
             cql3::functions::functions::add_function(co_await create_func(db, *val));
         }
@@ -1985,7 +1998,7 @@ static future<> merge_aggregates(distributed<service::storage_proxy>& proxy, sch
         schema_result scylla_before, schema_result scylla_after) {
     auto diff = diff_aggregates_rows(before, after, scylla_before, scylla_after);
 
-    co_await proxy.local().get_db().invoke_on_all([&] (replica::database& db)-> future<> {
+    co_await update_database(proxy.local().get_db(), [&] (replica::database& db)-> future<> {
         for (const auto& val : diff.created) {
             cql3::functions::functions::add_function(create_aggregate(db, *val.first, val.second));
         }
