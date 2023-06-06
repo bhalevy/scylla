@@ -84,12 +84,17 @@ class size_tiered_compaction_strategy : public compaction_strategy_impl {
     size_tiered_compaction_strategy_options _options;
 
     // Return a list of pair of shared_sstable and its respective size.
-    static std::vector<std::pair<sstables::shared_sstable, uint64_t>> create_sstable_and_length_pairs(const std::vector<sstables::shared_sstable>& sstables);
+    template <std::ranges::range Range>
+    requires std::same_as<std::ranges::range_value_t<Range>, sstables::shared_sstable>
+    static std::vector<std::pair<sstables::shared_sstable, uint64_t>> create_sstable_and_length_pairs(const Range& sstables);
 
     // Group files of similar size into buckets.
-    static std::vector<std::vector<sstables::shared_sstable>> get_buckets(const std::vector<sstables::shared_sstable>& sstables, size_tiered_compaction_strategy_options options);
+    template <std::ranges::range Range>
+    requires std::same_as<std::ranges::range_value_t<Range>, sstables::shared_sstable>
+    static std::vector<std::vector<sstables::shared_sstable>> get_buckets(const Range& sstables, const size_tiered_compaction_strategy_options& options);
 
     std::vector<std::vector<sstables::shared_sstable>> get_buckets(const std::vector<sstables::shared_sstable>& sstables) const;
+    std::vector<std::vector<sstables::shared_sstable>> get_buckets(const std::unordered_set<sstables::shared_sstable>& sstables) const;
 
     // Maybe return a bucket of sstables to compact
     std::vector<sstables::shared_sstable>
