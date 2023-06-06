@@ -1379,11 +1379,11 @@ future<std::set<sstring>> merge_keyspaces(distributed<service::storage_proxy>& p
             co_await db.create_keyspace(ksm, proxy.local().get_erm_factory());
             co_await db.get_notifier().create_keyspace(ksm);
         }
-        {
-            for (auto& name : altered) {
-                co_await db.update_keyspace(proxy, name);
-            };
-        }
+    });
+    co_await update_database(proxy.local().get_db(), [&] (replica::database& db) -> future<> {
+        for (auto& name : altered) {
+            co_await db.update_keyspace(proxy, name);
+        };
     });
     co_return dropped;
 }
