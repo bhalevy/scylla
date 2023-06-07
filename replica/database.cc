@@ -893,12 +893,14 @@ future<> database::update_keyspace(sharded<service::storage_proxy>& proxy, const
     }
 
     co_await ks.update_from(get_shared_token_metadata(), std::move(new_ksm));
-    co_await get_notifier().update_keyspace(ks.metadata());
 }
 
 future<> database::update_keyspace_on_all_shards(sharded<database>& sharded_db, sharded<service::storage_proxy>& proxy, const sstring& name) {
-    co_await sharded_db.invoke_on_all([&] (replica::database& db) -> future<> {
-        co_await db.update_keyspace(proxy, name);
+    return modify_keyspace_on_all_shards(sharded_db, [&] (replica::database& db) {
+        return db.update_keyspace(proxy, name);
+    }, [&] (replica::database& db) {
+        const auto& ks = db.find_keyspace(name);
+        return db.get_notifier().update_keyspace(ks.metadata());
     });
 }
 
@@ -907,8 +909,10 @@ void database::drop_keyspace(const sstring& name) {
 }
 
 future<> database::drop_keyspace_on_all_shards(sharded<database>& sharded_db, const sstring& name) {
-    co_await sharded_db.invoke_on_all([&] (replica::database& db) {
+    return modify_keyspace_on_all_shards(sharded_db, [&] (replica::database& db) {
         db.drop_keyspace(name);
+        return make_ready_future<>();
+    }, [&] (replica::database& db) {
         return db.get_notifier().drop_keyspace(name);
     });
 }
@@ -1417,9 +1421,17 @@ future<> database::create_in_memory_keyspace(const lw_shared_ptr<keyspace_metada
     _keyspaces.emplace(ksm->name(), std::move(ks));
 }
 
+future<> database::modify_keyspace_on_all_shards(sharded<database>& sharded_db, std::function<future<>(replica::database&)> func, std::function<future<>(replica::database&)> notifier) {
+    co_await sharded_db.invoke_on_all(func);
+    co_await sharded_db.invoke_on_all(notifier);
+}
+
 future<> database::create_keyspace_on_all_shards(sharded<database>& sharded_db, sharded<service::storage_proxy>& proxy, const sstring& name) {
-    return sharded_db.invoke_on_all([&] (replica::database& db) {
+    return modify_keyspace_on_all_shards(sharded_db, [&] (replica::database& db) {
         return db.create_keyspace(proxy, name);
+    }, [&] (replica::database& db) {
+        const auto& ks = db.find_keyspace(name);
+        return db.get_notifier().create_keyspace(ks.metadata());
     });
 }
 
@@ -1429,7 +1441,6 @@ database::create_keyspace(sharded<service::storage_proxy>& proxy, const sstring&
     auto scylla_specific_rs = co_await db::schema_tables::extract_scylla_specific_keyspace_info(proxy, val);
     auto ksm = db::schema_tables::create_keyspace_from_schema_partition(val, std::move(scylla_specific_rs));
     co_await create_keyspace(ksm, proxy.local().get_erm_factory(), system_keyspace::no);
-    co_await get_notifier().create_keyspace(ksm);
 }
 
 future<>
