@@ -1417,9 +1417,19 @@ future<> database::create_in_memory_keyspace(const lw_shared_ptr<keyspace_metada
     _keyspaces.emplace(ksm->name(), std::move(ks));
 }
 
+future<> database::create_keyspace_on_all_shards(sharded<database>& sharded_db, sharded<service::storage_proxy>& proxy, const sstring& name) {
+    return sharded_db.invoke_on_all([&] (replica::database& db) {
+        return db.create_keyspace(proxy, name);
+    });
+}
+
 future<>
-database::create_keyspace(const lw_shared_ptr<keyspace_metadata>& ksm, locator::effective_replication_map_factory& erm_factory) {
-    return create_keyspace(ksm, erm_factory, system_keyspace::no);
+database::create_keyspace(sharded<service::storage_proxy>& proxy, const sstring& name) {
+    auto val = co_await db::schema_tables::read_schema_partition_for_keyspace(proxy, db::schema_tables::KEYSPACES, name);
+    auto scylla_specific_rs = co_await db::schema_tables::extract_scylla_specific_keyspace_info(proxy, val);
+    auto ksm = db::schema_tables::create_keyspace_from_schema_partition(val, std::move(scylla_specific_rs));
+    co_await create_keyspace(ksm, proxy.local().get_erm_factory(), system_keyspace::no);
+    co_await get_notifier().create_keyspace(ksm);
 }
 
 future<>

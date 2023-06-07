@@ -1427,6 +1427,7 @@ private:
     void remove(table&) noexcept;
     void drop_keyspace(const sstring& name);
     future<> update_keyspace(sharded<service::storage_proxy>& proxy, const sstring& name);
+    future<> create_keyspace(sharded<service::storage_proxy>& proxy, const sstring& name);
 public:
     static table_schema_version empty_version;
 
@@ -1518,7 +1519,7 @@ public:
      *
      * @return ready future when the operation is complete
      */
-    future<> create_keyspace(const lw_shared_ptr<keyspace_metadata>&, locator::effective_replication_map_factory& erm_factory);
+    static future<> create_keyspace_on_all_shards(sharded<database>& sharded_db, sharded<service::storage_proxy>& proxy, const sstring& name);
     /* below, find_keyspace throws no_such_<type> on fail */
     keyspace& find_keyspace(std::string_view name);
     const keyspace& find_keyspace(std::string_view name) const;
