@@ -8,6 +8,7 @@
 
 #include "log.hh"
 #include "replica/database_fwd.hh"
+#include "seastar/core/on_internal_error.hh"
 #include "utils/lister.hh"
 #include "replica/database.hh"
 #include <seastar/core/future-util.hh>
@@ -902,12 +903,16 @@ future<> database::update_keyspace(sharded<service::storage_proxy>& proxy, const
 }
 
 future<> database::update_keyspace_on_all_shards(sharded<database>& sharded_db, sharded<service::storage_proxy>& proxy, const sstring& name) {
-    return modify_keyspace_on_all_shards(sharded_db, [&] (replica::database& db) {
-        return db.update_keyspace(proxy, name);
-    }, [&] (replica::database& db) {
-        const auto& ks = db.find_keyspace(name);
-        return db.get_notifier().update_keyspace(ks.metadata());
-    });
+    try {
+        co_await modify_keyspace_on_all_shards(sharded_db, [&] (replica::database& db) {
+            return db.update_keyspace(proxy, name);
+        }, [&] (replica::database& db) {
+            const auto& ks = db.find_keyspace(name);
+            return db.get_notifier().update_keyspace(ks.metadata());
+        });
+    } catch (...) {
+        on_fatal_internal_error(dblog, fmt::format("Failed updating keyspace {}: {}", name, std::current_exception()));
+    }
 }
 
 void database::drop_keyspace(const sstring& name) {
