@@ -7,6 +7,7 @@
  */
 
 #include "transport/server.hh"
+#include <exception>
 #include <seastar/core/gate.hh>
 #include "service/migration_listener.hh"
 #include "transport/response.hh"
@@ -43,11 +44,15 @@ void cql_server::event_notifier::on_create_keyspace(const sstring& ks_name)
     for (auto&& conn : _schema_change_listeners) {
         using namespace cql_transport;
         if (!conn->_pending_requests_gate.is_closed()) {
+          try {
             conn->write_response(conn->make_schema_change_event(event::schema_change{
                 event::schema_change::change_type::CREATED,
                 event::schema_change::target_type::KEYSPACE,
                 ks_name
             }));
+          } catch (...) {
+            elogger.warn("Create keyspace notification failed {}: {}. Ignored", ks_name, std::current_exception());
+          }
         };
     }
 }
@@ -57,12 +62,16 @@ void cql_server::event_notifier::on_create_column_family(const sstring& ks_name,
     for (auto&& conn : _schema_change_listeners) {
         using namespace cql_transport;
         if (!conn->_pending_requests_gate.is_closed()) {
+          try {
             conn->write_response(conn->make_schema_change_event(event::schema_change{
                 event::schema_change::change_type::CREATED,
                 event::schema_change::target_type::TABLE,
                 ks_name,
                 cf_name
             }));
+          } catch (...) {
+            elogger.warn("Create table notification failed {}.{}: {}. Ignored", ks_name, cf_name, std::current_exception());
+          }
         };
     }
 }
@@ -72,12 +81,16 @@ void cql_server::event_notifier::on_create_user_type(const sstring& ks_name, con
     for (auto&& conn : _schema_change_listeners) {
         using namespace cql_transport;
         if (!conn->_pending_requests_gate.is_closed()) {
+          try {
             conn->write_response(conn->make_schema_change_event(event::schema_change{
                 event::schema_change::change_type::CREATED,
                 event::schema_change::target_type::TYPE,
                 ks_name,
                 type_name
             }));
+          } catch (...) {
+            elogger.warn("Create user type notification failed {}.{}: {}. Ignored", ks_name, type_name, std::current_exception());
+          }
         };
     }
 }
@@ -102,11 +115,15 @@ void cql_server::event_notifier::on_update_keyspace(const sstring& ks_name)
     for (auto&& conn : _schema_change_listeners) {
         using namespace cql_transport;
         if (!conn->_pending_requests_gate.is_closed()) {
+          try {
             conn->write_response(conn->make_schema_change_event(event::schema_change{
                 event::schema_change::change_type::UPDATED,
                 event::schema_change::target_type::KEYSPACE,
                 ks_name
             }));
+          } catch (...) {
+            elogger.warn("Update keyspace notification failed {}: {}. Ignored", ks_name, std::current_exception());
+          }
         };
     }
 }
@@ -116,12 +133,16 @@ void cql_server::event_notifier::on_update_column_family(const sstring& ks_name,
     for (auto&& conn : _schema_change_listeners) {
         using namespace cql_transport;
         if (!conn->_pending_requests_gate.is_closed()) {
+          try {
             conn->write_response(conn->make_schema_change_event(event::schema_change{
                 event::schema_change::change_type::UPDATED,
                 event::schema_change::target_type::TABLE,
                 ks_name,
                 cf_name
             }));
+          } catch (...) {
+            elogger.warn("Update table notification failed {}.{}: {}. Ignored", ks_name, cf_name, std::current_exception());
+          }
         };
     }
 }
@@ -131,12 +152,16 @@ void cql_server::event_notifier::on_update_user_type(const sstring& ks_name, con
     for (auto&& conn : _schema_change_listeners) {
         using namespace cql_transport;
         if (!conn->_pending_requests_gate.is_closed()) {
+          try {
             conn->write_response(conn->make_schema_change_event(event::schema_change{
                 event::schema_change::change_type::UPDATED,
                 event::schema_change::target_type::TYPE,
                 ks_name,
                 type_name
             }));
+          } catch (...) {
+            elogger.warn("Update user type notification failed {}.{}: {}. Ignored", ks_name, type_name, std::current_exception());
+          }
         };
     }
 }
@@ -163,11 +188,15 @@ void cql_server::event_notifier::on_drop_keyspace(const sstring& ks_name)
     for (auto&& conn : _schema_change_listeners) {
         using namespace cql_transport;
         if (!conn->_pending_requests_gate.is_closed()) {
+          try {
             conn->write_response(conn->make_schema_change_event(event::schema_change{
                 event::schema_change::change_type::DROPPED,
                 event::schema_change::target_type::KEYSPACE,
                 ks_name
             }));
+          } catch (...) {
+            elogger.warn("Drop keyspace notification failed {}: {}. Ignored", ks_name, std::current_exception());
+          }
         };
     }
 }
@@ -177,12 +206,16 @@ void cql_server::event_notifier::on_drop_column_family(const sstring& ks_name, c
     for (auto&& conn : _schema_change_listeners) {
         using namespace cql_transport;
         if (!conn->_pending_requests_gate.is_closed()) {
+          try {
             conn->write_response(conn->make_schema_change_event(event::schema_change{
                 event::schema_change::change_type::DROPPED,
                 event::schema_change::target_type::TABLE,
                 ks_name,
                 cf_name
             }));
+          } catch (...) {
+            elogger.warn("Drop table notification failed {}.{}: {}. Ignored", ks_name, cf_name, std::current_exception());
+          }
         };
     }
 }
@@ -192,12 +225,16 @@ void cql_server::event_notifier::on_drop_user_type(const sstring& ks_name, const
     for (auto&& conn : _schema_change_listeners) {
         using namespace cql_transport;
         if (!conn->_pending_requests_gate.is_closed()) {
+          try {
             conn->write_response(conn->make_schema_change_event(event::schema_change{
                 event::schema_change::change_type::DROPPED,
                 event::schema_change::target_type::TYPE,
                 ks_name,
                 type_name
             }));
+          } catch (...) {
+            elogger.warn("Drop user type notification failed {}.{}: {}. Ignored", ks_name, type_name, std::current_exception());
+          }
         };
     }
 }
