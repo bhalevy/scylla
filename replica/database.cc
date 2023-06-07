@@ -1405,7 +1405,18 @@ future<> database::create_in_memory_keyspace(const lw_shared_ptr<keyspace_metada
 }
 
 future<> database::modify_keyspace_on_all_shards(sharded<database>& sharded_db, std::function<future<>(replica::database&)> func, std::function<future<>(replica::database&)> notifier) {
-    co_await sharded_db.invoke_on_all(func);
+    // Run func first on shard 0
+    // to allow "seeding" of the effective_replication_map
+    // with a new e_r_m instance.
+    co_await sharded_db.invoke_on(0, func);
+    if (smp::count > 1) {
+        co_await sharded_db.invoke_on_all([&] (replica::database& db) {
+            if (this_shard_id() == 0) {
+                return make_ready_future<>();
+            }
+            return func(db);
+        });
+    }
     co_await sharded_db.invoke_on_all(notifier);
 }
 
