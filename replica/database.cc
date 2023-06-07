@@ -902,6 +902,12 @@ future<> database::update_keyspace(sharded<service::storage_proxy>& proxy, const
     co_await get_notifier().update_keyspace(ks.metadata());
 }
 
+future<> database::update_keyspace_on_all_shards(sharded<database>& sharded_db, sharded<service::storage_proxy>& proxy, const sstring& name) {
+    co_await sharded_db.invoke_on_all([&] (replica::database& db) -> future<> {
+        co_await db.update_keyspace(proxy, name);
+    });
+}
+
 void database::drop_keyspace(const sstring& name) {
     _keyspaces.erase(name);
 }
