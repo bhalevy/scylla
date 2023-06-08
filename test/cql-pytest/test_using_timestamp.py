@@ -90,3 +90,56 @@ def test_key_writetime(cql, table1):
         cql.execute(f'SELECT writetime(k) FROM {table1}')
     with pytest.raises(InvalidRequest, match='PRIMARY KEY part k'):
         cql.execute(f'SELECT ttl(k) FROM {table1}')
+
+# Reproducer for https://github.com/scylladb/scylladb/issues/14182
+def test_rewrite_using_same_timeout_and_ttl(scylla_only, cql, table1):
+    table = table1
+    k = unique_key_int()
+    ts1 = 1000
+    ttl1 = 10
+    ts2 = 1000
+    ttl2 = 10
+    values = [[1, 1], [1, 2], [2, 1]]
+    errors = []
+    for i in range(3):
+        v1, v2 = values[i]
+
+        t1 = time.time()
+        cql.execute(f"INSERT INTO {table} (k, v) VALUES ({k}, {v1}) USING TIMESTAMP {ts1} AND TTL {ttl1}")
+
+        # rewriting right away, so that both cells will carry the same expiry and ttl should return the larger value
+        rewrite = f"INSERT INTO {table} (k, v) VALUES ({k}, {v2}) USING TIMESTAMP {ts2} AND TTL {ttl2}"
+        cql.execute(rewrite)
+        select = f"SELECT * FROM {table} WHERE k = {k}"
+        res = list(cql.execute(select))
+        expected = v1 if v1 >= v2 else v2
+        if res[0].v != expected:
+            errors.append(f"Expected (k={k}, v={expected}) after immediate rewrite in iteration {i}, but got {res[0]}")
+
+        delay = 4
+        time.sleep(delay)
+        t2 = time.time()
+        cql.execute(rewrite)
+        res = list(cql.execute(select))
+        # rewriting where the atomic_cell's expiration time should return the latter value
+        expected = v2
+        if res[0].v != expected:
+            errors.append(f"Expected (k={k}, v={expected}) after {delay} seconds rewrite in iteration {i}, but got {res[0]}")
+
+        expire1 = t1 + ttl1
+        time.sleep(expire1 - time.time() + 2)
+        res = list(cql.execute(select))
+        # reading after the first write expires should return the latter value
+        expected = v2
+        if res[0].v != expected:
+            errors.append(f"Expected (k={k}, v={expected}) after first expiration in iteration {i}, but got {res[0]}")
+
+        expire2 = t2 + ttl2
+        time.sleep(expire2 - time.time() + 2)
+        # reading after both writes expired should return nothing
+        res = list(cql.execute(select))
+        if len(res) != 0:
+            errors.append(f"Expected no results after both writes expired in iteration {i}, but got {res}")
+
+    perrors = '\n'.join(errors)
+    assert not errors, f"Found errors:\n{perrors}"
