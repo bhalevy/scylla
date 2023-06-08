@@ -18,7 +18,7 @@ import time
 @pytest.fixture(scope="session")
 def table1(cql, test_keyspace):
     table = test_keyspace + "." + unique_name()
-    cql.execute(f"CREATE TABLE {table} (k int PRIMARY KEY, v int)")
+    cql.execute(f"CREATE TABLE {table} (k int PRIMARY KEY, v int, w int)")
     yield table
     cql.execute("DROP TABLE " + table)
 
@@ -90,3 +90,79 @@ def test_key_writetime(cql, table1):
         cql.execute(f'SELECT writetime(k) FROM {table1}')
     with pytest.raises(InvalidRequest, match='PRIMARY KEY part k'):
         cql.execute(f'SELECT ttl(k) FROM {table1}')
+
+# Reproducer for https://github.com/scylladb/scylladb/issues/14182
+def test_rewrite_using_same_timestamp(cql, table1):
+    table = table1
+    k = unique_key_int()
+    ts = 1000
+    ttl1 = 1
+    ttl2 = 1
+    values = [[1, 1], [1, 2], [2, 1]]
+    errors = []
+    for i in range(3):
+        v1, v2 = values[i]
+
+        # sync with wall-clock on exact second so that expiration won't cross the whole-second boundary
+        t1 = time.time()
+        while t1 - int(t1) >= 0.9:
+            time.sleep(1 - (t1 - int(t1)))
+            t1 = time.time()
+
+        cql.execute(f"INSERT INTO {table} (k, v) VALUES ({k}, {v1}) USING TIMESTAMP {ts} AND TTL {ttl1}")
+        # rewriting right away, so that both cells will carry the same expiry and ttl should return the larger value
+        rewrite = f"INSERT INTO {table} (k, v) VALUES ({k}, {v2}) USING TIMESTAMP {ts} AND TTL {ttl2}"
+        cql.execute(rewrite)
+        select = f"SELECT k, v FROM {table} WHERE k = {k}"
+        res = list(cql.execute(select))
+        assert len(res) == 1, f"Expected a single row, but got {res}"
+        expected = v1 if v1 >= v2 else v2
+        if res[0].v != expected:
+            errors.append(f"Expected (k={k}, v={expected}) after immediate rewrite in iteration {i}, but got {res[0]}")
+
+        delay = 1
+        time.sleep(delay)
+        t2 = time.time()
+        cql.execute(rewrite)
+        res = list(cql.execute(select))
+        assert len(res) == 1, f"Expected a single row, but got {res}"
+        # rewriting where the atomic_cell's expiration time should return the latter value
+        expected = v2
+        if res[0].v != expected:
+            errors.append(f"Expected (k={k}, v={expected}) after {delay} seconds rewrite in iteration {i}, but got {res[0]}")
+
+        expire2 = t2 + ttl2
+        time.sleep(expire2 - time.time() + 2)
+        # reading after both writes expired should return nothing
+        res = list(cql.execute(select))
+        if len(res) != 0:
+            errors.append(f"Expected no results after both writes expired in iteration {i}, but got {res}")
+
+    perrors = '\n'.join(errors)
+    assert not errors, f"Found errors:\n{perrors}"
+
+# Reproducer for https://github.com/scylladb/scylladb/issues/14182
+def test_rewrite_multiple_cells_using_same_timestamp(cql, table1):
+    table = table1
+    k = unique_key_int()
+    ts = 1000
+    ttl = 10
+    t1 = time.time()
+    values = [{'v':1, 'w':2}, {'v':2, 'w':1}]
+
+    # sync with wall-clock on exact second so that expiration won't cross the whole-second boundary
+    while t1 - int(t1) >= 0.9:
+        time.sleep(1 - (t1 - int(t1)))
+        t1 = time.time()
+
+    # rewrite values using the same write time and ttl, after waiting a second, so they get different expiration time
+    # if reconciliation is done by value, the result will be a mix of the two writes
+    # while if reconciliation is based first on the expiration time, the second write should prevail.
+    cql.execute(f"INSERT INTO {table} (k, v, w) VALUES ({k}, {values[0]['v']}, {values[0]['w']}) USING TIMESTAMP {ts} AND TTL {ttl}")
+    time.sleep(1)
+    cql.execute(f"INSERT INTO {table} (k, v, w) VALUES ({k}, {values[1]['v']}, {values[1]['w']}) USING TIMESTAMP {ts} AND TTL {ttl}")
+
+    res = list(cql.execute(f"SELECT * FROM {table} WHERE k = {k}"))
+    assert len(res) == 1, f"Expected a single row, but got {res}"
+    assert res[0].k == k and res[0].v == values[1]['v'] and res[0].w == values[1]['w'], \
+        f"Expected (k={k}, v={values[1]['v']}, w={values[1]['w']}) after rewrite but got {res[0]}"
