@@ -592,7 +592,7 @@ of eventual consistency on an event of a timestamp collision:
 
 ``INSERT`` statements happening concurrently at different cluster
 nodes proceed without coordination. Eventually cell values
-supplied by a statement with the highest timestamp will prevail.
+supplied by a statement with the highest timestamp will prevail (see :ref:`update ordering <update-ordering>`).
 
 Unless a timestamp is provided by the client, Scylla will automatically
 generate a timestamp with microsecond precision for each
@@ -601,7 +601,7 @@ by the same node are unique. Timestamps assigned at different
 nodes are not guaranteed to be globally unique.
 With a steadily high write rate timestamp collision
 is not unlikely. If it happens, i.e. two ``INSERTS`` have the same
-timestamp, the lexicographically bigger value prevails:
+timestamp, a tie-breaking algorithm determines which of the inserts prevails (see :ref:`update ordering <update-ordering>`).
 
 Please refer to the :ref:`UPDATE <update-parameters>` section for more information on the :token:`update_parameter`.
 
@@ -709,8 +709,8 @@ Similarly to ``INSERT``, ``UPDATE`` statement happening concurrently at differen
 cluster nodes proceed without coordination. Cell values
 supplied by a statement with the highest timestamp will prevail.
 If two ``UPDATE`` statements or ``UPDATE`` and ``INSERT``
-statements have the same timestamp,
-lexicographically bigger value prevails.
+statements have the same timestamp, a tie-breaking algorithm determines which of them prevails
+(see :ref:`update ordering <update-ordering>`).
 
 Regarding the :token:`assignment`:
 
@@ -748,8 +748,8 @@ parameters:
   implicitly set by the coordinator by default, when the `USING TIMESTAMP` update parameter is absent.
   Scylla ensures that query timestamps created by the same coordinator node are unique (even across different shards
   on the same node). However, timestamps assigned at different nodes are not guaranteed to be globally unique.
-  Note that with a steadily high write rate, timestamp collision is not unlikely. If it happens, e.g. two INSERTS
-  have the same timestamp, conflicting cell values are compared and the cells with the lexicographically bigger value prevail.
+  Note that with a steadily high write rate, timestamp collision is not unlikely. If it happens, e.g. two INSERTS or UPDATES
+  have the same timestamp, a tie-breaking algorithm determines which of the upserts prevails (see :ref:`update ordering <update-ordering>` for more information):
 - ``TTL``: specifies an optional Time To Live (in seconds) for the inserted values. If set, the inserted values are
   automatically removed from the database after the specified time. Note that the TTL concerns the inserted values, not
   the columns themselves. This means that any subsequent update of the column will also reset the TTL (to whatever TTL
@@ -758,6 +758,37 @@ parameters:
   to inserting with a TTL of 0. You can read more about TTL in the :doc:`documentation </cql/time-to-live>` and also in `this Scylla University lesson <https://university.scylladb.com/courses/data-modeling/lessons/advanced-data-modeling/topic/expiring-data-with-ttl-time-to-live/>`_.
 - ``TIMEOUT``: specifies a timeout duration for the specific request.
   Please refer to the :ref:`SELECT <using-timeout>` section for more information.
+
+.. _update-ordering:
+
+Update ordering
+~~~~~~~~~~~~~~~
+
+The fundamental rule for ordering multiple inserts or updates to a cell
+is that the cell with the highest timestamp wins.
+
+Otherwise, if cells have the same timestamp:
+
+Dead cells win over live cells; and if both cells are deleted, the one with the later deletion time prevails.
+
+If both cells are alive, their expiration time is examined.
+Expiring cells win over live cells as they will become tombstones at some future date
+and so, going by the rule above, they should be preferred over live cells.
+
+If both cells are expiring, the one with the latest expiration time wins;
+and if they have the same expiration time (in whole second resolution),
+their write time is derived from the expiration time less the remaining time-to-live
+and the one that was written at a later time prevails.
+
+Finally, if both cells are live and not expiring, or have the same expiration time and remaining time-to-live,
+the cell with the lexicographically bigger value prevails.
+
+Note that when a TTL is used and multiple columns are INSERTed or UPDATEed using the same timestamp,
+SELECTing those columns will return cells picked from only one of those upserts, that has the latest expiration time,
+since Scylla assigns the same expiration time to all cells in an INSERT or UPDATE query.
+Otherwise, cell selection would be based on the cell values in each column, independently,
+and SELECT may return cells picked from either upsert.
+:doc:`Lightweight Transactions (LWT) </using-scylla/lwt>` can be used to ensure atomicity of INSERT or UPDATE.
 
 .. _delete_statement:
 
@@ -798,7 +829,7 @@ For more information on the :token:`update_parameter` refer to the :ref:`UPDATE 
 In a ``DELETE`` statement, all deletions within the same partition key are applied atomically,
 meaning either all columns mentioned in the statement are deleted or none.
 If ``DELETE`` statement has the same timestamp as ``INSERT`` or
-``UPDATE`` of the same primary key, delete operation prevails.
+``UPDATE`` of the same primary key, delete operation prevails (see :ref:`update ordering <update-ordering>`).
 
 A ``DELETE`` operation can be conditional through the use of an ``IF`` clause, similar to ``UPDATE`` and ``INSERT``
 statements. Each such ``DELETE`` gets a globally unique timestamp.
