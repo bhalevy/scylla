@@ -71,4 +71,23 @@ event::schema_change::schema_change(change_type change, target_type target, sstr
         break;
     }
 }
+
+sstring event::schema_change::change_how(change_type type) {
+    switch (type) {
+    case change_type::CREATED: return "Create";
+    case change_type::UPDATED: return "Update";
+    case change_type::DROPPED: return "Drop";
+    }
+}
+
+sstring event::schema_change::change_what(target_type target) {
+    switch (target) {
+    case target_type::KEYSPACE: return "keyspace";
+    case target_type::TABLE: return "table";
+    case target_type::TYPE: return "type";
+    case target_type::FUNCTION: return "function";
+    case target_type::AGGREGATE: return "aggregate";
+    }
+}
+
 }

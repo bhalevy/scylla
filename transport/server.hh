@@ -297,6 +297,10 @@ class cql_server::event_notifier : public service::migration_listener,
     std::unordered_set<gms::inet_address> _endpoints_pending_joined_notification;
 
     void send_join_cluster(const gms::inet_address& endpoint);
+    // Called in a seastar thread
+    void on_schema_change(std::function<void(cql_server::connection*)> notify, std::function<std::string(std::exception_ptr)> describe_error);
+    void on_keyspace_change(event::schema_change::change_type, const sstring& ks_name);
+    void on_ks_entity_change(event::schema_change::change_type, event::schema_change::target_type, const sstring& ks_name, const sstring& ent_name);
 public:
     explicit event_notifier(const cql_server& s) noexcept : _server(s) {}
     void register_event(cql_transport::event::event_type et, cql_server::connection* conn);

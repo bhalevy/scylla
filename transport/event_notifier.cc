@@ -38,53 +38,67 @@ void cql_server::event_notifier::unregister_connection(cql_server::connection* c
     _schema_change_listeners.erase(conn);
 }
 
+void cql_server::event_notifier::on_schema_change(std::function<void(cql_server::connection*)> notify, std::function<std::string(std::exception_ptr)> describe_error) {
+    auto listeners = boost::copy_range<std::vector<cql_server::connection*>>(_schema_change_listeners);
+    std::vector<cql_server::connection*> conns_to_shutdown;
+    conns_to_shutdown.reserve(_schema_change_listeners.size());
+    for (auto&& conn : listeners) {
+        if (conn->_pending_requests_gate.is_closed()) {
+            continue;
+        }
+        std::exception_ptr ex;
+        try {
+            notify(conn);
+        } catch (...) {
+            ex = std::current_exception();
+            elogger.warn("{}. Closing connection", describe_error(ex));
+            conns_to_shutdown.emplace_back(conn);
+            unregister_connection(conn);
+        }
+    }
+    for (auto&& conn : conns_to_shutdown) {
+        conn->shutdown().get();
+    }
+}
+
+void cql_server::event_notifier::on_keyspace_change(event::schema_change::change_type type, const sstring& ks_name) {
+    on_schema_change([&] (cql_server::connection* conn) {
+        conn->write_response(conn->make_schema_change_event(event::schema_change{
+            type, event::schema_change::target_type::KEYSPACE, ks_name
+        }));
+    }, [&] (std::exception_ptr ex) {
+        return fmt::format("{} keyspace notification failed {}: {}", event::schema_change::change_how(type), ks_name, ex);
+    });
+}
+
+void cql_server::event_notifier::on_ks_entity_change(event::schema_change::change_type type, event::schema_change::target_type target, const sstring& ks_name, const sstring& ent_name) {
+    on_schema_change([&] (cql_server::connection* conn) {
+        conn->write_response(conn->make_schema_change_event(event::schema_change{
+            type, target, ks_name, ent_name
+        }));
+    }, [&] (std::exception_ptr ex) {
+        return fmt::format("{} {} notification failed {}.{}: {}", event::schema_change::change_how(type), event::schema_change::change_what(target), ks_name, ent_name, ex);
+    });
+}
+
 void cql_server::event_notifier::on_create_keyspace(const sstring& ks_name)
 {
-    for (auto&& conn : _schema_change_listeners) {
-        using namespace cql_transport;
-        if (!conn->_pending_requests_gate.is_closed()) {
-            conn->write_response(conn->make_schema_change_event(event::schema_change{
-                event::schema_change::change_type::CREATED,
-                event::schema_change::target_type::KEYSPACE,
-                ks_name
-            }));
-        };
-    }
+    on_keyspace_change(event::schema_change::change_type::CREATED, ks_name);
 }
 
 void cql_server::event_notifier::on_create_column_family(const sstring& ks_name, const sstring& cf_name)
 {
-    for (auto&& conn : _schema_change_listeners) {
-        using namespace cql_transport;
-        if (!conn->_pending_requests_gate.is_closed()) {
-            conn->write_response(conn->make_schema_change_event(event::schema_change{
-                event::schema_change::change_type::CREATED,
-                event::schema_change::target_type::TABLE,
-                ks_name,
-                cf_name
-            }));
-        };
-    }
+    on_ks_entity_change(event::schema_change::change_type::CREATED, event::schema_change::target_type::TABLE, ks_name, cf_name);
 }
 
 void cql_server::event_notifier::on_create_user_type(const sstring& ks_name, const sstring& type_name)
 {
-    for (auto&& conn : _schema_change_listeners) {
-        using namespace cql_transport;
-        if (!conn->_pending_requests_gate.is_closed()) {
-            conn->write_response(conn->make_schema_change_event(event::schema_change{
-                event::schema_change::change_type::CREATED,
-                event::schema_change::target_type::TYPE,
-                ks_name,
-                type_name
-            }));
-        };
-    }
+    on_ks_entity_change(event::schema_change::change_type::CREATED, event::schema_change::target_type::TYPE, ks_name, type_name);
 }
 
 void cql_server::event_notifier::on_create_view(const sstring& ks_name, const sstring& view_name)
 {
-    on_create_column_family(ks_name, view_name);
+    on_ks_entity_change(event::schema_change::change_type::CREATED, event::schema_change::target_type::TABLE, ks_name, view_name);
 }
 
 void cql_server::event_notifier::on_create_function(const sstring& ks_name, const sstring& function_name)
@@ -99,51 +113,22 @@ void cql_server::event_notifier::on_create_aggregate(const sstring& ks_name, con
 
 void cql_server::event_notifier::on_update_keyspace(const sstring& ks_name)
 {
-    for (auto&& conn : _schema_change_listeners) {
-        using namespace cql_transport;
-        if (!conn->_pending_requests_gate.is_closed()) {
-            conn->write_response(conn->make_schema_change_event(event::schema_change{
-                event::schema_change::change_type::UPDATED,
-                event::schema_change::target_type::KEYSPACE,
-                ks_name
-            }));
-        };
-    }
+    on_keyspace_change(event::schema_change::change_type::UPDATED, ks_name);
 }
 
 void cql_server::event_notifier::on_update_column_family(const sstring& ks_name, const sstring& cf_name, bool columns_changed)
 {
-    for (auto&& conn : _schema_change_listeners) {
-        using namespace cql_transport;
-        if (!conn->_pending_requests_gate.is_closed()) {
-            conn->write_response(conn->make_schema_change_event(event::schema_change{
-                event::schema_change::change_type::UPDATED,
-                event::schema_change::target_type::TABLE,
-                ks_name,
-                cf_name
-            }));
-        };
-    }
+    on_ks_entity_change(event::schema_change::change_type::UPDATED, event::schema_change::target_type::TABLE, ks_name, cf_name);
 }
 
 void cql_server::event_notifier::on_update_user_type(const sstring& ks_name, const sstring& type_name)
 {
-    for (auto&& conn : _schema_change_listeners) {
-        using namespace cql_transport;
-        if (!conn->_pending_requests_gate.is_closed()) {
-            conn->write_response(conn->make_schema_change_event(event::schema_change{
-                event::schema_change::change_type::UPDATED,
-                event::schema_change::target_type::TYPE,
-                ks_name,
-                type_name
-            }));
-        };
-    }
+    on_ks_entity_change(event::schema_change::change_type::UPDATED, event::schema_change::target_type::TYPE, ks_name, type_name);
 }
 
 void cql_server::event_notifier::on_update_view(const sstring& ks_name, const sstring& view_name, bool columns_changed)
 {
-    on_update_column_family(ks_name, view_name, columns_changed);
+    on_ks_entity_change(event::schema_change::change_type::UPDATED, event::schema_change::target_type::TABLE, ks_name, view_name);
 }
 
 void cql_server::event_notifier::on_update_function(const sstring& ks_name, const sstring& function_name)
@@ -160,51 +145,22 @@ void cql_server::event_notifier::on_update_tablet_metadata() {}
 
 void cql_server::event_notifier::on_drop_keyspace(const sstring& ks_name)
 {
-    for (auto&& conn : _schema_change_listeners) {
-        using namespace cql_transport;
-        if (!conn->_pending_requests_gate.is_closed()) {
-            conn->write_response(conn->make_schema_change_event(event::schema_change{
-                event::schema_change::change_type::DROPPED,
-                event::schema_change::target_type::KEYSPACE,
-                ks_name
-            }));
-        };
-    }
+    on_keyspace_change(event::schema_change::change_type::DROPPED, ks_name);
 }
 
 void cql_server::event_notifier::on_drop_column_family(const sstring& ks_name, const sstring& cf_name)
 {
-    for (auto&& conn : _schema_change_listeners) {
-        using namespace cql_transport;
-        if (!conn->_pending_requests_gate.is_closed()) {
-            conn->write_response(conn->make_schema_change_event(event::schema_change{
-                event::schema_change::change_type::DROPPED,
-                event::schema_change::target_type::TABLE,
-                ks_name,
-                cf_name
-            }));
-        };
-    }
+    on_ks_entity_change(event::schema_change::change_type::DROPPED, event::schema_change::target_type::TABLE, ks_name, cf_name);
 }
 
 void cql_server::event_notifier::on_drop_user_type(const sstring& ks_name, const sstring& type_name)
 {
-    for (auto&& conn : _schema_change_listeners) {
-        using namespace cql_transport;
-        if (!conn->_pending_requests_gate.is_closed()) {
-            conn->write_response(conn->make_schema_change_event(event::schema_change{
-                event::schema_change::change_type::DROPPED,
-                event::schema_change::target_type::TYPE,
-                ks_name,
-                type_name
-            }));
-        };
-    }
+    on_ks_entity_change(event::schema_change::change_type::DROPPED, event::schema_change::target_type::TYPE, ks_name, type_name);
 }
 
 void cql_server::event_notifier::on_drop_view(const sstring& ks_name, const sstring& view_name)
 {
-    on_drop_column_family(ks_name, view_name);
+    on_ks_entity_change(event::schema_change::change_type::DROPPED, event::schema_change::target_type::TABLE, ks_name, view_name);
 }
 
 void cql_server::event_notifier::on_drop_function(const sstring& ks_name, const sstring& function_name)

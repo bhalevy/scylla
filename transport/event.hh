@@ -80,6 +80,9 @@ public:
     template <typename... Ts>
     schema_change(change_type change, target_type target, sstring keyspace, Ts... arguments)
         : schema_change(change, target, keyspace, std::vector<sstring>{std::move(arguments)...}) {}
+
+    static sstring change_how(change_type);
+    static sstring change_what(target_type);
 };
 
 }
