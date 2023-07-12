@@ -27,6 +27,7 @@
 #include <seastar/core/thread.hh>
 #include <seastar/core/metrics.hh>
 #include <seastar/util/defer.hh>
+#include <seastar/util/backtrace.hh>
 #include <seastar/core/coroutine.hh>
 #include <seastar/coroutine/parallel_for_each.hh>
 #include <chrono>
@@ -2289,14 +2290,15 @@ bool gossiper::is_alive(inet_address ep) const {
     if (ep == get_broadcast_address()) {
         return true;
     }
+    bool is_alive = _live_endpoints.contains(ep);
     auto* eps = get_endpoint_state_for_endpoint_ptr(ep);
     // we could assert not-null, but having isAlive fail screws a node over so badly that
     // it's worth being defensive here so minor bugs don't cause disproportionate
     // badness.  (See CASSANDRA-1463 for an example).
     if (eps) {
-        return eps->is_alive();
+        return is_alive;
     }
-    logger.warn("unknown endpoint {}", ep);
+    logger.log(is_alive ? log_level::warn : log_level::trace, "unknown endpoint {}: is_alive={}", ep, is_alive);
     return false;
 }
 
