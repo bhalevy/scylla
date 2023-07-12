@@ -27,6 +27,7 @@
 #include <seastar/core/thread.hh>
 #include <seastar/core/metrics.hh>
 #include <seastar/util/defer.hh>
+#include <seastar/util/backtrace.hh>
 #include <seastar/core/coroutine.hh>
 #include <seastar/coroutine/parallel_for_each.hh>
 #include <chrono>
@@ -1660,16 +1661,16 @@ future<> gossiper::handle_major_state_change(inet_address ep, const endpoint_sta
         co_return;
     }
 
-    if (eps_old) {
-        // the node restarted: it is up to the subscriber to take whatever action is necessary
-        co_await _subscribers.for_each([ep, eps_old, pid] (shared_ptr<i_endpoint_state_change_subscriber> subscriber) {
-            return subscriber->on_restart(ep, *eps_old, pid);
-        });
-    }
-
     auto& ep_state = _endpoint_state_map.at(ep);
     if (!is_dead_state(ep_state)) {
         mark_alive(ep, ep_state);
+
+        if (eps_old) {
+            // the node restarted: it is up to the subscriber to take whatever action is necessary
+            co_await _subscribers.for_each([ep, eps_old, pid] (shared_ptr<i_endpoint_state_change_subscriber> subscriber) {
+                return subscriber->on_restart(ep, *eps_old, pid);
+            });
+        }
     } else {
         logger.debug("Not marking {} alive due to dead state {}", ep, get_gossip_status(eps));
         co_await mark_dead(ep, ep_state, pid);
@@ -1685,6 +1686,19 @@ future<> gossiper::handle_major_state_change(inet_address ep, const endpoint_sta
     if (is_shutdown(ep)) {
         co_await mark_as_shutdown(ep, pid);
     }
+}
+
+bool gossiper::is_alive_state(const endpoint_state& eps) const {
+    auto state = get_gossip_status(eps);
+    if (state == sstring(versioned_value::SHUTDOWN)) {
+        return false;
+    }
+    for (auto& deadstate : DEAD_STATES) {
+        if (state == deadstate) {
+            return false;
+        }
+    }
+    return true;
 }
 
 bool gossiper::is_dead_state(const endpoint_state& eps) const {
@@ -2275,14 +2289,19 @@ bool gossiper::is_alive(inet_address ep) const {
     if (ep == get_broadcast_address()) {
         return true;
     }
+    bool is_alive = _live_endpoints.contains(ep);
     auto* eps = get_endpoint_state_for_endpoint_ptr(ep);
     // we could assert not-null, but having isAlive fail screws a node over so badly that
     // it's worth being defensive here so minor bugs don't cause disproportionate
     // badness.  (See CASSANDRA-1463 for an example).
     if (eps) {
-        return eps->is_alive();
+        auto is_alive_state = this->is_alive_state(*eps);
+        if (eps->is_alive() != is_alive || is_alive_state != is_alive) {
+            logger.debug("Node {}: is_alive={} is_alive_state={} ({}) eps->is_alive={}: {}", ep, is_alive, is_alive_state, get_gossip_status(*eps),  eps->is_alive(), current_backtrace());
+        }
+        return is_alive;
     }
-    logger.warn("unknown endpoint {}", ep);
+    logger.log(is_alive ? log_level::warn : log_level::trace, "unknown endpoint {}: is_alive={}", ep, is_alive);
     return false;
 }
 

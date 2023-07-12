@@ -439,6 +439,7 @@ private:
 
 public:
     bool is_alive(inet_address ep) const;
+    bool is_alive_state(const endpoint_state& eps) const;
     bool is_dead_state(const endpoint_state& eps) const;
     // Wait for nodes to be alive on all shards
     future<> wait_alive(std::vector<gms::inet_address> nodes, std::chrono::milliseconds timeout);
