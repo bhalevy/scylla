@@ -1380,10 +1380,14 @@ endpoint_state& gossiper::get_endpoint_state(inet_address ep) {
 }
 
 future<> gossiper::reset_endpoint_state_map() {
-    _unreachable_endpoints.clear();
-    _live_endpoints.clear();
-    co_await update_live_endpoints_version();
-    co_await container().invoke_on_all([] (gossiper& g) {
+    logger.debug("Resetting endpoint state map");
+    auto version = co_await container().invoke_on(0, [] (gossiper& g) {
+        return g._live_endpoints_version + 1;
+    });
+    co_await container().invoke_on_all([version] (gossiper& g) {
+        g._unreachable_endpoints.clear();
+        g._live_endpoints.clear();
+        g._live_endpoints_version = version;
         g._endpoint_state_map.clear();
     });
 }
