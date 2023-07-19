@@ -681,8 +681,8 @@ future<> gossiper::remove_endpoint(inet_address endpoint, permit_id pid) {
     }
 
     _live_endpoints.erase(endpoint);
-    co_await update_live_endpoints_version();
     _unreachable_endpoints.erase(endpoint);
+    co_await replicate_live_endpoints_on_change();
     _syn_handlers.erase(endpoint);
     _ack_handlers.erase(endpoint);
     quarantine_endpoint(endpoint);
@@ -803,13 +803,6 @@ future<gossiper::endpoint_permit> gossiper::lock_endpoint(inet_address ep, permi
         on_internal_error_noexcept(logger, fmt::format("{}: lock_endpoint {}: newly held endpoint_lock_entry has {} holders", caller, ep, eptr->holders));
     }
     co_return endpoint_permit(std::move(eptr), std::move(ep), std::move(caller));
-}
-
-future<> gossiper::update_live_endpoints_version() {
-    auto version = _live_endpoints_version + 1;
-    return container().invoke_on_all([version] (gms::gossiper& g) {
-        g._live_endpoints_version = version;
-    });
 }
 
 future<std::set<inet_address>> gossiper::get_live_members_synchronized() {
@@ -938,6 +931,7 @@ future<> gossiper::replicate_live_endpoints_on_change() {
 
         if (live_endpoint_changed) {
             _shadow_live_endpoints = _live_endpoints;
+            ++_live_endpoints_version;
         }
 
         if (unreachable_endpoint_changed) {
@@ -950,6 +944,7 @@ future<> gossiper::replicate_live_endpoints_on_change() {
             if (this_shard_id() != 0) {
                 if (live_endpoint_changed) {
                     local_gossiper._live_endpoints = _shadow_live_endpoints;
+                    local_gossiper._live_endpoints_version = _live_endpoints_version;
                 }
 
                 if (unreachable_endpoint_changed) {
@@ -1607,7 +1602,7 @@ future<> gossiper::real_mark_alive(inet_address addr) {
 
     // Make a copy for endpoint_state because the code below can yield
     endpoint_state state = local_state;
-    co_await update_live_endpoints_version();
+    co_await replicate_live_endpoints_on_change();
     if (_endpoints_to_talk_with.empty()) {
         _endpoints_to_talk_with.push_back({addr});
     } else {
@@ -1629,8 +1624,8 @@ future<> gossiper::mark_dead(inet_address addr, endpoint_state& local_state, per
     local_state.mark_dead();
     endpoint_state state = local_state;
     _live_endpoints.erase(addr);
-    co_await update_live_endpoints_version();
     _unreachable_endpoints[addr] = now();
+    co_await replicate_live_endpoints_on_change();
     logger.info("InetAddress {} is now DOWN, status = {}", addr, get_gossip_status(state));
     co_await _subscribers.for_each([addr, state, pid] (shared_ptr<i_endpoint_state_change_subscriber> subscriber) -> future<> {
         co_await subscriber->on_dead(addr, state, pid);
