@@ -580,9 +580,9 @@ future<> gossiper::do_apply_state_locally(gms::inet_address node, const endpoint
                     // apply states, but do not notify since there is no major change
                     co_await this->apply_new_states(node, local_state, remote_state, permit.id());
                 } else {
-                    logger.trace("Ignoring remote version {} <= {} for {}", remote_max_version, local_max_version, node);
+                    logger.debug("Ignoring remote version {} <= {} for {}", remote_max_version, local_max_version, node);
                 }
-                if (!local_state.is_alive() && !this->is_dead_state(local_state)) { // unless of course, it was dead
+                if (!this->is_dead_state(local_state)) { // unless of course, it was dead
                     this->mark_alive(node, local_state);
                 }
             } else {
@@ -708,7 +708,7 @@ future<> gossiper::do_status_check() {
             continue;
         }
         auto& ep_state = *eps;
-        bool is_alive = ep_state.is_alive();
+        bool is_dead = is_dead_state(ep_state);
         auto update_timestamp = ep_state.get_update_timestamp();
 
         // check if this is a fat client. fat clients are removed automatically from
@@ -723,7 +723,7 @@ future<> gossiper::do_status_check() {
 
         // check for dead state removal
         auto expire_time = get_expire_time_for_endpoint(endpoint);
-        if (!is_alive && (now > expire_time)
+        if (is_dead && (now > expire_time)
              && (!get_token_metadata_ptr()->is_normal_token_owner(endpoint))) {
             logger.debug("time is expiring for endpoint : {} ({})", endpoint, expire_time.time_since_epoch().count());
             co_await evict_from_membership(endpoint, pid);
@@ -951,10 +951,6 @@ future<> gossiper::replicate_live_endpoints_on_change() {
                 if (unreachable_endpoint_changed) {
                     local_gossiper._unreachable_endpoints = _shadow_unreachable_endpoints;
                 }
-
-                for (auto&& e : es) {
-                    local_gossiper._endpoint_state_map[e.first].set_alive(e.second.is_alive());
-                }
             }
         });
     }
@@ -1128,7 +1124,7 @@ int64_t gossiper::get_endpoint_downtime(inet_address ep) const noexcept {
 // It is called from failure_detector
 future<> gossiper::convict(inet_address endpoint) {
     auto* state = get_endpoint_state_for_endpoint_ptr(endpoint);
-    if (!state || !state->is_alive()) {
+    if (!state) {
         co_return;
     }
     if (is_shutdown(endpoint)) {
@@ -1396,7 +1392,7 @@ std::unordered_map<inet_address, endpoint_state> gms::gossiper::get_live_endpoin
     std::unordered_map<inet_address, endpoint_state> res;
     res.reserve(_endpoint_state_map.size());
     for (const auto& [node, ep_state] : _endpoint_state_map) {
-        if (node == get_broadcast_address() || ep_state.is_alive()) {
+        if (is_alive(node)) {
             res.emplace(node, ep_state);
         }
     }
@@ -1552,7 +1548,6 @@ void gossiper::mark_alive(inet_address addr, endpoint_state& local_state) {
         _pending_mark_alive_endpoints.erase(addr);
     });
 
-    local_state.mark_dead();
     msg_addr id = get_msg_addr(addr);
     auto generation = _endpoint_state_map[get_broadcast_address()].get_heart_beat_state().get_generation();
     // Enter the _background_msg gate so stop() would wait on it
@@ -1588,7 +1583,6 @@ future<> gossiper::real_mark_alive(inet_address addr) {
     logger.debug("Mark Node {} alive after EchoMessage", addr);
 
     auto& local_state = *es;
-    local_state.mark_alive();
     local_state.update_timestamp(); // prevents do_status_check from racing us and evicting if it was down > A_VERY_LONG_TIME
 
     logger.debug("removing expire time for endpoint : {}", addr);
@@ -1622,7 +1616,7 @@ future<> gossiper::real_mark_alive(inet_address addr) {
 
 future<> gossiper::mark_dead(inet_address addr, endpoint_state& local_state, permit_id pid) {
     logger.trace("marking as down {}", addr);
-    local_state.mark_dead();
+    auto permit = co_await lock_endpoint(addr, pid);
     endpoint_state state = local_state;
     _live_endpoints.erase(addr);
     _unreachable_endpoints[addr] = now();
@@ -1686,19 +1680,6 @@ future<> gossiper::handle_major_state_change(inet_address ep, const endpoint_sta
     if (is_shutdown(ep)) {
         co_await mark_as_shutdown(ep, pid);
     }
-}
-
-bool gossiper::is_alive_state(const endpoint_state& eps) const {
-    auto state = get_gossip_status(eps);
-    if (state == sstring(versioned_value::SHUTDOWN)) {
-        return false;
-    }
-    for (auto& deadstate : DEAD_STATES) {
-        if (state == deadstate) {
-            return false;
-        }
-    }
-    return true;
 }
 
 bool gossiper::is_dead_state(const endpoint_state& eps) const {
@@ -1911,7 +1892,6 @@ future<> gossiper::start_gossiping(gms::generation_type generation_nbr, std::map
     }
     endpoint_state& local_state = _endpoint_state_map[get_broadcast_address()];
     local_state.set_heart_beat_state_and_update_timestamp(heart_beat_state(generation_nbr));
-    local_state.mark_alive();
     for (auto& entry : preload_local_states) {
         local_state.add_application_state(entry.first, entry.second);
     }
@@ -2080,7 +2060,6 @@ future<> gossiper::add_saved_endpoint(inet_address ep) {
     if (host_id) {
         ep_state.add_application_state(gms::application_state::HOST_ID, versioned_value::host_id(host_id.value()));
     }
-    ep_state.mark_dead();
     _endpoint_state_map[ep] = ep_state;
     co_await replicate(ep, ep_state, permit.id());
     _unreachable_endpoints[ep] = now();
@@ -2295,10 +2274,6 @@ bool gossiper::is_alive(inet_address ep) const {
     // it's worth being defensive here so minor bugs don't cause disproportionate
     // badness.  (See CASSANDRA-1463 for an example).
     if (eps) {
-        auto is_alive_state = this->is_alive_state(*eps);
-        if (eps->is_alive() != is_alive || is_alive_state != is_alive) {
-            logger.debug("Node {}: is_alive={} is_alive_state={} ({}) eps->is_alive={}: {}", ep, is_alive, is_alive_state, get_gossip_status(*eps),  eps->is_alive(), current_backtrace());
-        }
         return is_alive;
     }
     logger.log(is_alive ? log_level::warn : log_level::trace, "unknown endpoint {}: is_alive={}", ep, is_alive);
@@ -2613,7 +2588,9 @@ int gossiper::get_down_endpoint_count() const noexcept {
 }
 
 int gossiper::get_up_endpoint_count() const noexcept {
-    return boost::count_if(_endpoint_state_map | boost::adaptors::map_values, std::mem_fn(&endpoint_state::is_alive));
+    return boost::count_if(_endpoint_state_map | boost::adaptors::map_keys, [this] (const inet_address& ep) {
+        return is_alive(ep);
+    });
 }
 
 void gossiper::append_endpoint_state(std::stringstream& ss, const endpoint_state& state) {
