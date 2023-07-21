@@ -444,7 +444,6 @@ private:
     endpoint_state& my_endpoint_state() {
         return get_or_create_endpoint_state(get_broadcast_address());
     }
-
     endpoint_state* get_mutable_endpoint_state_ptr(inet_address ep) noexcept;
     const endpoint_state& get_endpoint_state(inet_address ep) const;
 
@@ -493,7 +492,7 @@ private:
 
     // notify that a local application state is going to change (doesn't get triggered for remote changes)
     // Must be called under lock_endpoint.
-    future<> do_before_change_notifications(inet_address addr, const endpoint_state& ep_state, const application_state& ap_state, const versioned_value& new_value) const;
+    future<> do_before_change_notifications(inet_address addr, endpoint_state_ptr ep_state, const application_state& ap_state, const versioned_value& new_value) const;
 
     // notify that an application state has changed
     // Must be called under lock_endpoint.
