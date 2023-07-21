@@ -1227,13 +1227,33 @@ void gossiper::make_random_gossip_digest(utils::chunked_vector<gossip_digest>& g
     }
 }
 
-future<> gossiper::replicate(inet_address ep, const endpoint_state& es, permit_id pid) {
+future<> gossiper::replicate(inet_address ep, endpoint_state es, permit_id pid) {
     verify_permit(ep, pid);
-    // FIXME: make exception safe to ensure that the state
-    // will end up consistent on all shards
-    return container().invoke_on_all([ep, es] (gossiper& g) {
-        g._endpoint_state_map[ep] = es;
-    });
+    // First pass: replicate the new endpoint_state on all shards.
+    // Use foreign_ptr<std::unique_ptr> to ensure destroy on remote shards on exception
+    std::vector<foreign_ptr<std::unique_ptr<endpoint_state>>> ep_states;
+    ep_states.resize(smp::count);
+    es.update_is_normal();
+    auto p = std::make_unique<endpoint_state>(std::move(es));
+    const auto *eps = p.get();
+    ep_states[this_shard_id()] = make_foreign(std::move(p));
+    co_await coroutine::parallel_for_each(boost::irange(0u, smp::count), [&, orig = this_shard_id()] (auto shard) -> future<> {
+        if (shard != orig) {
+            ep_states[shard] = co_await smp::submit_to(shard, [eps] {
+                return make_foreign(std::make_unique<endpoint_state>(*eps));
+            });
+        }
+     });
+    // Second pass: set replicated endpoint_state on all shards
+    // Must not throw
+    try {
+        co_return co_await container().invoke_on_all([&] (gossiper& g) {
+            auto eps = ep_states[this_shard_id()].release();
+            g._endpoint_state_map[ep] = std::move(*eps);
+        });
+    } catch (...) {
+        on_fatal_internal_error(logger, fmt::format("Failed to replicate endpoint_state: {}", std::current_exception()));
+    }
 }
 
 future<> gossiper::advertise_token_removed(inet_address endpoint, locator::host_id host_id, permit_id pid) {
@@ -1930,7 +1950,7 @@ future<> gossiper::start_gossiping(gms::generation_type generation_nbr, std::map
 
     auto generation = local_state.get_heart_beat_state().get_generation();
 
-    co_await replicate(get_broadcast_address(), local_state, permit.id());
+    co_await replicate(get_broadcast_address(), std::move(local_state), permit.id());
 
     logger.trace("gossip started with generation {}", generation);
     _enabled = true;
