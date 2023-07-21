@@ -3551,7 +3551,7 @@ public:
             seastar::thread::maybe_yield();
             // FIXME: use node* rather than endpoint
             auto node = np->endpoint();
-            if (!ignore_nodes.contains(node) && sync_to_node(node)) {
+            if (!ignore_nodes.contains(node) && tmptr->is_normal_token_owner(node) && sync_to_node(node)) {
                 sync_nodes.insert(node);
             }
         });
