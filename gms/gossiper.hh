@@ -405,9 +405,7 @@ public:
     clk::time_point get_expire_time_for_endpoint(inet_address endpoint) const noexcept;
 
     const endpoint_state* get_endpoint_state_for_endpoint_ptr(inet_address ep) const noexcept;
-    endpoint_state& get_endpoint_state(inet_address ep);
-
-    endpoint_state* get_endpoint_state_for_endpoint_ptr(inet_address ep) noexcept;
+    const endpoint_state& get_endpoint_state(inet_address ep) const;
 
     const versioned_value* get_application_state_ptr(inet_address endpoint, application_state appstate) const noexcept;
     sstring get_application_state_value(inet_address endpoint, application_state appstate) const;
@@ -441,6 +439,8 @@ public:
      */
     sstring get_rpc_address(const inet_address& endpoint) const;
 private:
+    endpoint_state* get_mutable_endpoint_state_ptr(inet_address ep) noexcept;
+
     void update_timestamp_for_nodes(const std::map<inet_address, endpoint_state>& map);
 
     void mark_alive(inet_address addr);
@@ -448,7 +448,7 @@ private:
     future<> real_mark_alive(inet_address addr);
 
     // Must be called under lock_endpoint.
-    future<> mark_dead(inet_address addr, endpoint_state& local_state, permit_id);
+    future<> mark_dead(inet_address addr, const endpoint_state& local_state, permit_id);
 
     // Must be called under lock_endpoint.
     future<> mark_as_shutdown(const inet_address& endpoint, permit_id);
