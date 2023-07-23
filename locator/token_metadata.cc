@@ -556,6 +556,9 @@ std::unordered_map<inet_address, host_id> token_metadata_impl::get_endpoint_to_h
     std::unordered_map<inet_address, host_id> map;
     map.reserve(nodes.size());
     for (const auto& [endpoint, node] : nodes) {
+        if (!is_normal_token_owner(endpoint)) {
+            continue;
+        }
         map[endpoint] = node->host_id();
     }
     return map;
