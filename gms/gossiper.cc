@@ -2297,12 +2297,12 @@ bool gossiper::is_alive(inet_address ep) const {
     return is_alive;
 }
 
-future<> gossiper::wait_alive(std::vector<gms::inet_address> nodes, std::chrono::milliseconds timeout) {
+future<> gossiper::wait_alive(std::vector<gms::inet_address> nodes, std::chrono::milliseconds timeout) const {
     auto start_time = std::chrono::steady_clock::now();
     for (;;) {
         std::vector<gms::inet_address> live_nodes;
         for (const auto& node: nodes) {
-            size_t nr_alive = co_await container().map_reduce0([node] (gossiper& g) -> size_t {
+            size_t nr_alive = co_await container().map_reduce0([node] (const gossiper& g) -> size_t {
                 return g.is_alive(node) ? 1 : 0;
             }, 0, std::plus<size_t>());
             logger.debug("Marked node={} as alive on {} out of {} shards", node, nr_alive, smp::count);
@@ -2322,7 +2322,7 @@ future<> gossiper::wait_alive(std::vector<gms::inet_address> nodes, std::chrono:
     }
 }
 
-future<> gossiper::wait_for_live_nodes_to_show_up(size_t n) {
+future<> gossiper::wait_for_live_nodes_to_show_up(size_t n) const {
     logger::rate_limit rate_limit{std::chrono::seconds{5}};
 #ifdef SEASTAR_DEBUG
     // Account for debug slowness. 3 minutes is probably overkill but we don't want flaky tests.
