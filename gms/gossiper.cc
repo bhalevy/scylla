@@ -1855,7 +1855,7 @@ void gossiper::send_all(gossip_digest& g_digest,
 
 void gossiper::examine_gossiper(utils::chunked_vector<gossip_digest>& g_digest_list,
     utils::chunked_vector<gossip_digest>& delta_gossip_digest_list,
-    std::map<inet_address, endpoint_state>& delta_ep_state_map) {
+    std::map<inet_address, endpoint_state>& delta_ep_state_map) const {
     if (g_digest_list.size() == 0) {
         /* we've been sent a *completely* empty syn, which should normally
              * never happen since an endpoint will at least send a syn with
@@ -1879,7 +1879,7 @@ void gossiper::examine_gossiper(utils::chunked_vector<gossip_digest>& g_digest_l
              * endpoint we need to request all the data for this endpoint.
              */
         if (es) {
-            endpoint_state& ep_state_ptr = *es;
+            const auto& ep_state_ptr = *es;
             auto local_generation = ep_state_ptr.get_heart_beat_state().get_generation();
             /* get the max version of all keys in the state associated with this endpoint */
             auto max_local_version = get_max_endpoint_state_version(ep_state_ptr);
