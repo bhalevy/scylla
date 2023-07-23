@@ -467,10 +467,10 @@ public:
     bool is_alive(inet_address ep) const;
     bool is_dead_state(const endpoint_state& eps) const;
     // Wait for nodes to be alive on all shards
-    future<> wait_alive(std::vector<gms::inet_address> nodes, std::chrono::milliseconds timeout);
+    future<> wait_alive(std::vector<gms::inet_address> nodes, std::chrono::milliseconds timeout) const;
 
     // Wait for `n` live nodes to show up in gossip (including ourself).
-    future<> wait_for_live_nodes_to_show_up(size_t n);
+    future<> wait_for_live_nodes_to_show_up(size_t n) const;
 
     // Get live members synchronized to all shards
     future<std::set<inet_address>> get_live_members_synchronized();
