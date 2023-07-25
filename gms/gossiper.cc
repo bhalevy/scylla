@@ -38,6 +38,7 @@
 #include <boost/range/algorithm/partition.hpp>
 #include <boost/algorithm/string/split.hpp>
 #include <boost/algorithm/string/classification.hpp>
+#include <utility>
 #include "gms/generation-number.hh"
 #include "locator/token_metadata.hh"
 #include "utils/exceptions.hh"
@@ -731,33 +732,58 @@ future<> gossiper::do_status_check() {
     }
 }
 
-gossiper::endpoint_permit::endpoint_permit(endpoint_locks_map::entry_ptr&& ptr, semaphore_units<>&& units, inet_address addr, std::string caller) noexcept
+gossiper::endpoint_permit::endpoint_permit(endpoint_locks_map::entry_ptr&& ptr, semaphore_units<>&& units, const permit_id& pid, inet_address addr, std::string caller) noexcept
     : _permit(std::make_unique<permit>(std::move(ptr), std::move(units)))
+    , _permit_id(pid)
     , _addr(std::move(addr))
     , _caller(std::move(caller))
 {
-    logger.debug("{}: lock_endpoint {}: acquired", _caller, _addr);
+    logger.debug("{}: lock_endpoint {}: acquired: permit_id={}", _caller, _addr, _permit_id);
 }
+
+gossiper::endpoint_permit::endpoint_permit(const permit_id& pid, inet_address addr, std::string caller) noexcept
+    : _permit(nullptr)
+    , _permit_id(pid)
+    , _addr(std::move(addr))
+    , _caller(std::move(caller))
+{
+    logger.debug("{}: lock_endpoint {}: reacquired: permit_id={}", _caller, _addr, _permit_id);
+}
+
+gossiper::endpoint_permit::endpoint_permit(endpoint_permit&& o) noexcept
+    : _permit(std::move(o._permit))
+    , _permit_id(std::exchange(o._permit_id, null_permit_id))
+    , _addr(std::exchange(o._addr, inet_address{}))
+    , _caller(std::move(o._caller))
+{}
 
 gossiper::endpoint_permit::~endpoint_permit() {
     release();
 }
 
 bool gossiper::endpoint_permit::release() noexcept {
-    if (auto permit = std::move(_permit)) {
-        logger.debug("{}: lock_endpoint {}: released", _caller, _addr);
+    if (auto permit = std::exchange(_permit, nullptr)) {
+        logger.debug("{}: lock_endpoint {}: released: permit_id={}", _caller, _addr, _permit_id);
+        _permit_id = null_permit_id;
         return true;
+    } else if (auto pid = std::exchange(_permit_id, null_permit_id)) {
+        logger.debug("{}: lock_endpoint {}: reacquisition released: permit_id={}", _caller, _addr, pid);
     }
     return false;
 }
+
+gossiper::endpoint_lock_entry::endpoint_lock_entry() noexcept
+    : sem(1)
+    , pid(permit_id::create_random_id())
+{}
 
 future<gossiper::endpoint_permit> gossiper::lock_endpoint(inet_address ep, seastar::compat::source_location l) {
     assert(this_shard_id() == 0);
     std::string caller = l.function_name();
     logger.debug("{}: lock_endpoint {}: waiting", caller, ep);
-    auto eptr = co_await _endpoint_locks.get_or_load(ep, [] (const inet_address& ep) { return semaphore(1); });
-    auto units = co_await get_units(*eptr, 1);
-    co_return endpoint_permit(std::move(eptr), std::move(units), std::move(ep), std::move(caller));
+    auto eptr = co_await _endpoint_locks.get_or_load(ep, [] (const inet_address& ep) { return endpoint_lock_entry(); });
+    auto units = co_await get_units(eptr->sem, 1);
+    co_return endpoint_permit(std::move(eptr), std::move(units), eptr->pid, std::move(ep), std::move(caller));
 }
 
 future<> gossiper::update_live_endpoints_version() {
