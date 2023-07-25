@@ -148,7 +148,13 @@ public:
 public:
     static clk::time_point inline now() noexcept { return clk::now(); }
 public:
-    using endpoint_locks_map = utils::loading_shared_values<inet_address, semaphore>;
+    struct endpoint_lock_entry {
+        semaphore sem;
+        permit_id pid;
+
+        endpoint_lock_entry() noexcept;
+    };
+    using endpoint_locks_map = utils::loading_shared_values<inet_address, endpoint_lock_entry>;
     class endpoint_permit {
         struct permit {
             endpoint_locks_map::entry_ptr _ptr;
@@ -159,11 +165,13 @@ public:
             {}
         };
         std::unique_ptr<permit> _permit;
+        permit_id _permit_id;
         inet_address _addr;
         std::string _caller;
     public:
-        endpoint_permit(endpoint_locks_map::entry_ptr&& ptr, semaphore_units<>&& units, inet_address addr, std::string caller) noexcept;
-        endpoint_permit(endpoint_permit&&) = default;
+        endpoint_permit(endpoint_locks_map::entry_ptr&& ptr, semaphore_units<>&& units, const permit_id& pid, inet_address addr, std::string caller) noexcept;
+        endpoint_permit(const permit_id& pid, inet_address addr, std::string caller) noexcept;
+        endpoint_permit(endpoint_permit&&) noexcept;
         ~endpoint_permit();
         bool release() noexcept;
     };
