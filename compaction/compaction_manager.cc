@@ -81,13 +81,6 @@ public:
     // Explicitly release compacting sstables
     void release_compacting(const std::vector<sstables::shared_sstable>& sstables) {
         _cm.deregister_compacting_sstables(sstables);
-        for (const auto& sst : sstables) {
-            _compacting.erase(sst);
-            _cs.sstables_requiring_cleanup.erase(sst);
-        }
-        if (_cs.sstables_requiring_cleanup.empty()) {
-            _cs.owned_ranges_ptr = nullptr;
-        }
     }
 
     class update_me : public compaction_task_executor::on_replacement {
@@ -348,6 +341,16 @@ future<compaction_manager::compaction_stats_opt> compaction_manager::perform_tas
 }
 
 future<> compaction_manager::on_compaction_completion(table_state& t, sstables::compaction_completion_desc desc, sstables::offstrategy offstrategy) {
+    auto& cs = get_compaction_state(&t);
+    auto new_sstables = boost::copy_range<std::unordered_set<sstables::shared_sstable>>(desc.new_sstables);
+    for (const auto& sst : desc.old_sstables) {
+        if (!new_sstables.contains(sst)) {
+            cs.sstables_requiring_cleanup.erase(sst);
+        }
+    }
+    if (cs.sstables_requiring_cleanup.empty()) {
+        cs.owned_ranges_ptr = nullptr;
+    }
     return t.on_compaction_completion(std::move(desc), offstrategy);
 }
 

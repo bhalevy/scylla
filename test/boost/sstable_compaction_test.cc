@@ -4961,6 +4961,7 @@ SEASTAR_TEST_CASE(compaction_optimization_to_avoid_bloom_filter_checks) {
 
 SEASTAR_TEST_CASE(cleanup_incremental_compaction_test) {
     return test_env::do_with_async([] (test_env& env) {
+      for (auto offstrategy : {sstables::offstrategy::no, sstables::offstrategy::yes}) {
         auto builder = schema_builder("tests", "test")
                 .with_column("id", utf8_type, column_kind::partition_key)
                 .with_column("value", int32_type);
@@ -4982,7 +4983,7 @@ SEASTAR_TEST_CASE(cleanup_incremental_compaction_test) {
         std::vector<utils::observer<sstable&>> observers;
         std::vector<shared_sstable> ssts;
         size_t sstables_closed = 0;
-        size_t sstables_closed_during_cleanup = 0;
+        size_t sstables_missing_on_delete = 0;
         static constexpr size_t sstables_nr = 10;
 
         dht::token_range_vector owned_token_ranges;
@@ -5005,16 +5006,21 @@ SEASTAR_TEST_CASE(cleanup_incremental_compaction_test) {
                 std::move(mut2)
             });
             sstables::test(sst).set_run_identifier(run_identifier); // in order to produce multi-fragment run.
-            sst->set_sstable_level(1);
+            // Set level to 0 to trigger offstrategy compaction
+            sst->set_sstable_level(offstrategy ? 0 : 1);
 
             // every sstable will be eligible for cleanup, by having both an owned and unowned token.
             owned_token_ranges.push_back(dht::token_range::make_singular(sst->get_last_decorated_key().token()));
 
             gens.insert(sst->generation());
             ssts.push_back(std::move(sst));
+
+            if (offstrategy) {
+                // Force a new run_id to trigger offstrategy compaction
+                run_identifier = run_id::create_random_id();
+            }
         }
 
-        size_t last_input_sstable_count = sstables_nr;
         {
             auto t = env.make_table_for_tests(s);
             auto& cm = t->get_compaction_manager();
@@ -5022,21 +5028,18 @@ SEASTAR_TEST_CASE(cleanup_incremental_compaction_test) {
             t->disable_auto_compaction().get();
             const dht::token_range_vector empty_owned_ranges;
             for (auto&& sst : ssts) {
-                testlog.info("run id {}", sst->run_identifier());
-                column_family_test(t).add_sstable(sst).get();
+                testlog.info("run id {}, offstrategy={}", sst->run_identifier(), offstrategy);
+                column_family_test(t).add_sstable(sst, offstrategy).get();
                 column_family_test::update_sstables_known_generation(*t, sst->generation());
                 observers.push_back(sst->add_on_closed_handler([&] (sstable& sst) mutable {
                     auto sstables = t->get_sstables();
-                    auto input_sstable_count = std::count_if(sstables->begin(), sstables->end(), [&] (const shared_sstable& sst) {
-                        return gens.count(sst->generation());
-                    });
-
-                    testlog.info("Closing sstable of generation {}, table set size: {}", sst.generation(), input_sstable_count);
+                    testlog.info("Closing sstable of generation {}, table set size: {}", sst.generation(), sstables->size());
                     sstables_closed++;
-                    if (std::cmp_less(input_sstable_count, last_input_sstable_count)) {
-                        sstables_closed_during_cleanup++;
-                        last_input_sstable_count = input_sstable_count;
-                    }
+                }));
+                observers.push_back(sst->add_on_delete_handler([&] (sstable& sst) mutable {
+                    auto missing = !file_exists(sst.get_filename()).get();
+                    testlog.info("Deleting sstable of generation {}: missing={}", sst.generation(), missing);
+                    sstables_missing_on_delete += missing;
                 }));
             }
             ssts = {}; // releases references
@@ -5050,10 +5053,11 @@ SEASTAR_TEST_CASE(cleanup_incremental_compaction_test) {
             yield().get();
         }
 
-        testlog.info("Closed sstables {}, Closed during cleanup {}", sstables_closed, sstables_closed_during_cleanup);
+        testlog.info("Closed sstables {}, missing on delete {}", sstables_closed, sstables_missing_on_delete);
 
-        BOOST_REQUIRE(sstables_closed == sstables_nr);
-        BOOST_REQUIRE(sstables_closed_during_cleanup >= sstables_nr / 2);
+        BOOST_REQUIRE_EQUAL(sstables_closed, sstables_nr);
+        BOOST_REQUIRE_EQUAL(sstables_missing_on_delete, 0);
+      }
     });
 }
 
