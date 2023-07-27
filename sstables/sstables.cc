@@ -2792,6 +2792,8 @@ utils::hashed_key sstable::make_hashed_key(const schema& s, const partition_key&
 
 future<>
 sstable::unlink() noexcept {
+    _on_delete(*this);
+
     auto remove_fut = _storage->wipe(*this);
 
     try {
