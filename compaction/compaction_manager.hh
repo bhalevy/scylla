@@ -423,6 +423,8 @@ public:
     bool requires_cleanup(table_state& t, const sstables::shared_sstable& sst) const;
     const std::unordered_set<sstables::shared_sstable>& sstables_requiring_cleanup(table_state& t) const;
 
+    future<> on_compaction_completion(table_state& t, sstables::compaction_completion_desc desc, sstables::offstrategy offstrategy);
+
     friend class compacting_sstable_registration;
     friend class compaction_weight_registration;
     friend class compaction_manager_test;
