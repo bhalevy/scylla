@@ -5780,7 +5780,7 @@ storage_proxy::query_partition_key_range(lw_shared_ptr<query::read_command> cmd,
     const auto row_limit = cmd->get_row_limit();
     const auto partition_limit = cmd->partition_limit;
 
-    return query_partition_key_range_concurrent(query_options.timeout(*this),
+    co_return co_await query_partition_key_range_concurrent(query_options.timeout(*this),
             std::move(erm),
             std::move(results),
             cmd,
