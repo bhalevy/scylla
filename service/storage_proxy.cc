@@ -5690,6 +5690,8 @@ storage_proxy::query_partition_key_range_concurrent(storage_proxy::clock_type::t
 
             exec.push_back(::make_shared<never_speculating_read_executor>(schema, cf.shared_from_this(), p, erm, cmd, std::move(range), cl, std::move(filtered_endpoints), trace_state, permit, std::monostate()));
             ranges_per_exec.emplace(exec.back().get(), std::move(merged_ranges));
+
+            co_await coroutine::maybe_yield();
         }
 
         query::result_merger merger(cmd->get_row_limit(), cmd->partition_limit);
