@@ -5527,10 +5527,10 @@ bool storage_proxy::is_worth_merging_for_range_query(
 future<result<query_partition_key_range_concurrent_result>>
 storage_proxy::query_partition_key_range_concurrent(storage_proxy::clock_type::time_point timeout,
         locator::effective_replication_map_ptr erm,
-        std::vector<foreign_ptr<lw_shared_ptr<query::result>>>&& results,
+        std::vector<foreign_ptr<lw_shared_ptr<query::result>>>& results,
         lw_shared_ptr<query::read_command> cmd,
         db::consistency_level cl,
-        query_ranges_to_vnodes_generator&& ranges_to_vnodes,
+        query_ranges_to_vnodes_generator& ranges_to_vnodes,
         int concurrency_factor,
         tracing::trace_state_ptr trace_state,
         uint64_t remaining_row_count,
@@ -5696,13 +5696,13 @@ storage_proxy::query_partition_key_range_concurrent(storage_proxy::clock_type::t
         return rex->execute(timeout);
     }, std::move(merger));
 
-    return utils::result_futurize_try([&] {
+    co_return co_await utils::result_futurize_try([&] {
       return f.then(utils::result_wrap([p,
             erm, // protects &tm
             &tm,
             exec = std::move(exec),
-            results = std::move(results),
-            ranges_to_vnodes = std::move(ranges_to_vnodes),
+            &results,
+            &ranges_to_vnodes,
             cl,
             cmd,
             concurrency_factor,
@@ -5734,7 +5734,7 @@ storage_proxy::query_partition_key_range_concurrent(storage_proxy::clock_type::t
         } else {
             cmd->set_row_limit(remaining_row_count);
             cmd->partition_limit = remaining_partition_count;
-            return p->query_partition_key_range_concurrent(timeout, std::move(erm), std::move(results), cmd, cl, std::move(ranges_to_vnodes),
+            return p->query_partition_key_range_concurrent(timeout, std::move(erm), results, cmd, cl, ranges_to_vnodes,
                     concurrency_factor * 2, std::move(trace_state), remaining_row_count, remaining_partition_count, std::move(preferred_replicas), std::move(permit));
         }
       }));
@@ -5782,10 +5782,10 @@ storage_proxy::query_partition_key_range(lw_shared_ptr<query::read_command> cmd,
 
     co_return co_await query_partition_key_range_concurrent(query_options.timeout(*this),
             std::move(erm),
-            std::move(results),
+            results,
             cmd,
             cl,
-            std::move(ranges_to_vnodes),
+            ranges_to_vnodes,
             concurrency_factor,
             std::move(query_options.trace_state),
             cmd->get_row_limit(),
