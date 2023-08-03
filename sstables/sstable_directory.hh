@@ -169,7 +169,14 @@ private:
 
     template <std::ranges::range Container, typename Func>
     requires std::is_invocable_r_v<future<>, Func, typename std::ranges::range_value_t<Container>&>
-    future<> parallel_for_each_restricted(Container& C, Func func);
+    static future<> parallel_for_each_restricted(sstables_manager& manager, Container& C, Func func);
+
+    template <std::ranges::range Container, typename Func>
+    requires std::is_invocable_r_v<future<>, Func, typename std::ranges::range_value_t<Container>&>
+    future<> parallel_for_each_restricted(Container& C, Func func) {
+        return parallel_for_each_restricted(_manager, C, std::forward<Func>(func));
+    }
+
     future<> load_foreign_sstables(sstable_entry_descriptor_vector info_vec);
 
     // Sort the sstable according to owner
