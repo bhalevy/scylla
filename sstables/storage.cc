@@ -37,6 +37,7 @@ namespace sstables {
 class filesystem_storage final : public sstables::storage {
     sstring dir;
     std::optional<sstring> temp_dir; // Valid while the sstable is being created, until sealed
+    sstables_manager& manager;
 
 private:
     using mark_for_removal = bool_class<class mark_for_removal_tag>;
@@ -55,7 +56,7 @@ private:
     }
 
 public:
-    explicit filesystem_storage(sstring dir_) : dir(std::move(dir_)) {}
+    explicit filesystem_storage(sstables_manager& manager_, sstring dir_) : dir(std::move(dir_)), manager(manager_) {}
 
     virtual future<> seal(const sstable& sst) override;
     virtual future<> snapshot(const sstable& sst, sstring dir, absolute_path abs) const override;
@@ -548,8 +549,8 @@ future<> s3_storage::snapshot(const sstable& sst, sstring dir, absolute_path abs
 
 std::unique_ptr<sstables::storage> make_storage(sstables_manager& manager, const data_dictionary::storage_options& s_opts, sstring dir) {
     return std::visit(overloaded_functor {
-        [dir] (const data_dictionary::storage_options::local& loc) mutable -> std::unique_ptr<sstables::storage> {
-            return std::make_unique<sstables::filesystem_storage>(std::move(dir));
+        [dir, &manager] (const data_dictionary::storage_options::local& loc) mutable -> std::unique_ptr<sstables::storage> {
+            return std::make_unique<sstables::filesystem_storage>(manager, std::move(dir));
         },
         [dir, &manager] (const data_dictionary::storage_options::s3& os) mutable -> std::unique_ptr<sstables::storage> {
             return std::make_unique<sstables::s3_storage>(manager.get_endpoint_client(os.endpoint), os.bucket, std::move(dir));
