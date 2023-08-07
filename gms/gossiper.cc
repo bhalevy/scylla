@@ -1395,6 +1395,17 @@ const std::unordered_map<inet_address, endpoint_state>& gms::gossiper::get_endpo
     return _endpoint_state_map;
 }
 
+std::unordered_map<inet_address, endpoint_state> gms::gossiper::get_live_endpoint_states() const {
+    std::unordered_map<inet_address, endpoint_state> res;
+    res.reserve(_endpoint_state_map.size());
+    for (const auto& [node, ep_state] : _endpoint_state_map) {
+        if (node == get_broadcast_address() || ep_state.is_alive()) {
+            res.emplace(node, ep_state);
+        }
+    }
+    return res;
+}
+
 std::vector<inet_address> gossiper::get_endpoints() const {
     return boost::copy_range<std::vector<inet_address>>(_endpoint_state_map | boost::adaptors::map_keys);
 }
