@@ -222,7 +222,7 @@ void migration_manager::schedule_schema_pull(const gms::inet_address& endpoint, 
 }
 
 bool migration_manager::have_schema_agreement() {
-    const auto known_endpoints = _gossiper.get_endpoint_states();
+    const auto known_endpoints = _gossiper.get_live_endpoint_states();
     if (known_endpoints.size() == 1) {
         // Us.
         return true;
@@ -232,7 +232,7 @@ bool migration_manager::have_schema_agreement() {
     for (auto& x : known_endpoints) {
         auto& endpoint = x.first;
         auto& eps = x.second;
-        if (endpoint == utils::fb_utilities::get_broadcast_address() || !eps.is_alive()) {
+        if (endpoint == utils::fb_utilities::get_broadcast_address()) {
             continue;
         }
         mlogger.debug("Checking schema state for {}.", endpoint);
