@@ -405,6 +405,7 @@ public:
     future<> reset_endpoint_state_map();
 
     const std::unordered_map<inet_address, endpoint_state>& get_endpoint_states() const noexcept;
+    std::unordered_map<inet_address, endpoint_state> get_live_endpoint_states() const;
 
     std::vector<inet_address> get_endpoints() const;
 
