@@ -1674,16 +1674,16 @@ future<> gossiper::handle_major_state_change(inet_address ep, const endpoint_sta
         co_return;
     }
 
-    if (eps_old) {
-        // the node restarted: it is up to the subscriber to take whatever action is necessary
-        co_await _subscribers.for_each([ep, eps_old, pid] (shared_ptr<i_endpoint_state_change_subscriber> subscriber) {
-            return subscriber->on_restart(ep, *eps_old, pid);
-        });
-    }
-
     auto& ep_state = _endpoint_state_map.at(ep);
     if (!is_dead_state(ep_state)) {
         mark_alive(ep, ep_state);
+
+        if (eps_old) {
+            // the node restarted: it is up to the subscriber to take whatever action is necessary
+            co_await _subscribers.for_each([ep, eps_old, pid] (shared_ptr<i_endpoint_state_change_subscriber> subscriber) {
+                return subscriber->on_restart(ep, *eps_old, pid);
+            });
+        }
     } else {
         logger.debug("Not marking {} alive due to dead state {}", ep, get_gossip_status(eps));
         co_await mark_dead(ep, ep_state, pid);
