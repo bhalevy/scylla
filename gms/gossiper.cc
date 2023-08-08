@@ -1388,6 +1388,9 @@ endpoint_state& gossiper::get_endpoint_state(inet_address ep) {
 }
 
 future<> gossiper::reset_endpoint_state_map() {
+    if (this_shard_id() != 0) {
+        on_internal_error(logger, "must be called on shard 0");
+    }
     _unreachable_endpoints.clear();
     _live_endpoints.clear();
     co_await update_live_endpoints_version();
