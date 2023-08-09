@@ -1610,6 +1610,8 @@ future<> gossiper::real_mark_alive(inet_address addr) {
 
 future<> gossiper::mark_dead(inet_address addr, endpoint_state& local_state, permit_id pid) {
     logger.trace("marking as down {}", addr);
+    auto permit = co_await lock_endpoint(addr, pid);
+    pid = permit.id();
     local_state.mark_dead();
     endpoint_state state = local_state;
     _live_endpoints.resize(std::distance(_live_endpoints.begin(), std::remove(_live_endpoints.begin(), _live_endpoints.end(), addr)));
