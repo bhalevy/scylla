@@ -251,6 +251,15 @@ private:
     // Must be called on shard 0.
     future<semaphore_units<>> lock_endpoint_update_semaphore();
 
+    // Must be called on shard 0.
+    // Safely update _live_endpoints and/or _unreachable_endpoints
+    // on shards 0, after acquiring `lock_endpoint_update_semaphore`.
+    // The caller is responsible to increment _live_endpoints_version and
+    // _unreachable_endpoints_version when the respective members change.
+    // replicate_live_endpoints_on_change is called to replicate the changes to
+    // all shards.
+    future<> mutate_live_and_unreachable_endpoints(std::function<void(gossiper&)>);
+
     // replicate shard 0 live endpoints across all other shards.
     // _endpoint_update_semaphore must be held for the whole duration
     future<> replicate_live_endpoints_on_change();
