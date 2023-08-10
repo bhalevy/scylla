@@ -826,6 +826,13 @@ future<semaphore_units<>> gossiper::lock_endpoint_update_semaphore() {
     return get_units(_endpoint_update_semaphore, 1);
 }
 
+future<> gossiper::mutate_live_and_unreachable_endpoints(std::function<void(gossiper&)> func) {
+    auto lock = co_await lock_endpoint_update_semaphore();
+    func(*this);
+    _live_endpoints_version += (_live_endpoints != _shadow_live_endpoints);
+    co_await replicate_live_endpoints_on_change();
+}
+
 future<std::set<inet_address>> gossiper::get_live_members_synchronized() {
     return container().invoke_on(0, [] (gms::gossiper& g) -> future<std::set<inet_address>> {
         auto lock = co_await g.lock_endpoint_update_semaphore();
