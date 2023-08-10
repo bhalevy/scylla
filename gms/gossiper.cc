@@ -675,7 +675,6 @@ future<> gossiper::remove_endpoint(inet_address endpoint, permit_id pid) {
         logger.warn("Fail to call on_remove callback: {}", std::current_exception());
     }
 
-    auto lock = co_await lock_endpoint_update_semaphore();
     if(_seeds.contains(endpoint)) {
         build_seeds_list();
         _seeds.erase(endpoint);
@@ -1174,6 +1173,12 @@ future<> gossiper::evict_from_membership(inet_address endpoint, permit_id pid) {
     auto permit = co_await lock_endpoint(endpoint, pid);
     co_await mutate_live_and_unreachable_endpoints([endpoint] (gossiper& g) {
         g._unreachable_endpoints.erase(endpoint);
+        // When evict_from_membership is called, the endpoint should have
+        // already been erased from _live_endpoints, so enforce that here.
+        auto was_live = g._live_endpoints.erase(endpoint);
+        if (was_live) {
+            on_internal_error_noexcept(logger, fmt::format("Node {} was unexpectedly marked as live when evicted from membership", endpoint));
+        }
     });
     co_await container().invoke_on_all([endpoint] (auto& g) {
         g._endpoint_state_map.erase(endpoint);
