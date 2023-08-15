@@ -128,9 +128,9 @@ public:
 // the managed sets cannot be modified through compound_sstable_set, but only jointly read from, so insert() and erase() are disabled.
 class compound_sstable_set : public sstable_set_impl {
     schema_ptr _schema;
-    std::vector<lw_shared_ptr<sstable_set>> _sets;
+    std::vector<sstable_set> _sets;
 public:
-    compound_sstable_set(schema_ptr schema, std::vector<lw_shared_ptr<sstable_set>> sets);
+    compound_sstable_set(schema_ptr schema, std::vector<sstable_set> sets);
 
     virtual sstable_set_impl_ptr clone() const override;
     virtual future<sstable_set_impl_ptr> clone_gently() const override;
