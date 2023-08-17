@@ -477,7 +477,7 @@ private:
     future<> real_mark_alive(inet_address addr);
 
     // Must be called under lock_endpoint.
-    future<> mark_dead(inet_address addr, const endpoint_state& local_state, permit_id);
+    future<> mark_dead(inet_address addr, permit_id);
 
     // Must be called under lock_endpoint.
     future<> mark_as_shutdown(const inet_address& endpoint, permit_id);
