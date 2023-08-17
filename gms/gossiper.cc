@@ -1155,7 +1155,7 @@ future<> gossiper::convict(inet_address endpoint) {
     if (is_shutdown(endpoint)) {
         co_await mark_as_shutdown(endpoint, permit.id());
     } else {
-        co_await mark_dead(endpoint, *state, permit.id());
+        co_await mark_dead(endpoint, permit.id());
     }
 }
 
@@ -1647,17 +1647,17 @@ future<> gossiper::real_mark_alive(inet_address addr) {
     });
 }
 
-future<> gossiper::mark_dead(inet_address addr, const endpoint_state& local_state, permit_id pid) {
+future<> gossiper::mark_dead(inet_address addr, permit_id pid) {
     logger.trace("marking as down {}", addr);
     verify_permit(addr, pid);
-    endpoint_state state = local_state;
+    auto state = get_endpoint_state_ptr(addr);
     co_await mutate_live_and_unreachable_endpoints([addr] (gossiper& g) {
         g._live_endpoints.erase(addr);
         g._unreachable_endpoints[addr] = now();
     });
-    logger.info("InetAddress {} is now DOWN, status = {}", addr, get_gossip_status(state));
+    logger.info("InetAddress {} is now DOWN, status = {}", addr, get_gossip_status(*state));
     co_await _subscribers.for_each([addr, state, pid] (shared_ptr<i_endpoint_state_change_subscriber> subscriber) -> future<> {
-        co_await subscriber->on_dead(addr, state, pid);
+        co_await subscriber->on_dead(addr, *state, pid);
         logger.trace("Notified {}", fmt::ptr(subscriber.get()));
     });
 }
@@ -1702,7 +1702,7 @@ future<> gossiper::handle_major_state_change(inet_address ep, const endpoint_sta
         mark_alive(ep);
     } else {
         logger.debug("Not marking {} alive due to dead state {}", ep, get_gossip_status(eps));
-        co_await mark_dead(ep, ep_state, pid);
+        co_await mark_dead(ep, pid);
     }
 
     auto eps_new = get_endpoint_state_ptr(ep);
@@ -2386,7 +2386,7 @@ future<> gossiper::mark_as_shutdown(const inet_address& endpoint, permit_id pid)
         ep_state.add_application_state(application_state::STATUS, versioned_value::shutdown(true));
         ep_state.get_heart_beat_state().force_highest_possible_version_unsafe();
         co_await replicate(endpoint, ep_state, pid);
-        co_await mark_dead(endpoint, ep_state, pid);
+        co_await mark_dead(endpoint, pid);
     }
 }
 
