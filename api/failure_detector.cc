@@ -19,14 +19,14 @@ namespace fd = httpd::failure_detector_json;
 void set_failure_detector(http_context& ctx, routes& r, gms::gossiper& g) {
     fd::get_all_endpoint_states.set(r, [&g](std::unique_ptr<request> req) {
         std::vector<fd::endpoint_state> res;
-        for (auto i : g.get_endpoint_states()) {
+        for (const auto& [addr, eps] : g.get_endpoint_states()) {
             fd::endpoint_state val;
-            val.addrs = fmt::to_string(i.first);
-            val.is_alive = g.is_alive(i.first);
-            val.generation = i.second.get_heart_beat_state().get_generation().value();
-            val.version = i.second.get_heart_beat_state().get_heart_beat_version().value();
-            val.update_time = i.second.get_update_timestamp().time_since_epoch().count();
-            for (auto a : i.second.get_application_state_map()) {
+            val.addrs = fmt::to_string(addr);
+            val.is_alive = g.is_alive(addr);
+            val.generation = eps->get_heart_beat_state().get_generation().value();
+            val.version = eps->get_heart_beat_state().get_heart_beat_version().value();
+            val.update_time = eps->get_update_timestamp().time_since_epoch().count();
+            for (auto a : eps->get_application_state_map()) {
                 fd::version_value version_val;
                 // We return the enum index and not it's name to stay compatible to origin
                 // method that the state index are static but the name can be changed.
@@ -70,7 +70,7 @@ void set_failure_detector(http_context& ctx, routes& r, gms::gossiper& g) {
     });
 
     fd::get_endpoint_state.set(r, [&g] (std::unique_ptr<request> req) {
-        auto* state = g.get_endpoint_state_for_endpoint_ptr(gms::inet_address(req->param["addr"]));
+        auto state = g.get_endpoint_state_ptr(gms::inet_address(req->param["addr"]));
         if (!state) {
             return make_ready_future<json::json_return_type>(format("unknown endpoint {}", req->param["addr"]));
         }

@@ -700,7 +700,7 @@ future<> raft_group0::setup_group0(
 
 void raft_group0::load_initial_raft_address_map() {
     for (auto& [ip_addr, state] : _gossiper.get_endpoint_states()) {
-        auto* value = state.get_application_state_ptr(gms::application_state::HOST_ID);
+        auto value = state->get_application_state_ptr(gms::application_state::HOST_ID);
         if (value == nullptr) {
             continue;
         }

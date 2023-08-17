@@ -181,7 +181,7 @@ private:
     }
 
     /* map where key is the endpoint and value is the state associated with the endpoint */
-    std::unordered_map<inet_address, endpoint_state> _endpoint_state_map;
+    std::unordered_map<inet_address, endpoint_state_ptr> _endpoint_state_map;
     // Used for serializing changes to _endpoint_state_map and running of associated change listeners.
     endpoint_locks_map _endpoint_locks;
 
@@ -404,10 +404,7 @@ private:
 public:
     clk::time_point get_expire_time_for_endpoint(inet_address endpoint) const noexcept;
 
-    const endpoint_state* get_endpoint_state_for_endpoint_ptr(inet_address ep) const noexcept;
-    endpoint_state& get_endpoint_state(inet_address ep);
-
-    endpoint_state* get_endpoint_state_for_endpoint_ptr(inet_address ep) noexcept;
+    endpoint_state_ptr get_endpoint_state_ptr(inet_address ep) const noexcept;
 
     const versioned_value* get_application_state_ptr(inet_address endpoint, application_state appstate) const noexcept;
     sstring get_application_state_value(inet_address endpoint, application_state appstate) const;
@@ -416,8 +413,8 @@ public:
     // Must be called on shard 0
     future<> reset_endpoint_state_map();
 
-    const std::unordered_map<inet_address, endpoint_state>& get_endpoint_states() const noexcept;
-    std::unordered_map<inet_address, endpoint_state> get_live_endpoint_states() const;
+    std::unordered_map<inet_address, endpoint_state_ptr> get_endpoint_states() const noexcept;
+    std::unordered_map<inet_address, endpoint_state_ptr> get_live_endpoint_states() const;
 
     std::vector<inet_address> get_endpoints() const;
 
@@ -441,11 +438,16 @@ public:
      */
     sstring get_rpc_address(const inet_address& endpoint) const;
 private:
+    // FIXME: for now, allow modifying the endpoint_state in place
+    // until all updates are applied only using replicate
     // Gets or creates endpoint_state for this node
     endpoint_state& get_or_create_endpoint_state(inet_address ep);
     endpoint_state& my_endpoint_state() {
         return get_or_create_endpoint_state(get_broadcast_address());
     }
+
+    endpoint_state* get_mutable_endpoint_state_ptr(inet_address ep) noexcept;
+    endpoint_state& get_endpoint_state(inet_address ep);
 
     void update_timestamp_for_nodes(const std::map<inet_address, endpoint_state>& map);
 
@@ -454,7 +456,7 @@ private:
     future<> real_mark_alive(inet_address addr);
 
     // Must be called under lock_endpoint.
-    future<> mark_dead(inet_address addr, endpoint_state& local_state, permit_id);
+    future<> mark_dead(inet_address addr, const endpoint_state& local_state, permit_id);
 
     // Must be called under lock_endpoint.
     future<> mark_as_shutdown(const inet_address& endpoint, permit_id);

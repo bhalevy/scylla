@@ -256,9 +256,9 @@ public:
 
 bool should_propose_first_generation(const gms::inet_address& me, const gms::gossiper& g) {
     auto my_host_id = g.get_host_id(me);
-    auto& eps = g.get_endpoint_states();
+    auto eps = g.get_endpoint_states();
     return std::none_of(eps.begin(), eps.end(),
-            [&] (const std::pair<gms::inet_address, gms::endpoint_state>& ep) {
+            [&] (const std::pair<gms::inet_address, gms::endpoint_state_ptr>& ep) {
         return my_host_id < g.get_host_id(ep.first);
     });
 }
@@ -833,7 +833,7 @@ future<> generation_service::check_and_repair_cdc_streams() {
         }
         if (!_gossiper.is_normal(addr)) {
             throw std::runtime_error(format("All nodes must be in NORMAL or LEFT state while performing check_and_repair_cdc_streams"
-                    " ({} is in state {})", addr, _gossiper.get_gossip_status(state)));
+                    " ({} is in state {})", addr, _gossiper.get_gossip_status(*state)));
         }
 
         const auto gen_id = get_generation_id_for(addr, _gossiper);
