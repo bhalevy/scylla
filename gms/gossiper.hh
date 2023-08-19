@@ -245,8 +245,8 @@ private:
 
     bool _in_shadow_round = false;
 
-    std::unordered_map<inet_address, clk::time_point> _shadow_unreachable_endpoints;
-    std::unordered_set<inet_address> _shadow_live_endpoints;
+    uint64_t _shadow_live_endpoints_version = 0;
+    uint64_t _shadow_unreachable_endpoints_version = 0;
 
     // Must be called on shard 0.
     future<semaphore_units<>> lock_endpoint_update_semaphore();
