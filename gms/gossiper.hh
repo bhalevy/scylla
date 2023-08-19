@@ -228,6 +228,7 @@ private:
 
     /* unreachable member set */
     std::unordered_map<inet_address, clk::time_point> _unreachable_endpoints;
+    uint64_t _unreachable_endpoints_version = 0;
 
     semaphore _endpoint_update_semaphore = semaphore(1);
 

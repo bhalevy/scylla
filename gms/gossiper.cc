@@ -1395,13 +1395,15 @@ endpoint_state& gossiper::get_endpoint_state(inet_address ep) {
 future<> gossiper::reset_endpoint_state_map() {
     logger.debug("Resetting endpoint state map");
     auto lock = lock_endpoint_update_semaphore();
-    auto version = _live_endpoints_version + 1;
-    co_await container().invoke_on_all([version] (gossiper& g) {
+    auto live_endpoints_version = _live_endpoints_version + 1;
+    auto unreachable_endpoints_version = _unreachable_endpoints_version + 1;
+    co_await container().invoke_on_all([live_endpoints_version, unreachable_endpoints_version] (gossiper& g) {
         g._unreachable_endpoints.clear();
         g._live_endpoints.clear();
-        g._live_endpoints_version = version;
+        g._live_endpoints_version = live_endpoints_version;
         g._shadow_unreachable_endpoints.clear();
         g._shadow_live_endpoints.clear();
+        g._unreachable_endpoints_version = unreachable_endpoints_version;
         g._endpoint_state_map.clear();
     });
 }
@@ -1611,6 +1613,7 @@ future<> gossiper::real_mark_alive(inet_address addr) {
 
     logger.debug("removing expire time for endpoint : {}", addr);
     _unreachable_endpoints.erase(addr);
+    ++_unreachable_endpoints_version;
     _expire_time_endpoint_map.erase(addr);
 
     auto [it_, inserted] = _live_endpoints.insert(addr);
