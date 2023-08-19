@@ -948,29 +948,29 @@ future<> gossiper::replicate_live_endpoints_on_change() {
     //      to determine if it has the latest copy, and replicate the respective
     //      member from shard 0, if the shard is outdated.
     //
-        logger.debug("replicating live endpoints to other shards");
+    logger.debug("replicating live endpoints to other shards");
 
-        co_await container().invoke_on_all([this,
-                                   es = _endpoint_state_map] (gossiper& local_gossiper) {
-            // Don't copy gossiper(CPU0) maps into themselves!
-            if (this_shard_id() != 0) {
-                if (local_gossiper._shadow_live_endpoints_version != _live_endpoints_version) {
-                    local_gossiper._live_endpoints = _live_endpoints;
-                    local_gossiper._live_endpoints_version = _live_endpoints_version;
-                    local_gossiper._shadow_live_endpoints_version = _live_endpoints_version;
-                }
-
-                if (local_gossiper._shadow_unreachable_endpoints_version != _unreachable_endpoints_version) {
-                    local_gossiper._unreachable_endpoints = _unreachable_endpoints;
-                    local_gossiper._unreachable_endpoints_version = _unreachable_endpoints_version;
-                    local_gossiper._shadow_unreachable_endpoints_version = _unreachable_endpoints_version;
-                }
-
-                for (auto&& e : es) {
-                    local_gossiper._endpoint_state_map[e.first].set_alive(e.second.is_alive());
-                }
+    co_await container().invoke_on_all([this,
+                                es = _endpoint_state_map] (gossiper& local_gossiper) {
+        // Don't copy gossiper(CPU0) maps into themselves!
+        if (this_shard_id() != 0) {
+            if (local_gossiper._shadow_live_endpoints_version != _live_endpoints_version) {
+                local_gossiper._live_endpoints = _live_endpoints;
+                local_gossiper._live_endpoints_version = _live_endpoints_version;
+                local_gossiper._shadow_live_endpoints_version = _live_endpoints_version;
             }
-        });
+
+            if (local_gossiper._shadow_unreachable_endpoints_version != _unreachable_endpoints_version) {
+                local_gossiper._unreachable_endpoints = _unreachable_endpoints;
+                local_gossiper._unreachable_endpoints_version = _unreachable_endpoints_version;
+                local_gossiper._shadow_unreachable_endpoints_version = _unreachable_endpoints_version;
+            }
+
+            for (auto&& e : es) {
+                local_gossiper._endpoint_state_map[e.first].set_alive(e.second.is_alive());
+            }
+        }
+    });
 }
 
 // Depends on:
