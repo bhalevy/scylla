@@ -13,6 +13,7 @@
 #include <boost/range/algorithm/remove_if.hpp>
 #include <boost/range/algorithm/sort.hpp>
 
+#include "seastar/coroutine/maybe_yield.hh"
 #include "sstables.hh"
 
 #include "compatible_ring_position.hh"
@@ -136,6 +137,10 @@ sstable_set::operator=(const sstable_set& x) {
 
 sstable_set&
 sstable_set::operator=(sstable_set&&) noexcept = default;
+
+future<sstable_set> sstable_set::clone_gently() const {
+    co_return sstable_set(co_await _impl->clone_gently(), _schema);
+}
 
 std::vector<shared_sstable>
 sstable_set::select(const dht::partition_range& range) const {
@@ -342,6 +347,30 @@ seastar::shared_ptr<sstable_set_impl> partitioned_sstable_set::clone() const {
     return seastar::make_shared<partitioned_sstable_set>(_schema, _unleveled_sstables, _leveled_sstables, _all, _all_runs, _use_level_metadata, _bytes_on_disk);
 }
 
+future<seastar::shared_ptr<sstable_set_impl>> partitioned_sstable_set::clone_gently() const {
+    std::vector<shared_sstable> unleveled_sstables;
+    interval_map_type leveled_sstables;
+    lw_shared_ptr<sstable_list> all = _all;
+    std::unordered_map<run_id, sstable_run> all_runs;
+
+    // We presume that copying a vector<shared_sstable> won't stall
+    unleveled_sstables = _unleveled_sstables;
+
+    for (const auto& [interval, set] : _leveled_sstables) {
+        co_await coroutine::maybe_yield();
+        // We presume that copying a single unordered_set<shared_sstable> in each level won't stall
+        leveled_sstables.add({interval, set});
+    }
+
+    all_runs.reserve(_all_runs.size());
+    for (const auto& [run_id, run] : _all_runs) {
+        co_await coroutine::maybe_yield();
+        all_runs.emplace(run_id, run);
+    }
+
+    co_return seastar::make_shared<partitioned_sstable_set>(_schema, std::move(unleveled_sstables), std::move(leveled_sstables), std::move(all), std::move(all_runs), _use_level_metadata, _bytes_on_disk);
+}
+
 std::vector<shared_sstable> partitioned_sstable_set::select(const dht::partition_range& range) const {
     auto ipair = query(range);
     auto b = std::move(ipair.first);
@@ -514,8 +543,34 @@ time_series_sstable_set::time_series_sstable_set(const time_series_sstable_set& 
     , _sstables_reversed(make_lw_shared(*s._sstables_reversed))
 {}
 
+time_series_sstable_set::time_series_sstable_set(schema_ptr schema, schema_ptr reversed_schema, bool enable_optimized_twcs_queries, lw_shared_ptr<container_t> sstables, lw_shared_ptr<container_t> sstables_reversed, uint64_t bytes_on_disk)
+    : sstable_set_impl(bytes_on_disk)
+    , _schema(schema)
+    , _reversed_schema(reversed_schema)
+    , _enable_optimized_twcs_queries(enable_optimized_twcs_queries)
+    , _sstables(std::move(sstables))
+    , _sstables_reversed(std::move(sstables_reversed))
+{}
+
 sstable_set_impl_ptr time_series_sstable_set::clone() const {
     return seastar::make_shared<time_series_sstable_set>(*this);
+}
+
+future<sstable_set_impl_ptr> time_series_sstable_set::clone_gently() const {
+    auto sstables = make_lw_shared<container_t>(position_in_partition::less_compare(*_schema));
+    auto sstables_reversed = make_lw_shared<container_t>(position_in_partition::less_compare(*_reversed_schema));
+
+    for (const auto& x : *_sstables) {
+        sstables->insert(x);
+        co_await coroutine::maybe_yield();
+    }
+
+    for (const auto& x : *_sstables_reversed) {
+        sstables_reversed->insert(x);
+        co_await coroutine::maybe_yield();
+    }
+
+    co_return seastar::make_shared<time_series_sstable_set>(_schema, _reversed_schema, _enable_optimized_twcs_queries, std::move(sstables), std::move(sstables_reversed), bytes_on_disk());
 }
 
 std::vector<shared_sstable> time_series_sstable_set::select(const dht::partition_range& range) const {
@@ -1079,6 +1134,19 @@ sstable_set_impl_ptr compound_sstable_set::clone() const {
         cloned_sets.push_back(std::move(cloned_set));
     }
     return seastar::make_shared<compound_sstable_set>(_schema, std::move(cloned_sets));
+}
+
+future<sstable_set_impl_ptr> compound_sstable_set::clone_gently() const {
+    std::vector<lw_shared_ptr<sstable_set>> cloned_sets;
+
+    cloned_sets.reserve(_sets.size());
+    for (const auto& set : _sets) {
+        // implicit clone by using sstable_set's copy ctor.
+        auto cloned_set = make_lw_shared(co_await set->clone_gently());
+        cloned_sets.push_back(std::move(cloned_set));
+    }
+
+    co_return seastar::make_shared<compound_sstable_set>(_schema, std::move(cloned_sets));
 }
 
 std::vector<shared_sstable> compound_sstable_set::select(const dht::partition_range& range) const {

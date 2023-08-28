@@ -76,6 +76,7 @@ public:
     sstable_set_impl(const sstable_set_impl&) = default;
     virtual ~sstable_set_impl() {}
     virtual sstable_set_impl_ptr clone() const = 0;
+    virtual future<sstable_set_impl_ptr> clone_gently() const = 0;
     virtual std::vector<shared_sstable> select(const dht::partition_range& range) const = 0;
     virtual std::vector<sstable_run> select_sstable_runs(const std::vector<shared_sstable>& sstables) const;
     virtual lw_shared_ptr<const sstable_list> all() const = 0;
@@ -123,6 +124,7 @@ public:
     sstable_set(sstable_set&&) noexcept;
     sstable_set& operator=(const sstable_set&);
     sstable_set& operator=(sstable_set&&) noexcept;
+    future<sstable_set> clone_gently() const;
     std::vector<shared_sstable> select(const dht::partition_range& range) const;
     // Return all runs which contain any of the input sstables.
     std::vector<sstable_run> select_sstable_runs(const std::vector<shared_sstable>& sstables) const;

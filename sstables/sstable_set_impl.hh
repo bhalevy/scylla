@@ -61,6 +61,7 @@ public:
         uint64_t bytes_on_disk);
 
     virtual sstable_set_impl_ptr clone() const override;
+    virtual future<sstable_set_impl_ptr> clone_gently() const override;
     virtual std::vector<shared_sstable> select(const dht::partition_range& range) const override;
     virtual std::vector<sstable_run> select_sstable_runs(const std::vector<shared_sstable>& sstables) const override;
     virtual lw_shared_ptr<const sstable_list> all() const override;
@@ -88,8 +89,10 @@ private:
 public:
     time_series_sstable_set(schema_ptr schema, bool enable_optimized_twcs_queries);
     time_series_sstable_set(const time_series_sstable_set& s);
+    time_series_sstable_set(schema_ptr schema, schema_ptr reversed_schema, bool enable_optimized_twcs_queries, lw_shared_ptr<container_t> sstables, lw_shared_ptr<container_t> sstables_reversed, uint64_t bytes_on_disk);
 
     virtual sstable_set_impl_ptr clone() const override;
+    virtual future<sstable_set_impl_ptr> clone_gently() const override;
     virtual std::vector<shared_sstable> select(const dht::partition_range& range = query::full_partition_range) const override;
     virtual lw_shared_ptr<const sstable_list> all() const override;
     virtual stop_iteration for_each_sstable_until(std::function<stop_iteration(const shared_sstable&)> func) const override;
@@ -130,6 +133,7 @@ public:
     compound_sstable_set(schema_ptr schema, std::vector<lw_shared_ptr<sstable_set>> sets);
 
     virtual sstable_set_impl_ptr clone() const override;
+    virtual future<sstable_set_impl_ptr> clone_gently() const override;
     virtual std::vector<shared_sstable> select(const dht::partition_range& range = query::full_partition_range) const override;
     virtual std::vector<sstable_run> select_sstable_runs(const std::vector<shared_sstable>& sstables) const override;
     virtual lw_shared_ptr<const sstable_list> all() const override;
