@@ -8,6 +8,7 @@
 
 #include <seastar/core/on_internal_error.hh>
 #include <seastar/coroutine/parallel_for_each.hh>
+#include <seastar/core/gate.hh>
 #include "task_manager.hh"
 #include "test_module.hh"
 
@@ -181,17 +182,18 @@ void task_manager::task::start() {
     }
     _impl->_status.start_time = db_clock::now();
 
+    auto module = _impl->_module;
+    auto gate_holder = module->async_gate().hold();
+
     try {
         // Background fiber does not capture task ptr, so the task can be unregistered and destroyed independently in the foreground.
         // After the ttl expires, the task id will be used to unregister the task if that didn't happen in any other way.
-        (void)with_gate(_impl->_module->async_gate(), [f = done(), module = _impl->_module, id = id()] () mutable {
-            return std::move(f).finally([module] {
+            (void)done().finally([module] {
                 return sleep_abortable(module->get_task_manager().get_task_ttl(), module->abort_source());
-            }).then_wrapped([module, id] (auto f) {
+            }).then_wrapped([module, id = id(), gh = std::move(gate_holder)] (auto f) {
                 f.ignore_ready_future();
                 module->unregister_task(id);
             });
-        });
         _impl->_as.check();
         _impl->_status.state = task_manager::task_state::running;
         _impl->run_to_completion();
