@@ -4154,12 +4154,12 @@ future<> storage_service::check_for_endpoint_collision(std::unordered_set<gms::i
                 // Raft is responsible for consistency, so in case it is enable no need to check here
                 !_raft_topology_change_enabled) {
                 found_bootstrapping_node = false;
-                for (const auto& addr : _gossiper.get_endpoints()) {
-                    auto state = _gossiper.get_gossip_status(addr);
+                for (const auto& node : _gossiper.get_endpoints()) {
+                    auto state = _gossiper.get_gossip_status(node);
                     if (state == sstring(versioned_value::STATUS_UNKNOWN)) {
-                        throw std::runtime_error(::format("Node {} has gossip status=UNKNOWN. Try fixing it before adding new node to the cluster.", addr));
+                        throw std::runtime_error(::format("Node {} has gossip status=UNKNOWN. Try fixing it before adding new node to the cluster.", node));
                     }
-                    slogger.debug("Checking bootstrapping/leaving/moving nodes: node={}, status={} (check_for_endpoint_collision)", addr, state);
+                    slogger.debug("Checking bootstrapping/leaving/moving nodes: node={}, status={} (check_for_endpoint_collision)", node, state);
                     if (state == sstring(versioned_value::STATUS_BOOTSTRAPPING) ||
                         state == sstring(versioned_value::STATUS_LEAVING) ||
                         state == sstring(versioned_value::STATUS_MOVING)) {
@@ -7032,12 +7032,12 @@ future<> storage_service::wait_for_normal_state_handled_on_boot() {
 
     slogger.info("Started waiting for normal state handlers to finish");
     auto start_time = std::chrono::steady_clock::now();
-    std::vector<gms::inet_address> eps;
+    std::vector<gms::endpoint_id> eps;
     while (true) {
         eps = _gossiper.get_endpoints();
         auto it = std::partition(eps.begin(), eps.end(),
-                [this, me = get_broadcast_address()] (const gms::inet_address& ep) {
-            return ep == me || !_gossiper.is_normal_ring_member(ep) || is_normal_state_handled_on_boot(ep);
+                [this] (const auto& node) {
+            return _gossiper.is_me(node) || !_gossiper.is_normal_ring_member(node) || is_normal_state_handled_on_boot(node.addr);
         });
 
         if (it == eps.end()) {

@@ -282,17 +282,17 @@ private:
      */
     atomic_vector<shared_ptr<i_endpoint_state_change_subscriber>> _subscribers;
 
-    std::list<std::vector<inet_address>> _endpoints_to_talk_with;
+    std::list<std::vector<endpoint_id>> _endpoints_to_talk_with;
 
     /* live member set */
-    std::unordered_set<inet_address> _live_endpoints;
+    std::unordered_set<locator::host_id> _live_endpoints;
     uint64_t _live_endpoints_version = 0;
 
     /* nodes are being marked as alive */
     std::unordered_set<inet_address> _pending_mark_alive_endpoints;
 
     /* unreachable member set */
-    std::unordered_map<inet_address, clk::time_point> _unreachable_endpoints;
+    std::unordered_map<locator::host_id, clk::time_point> _unreachable_endpoints;
 
     semaphore _endpoint_update_semaphore = semaphore(1);
 
@@ -303,9 +303,9 @@ private:
      * gossip. We will ignore any gossip regarding these endpoints for QUARANTINE_DELAY time
      * after removal to prevent nodes from falsely reincarnating during the time when removal
      * gossip gets propagated to all nodes */
-    std::map<inet_address, clk::time_point> _just_removed_endpoints;
+    std::map<locator::host_id, clk::time_point> _just_removed_endpoints;
 
-    std::map<inet_address, clk::time_point> _expire_time_endpoint_map;
+    std::map<locator::host_id, clk::time_point> _expire_time_endpoint_map;
 
     bool _in_shadow_round = false;
 
@@ -365,7 +365,7 @@ public:
      */
     std::set<inet_address> get_unreachable_token_owners() const;
 
-    int64_t get_endpoint_downtime(inet_address ep) const noexcept;
+    int64_t get_endpoint_downtime(inet_address ep) const;
 
 private:
     /**
@@ -404,7 +404,7 @@ private:
      *
      * @param endpoint
      */
-    void quarantine_endpoint(inet_address endpoint);
+    void quarantine_endpoint(locator::host_id host_id);
 
     /**
      * Quarantines the endpoint until quarantine_start + QUARANTINE_DELAY
@@ -412,7 +412,7 @@ private:
      * @param endpoint
      * @param quarantine_start
      */
-    void quarantine_endpoint(inet_address endpoint, clk::time_point quarantine_start);
+    void quarantine_endpoint(locator::host_id host_id, clk::time_point quarantine_start);
 
 private:
     /**
@@ -463,10 +463,10 @@ private:
      * @param epSet   a set of endpoint from which a random endpoint is chosen.
      * @return true if the chosen endpoint is also a seed.
      */
-    future<> send_gossip(gossip_digest_syn message, std::set<inet_address> epset);
+    future<> send_gossip(gossip_digest_syn message, std::vector<endpoint_id> nodes);
 
     /* Sends a Gossip message to a live member */
-    future<> do_gossip_to_live_member(gossip_digest_syn message, inet_address ep);
+    future<> do_gossip_to_live_member(gossip_digest_syn message, endpoint_id node);
 
     /* Sends a Gossip message to an unreachable member */
     future<> do_gossip_to_unreachable_member(gossip_digest_syn message);
@@ -483,9 +483,9 @@ private:
         return v ? v->value() : "";
     }
 
-public:
-    clk::time_point get_expire_time_for_endpoint(inet_address endpoint) const noexcept;
+    clk::time_point get_expire_time_for_endpoint(locator::host_id host_id) const noexcept;
 
+public:
     // Gets a shared pointer to the endpoint_state, if exists.
     // Otherwise, returns a null ptr.
     // The endpoint_state is immutable (except for its update_timestamp), guaranteed not to change while
@@ -514,7 +514,7 @@ public:
     // Must be called on shard 0
     future<> reset_endpoint_state_map();
 
-    std::vector<inet_address> get_endpoints() const;
+    std::vector<endpoint_id> get_endpoints() const;
 
     size_t num_endpoints() const noexcept {
         return _endpoint_state_map.size();
@@ -611,10 +611,17 @@ private:
     std::optional<endpoint_state> get_state_for_version_bigger_than(endpoint_id node, const endpoint_state& ep_state, version_type version) const;
 
 public:
+    bool is_alive(locator::host_id host_id) const;
     bool is_alive(const endpoint_id& node) const {
-        return is_alive(node.addr);
+        return is_alive(node.host_id);
     }
-    bool is_alive(inet_address ep) const;
+    bool is_alive(inet_address ep) const {
+        if (is_me(ep)) {
+            return true;
+        }
+        auto host_id = address_host_id(ep);
+        return host_id && is_alive(host_id);
+    }
 
     bool is_dead_state(const endpoint_state& eps) const;
     // Wait for nodes to be alive on all shards
@@ -629,10 +636,11 @@ public:
     // Get live members synchronized to all shards
     future<std::set<inet_address>> get_unreachable_members_synchronized();
 
+    std::vector<endpoint_id> map_endpoints(const std::unordered_map<inet_address, endpoint_state>& map) const;
     future<> apply_state_locally(std::unordered_map<inet_address, endpoint_state> map);
 
 private:
-    future<> do_apply_state_locally(gms::inet_address node, endpoint_state remote_state, bool listener_notification);
+    future<> do_apply_state_locally(endpoint_id node, endpoint_state remote_state, bool listener_notification);
     future<> apply_state_locally_without_listener_notification(std::unordered_map<inet_address, endpoint_state> map);
 
     // Must be called under lock_endpoint.
@@ -757,9 +765,9 @@ public:
 
 public:
     void add_expire_time_for_endpoint(const endpoint_id& node, clk::time_point expire_time) {
-        return add_expire_time_for_endpoint(node.addr, expire_time);
+        return add_expire_time_for_endpoint(node.host_id, expire_time);
     }
-    void add_expire_time_for_endpoint(inet_address endpoint, clk::time_point expire_time);
+    void add_expire_time_for_endpoint(locator::host_id host_id, clk::time_point expire_time);
 
     static clk::time_point compute_expire_time();
 public:
@@ -798,9 +806,12 @@ public:
     void force_newer_generation();
 public:
     std::string_view get_gossip_status(const endpoint_state& ep_state) const noexcept;
-    std::string_view get_gossip_status(const endpoint_id& node) const noexcept;
+    std::string_view get_gossip_status(locator::host_id host_id) const noexcept;
+    std::string_view get_gossip_status(const endpoint_id& node) const noexcept {
+        return get_gossip_status(node.host_id);
+    }
     std::string_view get_gossip_status(const inet_address& addr) const noexcept {
-        return get_gossip_status(get_endpoint_id(addr));
+        return get_gossip_status(get_host_id(addr));
     }
 public:
     future<> wait_for_gossip_to_settle() const;
@@ -837,7 +848,7 @@ public:
     int get_up_endpoint_count() const noexcept;
 private:
     future<> failure_detector_loop();
-    future<> failure_detector_loop_for_node(gms::inet_address node, generation_type gossip_generation, uint64_t live_endpoints_version);
+    future<> failure_detector_loop_for_node(endpoint_id node, generation_type gossip_generation, uint64_t live_endpoints_version);
 };
 
 
