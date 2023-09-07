@@ -1557,11 +1557,29 @@ bool gossiper::is_cql_ready(const inet_address& endpoint) const {
 }
 
 locator::host_id gossiper::get_host_id(inet_address endpoint) const {
-    auto app_state = get_application_state_ptr(endpoint, application_state::HOST_ID);
-    if (!app_state) {
-        throw std::runtime_error(format("Host {} does not have HOST_ID application_state", endpoint));
+    locator::host_id host_id = address_host_id(endpoint);
+    if (!host_id) {
+        auto eps = get_endpoint_state_ptr(endpoint);
+        if (!eps) {
+            auto msg = format("Host {} has no endpoint_state", endpoint);
+            logger.warn("{}", msg);
+            throw std::runtime_error(msg);
+        } else {
+            auto app_state = eps->get_application_state_ptr(application_state::HOST_ID);
+            if (!app_state) {
+                auto msg = format("Host {} has no HOST_ID application_state", endpoint);
+                logger.warn("{}", msg);
+                throw std::runtime_error(msg);
+            } else {
+                host_id = locator::host_id(utils::UUID(app_state->value()));
+                if (!host_id) {
+                    auto msg = format("Host {} has null HOST_ID application_state value", endpoint);
+                    on_internal_error(logger, msg);
+                }
+            }
+        }
     }
-    return locator::host_id(utils::UUID(app_state->value()));
+    return host_id;
 }
 
 std::set<gms::inet_address> gossiper::get_nodes_with_host_id(locator::host_id host_id) const {
