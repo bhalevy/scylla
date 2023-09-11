@@ -199,6 +199,41 @@ private:
     // Used for serializing changes to _endpoint_state_map and running of associated change listeners.
     endpoint_locks_map _endpoint_locks;
 
+    // host_id <-> inet_address mapping;
+    semaphore _address_map_lock;    // Used on shard 0 to serialize updates to the address map
+    std::unordered_map<locator::host_id, inet_address> _host_id_to_address_map;
+    std::unordered_map<inet_address, locator::host_id> _address_to_host_id_map;
+
+    inet_address host_id_address(const locator::host_id& host_id) const noexcept {
+        auto it = _host_id_to_address_map.find(host_id);
+        if (it != _host_id_to_address_map.end()) {
+            return it->second;
+        }
+        return inet_address();
+    }
+
+    locator::host_id address_host_id(const inet_address& addr) const noexcept {
+        auto it = _address_to_host_id_map.find(addr);
+        if (it != _address_to_host_id_map.end()) {
+            return it->second;
+        }
+        return locator::host_id();
+    }
+
+    // Update the host_id <-> address mapping on all shards
+    future<> update_address_map(locator::host_id host_id, inet_address addr) noexcept {
+        if (host_id_address(host_id) == addr) {
+            return make_ready_future<>();
+        }
+        return do_update_address_map(std::move(host_id), std::move(addr));
+    }
+
+    future<> do_update_address_map(locator::host_id host_id, inet_address addr) noexcept;
+
+    future<> update_address_map(const rpc::client_info& cinfo) noexcept;
+
+    future<> erase_address_mapping(locator::host_id host_id, inet_address addr) noexcept;
+
 public:
     const std::vector<sstring> DEAD_STATES = {
         versioned_value::REMOVED_TOKEN,

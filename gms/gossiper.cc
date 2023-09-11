@@ -31,6 +31,7 @@
 #include <seastar/core/coroutine.hh>
 #include <seastar/coroutine/parallel_for_each.hh>
 #include <seastar/coroutine/exception.hh>
+#include <seastar/core/semaphore.hh>
 #include <chrono>
 #include "db/config.hh"
 #include "locator/host_id.hh"
@@ -86,12 +87,14 @@ std::chrono::milliseconds gossiper::quarantine_delay() const noexcept {
 }
 
 gossiper::gossiper(abort_source& as, const locator::shared_token_metadata& stm, netw::messaging_service& ms, const db::config& cfg, gossip_config gcfg)
-        : _abort_source(as)
+        : _address_map_lock(1)
+        , _abort_source(as)
         , _shared_token_metadata(stm)
         , _messaging(ms)
         , _failure_detector_timeout_ms(cfg.failure_detector_timeout_in_ms)
         , _force_gossip_generation(cfg.force_gossip_generation)
-        , _gcfg(std::move(gcfg)) {
+        , _gcfg(std::move(gcfg))
+{
     // Gossiper's stuff below runs only on CPU0
     if (this_shard_id() != 0) {
         return;
@@ -166,6 +169,7 @@ void gossiper::do_sort(utils::chunked_vector<gossip_digest>& g_digest_list) cons
 // Depends on
 // - no external dependency
 future<> gossiper::handle_syn_msg(const rpc::client_info& cinfo, gossip_digest_syn syn_msg) {
+    co_await update_address_map(cinfo);
     auto from = netw::messaging_service::get_source(cinfo);
     logger.trace("handle_syn_msg():from={},cluster_name:peer={},local={},group0_id:peer={},local={},partitioner_name:peer={},local={}",
         from, syn_msg.cluster_id(), get_cluster_name(), syn_msg.group0_id(), get_group0_id(), syn_msg.partioner(), get_partitioner_name());
@@ -276,6 +280,7 @@ static bool should_count_as_msg_processing(const std::map<inet_address, endpoint
 // - on_join callbacks
 // - on_alive
 future<> gossiper::handle_ack_msg(const rpc::client_info& cinfo, gossip_digest_ack ack_msg) {
+    co_await update_address_map(cinfo);
     auto id = netw::messaging_service::get_source(cinfo);
     logger.trace("handle_ack_msg():from={},msg={}", id, ack_msg);
 
@@ -390,6 +395,7 @@ future<> gossiper::do_send_ack2_msg(msg_addr from, utils::chunked_vector<gossip_
 // - on_join callbacks
 // - on_alive callbacks
 future<> gossiper::handle_ack2_msg(const rpc::client_info& cinfo, gossip_digest_ack2 msg) {
+    co_await update_address_map(cinfo);
     auto from = netw::messaging_service::get_source(cinfo);
     logger.trace("handle_ack2_msg():from={},msg={}", from, msg);
     if (!is_enabled()) {
@@ -414,6 +420,7 @@ future<> gossiper::handle_ack2_msg(const rpc::client_info& cinfo, gossip_digest_
 }
 
 future<> gossiper::handle_echo_msg(const rpc::client_info& cinfo, std::optional<int64_t> generation_number_opt) {
+    co_await update_address_map(cinfo);
     auto from = netw::messaging_service::get_source(cinfo);
     bool respond = false;
     if (_advertise_myself) {
@@ -441,12 +448,12 @@ future<> gossiper::handle_echo_msg(const rpc::client_info& cinfo, std::optional<
         logger.warn("handle_echo_msg: advertise_myself=false");
     }
     if (!respond) {
-        return make_exception_future(std::runtime_error("Not ready to respond gossip echo message"));
+        co_await coroutine::return_exception(std::runtime_error("Not ready to respond gossip echo message"));
     }
-    return make_ready_future<>();
 }
 
 future<> gossiper::handle_shutdown_msg(const rpc::client_info& cinfo, std::optional<int64_t> generation_number_opt) {
+    co_await update_address_map(cinfo);
     auto from = netw::messaging_service::get_source(cinfo);
     if (!is_enabled()) {
         logger.debug("Ignoring shutdown message from {} because gossip is disabled", from);
@@ -1213,9 +1220,11 @@ future<> gossiper::evict_from_membership(inet_address endpoint, permit_id pid) {
     co_await container().invoke_on_all([endpoint] (auto& g) {
         g._endpoint_state_map.erase(endpoint);
     });
+    auto host_id = get_host_id(endpoint);
+    co_await erase_address_mapping(host_id, endpoint);
     _expire_time_endpoint_map.erase(endpoint);
     quarantine_endpoint(endpoint);
-    logger.debug("evicting {} from gossip", endpoint);
+    logger.debug("Evicted {}/{} from gossip", host_id, endpoint);
 }
 
 void gossiper::quarantine_endpoint(inet_address endpoint) {
@@ -1414,6 +1423,67 @@ endpoint_state_ptr gossiper::get_endpoint_state_ptr(inet_address ep) const noexc
     } else {
         return it->second;
     }
+}
+
+future<> gossiper::update_address_map(const rpc::client_info& cinfo) noexcept {
+    auto host_id = cinfo.retrieve_auxiliary<locator::host_id>("host_id");
+    auto addr = cinfo.retrieve_auxiliary<gms::inet_address>("baddr");
+
+    if (host_id) {
+        return update_address_map(host_id, addr);
+    }
+    return make_ready_future<>();
+}
+
+future<> gossiper::do_update_address_map(locator::host_id host_id, inet_address addr) noexcept {
+    return container().invoke_on(0, [host_id, addr] (gossiper& g) {
+        return with_semaphore(g._address_map_lock, 1, [&g, host_id, addr] {
+            return g.container().invoke_on_all([host_id, addr] (gossiper& g) {
+                std::optional<inet_address> prev;
+                auto [it, inserted] = g._host_id_to_address_map.try_emplace(host_id, addr);
+                if (!inserted) {
+                    prev = std::exchange(it->second, addr);
+                    if (*prev == addr) {
+                        return make_ready_future<>();
+                    }
+                }
+                try {
+                    g._address_to_host_id_map[addr] = host_id;
+                } catch (...) {
+                    if (prev) {
+                        it->second = *prev;
+                    }
+                    throw;
+                }
+                if (prev) {
+                    g._address_to_host_id_map.erase(*prev);
+                }
+                return make_ready_future<>();
+            });
+        });
+    });
+}
+
+future<> gossiper::erase_address_mapping(locator::host_id host_id, inet_address addr) noexcept {
+    if (addr == inet_address()) {
+        on_internal_error(logger, fmt::format("erase_address_mapping: host_id={}: null inet_address is disallowed", host_id));
+    }
+    return container().invoke_on(0, [host_id, addr] (gossiper& g) {
+        return with_semaphore(g._address_map_lock, 1, [&g, host_id, addr] {
+            return g.container().invoke_on_all([host_id, addr] (gossiper& g) mutable {
+                if (host_id) {
+                    auto hit = g._host_id_to_address_map.find(host_id);
+                    if (hit != g._host_id_to_address_map.end() && hit->second == addr) {
+                        g._host_id_to_address_map.erase(hit);
+                    }
+                }
+                auto it = g._address_to_host_id_map.find(addr);
+                if (it != g._address_to_host_id_map.end() && (it->second == host_id || !host_id)) {
+                    g._address_to_host_id_map.erase(it);
+                }
+            });
+        });
+    });
 }
 
 void gossiper::update_timestamp(const endpoint_state_ptr& eps) noexcept {
@@ -1948,6 +2018,7 @@ void gossiper::examine_gossiper(utils::chunked_vector<gossip_digest>& g_digest_l
 
 future<> gossiper::start_gossiping(gms::generation_type generation_nbr, std::map<application_state, versioned_value> preload_local_states, gms::advertise_myself advertise) {
     auto permit = co_await lock_endpoint(get_broadcast_address(), null_permit_id);
+    co_await update_address_map(my_host_id(), get_broadcast_address());
     co_await container().invoke_on_all([advertise] (gossiper& g) {
         if (!advertise) {
             g._advertise_myself = false;
