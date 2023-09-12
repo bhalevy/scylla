@@ -2159,6 +2159,7 @@ future<> gossiper::do_shadow_round(std::unordered_set<gms::inet_address> nodes) 
         gossip_get_endpoint_states_request request{{
             gms::application_state::STATUS,
             gms::application_state::HOST_ID,
+            gms::application_state::RPC_ADDRESS,
             gms::application_state::TOKENS,
             gms::application_state::DC,
             gms::application_state::RACK,
