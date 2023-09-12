@@ -486,13 +486,7 @@ private:
 
     const std::unordered_map<inet_address, endpoint_state_ptr>& get_endpoint_states() const noexcept;
 
-    endpoint_state_ptr get_endpoint_state_ptr(const endpoint_id& node) const noexcept {
-        if (node.host_id) {
-            return get_endpoint_state_ptr(node.host_id);
-        } else {
-            return get_endpoint_state_ptr(node.addr);
-        }
-    }
+    endpoint_state_ptr get_endpoint_state_ptr(const endpoint_id& node) const noexcept;
 
     const versioned_value* get_application_state_ptr(endpoint_state_ptr eps, application_state appstate) const noexcept;
     sstring get_application_state_value(endpoint_state_ptr eps, application_state appstate) const noexcept;

@@ -1461,6 +1461,20 @@ endpoint_state_ptr gossiper::get_endpoint_state_ptr(inet_address ep) const noexc
     }
 }
 
+endpoint_state_ptr gossiper::get_endpoint_state_ptr(const endpoint_id& node) const noexcept {
+    endpoint_state_ptr ret;
+    if (node.host_id) {
+        ret = get_endpoint_state_ptr(node.host_id);
+    }
+    if (!ret) {
+        ret = get_endpoint_state_ptr(node.addr);
+        if (ret && node.host_id) {
+            logger.warn("endpoint_state for {} found only by address", node);
+        }
+    }
+    return ret;
+}
+
 future<endpoint_id> gossiper::get_endpoint_id(const rpc::client_info& cinfo) noexcept {
     auto host_id = cinfo.retrieve_auxiliary<locator::host_id>("host_id");
     auto addr = cinfo.retrieve_auxiliary<gms::inet_address>("baddr");
