@@ -2574,11 +2574,13 @@ void gossiper::force_newer_generation() {
 static std::string_view do_get_gossip_status(const endpoint_state& ep_state) noexcept {
     auto app_state = ep_state.get_application_state_ptr(application_state::STATUS);
     if (!app_state) {
+        logger.warn("Node {}/{} has no application_state::STATUS", ep_state.get_host_id(), ep_state.get_address());
         return gms::versioned_value::STATUS_UNKNOWN;
     }
     const auto& value = app_state->value();
     auto pos = value.find(',');
     if (!value.size() || !pos) {
+        logger.warn("Node {}/{} has invalid application_state::STATUS: {}", ep_state.get_host_id(), ep_state.get_address(), value);
         return gms::versioned_value::STATUS_UNKNOWN;
     }
     if (pos == sstring::npos) {
