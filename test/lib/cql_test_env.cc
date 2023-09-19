@@ -674,6 +674,11 @@ private:
                 seeds.emplace(gms::inet_address("127.0.0.1"));
             }
 
+            _raft_address_map.start().get();
+            auto stop_address_map = defer([this] {
+                _raft_address_map.stop().get();
+            });
+
             gms::gossip_config gcfg;
             gcfg.cluster_name = "Test Cluster";
             gcfg.seeds = std::move(seeds);
@@ -684,11 +689,6 @@ private:
                 _gossiper.stop().get();
             });
             _gossiper.invoke_on_all(&gms::gossiper::start).get();
-
-            _raft_address_map.start().get();
-            auto stop_address_map = defer([this] {
-                _raft_address_map.stop().get();
-            });
 
             _fd_pinger.start(std::ref(_ms), std::ref(_raft_address_map)).get();
             auto stop_fd_pinger = defer([this] { _fd_pinger.stop().get(); });
