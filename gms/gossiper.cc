@@ -208,7 +208,7 @@ future<> gossiper::handle_syn_msg(endpoint_id from, gossip_digest_syn syn_msg) {
         co_return;
     }
 
-    syn_msg_pending& p = _syn_handlers[from.addr];
+    syn_msg_pending& p = _syn_handlers[from.host_id];
     if (p.pending) {
         // The latest syn message from peer has the latest infomation, so
         // it is safe to drop the previous syn message and keep the latest
@@ -224,10 +224,10 @@ future<> gossiper::handle_syn_msg(endpoint_id from, gossip_digest_syn syn_msg) {
     for (;;) {
         try {
             co_await do_send_ack_msg(msg_addr(from.addr), std::move(syn_msg));
-            if (!_syn_handlers.contains(from.addr)) {
+            if (!_syn_handlers.contains(from.host_id)) {
                 co_return;
             }
-            syn_msg_pending& p = _syn_handlers[from.addr];
+            syn_msg_pending& p = _syn_handlers[from.host_id];
             if (p.syn_msg) {
                 // Process pending gossip syn msg and send ack msg back
                 logger.debug("Handle queued gossip syn msg from node {}, syn_msg={}, pending={}",
@@ -244,8 +244,8 @@ future<> gossiper::handle_syn_msg(endpoint_id from, gossip_digest_syn syn_msg) {
             }
         } catch (...) {
             auto ep = std::current_exception();
-            if (_syn_handlers.contains(from.addr)) {
-                syn_msg_pending& p = _syn_handlers[from.addr];
+            if (_syn_handlers.contains(from.host_id)) {
+                syn_msg_pending& p = _syn_handlers[from.host_id];
                 p.pending = false;
                 p.syn_msg = {};
             }
@@ -325,7 +325,7 @@ future<> gossiper::handle_ack_msg(endpoint_id from, gossip_digest_ack ack_msg) {
         // don't bother doing anything else, we have what we came for
         co_return;
     }
-    ack_msg_pending& p = _ack_handlers[from.addr];
+    ack_msg_pending& p = _ack_handlers[from.host_id];
     if (p.pending) {
         // The latest ack message digests from peer has the latest infomation, so
         // it is safe to drop the previous ack message digests and keep the latest
@@ -341,10 +341,10 @@ future<> gossiper::handle_ack_msg(endpoint_id from, gossip_digest_ack ack_msg) {
     for (;;) {
         try {
             co_await do_send_ack2_msg(msg_addr(from.addr), std::move(ack_msg_digest));
-            if (!_ack_handlers.contains(from.addr)) {
+            if (!_ack_handlers.contains(from.host_id)) {
                 co_return;
             }
-            ack_msg_pending& p = _ack_handlers[from.addr];
+            ack_msg_pending& p = _ack_handlers[from.host_id];
             if (p.ack_msg_digest) {
                 // Process pending gossip ack msg digests and send ack2 msg back
                 logger.debug("Handle queued gossip ack msg digests from node {}, ack_msg_digest={}, pending={}",
@@ -361,8 +361,8 @@ future<> gossiper::handle_ack_msg(endpoint_id from, gossip_digest_ack ack_msg) {
             }
         } catch (...) {
             auto ep = std::current_exception();
-            if (_ack_handlers.contains(from.addr)) {
-                ack_msg_pending& p = _ack_handlers[from.addr];
+            if (_ack_handlers.contains(from.host_id)) {
+                ack_msg_pending& p = _ack_handlers[from.host_id];
                 p.pending = false;
                 p.ack_msg_digest = {};
             }
@@ -771,8 +771,8 @@ future<> gossiper::remove_endpoint(endpoint_id node, permit_id pid) {
         was_alive = g._live_endpoints.erase(endpoint);
         g._unreachable_endpoints.erase(endpoint);
     });
-    _syn_handlers.erase(node.addr);
-    _ack_handlers.erase(node.addr);
+    _syn_handlers.erase(node.host_id);
+    _ack_handlers.erase(node.host_id);
     quarantine_endpoint(node.addr);
     logger.info("Removed endpoint {}", node);
 

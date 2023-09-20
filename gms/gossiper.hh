@@ -130,8 +130,8 @@ private:
     semaphore _callback_running{1};
     semaphore _apply_state_locally_semaphore{100};
     seastar::gate _background_msg;
-    std::unordered_map<gms::inet_address, syn_msg_pending> _syn_handlers;
-    std::unordered_map<gms::inet_address, ack_msg_pending> _ack_handlers;
+    std::unordered_map<locator::host_id, syn_msg_pending> _syn_handlers;
+    std::unordered_map<locator::host_id, ack_msg_pending> _ack_handlers;
     bool _advertise_myself = true;
     // Map ip address and generation number
     generation_for_nodes _advertise_to_nodes;
