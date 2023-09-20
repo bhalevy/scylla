@@ -61,11 +61,11 @@ class gossip_digest_syn {
 
 class gossip_digest_ack {
     utils::chunked_vector<gms::gossip_digest> get_gossip_digest_list();
-    std::map<gms::inet_address, gms::endpoint_state> get_endpoint_state_map();
+    std::unordered_map<gms::inet_address, gms::endpoint_state> get_endpoint_state_map();
 };
 
 class gossip_digest_ack2 {
-    std::map<gms::inet_address, gms::endpoint_state> get_endpoint_state_map();
+    std::unordered_map<gms::inet_address, gms::endpoint_state> get_endpoint_state_map();
 };
 
 struct gossip_get_endpoint_states_request {

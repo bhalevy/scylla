@@ -63,7 +63,7 @@ public:
             utils::chunked_vector<gms::gossip_digest> digests;
             digests.push_back(gms::gossip_digest(ep1, gen++, ver++));
             digests.push_back(gms::gossip_digest(ep2, gen++, ver++));
-            std::map<inet_address, endpoint_state> eps{
+            std::unordered_map<inet_address, endpoint_state> eps{
                 {ep1, endpoint_state()},
                 {ep2, endpoint_state()},
             };
@@ -80,7 +80,7 @@ public:
             auto from = netw::messaging_service::get_source(cinfo);
             // Prepare gossip_digest_ack2 message
             auto ep1 = inet_address("3.3.3.3");
-            std::map<inet_address, endpoint_state> eps{
+            std::unordered_map<inet_address, endpoint_state> eps{
                 {ep1, endpoint_state()},
             };
             gms::gossip_digest_ack2 ack2(std::move(eps));

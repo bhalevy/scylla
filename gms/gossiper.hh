@@ -577,7 +577,7 @@ private:
         return get_endpoint_state(node.host_id);
     }
 
-    void update_timestamp_for_nodes(const std::map<inet_address, endpoint_state>& map);
+    void update_timestamp_for_nodes(const std::unordered_map<inet_address, endpoint_state>& map);
 
     void mark_alive(const endpoint_id& node);
 
@@ -620,7 +620,7 @@ public:
     // Get live members synchronized to all shards
     future<std::set<inet_address>> get_unreachable_members_synchronized();
 
-    future<> apply_state_locally(std::map<inet_address, endpoint_state> map);
+    future<> apply_state_locally(std::unordered_map<inet_address, endpoint_state> map);
 
 private:
     future<> do_apply_state_locally(gms::inet_address node, endpoint_state remote_state, bool listener_notification);
@@ -646,7 +646,7 @@ private:
     void request_all(gossip_digest& g_digest, utils::chunked_vector<gossip_digest>& delta_gossip_digest_list, generation_type remote_generation) const;
 
     /* Send all the data with version greater than max_remote_version */
-    void send_all(gossip_digest& g_digest, std::map<inet_address, endpoint_state>& delta_ep_state_map, version_type max_remote_version) const;
+    void send_all(gossip_digest& g_digest, std::unordered_map<inet_address, endpoint_state>& delta_ep_state_map, version_type max_remote_version) const;
 
 public:
     /*
@@ -655,7 +655,7 @@ public:
     */
     void examine_gossiper(utils::chunked_vector<gossip_digest>& g_digest_list,
                          utils::chunked_vector<gossip_digest>& delta_gossip_digest_list,
-                         std::map<inet_address, endpoint_state>& delta_ep_state_map) const;
+                         std::unordered_map<inet_address, endpoint_state>& delta_ep_state_map) const;
 
 public:
     /**

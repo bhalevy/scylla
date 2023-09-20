@@ -26,12 +26,12 @@ class gossip_digest_ack {
 private:
     using inet_address = gms::inet_address;
     utils::chunked_vector<gossip_digest> _digests;
-    std::map<inet_address, endpoint_state> _map;
+    std::unordered_map<inet_address, endpoint_state> _map;
 public:
     gossip_digest_ack() {
     }
 
-    gossip_digest_ack(utils::chunked_vector<gossip_digest> d, std::map<inet_address, endpoint_state> m)
+    gossip_digest_ack(utils::chunked_vector<gossip_digest> d, std::unordered_map<inet_address, endpoint_state> m)
         : _digests(std::move(d))
         , _map(std::move(m)) {
     }
@@ -40,11 +40,11 @@ public:
         return _digests;
     }
 
-    std::map<inet_address, endpoint_state>& get_endpoint_state_map() {
+    std::unordered_map<inet_address, endpoint_state>& get_endpoint_state_map() {
         return _map;
     }
 
-    const std::map<inet_address, endpoint_state>& get_endpoint_state_map() const {
+    const std::unordered_map<inet_address, endpoint_state>& get_endpoint_state_map() const {
         return _map;
     }
 

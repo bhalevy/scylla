@@ -242,7 +242,7 @@ future<> gossiper::do_send_ack_msg(msg_addr from, gossip_digest_syn syn_msg) {
         auto g_digest_list = syn_msg.get_gossip_digests();
         do_sort(g_digest_list);
         utils::chunked_vector<gossip_digest> delta_gossip_digest_list;
-        std::map<inet_address, endpoint_state> delta_ep_state_map;
+        std::unordered_map<inet_address, endpoint_state> delta_ep_state_map;
         this->examine_gossiper(g_digest_list, delta_gossip_digest_list, delta_ep_state_map);
         gms::gossip_digest_ack ack_msg(std::move(delta_gossip_digest_list), std::move(delta_ep_state_map));
         logger.debug("Calling do_send_ack_msg to node {}, syn_msg={}, ack_msg={}", from, syn_msg, ack_msg);
@@ -250,7 +250,7 @@ future<> gossiper::do_send_ack_msg(msg_addr from, gossip_digest_syn syn_msg) {
     });
 }
 
-static bool should_count_as_msg_processing(const std::map<inet_address, endpoint_state>& map) {
+static bool should_count_as_msg_processing(const std::unordered_map<inet_address, endpoint_state>& map) {
     bool count_as_msg_processing  = false;
     for (auto& x : map) {
         auto& state = x.second;
@@ -356,7 +356,7 @@ future<> gossiper::handle_ack_msg(endpoint_id from, gossip_digest_ack ack_msg) {
 future<> gossiper::do_send_ack2_msg(msg_addr from, utils::chunked_vector<gossip_digest> ack_msg_digest) {
     return futurize_invoke([this, from, ack_msg_digest = std::move(ack_msg_digest)] () mutable {
         /* Get the state required to send to this gossipee - construct GossipDigestAck2Message */
-        std::map<inet_address, endpoint_state> delta_ep_state_map;
+        std::unordered_map<inet_address, endpoint_state> delta_ep_state_map;
         for (auto g_digest : ack_msg_digest) {
             auto node = get_endpoint_id(g_digest.get_endpoint());
             const auto es = get_endpoint_state_ptr(node);
@@ -680,7 +680,7 @@ future<> gossiper::apply_state_locally_without_listener_notification(std::unorde
     }
 }
 
-future<> gossiper::apply_state_locally(std::map<inet_address, endpoint_state> map) {
+future<> gossiper::apply_state_locally(std::unordered_map<inet_address, endpoint_state> map) {
     auto start = std::chrono::steady_clock::now();
     auto endpoints = boost::copy_range<utils::chunked_vector<inet_address>>(map | boost::adaptors::map_keys);
     std::shuffle(endpoints.begin(), endpoints.end(), _random_engine);
@@ -1742,7 +1742,7 @@ sstring gossiper::get_rpc_address(const inet_address& endpoint) const {
     return fmt::to_string(endpoint);
 }
 
-void gossiper::update_timestamp_for_nodes(const std::map<inet_address, endpoint_state>& map) {
+void gossiper::update_timestamp_for_nodes(const std::unordered_map<inet_address, endpoint_state>& map) {
     for (const auto& x : map) {
         const gms::inet_address& endpoint = x.first;
         const endpoint_state& remote_endpoint_state = x.second;
@@ -2058,7 +2058,7 @@ void gossiper::request_all(gossip_digest& g_digest,
 }
 
 void gossiper::send_all(gossip_digest& g_digest,
-    std::map<inet_address, endpoint_state>& delta_ep_state_map,
+    std::unordered_map<inet_address, endpoint_state>& delta_ep_state_map,
     version_type max_remote_version) const {
     auto ep = g_digest.get_endpoint();
     logger.trace("send_all(): ep={}, version > {}", ep, max_remote_version);
@@ -2074,7 +2074,7 @@ void gossiper::send_all(gossip_digest& g_digest,
 
 void gossiper::examine_gossiper(utils::chunked_vector<gossip_digest>& g_digest_list,
     utils::chunked_vector<gossip_digest>& delta_gossip_digest_list,
-    std::map<inet_address, endpoint_state>& delta_ep_state_map) const {
+    std::unordered_map<inet_address, endpoint_state>& delta_ep_state_map) const {
     if (g_digest_list.size() == 0) {
         /* we've been sent a *completely* empty syn, which should normally
              * never happen since an endpoint will at least send a syn with

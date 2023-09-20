@@ -23,20 +23,20 @@ namespace gms {
 class gossip_digest_ack2 {
 private:
     using inet_address = gms::inet_address;
-    std::map<inet_address, endpoint_state> _map;
+    std::unordered_map<inet_address, endpoint_state> _map;
 public:
     gossip_digest_ack2() {
     }
 
-    gossip_digest_ack2(std::map<inet_address, endpoint_state> m)
+    gossip_digest_ack2(std::unordered_map<inet_address, endpoint_state> m)
         : _map(std::move(m)) {
     }
 
-    std::map<inet_address, endpoint_state>& get_endpoint_state_map() {
+    std::unordered_map<inet_address, endpoint_state>& get_endpoint_state_map() {
         return _map;
     }
 
-    const std::map<inet_address, endpoint_state>& get_endpoint_state_map() const {
+    const std::unordered_map<inet_address, endpoint_state>& get_endpoint_state_map() const {
         return _map;
     }
 
