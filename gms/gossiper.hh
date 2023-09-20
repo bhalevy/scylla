@@ -773,29 +773,48 @@ public:
 public:
     bool is_seed(const inet_address& endpoint) const;
 
-    bool is_shutdown(const endpoint_state& ep_state) const;
+    static bool is_shutdown_status(std::string_view status) noexcept {
+        return status == sstring(versioned_value::SHUTDOWN);
+    }
+    bool is_shutdown(const endpoint_state& ep_state) const {
+        return is_shutdown_status(get_gossip_status(ep_state));
+    }
+    bool is_shutdown(locator::host_id host_id) const {
+        return is_shutdown_status(get_gossip_status(host_id));
+    }
     bool is_shutdown(const endpoint_id& node) const {
-        return is_shutdown(node.addr);
+        return is_shutdown(node.host_id);
     }
-    bool is_shutdown(const inet_address& endpoint) const;
 
+    static bool is_normal_status(std::string_view status) noexcept {
+        return status == sstring(versioned_value::STATUS_NORMAL);
+    }
+    bool is_normal(locator::host_id host_id) const {
+        return is_normal_status(get_gossip_status(host_id));
+    }
     bool is_normal(const endpoint_id& node) const {
-        return is_normal(node.addr);
+        return is_normal(node.host_id);
     }
-    bool is_normal(const inet_address& endpoint) const;
 
-    bool is_left(const endpoint_id& node) const {
-        return is_left(node.addr);
+    static bool is_left_status(std::string_view status) noexcept {
+        return status == sstring(versioned_value::STATUS_LEFT) || status == sstring(versioned_value::REMOVED_TOKEN);
     }
-    bool is_left(const inet_address& endpoint) const;
+    bool is_left(locator::host_id host_id) const {
+        return is_left_status(get_gossip_status(host_id));
+    }
+    bool is_left(const endpoint_id& node) const {
+        return is_left(node.host_id);
+    }
 
     // Check if a node is in NORMAL or SHUTDOWN status which means the node is
     // part of the token ring from the gossip point of view and operates in
     // normal status or was in normal status but is shutdown.
-    bool is_normal_ring_member(const endpoint_id& node) const {
-        return is_normal_ring_member(node.addr);
+    static bool is_normal_ring_member_status(std::string_view status) noexcept {
+        return status == sstring(versioned_value::STATUS_NORMAL) || status == sstring(versioned_value::SHUTDOWN);
     }
-    bool is_normal_ring_member(const inet_address& endpoint) const;
+    bool is_normal_ring_member(locator::host_id host_id) const {
+        return is_normal_ring_member_status(get_gossip_status(host_id));
+    }
 
     bool is_cql_ready(const endpoint_id& node) const {
         return is_cql_ready(node.addr);

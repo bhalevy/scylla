@@ -1238,7 +1238,7 @@ std::set<inet_address> gossiper::get_live_members() const {
     auto myip = get_broadcast_address();
     logger.debug("live_members before={}", live_members);
     live_members.insert(myip);
-    if (is_shutdown(myip)) {
+    if (!is_shutdown(my_host_id())) {
         live_members.erase(myip);
     }
     logger.debug("live_members after={}", live_members);
@@ -2002,28 +2002,6 @@ bool gossiper::is_dead_state(const endpoint_state& eps) const {
         }
     }
     return false;
-}
-
-bool gossiper::is_shutdown(const endpoint_state& ep_state) const {
-    return get_gossip_status(ep_state) == sstring(versioned_value::SHUTDOWN);
-}
-
-bool gossiper::is_shutdown(const inet_address& endpoint) const {
-    return get_gossip_status(endpoint) == sstring(versioned_value::SHUTDOWN);
-}
-
-bool gossiper::is_normal(const inet_address& endpoint) const {
-    return get_gossip_status(endpoint) == sstring(versioned_value::STATUS_NORMAL);
-}
-
-bool gossiper::is_left(const inet_address& endpoint) const {
-    auto status = get_gossip_status(endpoint);
-    return status == sstring(versioned_value::STATUS_LEFT) || status == sstring(versioned_value::REMOVED_TOKEN);
-}
-
-bool gossiper::is_normal_ring_member(const inet_address& endpoint) const {
-    auto status = get_gossip_status(endpoint);
-    return status == sstring(versioned_value::STATUS_NORMAL) || status == sstring(versioned_value::SHUTDOWN);
 }
 
 bool gossiper::is_silent_shutdown_state(const endpoint_state& ep_state) const{

@@ -3444,8 +3444,7 @@ future<> storage_service::handle_state_normal(gms::endpoint_id node, gms::permit
     } else {
         tmptr->del_replacing_endpoint(addr);
         auto nodes = _gossiper.get_nodes_with_host_id(host_id);
-        bool left = std::any_of(nodes.begin(), nodes.end(), [this] (const gms::inet_address& node) { return _gossiper.is_left(node); });
-        if (left) {
+        if (_gossiper.is_left(host_id)) {
             slogger.info("Skip to set host_id={} to be owned by node={}, because the node is removed from the cluster, nodes {} used to own the host_id", host_id, node, nodes);
             _normal_state_handled_on_boot.insert(addr);
             co_return;
@@ -7037,7 +7036,7 @@ future<> storage_service::wait_for_normal_state_handled_on_boot() {
         eps = _gossiper.get_endpoints();
         auto it = std::partition(eps.begin(), eps.end(),
                 [this] (const auto& node) {
-            return _gossiper.is_me(node) || !_gossiper.is_normal_ring_member(node) || is_normal_state_handled_on_boot(node.addr);
+            return _gossiper.is_me(node) || !_gossiper.is_normal_ring_member(node.host_id) || is_normal_state_handled_on_boot(node.addr);
         });
 
         if (it == eps.end()) {

@@ -1078,7 +1078,7 @@ future<int> repair_service::do_repair_start(sstring keyspace, std::unordered_map
         co_return id.id;
     }
 
-    if (!_gossiper.local().is_normal(utils::fb_utilities::get_broadcast_address())) {
+    if (!_gossiper.local().is_normal(_gossiper.local().my_host_id())) {
         throw std::runtime_error("Node is not in NORMAL status yet!");
     }
 
