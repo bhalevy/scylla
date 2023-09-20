@@ -739,21 +739,12 @@ future<> raft_group0::setup_group0(
 }
 
 future<> raft_group0::load_initial_raft_address_map() {
-    co_await _gossiper.for_each_endpoint_state_gently([this] (const gms::inet_address& ip_addr, const gms::endpoint_state& state) -> future<> {
-        auto* value = state.get_application_state_ptr(gms::application_state::HOST_ID);
-        if (value == nullptr) {
-            co_return;
-        }
-        auto server_id = utils::UUID(value->value());
-        if (server_id == utils::UUID{}) {
-            upgrade_log.error("empty Host ID for host {} ", ip_addr);
-            co_return;
-        }
+    co_await _gossiper.for_each_endpoint_state_gently([this] (const gms::endpoint_id& node, const gms::endpoint_state& state) -> future<> {
         // The failure detector needs the IPs on all shards. We
         // can safely overwrite existing entries since are loading
         // them directly from gossiper app state - which is most
         // recent.
-        co_await _raft_gr.address_map().add_or_update_entry(raft::server_id{server_id}, ip_addr);
+        co_await _raft_gr.address_map().add_or_update_entry(raft::server_id{node.host_id.uuid()}, node.addr);
     });
 }
 

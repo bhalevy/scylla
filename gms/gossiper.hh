@@ -513,15 +513,15 @@ public:
 
     // Calls func for each endpoint_state.
     // Called function must not yield
-    void for_each_endpoint_state(std::function<void(const inet_address&, const endpoint_state&)> func) const {
-        for_each_endpoint_state_until([func = std::move(func)] (const inet_address& node, const endpoint_state& eps) {
+    void for_each_endpoint_state(std::function<void(const endpoint_id&, const endpoint_state&)> func) const {
+        for_each_endpoint_state_until([func = std::move(func)] (const endpoint_id& node, const endpoint_state& eps) {
             func(node, eps);
             return stop_iteration::no;
         });
     }
 
-    future<> for_each_endpoint_state_gently(std::function<future<>(const inet_address&, const endpoint_state&)> func) const {
-        co_await for_each_endpoint_state_gently_until([func = std::move(func)] (const inet_address& node, const endpoint_state& eps) -> future<stop_iteration> {
+    future<> for_each_endpoint_state_gently(std::function<future<>(const endpoint_id&, const endpoint_state&)> func) const {
+        co_await for_each_endpoint_state_gently_until([func = std::move(func)] (const endpoint_id& node, const endpoint_state& eps) -> future<stop_iteration> {
             co_await func(node, eps);
             co_return stop_iteration::no;
         });
@@ -530,8 +530,8 @@ public:
     // Calls func for each endpoint_state until it returns stop_iteration::yes
     // Returns stop_iteration::yes iff `func` returns stop_iteration::yes.
     // Called function must not yield
-    stop_iteration for_each_endpoint_state_until(std::function<stop_iteration(const inet_address&, const endpoint_state&)>) const;
-    future<stop_iteration> for_each_endpoint_state_gently_until(std::function<future<stop_iteration>(const inet_address&, const endpoint_state&)>) const;
+    stop_iteration for_each_endpoint_state_until(std::function<stop_iteration(const endpoint_id&, const endpoint_state&)>) const;
+    future<stop_iteration> for_each_endpoint_state_gently_until(std::function<future<stop_iteration>(const endpoint_id&, const endpoint_state&)>) const;
 
     locator::host_id get_host_id(inet_address addr, throw_on_error = throw_on_error::yes) const;
 
@@ -539,6 +539,10 @@ public:
     // Throws a runtime_error if the host is not found,
     endpoint_id get_endpoint_id(inet_address addr) const {
         return endpoint_id(get_host_id(addr), addr);
+    }
+
+    endpoint_id get_endpoint_id(locator::host_id host_id) const {
+        return endpoint_id(host_id, host_id_address(host_id));
     }
 
     std::set<gms::inet_address> get_nodes_with_host_id(locator::host_id host_id) const;

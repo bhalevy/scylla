@@ -1601,8 +1601,13 @@ std::vector<inet_address> gossiper::get_endpoints() const {
     return boost::copy_range<std::vector<inet_address>>(_endpoint_state_map | boost::adaptors::map_keys);
 }
 
-stop_iteration gossiper::for_each_endpoint_state_until(std::function<stop_iteration(const inet_address&, const endpoint_state&)> func) const {
-    for (const auto& [node, eps] : _endpoint_state_map) {
+stop_iteration gossiper::for_each_endpoint_state_until(std::function<stop_iteration(const endpoint_id&, const endpoint_state&)> func) const {
+    for (const auto& [host_id, eps] : _endpoint_state_map_by_host_id) {
+        auto node = get_endpoint_id(host_id);
+        if (!node.addr) {
+            logger.warn("Could not find IP address for host_id={}");
+            continue;
+        }
         if (func(node, *eps) == stop_iteration::yes) {
             return stop_iteration::yes;
         }
@@ -1610,11 +1615,16 @@ stop_iteration gossiper::for_each_endpoint_state_until(std::function<stop_iterat
     return stop_iteration::no;
 }
 
-future<stop_iteration> gossiper::for_each_endpoint_state_gently_until(std::function<future<stop_iteration>(const inet_address&, const endpoint_state&)> func) const {
+future<stop_iteration> gossiper::for_each_endpoint_state_gently_until(std::function<future<stop_iteration>(const endpoint_id&, const endpoint_state&)> func) const {
     // Copy the endpoint state map to allow yielding.
     // This is relatively inexpensive since we it stores shared ptrs of the endpoint states
-    auto endpoint_state_map = _endpoint_state_map;
-    for (const auto& [node, eps] : endpoint_state_map) {
+    auto endpoint_state_map_by_host_id = _endpoint_state_map_by_host_id;
+    for (const auto& [host_id, eps] : endpoint_state_map_by_host_id) {
+        auto node = get_endpoint_id(host_id);
+        if (!node.addr) {
+            logger.warn("Could not find IP address for host_id={}");
+            continue;
+        }
         if ((co_await func(node, *eps)) == stop_iteration::yes) {
             co_return stop_iteration::yes;
         }

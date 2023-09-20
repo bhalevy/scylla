@@ -229,20 +229,20 @@ bool migration_manager::have_schema_agreement() {
     }
     auto our_version = _storage_proxy.get_db().local().get_version();
     bool match = false;
-    _gossiper.for_each_endpoint_state_until([&] (const gms::inet_address& endpoint, const gms::endpoint_state& eps) {
-        if (utils::fb_utilities::is_me(endpoint) || !_gossiper.is_alive(endpoint)) {
+    _gossiper.for_each_endpoint_state_until([&] (const gms::endpoint_id& node, const gms::endpoint_state& eps) {
+        if (_gossiper.is_me(node) || !_gossiper.is_alive(node)) {
             return stop_iteration::no;
         }
-        mlogger.debug("Checking schema state for {}.", endpoint);
+        mlogger.debug("Checking schema state for {}.", node);
         auto schema = eps.get_application_state_ptr(gms::application_state::SCHEMA);
         if (!schema) {
-            mlogger.debug("Schema state not yet available for {}.", endpoint);
+            mlogger.debug("Schema state not yet available for {}.", node);
             match = false;
             return stop_iteration::yes;
         }
         auto remote_version = table_schema_version(utils::UUID{schema->value()});
         if (our_version != remote_version) {
-            mlogger.debug("Schema mismatch for {} ({} != {}).", endpoint, our_version, remote_version);
+            mlogger.debug("Schema mismatch for {} ({} != {}).", node, our_version, remote_version);
             match = false;
             return stop_iteration::yes;
         } else {
