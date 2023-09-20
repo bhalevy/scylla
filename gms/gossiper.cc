@@ -580,6 +580,7 @@ future<> gossiper::send_gossip(gossip_digest_syn message, std::set<inet_address>
 future<> gossiper::do_apply_state_locally(gms::inet_address addr, endpoint_state remote_state, bool listener_notification) {
     // If state does not exist just add it. If it does then add it if the remote generation is greater.
     // If there is a generation tie, attempt to break it by heartbeat version.
+    auto remote_generation = remote_state.get_heart_beat_state().get_generation();
     locator::host_id remote_host_id = remote_state.get_host_id();
     locator::host_id local_host_id;
     auto node = remote_host_id ? endpoint_id(remote_host_id, addr) : get_endpoint_id(addr);
@@ -589,7 +590,6 @@ future<> gossiper::do_apply_state_locally(gms::inet_address addr, endpoint_state
         local_host_id = es->get_host_id();
         endpoint_state local_state = *es;
         auto local_generation = local_state.get_heart_beat_state().get_generation();
-        auto remote_generation = remote_state.get_heart_beat_state().get_generation();
 
         if (!local_host_id) {
             on_internal_error_noexcept(logger, fmt::format("Node {} has null HOST_ID application state", node));
@@ -597,6 +597,7 @@ future<> gossiper::do_apply_state_locally(gms::inet_address addr, endpoint_state
                 logger.warn("Node {} sent null host_id in remote state", addr);
             } else {
                 logger.info("Node {} host_id is {}", addr, remote_host_id);
+                co_await update_address_map(remote_host_id, addr, remote_generation);
             }
         } else if (local_host_id != node.host_id) {
             on_internal_error(logger, fmt::format("Node {} has mismatched HOST_ID application state: {}", node, local_host_id));
@@ -658,6 +659,7 @@ future<> gossiper::do_apply_state_locally(gms::inet_address addr, endpoint_state
     } else {
         if (remote_host_id) {
             logger.info("Node {} host_id is {}", addr, remote_host_id);
+            co_await update_address_map(remote_host_id, addr, remote_generation);
         } else {
             logger.warn("Node {} sent null host_id in remote state", addr);
         }
