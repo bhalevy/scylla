@@ -472,9 +472,14 @@ async def test_tablet_missing_data_repair(manager: ManagerClient):
         logger.info("Checking table")
         query = SimpleStatement("SELECT * FROM test.test;", consistency_level=ConsistencyLevel.ONE)
         rows = await cql.run_async(query)
-        assert len(rows) == len(keys)
+        d = dict()
         for r in rows:
+            assert r.pk not in d, f"pk={r.pk} selected more than once"
             assert r.c == r.pk
+            d[r.pk] = r.c
+        for pk in keys:
+            assert pk in d, f"pk={pk} not found in result"
+        assert len(rows) == len(keys)
 
     for idx in range(0,3):
         s = servers[idx].server_id
