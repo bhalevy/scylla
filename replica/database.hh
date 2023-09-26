@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include "dht/token.hh"
 #include "locator/abstract_replication_strategy.hh"
 #include "index/secondary_index_manager.hh"
 #include <seastar/core/abort_source.hh>
@@ -598,6 +599,11 @@ private:
     // Safely iterate through compaction groups, while performing async operations on them.
     future<> parallel_foreach_compaction_group(std::function<future<>(compaction_group&)> action);
 
+    // Iterate serially and safely through compaction groups, while performing sync operations on them.
+    stop_iteration foreach_compaction_group_until(std::function<stop_iteration(compaction_group&)> action, dht::token start_token = dht::minimum_token(), dht::token end_token = dht::maximum_token());
+    // Iterate serially and safely through compaction groups, while performing async operations on them.
+    future<stop_iteration> foreach_compaction_group_gently_until(std::function<future<stop_iteration>(compaction_group&)> action, dht::token start_token = dht::minimum_token(), dht::token end_token = dht::maximum_token());
+
     bool cache_enabled() const {
         return _config.enable_cache && _schema->caching_options().enabled();
     }
@@ -623,6 +629,9 @@ private:
     mutation_source_opt _virtual_reader;
     std::optional<noncopyable_function<future<>(const frozen_mutation&)>> _virtual_writer;
 
+    friend class table_sstable_set;
+    friend class table_incremental_selector;
+
     // Creates a mutation reader which covers given sstables.
     // Caller needs to ensure that column_family remains live (FIXME: relax this).
     // The 'range' parameter must be live as long as the reader is used.
@@ -638,9 +647,7 @@ private:
                                         const sstables::sstable_predicate& = sstables::default_sstable_predicate()) const;
 
     lw_shared_ptr<sstables::sstable_set> make_maintenance_sstable_set() const;
-    lw_shared_ptr<sstables::sstable_set> make_compound_sstable_set();
-    // Compound sstable set must be refreshed whenever any of its managed sets are changed
-    void refresh_compound_sstable_set();
+    lw_shared_ptr<sstables::sstable_set> make_table_sstable_set();
 
     snapshot_source sstables_as_snapshot_source();
     partition_presence_checker make_partition_presence_checker(lw_shared_ptr<sstables::sstable_set>);
@@ -1213,6 +1220,7 @@ public:
 
     friend class compaction_group;
     friend class table_sstables_adder;
+    friend class table_sstable_set;
 };
 
 using user_types_metadata = data_dictionary::user_types_metadata;
