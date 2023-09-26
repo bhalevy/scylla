@@ -598,6 +598,11 @@ private:
     // Safely iterate through compaction groups, while performing async operations on them.
     future<> parallel_foreach_compaction_group(std::function<future<>(compaction_group&)> action);
 
+    // Iterate serially and safely through compaction groups, while performing sync operations on them.
+    stop_iteration foreach_compaction_group_until(const dht::partition_range& pr, std::function<stop_iteration(compaction_group&)> action);
+    // Iterate serially and safely through compaction groups, while performing async operations on them.
+    future<stop_iteration> foreach_compaction_group_gently_until(const dht::partition_range& pr, std::function<future<stop_iteration>(compaction_group&)> action);
+
     bool cache_enabled() const {
         return _config.enable_cache && _schema->caching_options().enabled();
     }
@@ -641,9 +646,7 @@ private:
                                         const sstables::sstable_predicate& = sstables::default_sstable_predicate()) const;
 
     lw_shared_ptr<sstables::sstable_set> make_maintenance_sstable_set() const;
-    lw_shared_ptr<sstables::sstable_set> make_compound_sstable_set();
-    // Compound sstable set must be refreshed whenever any of its managed sets are changed
-    void refresh_compound_sstable_set();
+    lw_shared_ptr<sstables::sstable_set> make_table_sstable_set();
 
     snapshot_source sstables_as_snapshot_source();
     partition_presence_checker make_partition_presence_checker(lw_shared_ptr<sstables::sstable_set>);
@@ -1185,6 +1188,8 @@ public:
 
     friend class distributed_loader;
     friend class table_populator;
+    friend class table_sstable_set;
+    friend class table_incremental_selector;
 
 private:
     timer<> _off_strategy_trigger;
