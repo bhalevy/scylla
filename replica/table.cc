@@ -61,7 +61,7 @@
 
 namespace replica {
 
-static logging::logger tlogger("table");
+logging::logger tlogger("table");
 static seastar::metrics::label column_family_label("cf");
 static seastar::metrics::label keyspace_label("ks");
 
@@ -122,26 +122,11 @@ lw_shared_ptr<sstables::sstable_set> compaction_group::make_compound_sstable_set
     return make_lw_shared(sstables::make_compound_sstable_set(_t.schema(), { _main_sstables, _maintenance_sstables }));
 }
 
-lw_shared_ptr<sstables::sstable_set> table::make_compound_sstable_set() {
-    if (auto cg = single_compaction_group_if_available()) {
-        return cg->make_compound_sstable_set();
-    }
-    // TODO: switch to a specialized set for groups which assumes disjointness across compound sets and incrementally read from them.
-    // FIXME: avoid recreation of compound_set for groups which had no change. usually, only one group will be changed at a time.
-    auto sstable_sets = boost::copy_range<std::vector<lw_shared_ptr<sstables::sstable_set>>>(compaction_groups()
-        | boost::adaptors::transformed(std::mem_fn(&compaction_group::make_compound_sstable_set)));
-    return make_lw_shared(sstables::make_compound_sstable_set(schema(), std::move(sstable_sets)));
-}
-
 lw_shared_ptr<sstables::sstable_set> table::make_maintenance_sstable_set() const {
     // Level metadata is not used because (level 0) maintenance sstables are disjoint and must be stored for efficient retrieval in the partitioned set
     bool use_level_metadata = false;
     return make_lw_shared<sstables::sstable_set>(
             sstables::make_partitioned_sstable_set(_schema, use_level_metadata));
-}
-
-void table::refresh_compound_sstable_set() {
-    _sstables = make_compound_sstable_set();
 }
 
 // Exposed for testing, not performance critical.
@@ -519,12 +504,10 @@ void compaction_group::set_maintenance_sstables(lw_shared_ptr<sstables::sstable_
 
 void table::add_sstable(compaction_group& cg, sstables::shared_sstable sstable) {
     cg.add_sstable(std::move(sstable));
-    refresh_compound_sstable_set();
 }
 
 void table::add_maintenance_sstable(compaction_group& cg, sstables::shared_sstable sst) {
     cg.add_maintenance_sstable(std::move(sst));
-    refresh_compound_sstable_set();
 }
 
 void table::do_update_off_strategy_trigger() {
@@ -822,6 +805,39 @@ future<> table::parallel_foreach_compaction_group(std::function<future<>(compact
     co_await coroutine::parallel_for_each(compaction_groups(), [&] (compaction_group& cg) {
         return action(cg);
     });
+}
+
+stop_iteration table::foreach_storage_group_until(const dht::token_range& tr, std::function<stop_iteration(storage_group&)> action) {
+    size_t candidate_start = tr.start() ? storage_group_id_for_token(tr.start()->value()) : size_t(0);
+    size_t candidate_end = tr.end() ? storage_group_id_for_token(tr.end()->value()) : (_storage_groups.size() - 1);
+
+    while (candidate_start <= candidate_end) {
+        auto* sg = _sg_manager->storage_group_at(_storage_groups, candidate_start++);
+        if (!sg) {
+            continue;
+        }
+        if (action(*sg) == stop_iteration::yes) {
+            return stop_iteration::yes;
+        }
+    }
+    return stop_iteration::no;
+}
+
+future<stop_iteration> table::foreach_storage_group_gently_until(const dht::token_range& tr, std::function<future<stop_iteration>(storage_group&)> action) {
+    size_t candidate_start = tr.start() ? storage_group_id_for_token(tr.start()->value()) : size_t(0);
+    size_t candidate_end = tr.end() ? storage_group_id_for_token(tr.end()->value()) : (_storage_groups.size() - 1);
+
+    auto lock = co_await _storage_groups_lock.hold_read_lock();
+    while (candidate_start <= candidate_end) {
+        auto* sg = _sg_manager->storage_group_at(_storage_groups, candidate_start++);
+        if (!sg) {
+            continue;
+        }
+        if (co_await action(*sg) == stop_iteration::yes) {
+            co_return stop_iteration::yes;
+        }
+    }
+    co_return stop_iteration::no;
 }
 
 future<utils::chunked_vector<sstables::sstable_files_snapshot>> table::take_storage_snapshot(dht::token_range tr) {
@@ -1239,7 +1255,6 @@ table::stop() {
         for (compaction_group& cg : compaction_groups()) {
             cg.clear_sstables();
         }
-        _sstables = make_compound_sstable_set();
     }));
     _cache.refresh_snapshot();
 }
@@ -1424,8 +1439,6 @@ compaction_group::update_sstable_lists_on_off_strategy_completion(sstables::comp
         virtual void execute() override {
             _cg.set_main_sstables(std::move(_new_main_list));
             _cg.set_maintenance_sstables(std::move(_new_maintenance_list));
-            // FIXME: the following is not exception safe
-            _t.refresh_compound_sstable_set();
             // Input sstables aren't not removed from backlog tracker because they come from the maintenance set.
             _cg.backlog_tracker_adjust_charges({}, _new_main);
         }
@@ -1520,8 +1533,6 @@ compaction_group::update_main_sstable_list_on_compaction_completion(sstables::co
             for (auto&& [cg, d] : _cg_desc) {
                 cg->set_main_sstables(std::move(d.new_sstables));
             }
-            // FIXME: the following is not exception safe
-            _t.refresh_compound_sstable_set();
             for (auto& [cg, d] : _cg_desc) {
                 cg->backlog_tracker_adjust_charges(d.desc.old_sstables, d.desc.new_sstables);
             }
@@ -1710,7 +1721,6 @@ void table::set_compaction_strategy(sstables::compaction_strategy_type strategy)
     for (auto& updater : cg_sstable_set_updaters) {
         updater.execute();
     }
-    refresh_compound_sstable_set();
 }
 
 size_t table::sstables_count() const {
@@ -1859,7 +1869,7 @@ table::table(schema_ptr schema, config config, lw_shared_ptr<const storage_optio
     , _compaction_strategy(make_compaction_strategy(_schema->compaction_strategy(), _schema->compaction_strategy_options()))
     , _sg_manager(make_storage_group_manager())
     , _storage_groups(_sg_manager->make_storage_groups(_compaction_groups))
-    , _sstables(make_compound_sstable_set())
+    , _sstables(make_table_sstable_set())
     , _cache(_schema, sstables_as_snapshot_source(), row_cache_tracker, is_continuous::yes)
     , _commitlog(nullptr)
     , _readonly(true)
@@ -2237,7 +2247,6 @@ future<db::replay_position> table::discard_sstables(db_clock::time_point truncat
             cg.set_main_sstables(std::move(pruned));
             cg.set_maintenance_sstables(std::move(maintenance_pruned));
         }
-        refresh_compound_sstable_set();
         tlogger.debug("cleaning out row cache");
     }));
     rebuild_statistics();
