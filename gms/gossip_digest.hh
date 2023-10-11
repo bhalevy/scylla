@@ -15,6 +15,7 @@
 #include "gms/inet_address.hh"
 #include "gms/generation-number.hh"
 #include "gms/version_generator.hh"
+#include "locator/host_id.hh"
 
 namespace gms {
 
@@ -28,17 +29,24 @@ private:
     inet_address _endpoint;
     generation_type _generation;
     version_type _max_version;
+    // Optional host_id of _endpoint
+    locator::host_id _host_id;
 public:
     gossip_digest() = default;
 
-    explicit gossip_digest(inet_address ep, generation_type gen = {}, version_type version = {}) noexcept
+    explicit gossip_digest(inet_address ep, generation_type gen, version_type version, locator::host_id host_id) noexcept
         : _endpoint(ep)
         , _generation(gen)
-        , _max_version(version) {
-    }
+        , _max_version(version)
+        , _host_id(std::move(host_id))
+    {}
 
     inet_address get_endpoint() const {
         return _endpoint;
+    }
+
+    void set_endpoint(inet_address ep) {
+        _endpoint = ep;
     }
 
     generation_type get_generation() const {
@@ -49,6 +57,15 @@ public:
         return _max_version;
     }
 
+    // note: host_id may be null when digest is sent by peers running old versions
+    locator::host_id get_host_id() const {
+        return _host_id;
+    }
+
+    void set_host_id(locator::host_id host_id) {
+        _host_id = host_id;
+    }
+
     friend bool operator<(const gossip_digest& x, const gossip_digest& y) {
         if (x._generation != y._generation) {
             return x._generation < y._generation;
@@ -57,7 +74,7 @@ public:
     }
 
     friend inline std::ostream& operator<<(std::ostream& os, const gossip_digest& d) {
-        fmt::print(os, "{}:{}:{}", d._endpoint, d._generation, d._max_version);
+        fmt::print(os, "{}/{}:{}:{}", d._host_id, d._endpoint, d._generation, d._max_version);
         return os;
     }
 }; // class gossip_digest

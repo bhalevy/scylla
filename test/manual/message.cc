@@ -57,17 +57,23 @@ public:
 
             auto from = netw::messaging_service::get_source(cinfo);
             auto ep1 = inet_address("1.1.1.1");
+            auto id1 = locator::host_id(utils::UUID("6e289c86-f078-4ce7-9f54-2e82e24c31eb"));
             auto ep2 = inet_address("2.2.2.2");
+            auto id2 = locator::host_id(utils::UUID("32a9dc88-8841-45f7-afb9-5ef01bcb5f6d"));
             gms::generation_type gen(800);
             gms::version_type ver(900);
             utils::chunked_vector<gms::gossip_digest> digests;
-            digests.push_back(gms::gossip_digest(ep1, gen++, ver++));
-            digests.push_back(gms::gossip_digest(ep2, gen++, ver++));
+            digests.push_back(gms::gossip_digest(ep1, gen++, ver++, id1));
+            digests.push_back(gms::gossip_digest(ep2, gen++, ver++, id2));
             std::unordered_map<inet_address, endpoint_state> eps{
                 {ep1, endpoint_state()},
                 {ep2, endpoint_state()},
             };
-            gms::gossip_digest_ack ack(std::move(digests), std::move(eps));
+            std::unordered_map<inet_address, locator::host_id> address_map{
+                {ep1, id1},
+                {ep2, id2},
+            };
+            gms::gossip_digest_ack ack(std::move(digests), std::move(eps), std::move(address_map));
             // FIXME: discarded future.
             (void)ms.send_gossip_digest_ack(from, std::move(ack)).handle_exception([] (auto ep) {
                 fmt::print("Fail to send ack : {}", ep);
@@ -80,10 +86,14 @@ public:
             auto from = netw::messaging_service::get_source(cinfo);
             // Prepare gossip_digest_ack2 message
             auto ep1 = inet_address("3.3.3.3");
+            auto id1 = locator::host_id(utils::UUID("9379ee18-ed48-43e5-a629-f59de9b2bfdd"));
             std::unordered_map<inet_address, endpoint_state> eps{
                 {ep1, endpoint_state()},
             };
-            gms::gossip_digest_ack2 ack2(std::move(eps));
+            std::unordered_map<inet_address, locator::host_id> address_map{
+                {ep1, id1},
+            };
+            gms::gossip_digest_ack2 ack2(std::move(eps), std::move(address_map));
             // FIXME: discarded future.
             (void)ms.send_gossip_digest_ack2(from, std::move(ack2)).handle_exception([] (auto ep) {
                 fmt::print("Fail to send ack2 : {}", ep);
@@ -116,12 +126,14 @@ public:
         // Prepare gossip_digest_syn message
         auto id = get_msg_addr();
         auto ep1 = inet_address("1.1.1.1");
+        auto id1 = locator::host_id(utils::UUID("6e289c86-f078-4ce7-9f54-2e82e24c31eb"));
         auto ep2 = inet_address("2.2.2.2");
+        auto id2 = locator::host_id(utils::UUID("32a9dc88-8841-45f7-afb9-5ef01bcb5f6d"));
         gms::generation_type gen(100);
         gms::version_type ver(900);
         utils::chunked_vector<gms::gossip_digest> digests;
-        digests.push_back(gms::gossip_digest(ep1, gen++, ver++));
-        digests.push_back(gms::gossip_digest(ep2, gen++, ver++));
+        digests.push_back(gms::gossip_digest(ep1, gen++, ver++, id1));
+        digests.push_back(gms::gossip_digest(ep2, gen++, ver++, id2));
         gms::gossip_digest_syn syn("my_cluster", "my_partition", digests, utils::null_uuid());
         return ms.send_gossip_digest_syn(id, std::move(syn)).then([this] {
             return digest_test_done.get_future();

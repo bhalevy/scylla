@@ -125,6 +125,15 @@ gossiper::gossiper(abort_source& as, const locator::shared_token_metadata& stm, 
     });
 }
 
+locator::host_id gossiper::resolve_host_id(gossip_digest& g_digest) const noexcept {
+    auto host_id = g_digest.get_host_id();
+    if (!host_id) {
+        host_id = get_host_id(g_digest.get_endpoint(), throw_on_error::no);
+        g_digest.set_host_id(host_id);
+    }
+    return host_id;
+}
+
 /*
  * First construct a map whose key is the endpoint in the GossipDigest and the value is the
  * GossipDigest itself. Then build a list of version differences i.e difference between the
@@ -132,11 +141,15 @@ gossiper::gossiper(abort_source& as, const locator::shared_token_metadata& stm, 
  * Sort this list. Now loop through the sorted list and retrieve the GossipDigest corresponding
  * to the endpoint from the map that was initially constructed.
 */
-void gossiper::do_sort(utils::chunked_vector<gossip_digest>& g_digest_list) const {
+std::unordered_map<inet_address, locator::host_id> gossiper::do_sort(utils::chunked_vector<gossip_digest>& g_digest_list) const {
     /* Construct a map of endpoint to GossipDigest. */
     std::map<inet_address, gossip_digest> ep_to_digest_map;
+    std::unordered_map<inet_address, locator::host_id> ep_address_map;
     for (auto g_digest : g_digest_list) {
-        ep_to_digest_map.emplace(g_digest.get_endpoint(), g_digest);
+        auto ep = g_digest.get_endpoint();
+        auto host_id = resolve_host_id(g_digest);
+        ep_to_digest_map.emplace(ep, g_digest);
+        ep_address_map.emplace(ep, host_id);
     }
 
     /*
@@ -144,12 +157,15 @@ void gossiper::do_sort(utils::chunked_vector<gossip_digest>& g_digest_list) cons
      * of the local EndpointState and the version found in the GossipDigest.
     */
     utils::chunked_vector<gossip_digest> diff_digests;
+    std::unordered_map<inet_address, locator::host_id> diff_address_map;
     for (auto g_digest : g_digest_list) {
         auto ep = g_digest.get_endpoint();
-        auto ep_state = this->get_endpoint_state_ptr(ep);
+        auto host_id = ep_address_map[ep];
+        auto ep_state = host_id ? get_endpoint_state_ptr(host_id) : get_endpoint_state_ptr(ep);
         version_type version = ep_state ? this->get_max_endpoint_state_version(*ep_state) : version_type();
         int32_t diff_version = ::abs(version - g_digest.get_max_version());
-        diff_digests.emplace_back(gossip_digest(ep, g_digest.get_generation(), version_type(diff_version)));
+        diff_digests.emplace_back(gossip_digest(g_digest.get_endpoint(), g_digest.get_generation(), version_type(diff_version), host_id));
+        diff_address_map.emplace(ep, host_id);
     }
 
     g_digest_list.clear();
@@ -162,6 +178,8 @@ void gossiper::do_sort(utils::chunked_vector<gossip_digest>& g_digest_list) cons
     for (int i = size - 1; i >= 0; --i) {
         g_digest_list.emplace_back(ep_to_digest_map[diff_digests[i].get_endpoint()]);
     }
+
+    return diff_address_map;
 }
 
 // Depends on
@@ -240,11 +258,12 @@ future<> gossiper::handle_syn_msg(endpoint_id from, gossip_digest_syn syn_msg) {
 future<> gossiper::do_send_ack_msg(msg_addr from, gossip_digest_syn syn_msg) {
     return futurize_invoke([this, from, syn_msg = std::move(syn_msg)] () mutable {
         auto g_digest_list = syn_msg.get_gossip_digests();
-        do_sort(g_digest_list);
+        auto g_digest_address_map = do_sort(g_digest_list);
         utils::chunked_vector<gossip_digest> delta_gossip_digest_list;
         std::unordered_map<inet_address, endpoint_state> delta_ep_state_map;
-        this->examine_gossiper(g_digest_list, delta_gossip_digest_list, delta_ep_state_map);
-        gms::gossip_digest_ack ack_msg(std::move(delta_gossip_digest_list), std::move(delta_ep_state_map));
+        std::unordered_map<inet_address, locator::host_id> delta_ep_address_map;
+        this->examine_gossiper(g_digest_list, delta_gossip_digest_list, delta_ep_state_map, delta_ep_address_map);
+        gms::gossip_digest_ack ack_msg(std::move(delta_gossip_digest_list), std::move(delta_ep_state_map), std::move(delta_ep_address_map));
         logger.debug("Calling do_send_ack_msg to node {}, syn_msg={}, ack_msg={}", from, syn_msg, ack_msg);
         return _messaging.send_gossip_digest_ack(from, std::move(ack_msg));
     });
@@ -357,9 +376,12 @@ future<> gossiper::do_send_ack2_msg(msg_addr from, utils::chunked_vector<gossip_
     return futurize_invoke([this, from, ack_msg_digest = std::move(ack_msg_digest)] () mutable {
         /* Get the state required to send to this gossipee - construct GossipDigestAck2Message */
         std::unordered_map<inet_address, endpoint_state> delta_ep_state_map;
+        std::unordered_map<inet_address, locator::host_id> delta_ep_address_map;
         for (auto g_digest : ack_msg_digest) {
-            auto node = get_endpoint_id(g_digest.get_endpoint());
-            const auto es = get_endpoint_state_ptr(node);
+            auto ep = g_digest.get_endpoint();
+            auto host_id = resolve_host_id(g_digest);
+            auto node = endpoint_id(host_id, ep);
+            const auto es = host_id ? get_endpoint_state_ptr(host_id) : get_endpoint_state_ptr(ep);
             if (!es || es->get_heart_beat_state().get_generation() < g_digest.get_generation()) {
                 continue;
             }
@@ -373,9 +395,10 @@ future<> gossiper::do_send_ack2_msg(msg_addr from, utils::chunked_vector<gossip_
             auto local_ep_state_ptr = get_state_for_version_bigger_than(node, *es, version);
             if (local_ep_state_ptr) {
                 delta_ep_state_map.emplace(node.addr, *local_ep_state_ptr);
+                delta_ep_address_map.emplace(node.addr, node.host_id);
             }
         }
-        gms::gossip_digest_ack2 ack2_msg(std::move(delta_ep_state_map));
+        gms::gossip_digest_ack2 ack2_msg(std::move(delta_ep_state_map), std::move(delta_ep_address_map));
         logger.debug("Calling do_send_ack2_msg to node {}, ack_msg_digest={}, ack2_msg={}", from, ack_msg_digest, ack2_msg);
         return _messaging.send_gossip_digest_ack2(from, std::move(ack2_msg));
     });
@@ -1285,20 +1308,18 @@ void gossiper::make_random_gossip_digest(utils::chunked_vector<gossip_digest>& g
     generation_type generation;
     version_type max_version;
 
-    // local epstate will be part of _endpoint_state_map
-    utils::chunked_vector<inet_address> endpoints;
-    for (auto&& x : _endpoint_state_map) {
-        endpoints.push_back(x.first);
-    }
-    std::shuffle(endpoints.begin(), endpoints.end(), _random_engine);
-    for (auto& endpoint : endpoints) {
-        auto es = get_endpoint_state_ptr(endpoint);
-        if (es) {
-            auto& eps = *es;
-            generation = eps.get_heart_beat_state().get_generation();
-            max_version = get_max_endpoint_state_version(eps);
-        }
-        g_digests.push_back(gossip_digest(endpoint, generation, max_version));
+    struct node_endpoint_state {
+        locator::host_id host_id;
+        endpoint_state_ptr eps;
+    };
+    auto states = boost::copy_range<std::vector<node_endpoint_state>>(_endpoint_state_map_by_host_id | boost::adaptors::transformed([] (const auto& x) {
+        return node_endpoint_state(x.first, x.second);
+    }));
+    std::shuffle(states.begin(), states.end(), _random_engine);
+    for (const auto& st : states) {
+        generation = st.eps->get_heart_beat_state().get_generation();
+        max_version = get_max_endpoint_state_version(*st.eps);
+        g_digests.push_back(gossip_digest(host_id_address(st.host_id), generation, max_version, st.host_id));
     }
 }
 
@@ -2053,28 +2074,32 @@ future<> gossiper::do_on_dead_notifications(endpoint_id node, endpoint_state_ptr
 void gossiper::request_all(gossip_digest& g_digest,
     utils::chunked_vector<gossip_digest>& delta_gossip_digest_list, generation_type remote_generation) const {
     /* We are here since we have no data for this endpoint locally so request everthing. */
-    delta_gossip_digest_list.emplace_back(g_digest.get_endpoint(), remote_generation);
-    logger.trace("request_all for {}", g_digest.get_endpoint());
+    delta_gossip_digest_list.emplace_back(g_digest.get_endpoint(), remote_generation, version_type{}, resolve_host_id(g_digest));
+    logger.trace("request_all for {}/{}", g_digest.get_host_id(), g_digest.get_endpoint());
 }
 
 void gossiper::send_all(gossip_digest& g_digest,
     std::unordered_map<inet_address, endpoint_state>& delta_ep_state_map,
+    std::unordered_map<inet_address, locator::host_id>& delta_ep_address_map,
     version_type max_remote_version) const {
     auto ep = g_digest.get_endpoint();
-    logger.trace("send_all(): ep={}, version > {}", ep, max_remote_version);
-    auto eps = get_endpoint_state_ptr(ep);
+    auto host_id = resolve_host_id(g_digest);
+    logger.trace("send_all(): node={}/{}, version > {}", host_id, ep, max_remote_version);
+    auto eps = host_id ? get_endpoint_state_ptr(host_id) : get_endpoint_state_ptr(ep);
     if (eps) {
-        auto node = endpoint_id(eps->get_host_id(), ep);
+        auto node = endpoint_id(host_id, ep);
         auto local_ep_state_ptr = get_state_for_version_bigger_than(node, *eps, max_remote_version);
         if (local_ep_state_ptr) {
             delta_ep_state_map[ep] = std::move(*local_ep_state_ptr);
+            delta_ep_address_map[ep] = host_id;
         }
     }
 }
 
 void gossiper::examine_gossiper(utils::chunked_vector<gossip_digest>& g_digest_list,
     utils::chunked_vector<gossip_digest>& delta_gossip_digest_list,
-    std::unordered_map<inet_address, endpoint_state>& delta_ep_state_map) const {
+    std::unordered_map<inet_address, endpoint_state>& delta_ep_state_map,
+    std::unordered_map<inet_address, locator::host_id>& delta_ep_address_map) const {
     if (g_digest_list.size() == 0) {
         /* we've been sent a *completely* empty syn, which should normally
              * never happen since an endpoint will at least send a syn with
@@ -2082,16 +2107,17 @@ void gossiper::examine_gossiper(utils::chunked_vector<gossip_digest>& g_digest_l
              * gossip, and we should reply with everything we know.
              */
         logger.debug("Shadow request received, adding all states");
-        for (auto& entry : _endpoint_state_map) {
-            g_digest_list.emplace_back(entry.first);
+        for (const auto& [host_id, eps] : _endpoint_state_map_by_host_id) {
+            g_digest_list.emplace_back(host_id_address(host_id), generation_type{}, version_type{}, host_id);
         }
     }
     for (gossip_digest& g_digest : g_digest_list) {
         auto remote_generation = g_digest.get_generation();
         auto max_remote_version = g_digest.get_max_version();
         /* Get state associated with the end point in digest */
-        auto&& ep = g_digest.get_endpoint();
-        auto es = get_endpoint_state_ptr(ep);
+        auto ep = g_digest.get_endpoint();
+        auto host_id = resolve_host_id(g_digest);
+        auto es = host_id ? get_endpoint_state_ptr(host_id) : get_endpoint_state_ptr(ep);
         /* Here we need to fire a GossipDigestAckMessage. If we have some
              * data associated with this endpoint locally then we follow the
              * "if" path of the logic. If we have absolutely nothing for this
@@ -2113,7 +2139,7 @@ void gossiper::examine_gossiper(utils::chunked_vector<gossip_digest>& g_digest_l
                 request_all(g_digest, delta_gossip_digest_list, remote_generation);
             } else if (remote_generation < local_generation) {
                 /* send all data with generation = localgeneration and version > 0 */
-                send_all(g_digest, delta_ep_state_map, version_type());
+                send_all(g_digest, delta_ep_state_map, delta_ep_address_map, version_type());
             } else if (remote_generation == local_generation) {
                 /*
                  * If the max remote version is greater then we request the
@@ -2127,10 +2153,10 @@ void gossiper::examine_gossiper(utils::chunked_vector<gossip_digest>& g_digest_l
                  */
                 if (max_remote_version > max_local_version) {
                     logger.trace("examine_gossiper(): requesting version > {} from {}", max_local_version, g_digest.get_endpoint());
-                    delta_gossip_digest_list.emplace_back(g_digest.get_endpoint(), remote_generation, max_local_version);
+                    delta_gossip_digest_list.emplace_back(g_digest.get_endpoint(), remote_generation, max_local_version, g_digest.get_host_id());
                 } else if (max_remote_version < max_local_version) {
                     /* send all data with generation = localgeneration and version > max_remote_version */
-                    send_all(g_digest, delta_ep_state_map, max_remote_version);
+                    send_all(g_digest, delta_ep_state_map, delta_ep_address_map, max_remote_version);
                 }
             }
         } else {

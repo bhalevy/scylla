@@ -50,6 +50,7 @@ class gossip_digest {
     gms::inet_address get_endpoint();
     gms::generation_type get_generation();
     gms::version_type get_max_version();
+    locator::host_id get_host_id() [[version 5.4]];
 };
 
 class gossip_digest_syn {
@@ -62,10 +63,12 @@ class gossip_digest_syn {
 class gossip_digest_ack {
     utils::chunked_vector<gms::gossip_digest> get_gossip_digest_list();
     std::unordered_map<gms::inet_address, gms::endpoint_state> get_endpoint_state_map();
+    std::unordered_map<gms::inet_address, locator::host_id> get_address_map() [[version 5.4]];
 };
 
 class gossip_digest_ack2 {
     std::unordered_map<gms::inet_address, gms::endpoint_state> get_endpoint_state_map();
+    std::unordered_map<gms::inet_address, locator::host_id> get_address_map() [[version 5.4]];
 };
 
 struct gossip_get_endpoint_states_request {

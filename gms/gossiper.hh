@@ -121,7 +121,10 @@ private:
         return get_msg_addr(node.addr);
     }
 
-    void do_sort(utils::chunked_vector<gossip_digest>& g_digest_list) const;
+    // Returns a sorted gossip_digest list in the input/output g_digest_list param
+    // and a respective inet_address -> host_id address_map, to be sent
+    // in corresponding messages.
+    std::unordered_map<inet_address, locator::host_id> do_sort(utils::chunked_vector<gossip_digest>& g_digest_list) const;
     timer<lowres_clock> _scheduled_gossip_task;
     bool _enabled = false;
     semaphore _callback_running{1};
@@ -240,6 +243,12 @@ private:
     // Update the host_id <-> address mapping on all shards
     // host_id and addr must be valid
     future<> update_address_map(const locator::host_id& host_id, inet_address addr, gms::generation_type generation_number = {}) noexcept;
+
+    // Get the host_id based on the gossip_digest.
+    // Use either the host_id provided in the digest, or if not present
+    // (e.g. when got from a peer running an old version)
+    // use the local reverse mapping.
+    locator::host_id resolve_host_id(gossip_digest& g_digest) const noexcept;
 
 public:
     const std::vector<sstring> DEAD_STATES = {
@@ -646,7 +655,10 @@ private:
     void request_all(gossip_digest& g_digest, utils::chunked_vector<gossip_digest>& delta_gossip_digest_list, generation_type remote_generation) const;
 
     /* Send all the data with version greater than max_remote_version */
-    void send_all(gossip_digest& g_digest, std::unordered_map<inet_address, endpoint_state>& delta_ep_state_map, version_type max_remote_version) const;
+    void send_all(gossip_digest& g_digest,
+            std::unordered_map<inet_address, endpoint_state>& delta_ep_state_map,
+            std::unordered_map<inet_address, locator::host_id>& delta_ep_address_map,
+            version_type max_remote_version) const;
 
 public:
     /*
@@ -655,7 +667,8 @@ public:
     */
     void examine_gossiper(utils::chunked_vector<gossip_digest>& g_digest_list,
                          utils::chunked_vector<gossip_digest>& delta_gossip_digest_list,
-                         std::unordered_map<inet_address, endpoint_state>& delta_ep_state_map) const;
+                         std::unordered_map<inet_address, endpoint_state>& delta_ep_state_map,
+                         std::unordered_map<inet_address, locator::host_id>& delta_ep_address_map) const;
 
 public:
     /**

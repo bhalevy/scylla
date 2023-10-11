@@ -20,8 +20,12 @@ std::ostream& operator<<(std::ostream& os, const gossip_digest_ack& ack) {
     }
     os << "} ";
     os << "endpoint_state:{";
-    for (auto& d : ack._map) {
-        os << "[" << d.first << "->" << d.second << "]";
+    for (const auto& [addr, ep] : ack._map) {
+        os << "[";
+        if (auto it = ack._address_map.find(addr); it != ack._address_map.end()) {
+            os << it->second << '/';
+        }
+        os << addr << "->" << ep << "]";
     }
     return os << "}";
 }

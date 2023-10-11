@@ -24,13 +24,16 @@ class gossip_digest_ack2 {
 private:
     using inet_address = gms::inet_address;
     std::unordered_map<inet_address, endpoint_state> _map;
+    // Optional mapping of all inet_address -> host_id in _map
+    std::unordered_map<inet_address, locator::host_id> _address_map;
 public:
     gossip_digest_ack2() {
     }
 
-    gossip_digest_ack2(std::unordered_map<inet_address, endpoint_state> m)
-        : _map(std::move(m)) {
-    }
+    gossip_digest_ack2(std::unordered_map<inet_address, endpoint_state> m, std::unordered_map<inet_address, locator::host_id> address_map)
+        : _map(std::move(m))
+        , _address_map(std::move(address_map))
+    {}
 
     std::unordered_map<inet_address, endpoint_state>& get_endpoint_state_map() {
         return _map;
@@ -38,6 +41,10 @@ public:
 
     const std::unordered_map<inet_address, endpoint_state>& get_endpoint_state_map() const {
         return _map;
+    }
+
+    const std::unordered_map<inet_address, locator::host_id>& get_address_map() const {
+        return _address_map;
     }
 
     friend std::ostream& operator<<(std::ostream& os, const gossip_digest_ack2& ack2);
