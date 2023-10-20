@@ -2071,7 +2071,7 @@ void gossiper::build_seeds_list() {
     }
 }
 
-future<> gossiper::add_saved_endpoint(inet_address ep) {
+future<> gossiper::add_saved_endpoint(inet_address ep, loaded_endpoint_state loaded_state) {
     if (ep == get_broadcast_address()) {
         logger.debug("Attempt to add self as saved endpoint");
         co_return;
@@ -2087,20 +2087,20 @@ future<> gossiper::add_saved_endpoint(inet_address ep) {
         logger.debug("not replacing a previous ep_state for {}, but reusing it: {}", ep, ep_state);
         ep_state.set_heart_beat_state_and_update_timestamp(heart_beat_state());
     }
-    const auto tmptr = get_token_metadata_ptr();
-    auto tokens = tmptr->get_tokens(ep);
-    if (!tokens.empty()) {
-        std::unordered_set<dht::token> tokens_set(tokens.begin(), tokens.end());
-        ep_state.add_application_state(gms::application_state::TOKENS, versioned_value::tokens(tokens_set));
+    if (!loaded_state.tokens.empty()) {
+        ep_state.add_application_state(gms::application_state::TOKENS, versioned_value::tokens(loaded_state.tokens));
     }
-    auto host_id = tmptr->get_host_id_if_known(ep);
-    if (host_id) {
-        ep_state.add_application_state(gms::application_state::HOST_ID, versioned_value::host_id(host_id.value()));
+    if (loaded_state.host_id) {
+        ep_state.add_application_state(gms::application_state::HOST_ID, versioned_value::host_id(loaded_state.host_id));
+    }
+    if (loaded_state.opt_dc_rack) {
+        ep_state.add_application_state(gms::application_state::DC, versioned_value::datacenter(loaded_state.opt_dc_rack->dc));
+        ep_state.add_application_state(gms::application_state::RACK, versioned_value::datacenter(loaded_state.opt_dc_rack->rack));
     }
     auto generation = ep_state.get_heart_beat_state().get_generation();
+    logger.debug("Adding saved endpoint {} generation={} version={}: {}", ep, generation, ep_state.get_heart_beat_state().get_heart_beat_version(), ep_state);
     co_await replicate(ep, std::move(ep_state), permit.id());
     _unreachable_endpoints[ep] = now();
-    logger.trace("Adding saved endpoint {} {}", ep, generation);
 }
 
 future<> gossiper::add_local_application_state(application_state state, versioned_value value) {
