@@ -281,11 +281,11 @@ public:
     }
 
 private:
-    inet_address get_broadcast_address() const noexcept {
-        return get_token_metadata_ptr()->get_topology().my_address();
-    }
     locator::host_id my_host_id() const noexcept {
         return get_token_metadata_ptr()->get_topology().my_host_id();
+    }
+    inet_address get_broadcast_address() const noexcept {
+        return get_token_metadata_ptr()->get_topology().my_address();
     }
     bool is_me(inet_address addr) const noexcept {
         return get_token_metadata_ptr()->get_topology().is_me(addr);
