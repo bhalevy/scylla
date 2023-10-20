@@ -10,6 +10,7 @@
 
 #pragma once
 
+#include "locator/types.hh"
 #include "unimplemented.hh"
 #include <seastar/core/distributed.hh>
 #include <seastar/core/shared_ptr.hh>
@@ -78,6 +79,12 @@ struct gossip_config {
     uint32_t shadow_round_ms = 300 * 1000;
     uint32_t shutdown_announce_ms = 2 * 1000;
     uint32_t skip_wait_for_gossip_to_settle = -1;
+};
+
+struct loaded_endpoint_state {
+    locator::host_id host_id;
+    std::unordered_set<dht::token> tokens;
+    std::optional<locator::endpoint_dc_rack> opt_dc_rack;
 };
 
 /**
@@ -603,7 +610,7 @@ public:
     /**
      * Add an endpoint we knew about previously, but whose state is unknown
      */
-    future<> add_saved_endpoint(inet_address ep);
+    future<> add_saved_endpoint(inet_address ep, loaded_endpoint_state);
 
     future<> add_local_application_state(application_state state, versioned_value value);
 
