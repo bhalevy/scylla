@@ -2100,10 +2100,14 @@ void gossiper::build_seeds_list() {
     }
 }
 
-future<> gossiper::add_saved_endpoint(inet_address ep, permit_id pid) {
+future<> gossiper::add_saved_endpoint(inet_address ep, loaded_endpoint_state loaded_state, permit_id pid) {
     if (ep == get_broadcast_address()) {
         logger.debug("Attempt to add self as saved endpoint");
         co_return;
+    }
+
+    if (!loaded_state.host_id) {
+        on_internal_error(logger, format("can't find host_id for ep {} for adding saved endpoint", ep));
     }
 
     auto permit = co_await lock_endpoint(ep, pid);
@@ -2120,24 +2124,18 @@ future<> gossiper::add_saved_endpoint(inet_address ep, permit_id pid) {
         logger.debug("not replacing a previous ep_state for {}, but reusing it: {}", ep, ep_state);
         ep_state.update_timestamp();
     }
-    // It's okay to use the local version generator for the loaded application state values
-    // As long as the endpoint_state has zero generation.
-    // It will get updated as a whole by handle_major_state_change
-    // via do_apply_state_locally when (remote_generation > local_generation)
-    const auto tmptr = get_token_metadata_ptr();
-    auto host_id = tmptr->get_host_id_if_known(ep);
-    if (host_id) {
-        ep_state.add_application_state(gms::application_state::HOST_ID, versioned_value::host_id(host_id.value()));
-        auto tokens = tmptr->get_tokens(*host_id);
-        if (!tokens.empty()) {
-            std::unordered_set<dht::token> tokens_set(tokens.begin(), tokens.end());
-            ep_state.add_application_state(gms::application_state::TOKENS, versioned_value::tokens(tokens_set));
-        }
+    ep_state.add_application_state(gms::application_state::HOST_ID, versioned_value::host_id(loaded_state.host_id));
+    if (!loaded_state.tokens.empty()) {
+        ep_state.add_application_state(gms::application_state::TOKENS, versioned_value::tokens(loaded_state.tokens));
+    }
+    if (loaded_state.opt_dc_rack) {
+        ep_state.add_application_state(gms::application_state::DC, versioned_value::datacenter(loaded_state.opt_dc_rack->dc));
+        ep_state.add_application_state(gms::application_state::RACK, versioned_value::datacenter(loaded_state.opt_dc_rack->rack));
     }
     auto generation = ep_state.get_heart_beat_state().get_generation();
     co_await replicate(ep, std::move(ep_state), permit.id());
     _unreachable_endpoints[ep] = now();
-    logger.trace("Adding saved endpoint {} {}", ep, generation);
+    logger.debug("Added saved endpoint {} generation={} version={}: {}", ep, generation, ep_state.get_heart_beat_state().get_heart_beat_version(), ep_state);
 }
 
 future<> gossiper::add_local_application_state(application_state state, versioned_value value) {
