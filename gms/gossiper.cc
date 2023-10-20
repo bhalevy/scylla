@@ -2121,18 +2121,20 @@ void gossiper::build_seeds_list() {
     }
 }
 
-future<> gossiper::add_saved_endpoint(locator::host_id host_id, inet_address ep, permit_id pid) {
+future<> gossiper::add_saved_endpoint(locator::host_id host_id, gms::loaded_endpoint_state st, permit_id pid) {
     if (host_id == my_host_id()) {
         logger.debug("Attempt to add self as saved endpoint");
         co_return;
     }
+    const auto& ep = st.endpoint;
     if (!host_id) {
         on_internal_error(logger, format("Attempt to add {} with my null host_id as saved endpoint", ep));
-        co_return;
+    }
+    if (ep == inet_address{}) {
+        on_internal_error(logger, format("Attempt to add {} with my null inet_address as saved endpoint", host_id));
     }
     if (ep == get_broadcast_address()) {
         on_internal_error(logger, format("Attempt to add {} with my broadcast_address {} as saved endpoint", host_id, ep));
-        co_return;
     }
 
     auto permit = co_await lock_endpoint(ep, pid);
