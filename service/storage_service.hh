@@ -82,6 +82,7 @@ class range_streamer;
 namespace gms {
 class feature_service;
 class gossiper;
+class loaded_endpoint_state;
 };
 
 namespace service {
@@ -355,7 +356,7 @@ private:
     future<> join_token_ring(sharded<db::system_distributed_keyspace>& sys_dist_ks,
             sharded<service::storage_proxy>& proxy,
             std::unordered_set<gms::inet_address> initial_contact_nodes,
-            std::unordered_set<gms::inet_address> loaded_endpoints,
+            std::unordered_map<gms::inet_address, gms::loaded_endpoint_state> loaded_endpoints,
             std::unordered_map<gms::inet_address, sstring> loaded_peer_features,
             std::chrono::milliseconds);
     future<> start_sys_dist_ks();
