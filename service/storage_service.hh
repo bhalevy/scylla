@@ -82,6 +82,7 @@ class range_streamer;
 namespace gms {
 class feature_service;
 class gossiper;
+class loaded_endpoint_state;
 };
 
 namespace service {
@@ -369,7 +370,7 @@ private:
             sharded<service::storage_proxy>& proxy,
             sharded<gms::gossiper>& gossiper,
             std::unordered_set<gms::inet_address> initial_contact_nodes,
-            std::unordered_set<gms::inet_address> loaded_endpoints,
+            std::unordered_map<gms::inet_address, gms::loaded_endpoint_state> loaded_endpoints,
             std::unordered_map<gms::inet_address, sstring> loaded_peer_features,
             std::chrono::milliseconds,
             start_hint_manager start_hm);
