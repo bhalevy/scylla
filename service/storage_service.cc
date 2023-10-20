@@ -25,6 +25,7 @@
 #include "db/consistency_level.hh"
 #include "seastar/core/when_all.hh"
 #include "service/tablet_allocator.hh"
+#include "locator/types.hh"
 #include "locator/tablets.hh"
 #include "locator/tablet_metadata_guard.hh"
 #include "replica/tablet_mutation_builder.hh"
@@ -621,7 +622,14 @@ future<> storage_service::topology_state_load() {
         // since it is not loaded in join_cluster in the
         // _raft_topology_change_enabled case.
         if (!_gossiper.get_endpoint_state_ptr(ep)) {
-            co_await _gossiper.add_saved_endpoint(ep, permit.id());
+            gms::loaded_endpoint_state st;
+            const auto& topo = tmptr->get_topology();
+            // node must exist in topology if it's in tmptr->get_all_endpoints
+            const auto* node = topo.find_node(e);
+            st.host_id = node->host_id();
+            st.tokens = boost::copy_range<std::unordered_set<dht::token>>(tmptr->get_tokens(e));
+            st.opt_dc_rack = node->dc_rack();
+            co_await _gossiper.add_saved_endpoint(ep, std::move(st), permit.id());
         }
     }
 
@@ -1113,7 +1121,7 @@ future<> storage_service::join_token_ring(sharded<db::system_distributed_keyspac
         sharded<service::storage_proxy>& proxy,
         sharded<gms::gossiper>& gossiper,
         std::unordered_set<gms::inet_address> initial_contact_nodes,
-        std::unordered_set<gms::inet_address> loaded_endpoints,
+        std::unordered_map<gms::inet_address, gms::loaded_endpoint_state> loaded_endpoints,
         std::unordered_map<gms::inet_address, sstring> loaded_peer_features,
         std::chrono::milliseconds delay,
         start_hint_manager start_hm) {
@@ -1192,10 +1200,10 @@ future<> storage_service::join_token_ring(sharded<db::system_distributed_keyspac
                     my_ip, local_host_id));
         }
         co_await _gossiper.reset_endpoint_state_map();
-        for (auto ep : loaded_endpoints) {
+        for (auto& [ep, st] : loaded_endpoints) {
             // gossiping hasn't started yet
             // so no need to lock the endpoint
-            co_await _gossiper.add_saved_endpoint(ep, gms::null_permit_id);
+            co_await _gossiper.add_saved_endpoint(ep, std::move(st), gms::null_permit_id);
         }
     }
     auto features = _feature_service.supported_feature_set();
@@ -2385,52 +2393,47 @@ future<> storage_service::join_cluster(sharded<db::system_distributed_keyspace>&
 
     set_mode(mode::STARTING);
 
-    std::unordered_set<inet_address> loaded_endpoints;
+    std::unordered_map<inet_address, gms::loaded_endpoint_state> loaded_endpoints;
     if (_db.local().get_config().load_ring_state() && !_raft_topology_change_enabled) {
         slogger.info("Loading persisted ring state");
-        auto loaded_tokens = co_await _sys_ks.local().load_tokens();
-        auto loaded_host_ids = co_await _sys_ks.local().load_host_ids();
-        auto loaded_dc_rack = co_await _sys_ks.local().load_dc_rack_info();
+        for (auto& [ep, tokens] : co_await _sys_ks.local().load_tokens()) {
+            loaded_endpoints[ep].tokens = std::move(tokens);
+        }
+        for (auto& [ep, host_id] : co_await _sys_ks.local().load_host_ids()) {
+            loaded_endpoints[ep].host_id = std::move(host_id);
+        }
+        for (auto& [ep, dc_rack] : co_await _sys_ks.local().load_dc_rack_info()) {
+            loaded_endpoints[ep].opt_dc_rack = std::move(dc_rack);
+        }
 
-        auto get_dc_rack = [&loaded_dc_rack] (inet_address ep) {
-            if (loaded_dc_rack.contains(ep)) {
-                return loaded_dc_rack[ep];
-            } else {
-                return locator::endpoint_dc_rack::default_location;
-            }
+        auto get_dc_rack = [] (const gms::loaded_endpoint_state& st) {
+            return st.opt_dc_rack.value_or(locator::endpoint_dc_rack::default_location);
         };
 
         if (slogger.is_enabled(logging::log_level::debug)) {
-            for (auto& x : loaded_tokens) {
-                slogger.debug("Loaded tokens: endpoint={}, tokens={}", x.first, x.second);
-            }
-
-            for (auto& x : loaded_host_ids) {
-                slogger.debug("Loaded host_id: endpoint={}, uuid={}", x.first, x.second);
+            for (const auto& [ep, st] : loaded_endpoints) {
+                auto dc_rack = get_dc_rack(st);
+                slogger.debug("Loaded tokens: endpoint={}/{} dc={} rack={} tokens={}", ep, st.host_id, dc_rack.dc, dc_rack.rack, st.tokens);
             }
         }
 
         auto tmlock = co_await get_token_metadata_lock();
         auto tmptr = co_await get_mutable_token_metadata_ptr();
-        for (auto x : loaded_tokens) {
-            auto ep = x.first;
-            auto tokens = x.second;
+        for (const auto& [ep, st] : loaded_endpoints) {
             if (ep == get_broadcast_address()) {
                 // entry has been mistakenly added, delete it
                 co_await _sys_ks.local().remove_endpoint(ep);
             } else {
-                const auto dc_rack = get_dc_rack(ep);
-                const auto hostIdIt = loaded_host_ids.find(ep);
-                if (hostIdIt == loaded_host_ids.end()) {
+                const auto dc_rack = get_dc_rack(st);
+                if (!st.host_id) {
                     on_internal_error(slogger, format("can't find host_id for ep {}", ep));
                 }
-                tmptr->update_topology(hostIdIt->second, dc_rack, locator::node::state::normal);
-                co_await tmptr->update_normal_tokens(tokens, hostIdIt->second);
-                tmptr->update_host_id(hostIdIt->second, ep);
-                loaded_endpoints.insert(ep);
+                tmptr->update_topology(st.host_id, dc_rack, locator::node::state::normal);
+                co_await tmptr->update_normal_tokens(st.tokens, st.host_id);
+                tmptr->update_host_id(st.host_id, ep);
                 // gossiping hasn't started yet
                 // so no need to lock the endpoint
-                co_await _gossiper.add_saved_endpoint(ep, gms::null_permit_id);
+                co_await _gossiper.add_saved_endpoint(ep, st, gms::null_permit_id);
             }
         }
         co_await replicate_to_all_cores(std::move(tmptr));
@@ -2443,10 +2446,10 @@ future<> storage_service::join_cluster(sharded<db::system_distributed_keyspace>&
     auto seeds = _gossiper.get_seeds();
     auto initial_contact_nodes = loaded_endpoints.empty() ?
         std::unordered_set<gms::inet_address>(seeds.begin(), seeds.end()) :
-        loaded_endpoints;
+        boost::copy_range<std::unordered_set<gms::inet_address>>(loaded_endpoints | boost::adaptors::map_keys);
     auto loaded_peer_features = co_await _sys_ks.local().load_peer_features();
     slogger.info("initial_contact_nodes={}, loaded_endpoints={}, loaded_peer_features={}",
-            initial_contact_nodes, loaded_endpoints, loaded_peer_features.size());
+            initial_contact_nodes, loaded_endpoints | boost::adaptors::map_keys, loaded_peer_features.size());
     for (auto& x : loaded_peer_features) {
         slogger.info("peer={}, supported_features={}", x.first, x.second);
     }

@@ -36,6 +36,7 @@
 #include <seastar/core/abort_source.hh>
 #include <seastar/core/scheduling.hh>
 #include "locator/token_metadata.hh"
+#include "locator/types.hh"
 
 namespace db {
 class config;
@@ -74,6 +75,12 @@ struct gossip_config {
     uint32_t shadow_round_ms = 300 * 1000;
     uint32_t shutdown_announce_ms = 2 * 1000;
     uint32_t skip_wait_for_gossip_to_settle = -1;
+};
+
+struct loaded_endpoint_state {
+    locator::host_id host_id;
+    std::unordered_set<dht::token> tokens;
+    std::optional<locator::endpoint_dc_rack> opt_dc_rack;
 };
 
 /**
@@ -608,7 +615,7 @@ public:
     /**
      * Add an endpoint we knew about previously, but whose state is unknown
      */
-    future<> add_saved_endpoint(inet_address ep, permit_id);
+    future<> add_saved_endpoint(inet_address ep, loaded_endpoint_state, permit_id);
 
     future<> add_local_application_state(application_state state, versioned_value value);
 
