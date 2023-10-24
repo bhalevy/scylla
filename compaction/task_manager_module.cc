@@ -14,6 +14,7 @@
 #include "sstables/sstables.hh"
 #include "sstables/sstable_directory.hh"
 #include "utils/pretty_printers.hh"
+#include "db/config.hh"
 
 namespace replica {
 
@@ -266,6 +267,15 @@ future<tasks::task_manager::task::progress> compaction_task_impl::get_progress(c
 }
 
 future<> major_keyspace_compaction_task_impl::run() {
+    // TODO: implement a `compact_all_keyspaces` api
+    // that will flush all tables once for all keyspaces
+    // rather than for each keyspace, using a mechanism similar to `run_table_tasks`.
+    // It can be called from `scylla-nodetool compact` with keyspace arg.
+    if (_db.local().get_config().compaction_flush_all_tables_before_major()) {
+        co_await _db.invoke_on_all([&] (replica::database& db) -> future<> {
+            co_await db.flush_all_tables();
+        });
+    }
     co_await _db.invoke_on_all([&] (replica::database& db) -> future<> {
         tasks::task_info parent_info{_status.id, _status.shard};
         auto& module = db.get_compaction_manager().get_task_manager_module();
@@ -290,7 +300,8 @@ future<> table_major_keyspace_compaction_task_impl::run() {
     co_await wait_for_your_turn(_cv, _current_task, _status.id);
     tasks::task_info info{_status.id, _status.shard};
     co_await run_on_table("force_keyspace_compaction", _db, _status.keyspace, _ti, [info] (replica::table& t) {
-        return t.compact_all_sstables(info);
+        // All tables were already flushed in shard_major_keyspace_compaction_task_impl
+        return t.compact_all_sstables(info, replica::table::do_flush::no);
     });
 }
 

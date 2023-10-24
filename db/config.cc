@@ -361,6 +361,8 @@ db::config::config(std::shared_ptr<db::extensions> exts)
         "If set to higher than 0, ignore the controller's output and set the compaction shares statically. Do not set this unless you know what you are doing and suspect a problem in the controller. This option will be retired when the controller reaches more maturity")
     , compaction_enforce_min_threshold(this, "compaction_enforce_min_threshold", liveness::LiveUpdate, value_status::Used, false,
         "If set to true, enforce the min_threshold option for compactions strictly. If false (default), Scylla may decide to compact even if below min_threshold")
+    , compaction_flush_all_tables_before_major(this, "compaction_flush_all_tables_before_major", value_status::Used, true,
+        "Enable or disable flushing all tables before each major compaction. This option is useful for maximizing tombstone garbage collection by releasing all active commitlog segments. Be careful using this option if major compaction is run frequently")
     /**
     * @Group Initialization properties
     * @GroupDescription The minimal properties needed for configuring a cluster.
