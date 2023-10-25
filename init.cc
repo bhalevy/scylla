@@ -41,7 +41,12 @@ std::set<gms::inet_address> get_seeds_from_db_config(const db::config& cfg) {
         }
     }
     if (seeds.empty()) {
-        seeds.emplace(gms::inet_address("127.0.0.1"));
+        if (cfg.developer_mode()) {
+            seeds.emplace(gms::inet_address("127.0.0.1"));
+        } else {
+            startlog.error("Bad configuration: no 'seeds' provided");
+            throw bad_configuration_error();
+        }
     }
     auto broadcast_address = utils::fb_utilities::get_broadcast_address();
     startlog.info("seeds={{{}}}, listen_address={}, broadcast_address={}",
