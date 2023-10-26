@@ -157,8 +157,9 @@ The ScyllaDB image supports many command line options that are passed to the `do
 
 #### `--seeds SEEDS`
 
-The `-seeds` command line option configures ScyllaDB's seed nodes.
-If no `--seeds` option is specified, ScyllaDB uses its own IP address as the seed.
+The `--seeds` command line option configures ScyllaDB's seed nodes.
+To start a single-node ScyllaDB cluster, pass the localhost address (127.0.0.1) as the `--seeds` argument.
+If no `--seeds` option is specified and the `--developer-mode=1` option is used, ScyllaDB automatically uses the localhost address as the seed.
 
 For example, to configure ScyllaDB to run with two seed nodes `192.168.0.100` and `192.168.0.200`:
 
