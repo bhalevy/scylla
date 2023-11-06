@@ -3849,8 +3849,31 @@ future<> storage_service::handle_state_removed(inet_address endpoint, std::vecto
 
 future<> storage_service::on_join(gms::inet_address endpoint, gms::endpoint_state_ptr ep_state, gms::permit_id pid) {
     slogger.debug("endpoint={} on_join: permit_id={}", endpoint, pid);
-    for (const auto& e : ep_state->get_application_state_map()) {
-        co_await on_change(endpoint, e.first, e.second, pid);
+    std::unordered_map<gms::application_state, gms::versioned_value> deferred;
+    std::optional<gms::versioned_value> status;
+    for (const auto& [state, value] : ep_state->get_application_state_map()) {
+        switch (state) {
+        // The endpoint status will be handled after
+        // this loop, after systen.peers table was updated
+        case gms::application_state::STATUS:
+            status.emplace(value);
+            continue;
+        // Those application states will be handled after STATUS,
+        // as their handling depends on the endpoint being
+        // a nromal a token owner
+        case gms::application_state::RPC_READY:
+        case gms::application_state::INTERNAL_IP:
+            deferred.emplace(state, value);
+            continue;
+        default:
+            co_await on_change(endpoint, state, value, pid);
+        }
+    }
+    if (status) {
+        co_await on_change(endpoint, gms::application_state::STATUS, *status, pid);
+    }
+    for (const auto& [state, value] : deferred) {
+        co_await on_change(endpoint, state, value, pid);
     }
 }
 
