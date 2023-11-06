@@ -338,6 +338,7 @@ private:
     bool should_bootstrap();
     bool is_replacing();
     bool is_first_node();
+    future<> load_saved_endpoint(locator::mutable_token_metadata_ptr tmptr, inet_address ep, const gms::loaded_endpoint_state& st, locator::node::state node_state);
     future<> join_token_ring(sharded<db::system_distributed_keyspace>& sys_dist_ks,
             sharded<service::storage_proxy>& proxy,
             std::unordered_set<gms::inet_address> initial_contact_nodes,
@@ -491,7 +492,7 @@ private:
      *
      * @param endpoint node
      */
-    future<> handle_state_normal(inet_address endpoint, gms::permit_id);
+    future<> handle_state_normal(inet_address endpoint, gms::permit_id, gms::endpoint_state_ptr = nullptr);
 
     /**
      * Handle node leaving the ring. This will happen when a node is decommissioned

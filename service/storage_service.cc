@@ -3627,13 +3627,17 @@ future<> storage_service::handle_state_bootstrap(inet_address endpoint, gms::per
     co_await replicate_to_all_cores(std::move(tmptr));
 }
 
-future<> storage_service::handle_state_normal(inet_address endpoint, gms::permit_id pid) {
-    slogger.debug("endpoint={} handle_state_normal: permit_id={}", endpoint, pid);
-
+future<> storage_service::handle_state_normal(inet_address endpoint, gms::permit_id pid, gms::endpoint_state_ptr eps) {
     if (_raft_topology_change_enabled) {
         slogger.debug("ignore handle_state_normal since topology change are using raft");
         co_return;
     }
+
+    if (!eps) {
+        eps = _gossiper.get_endpoint_state_ptr(endpoint);
+    }
+    auto node_status = eps->get_application_state_ptr(gms::application_state::STATUS);
+    slogger.info("endpoint={} handle_state_normal: status={} permit_id={}", endpoint, _gossiper.gossip_status_string(node_status), pid);
 
     auto tokens = get_tokens_for(endpoint);
 
@@ -3759,7 +3763,11 @@ future<> storage_service::handle_state_normal(inet_address endpoint, gms::permit
             do_notify_joined = true;
         }
 
-        tmptr->update_topology(endpoint, get_dc_rack_for(endpoint), locator::node::state::normal);
+        std::optional<locator::node::state> opt_st;
+        if (node_status) {
+            opt_st.emplace(locator::node::state::normal);
+        }
+        tmptr->update_topology(endpoint, get_dc_rack_for(endpoint), opt_st);
         co_await tmptr->update_normal_tokens(owned_tokens, endpoint);
     }
 
@@ -3871,6 +3879,26 @@ future<> storage_service::on_join(gms::inet_address endpoint, gms::endpoint_stat
     }
     if (status) {
         co_await on_change(endpoint, gms::application_state::STATUS, *status, pid);
+    } else if (!get_token_metadata().is_normal_token_owner(endpoint) &&
+               ep_state->get_application_state_ptr(gms::application_state::TOKENS)) {
+        gms::loaded_endpoint_state st;
+        if (auto stp = ep_state->get_application_state_ptr(gms::application_state::HOST_ID)) {
+            st.host_id = locator::host_id(utils::UUID(stp->value()));
+        }
+        if (auto stp = ep_state->get_application_state_ptr(gms::application_state::TOKENS)) {
+            st.tokens =  versioned_value::tokens_from_string(stp->value());
+        }
+        if (auto stp = ep_state->get_application_state_ptr(gms::application_state::DC)) {
+            locator::endpoint_dc_rack dc_rack;
+            dc_rack.dc = stp->value();
+            if (auto stp = ep_state->get_application_state_ptr(gms::application_state::RACK)) {
+                dc_rack.rack = stp->value();
+            }
+            st.opt_dc_rack = std::move(dc_rack);
+        }
+        co_await mutate_token_metadata([&] (mutable_token_metadata_ptr tmptr) {
+            return load_saved_endpoint(tmptr, endpoint, st, locator::node::state::none);
+        });
     }
     for (const auto& [state, value] : deferred) {
         co_await on_change(endpoint, state, value, pid);
@@ -4113,6 +4141,15 @@ void storage_service::set_group0(raft_group0& group0, bool raft_topology_change_
     _raft_topology_change_enabled = raft_topology_change_enabled;
 }
 
+future<> storage_service::load_saved_endpoint(locator::mutable_token_metadata_ptr tmptr, inet_address ep, const gms::loaded_endpoint_state& st, locator::node::state node_state) {
+    auto dc_rack = st.opt_dc_rack.value_or(locator::endpoint_dc_rack::default_location);
+    tmptr->update_topology(ep, dc_rack, node_state);
+    co_await tmptr->update_normal_tokens(st.tokens, ep);
+    if (st.host_id) {
+        tmptr->update_host_id(st.host_id, ep);
+    }
+}
+
 future<> storage_service::join_cluster(sharded<db::system_distributed_keyspace>& sys_dist_ks, sharded<service::storage_proxy>& proxy) {
     assert(this_shard_id() == 0);
 
@@ -4144,16 +4181,12 @@ future<> storage_service::join_cluster(sharded<db::system_distributed_keyspace>&
 
         auto tmlock = co_await get_token_metadata_lock();
         auto tmptr = co_await get_mutable_token_metadata_ptr();
-            for (const auto& [ep, st] : loaded_endpoints) {
+        for (const auto& [ep, st] : loaded_endpoints) {
             if (ep == get_broadcast_address()) {
                 // entry has been mistakenly added, delete it
                 co_await _sys_ks.local().remove_endpoint(ep);
             } else if (!st.tokens.empty()) {
-                tmptr->update_topology(ep, get_dc_rack(st), locator::node::state::normal);
-                co_await tmptr->update_normal_tokens(st.tokens, ep);
-                if (st.host_id) {
-                    tmptr->update_host_id(st.host_id, ep);
-                }
+                co_await load_saved_endpoint(tmptr, ep, st, locator::node::state::normal);
                 co_await _gossiper.add_saved_endpoint(ep, st);
             }
         }

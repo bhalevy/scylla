@@ -2388,7 +2388,7 @@ void gossiper::force_newer_generation() {
     eps.get_heart_beat_state().force_newer_generation_unsafe();
 }
 
-static std::string_view do_get_gossip_status(const gms::versioned_value* app_state) noexcept {
+std::string_view gossiper::gossip_status_string(const gms::versioned_value* app_state) const noexcept {
     if (!app_state) {
         return gms::versioned_value::STATUS_UNKNOWN;
     }
@@ -2404,11 +2404,11 @@ static std::string_view do_get_gossip_status(const gms::versioned_value* app_sta
 }
 
 std::string_view gossiper::get_gossip_status(const endpoint_state& ep_state) const noexcept {
-    return do_get_gossip_status(ep_state.get_application_state_ptr(application_state::STATUS));
+    return gossip_status_string(ep_state.get_application_state_ptr(application_state::STATUS));
 }
 
 std::string_view gossiper::get_gossip_status(const inet_address& endpoint) const noexcept {
-    return do_get_gossip_status(get_application_state_ptr(endpoint, application_state::STATUS));
+    return gossip_status_string(get_application_state_ptr(endpoint, application_state::STATUS));
 }
 
 future<> gossiper::wait_for_gossip(std::chrono::milliseconds initial_delay, std::optional<int32_t> force_after) const {

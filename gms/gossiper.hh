@@ -658,6 +658,7 @@ public:
 public:
     std::string_view get_gossip_status(const endpoint_state& ep_state) const noexcept;
     std::string_view get_gossip_status(const inet_address& endpoint) const noexcept;
+    std::string_view gossip_status_string(const gms::versioned_value* app_state) const noexcept;
 public:
     future<> wait_for_gossip_to_settle() const;
     future<> wait_for_range_setup() const;
