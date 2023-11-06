@@ -333,6 +333,11 @@ static locator::node::state to_topology_node_state(node_state ns) {
     on_internal_error(slogger, format("unhandled node state: {}", ns));
 }
 
+future<> storage_service::add_saved_endpoint(gms::inet_address ep, gms::loaded_endpoint_state state) {
+    _loaded_endpoints.emplace(ep, state);
+    return _gossiper.add_saved_endpoint(ep, std::move(state));
+}
+
 future<> storage_service::topology_state_load() {
 #ifdef SEASTAR_DEBUG
     static bool running = false;
@@ -547,7 +552,7 @@ future<> storage_service::topology_state_load() {
             st.host_id = node->host_id();
             st.tokens = boost::copy_range<std::unordered_set<dht::token>>(tmptr->get_tokens(e));
             st.opt_dc_rack = node->dc_rack();
-            co_await _gossiper.add_saved_endpoint(e, std::move(st));
+            co_await add_saved_endpoint(e, std::move(st));
         }
     }
 
@@ -2955,7 +2960,6 @@ future<> storage_service::update_topology_with_local_metadata(raft::server& raft
 future<> storage_service::join_token_ring(sharded<db::system_distributed_keyspace>& sys_dist_ks,
         sharded<service::storage_proxy>& proxy,
         std::unordered_set<gms::inet_address> initial_contact_nodes,
-        std::unordered_map<gms::inet_address, gms::loaded_endpoint_state> loaded_endpoints,
         std::unordered_map<gms::inet_address, sstring> loaded_peer_features,
         std::chrono::milliseconds delay) {
     std::unordered_set<token> bootstrap_tokens;
@@ -3035,7 +3039,8 @@ future<> storage_service::join_token_ring(sharded<db::system_distributed_keyspac
                     my_ip, local_host_id));
         }
         co_await _gossiper.reset_endpoint_state_map();
-        for (auto& [ep, st] : loaded_endpoints) {
+        slogger.debug("Finished gossip shadow round, loaded_endpoints={}", _loaded_endpoints | boost::adaptors::map_keys);
+        for (auto& [ep, st] : _loaded_endpoints) {
             co_await _gossiper.add_saved_endpoint(ep, std::move(st));
         }
     }
@@ -4155,17 +4160,16 @@ future<> storage_service::join_cluster(sharded<db::system_distributed_keyspace>&
 
     set_mode(mode::STARTING);
 
-    std::unordered_map<inet_address, gms::loaded_endpoint_state> loaded_endpoints;
     if (_db.local().get_config().load_ring_state() && !_raft_topology_change_enabled) {
         slogger.info("Loading persisted ring state");
         for (auto& [ep, tokens] : co_await _sys_ks.local().load_tokens()) {
-            loaded_endpoints[ep].tokens = std::move(tokens);
+            _loaded_endpoints[ep].tokens = std::move(tokens);
         }
         for (auto& [ep, host_id] : co_await _sys_ks.local().load_host_ids()) {
-            loaded_endpoints[ep].host_id = std::move(host_id);
+            _loaded_endpoints[ep].host_id = std::move(host_id);
         }
         for (auto& [ep, dc_rack] : co_await _sys_ks.local().load_dc_rack_info()) {
-            loaded_endpoints[ep].opt_dc_rack = std::move(dc_rack);
+            _loaded_endpoints[ep].opt_dc_rack = std::move(dc_rack);
         }
 
         auto get_dc_rack = [] (const gms::loaded_endpoint_state& st) {
@@ -4173,7 +4177,7 @@ future<> storage_service::join_cluster(sharded<db::system_distributed_keyspace>&
         };
 
         if (slogger.is_enabled(logging::log_level::debug)) {
-            for (const auto& [ep, st] : loaded_endpoints) {
+            for (const auto& [ep, st] : _loaded_endpoints) {
                 auto dc_rack = get_dc_rack(st);
                 slogger.debug("Loaded tokens: endpoint={}/{} dc={} rack={} tokens={}", ep, st.host_id, dc_rack.dc, dc_rack.rack, st.tokens);
             }
@@ -4181,7 +4185,7 @@ future<> storage_service::join_cluster(sharded<db::system_distributed_keyspace>&
 
         auto tmlock = co_await get_token_metadata_lock();
         auto tmptr = co_await get_mutable_token_metadata_ptr();
-        for (const auto& [ep, st] : loaded_endpoints) {
+        for (const auto& [ep, st] : _loaded_endpoints) {
             if (ep == get_broadcast_address()) {
                 // entry has been mistakenly added, delete it
                 co_await _sys_ks.local().remove_endpoint(ep);
@@ -4198,16 +4202,16 @@ future<> storage_service::join_cluster(sharded<db::system_distributed_keyspace>&
     // node, we use the nodes specified in seeds as the initial contact
     // point nodes, otherwise use the peer nodes persisted in system table.
     auto seeds = _gossiper.get_seeds();
-    auto initial_contact_nodes = loaded_endpoints.empty() ?
+    auto initial_contact_nodes = _loaded_endpoints.empty() ?
         std::unordered_set<gms::inet_address>(seeds.begin(), seeds.end()) :
-        boost::copy_range<std::unordered_set<gms::inet_address>>(loaded_endpoints | boost::adaptors::map_keys);
+        boost::copy_range<std::unordered_set<gms::inet_address>>(_loaded_endpoints | boost::adaptors::map_keys);
     auto loaded_peer_features = co_await _sys_ks.local().load_peer_features();
     slogger.info("initial_contact_nodes={}, loaded_endpoints={}, loaded_peer_features={}",
-            initial_contact_nodes, loaded_endpoints | boost::adaptors::map_keys, loaded_peer_features.size());
+            initial_contact_nodes, _loaded_endpoints | boost::adaptors::map_keys, loaded_peer_features.size());
     for (auto& x : loaded_peer_features) {
         slogger.info("peer={}, supported_features={}", x.first, x.second);
     }
-    co_return co_await join_token_ring(sys_dist_ks, proxy, std::move(initial_contact_nodes), std::move(loaded_endpoints), std::move(loaded_peer_features), get_ring_delay());
+    co_return co_await join_token_ring(sys_dist_ks, proxy, std::move(initial_contact_nodes), std::move(loaded_peer_features), get_ring_delay());
 }
 
 future<> storage_service::replicate_to_all_cores(mutable_token_metadata_ptr tmptr) noexcept {
@@ -4470,6 +4474,9 @@ storage_service::prepare_replacement_info(std::unordered_set<gms::inet_address> 
     }
     slogger.info("Host {}/{} is replacing {}/{}", get_token_metadata().get_my_id(), get_broadcast_address(), replace_host_id, replace_address);
     co_await _gossiper.reset_endpoint_state_map();
+    for (auto& [ep, st] : _loaded_endpoints) {
+        co_await _gossiper.add_saved_endpoint(ep, st);
+    }
 
     co_return replacement_info {
         .tokens = std::move(tokens),

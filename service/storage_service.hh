@@ -342,7 +342,6 @@ private:
     future<> join_token_ring(sharded<db::system_distributed_keyspace>& sys_dist_ks,
             sharded<service::storage_proxy>& proxy,
             std::unordered_set<gms::inet_address> initial_contact_nodes,
-            std::unordered_map<gms::inet_address, gms::loaded_endpoint_state> loaded_endpoints,
             std::unordered_map<gms::inet_address, sstring> loaded_peer_features,
             std::chrono::milliseconds);
     future<> start_sys_dist_ks();
@@ -785,10 +784,14 @@ private:
 
     future<join_node_request_result> join_node_request_handler(join_node_request_params params);
     future<join_node_response_result> join_node_response_handler(join_node_response_params params);
+
+    future<> add_saved_endpoint(gms::inet_address, gms::loaded_endpoint_state);
+
     shared_promise<> _join_node_request_done;
     shared_promise<> _join_node_group0_started;
     shared_promise<> _join_node_response_done;
     semaphore _join_node_response_handler_mutex{1};
+    std::unordered_map<gms::inet_address, gms::loaded_endpoint_state> _loaded_endpoints;
 
     // We need to be able to abort all group0 operation during shutdown, so we need special abort source for that
     abort_source _group0_as;
