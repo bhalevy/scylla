@@ -3900,9 +3900,9 @@ future<> storage_service::on_change(inet_address endpoint, application_state sta
             slogger.debug("Ignoring state change for dead or unknown endpoint: {}", endpoint);
             co_return;
         }
+        slogger.debug("endpoint={} on_change:     updating system.peers table", endpoint);
+        co_await do_update_system_peers_table(endpoint, state, value);
         if (get_token_metadata().is_normal_token_owner(endpoint)) {
-            slogger.debug("endpoint={} on_change:     updating system.peers table", endpoint);
-            co_await do_update_system_peers_table(endpoint, state, value);
             if (state == application_state::RPC_READY) {
                 slogger.debug("Got application_state::RPC_READY for node {}, is_cql_ready={}", endpoint, ep_state->is_cql_ready());
                 co_await notify_cql_change(endpoint, ep_state->is_cql_ready());
