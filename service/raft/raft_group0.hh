@@ -138,6 +138,8 @@ public:
         db::system_keyspace& sys_ks,
         raft_group0_client& client);
 
+    raft_group0(raft_group0&&) noexcept = default;
+
     // Initialises RPC verbs on all shards.
     // Call after construction but before using the object.
     future<> start();
