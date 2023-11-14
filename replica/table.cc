@@ -1374,6 +1374,7 @@ compaction_group::update_main_sstable_list_on_compaction_completion(sstables::co
 
 future<>
 table::compact_all_sstables(std::optional<tasks::task_info> info, do_flush do_flush) {
+    tlogger.info("compact_all_sstables: {}.{}: do_flush={}", _schema->ks_name(), _schema->cf_name(), do_flush);
     if (do_flush) {
         co_await flush();
     }
@@ -1383,6 +1384,7 @@ table::compact_all_sstables(std::optional<tasks::task_info> info, do_flush do_fl
     co_await parallel_foreach_compaction_group([this, info] (compaction_group& cg) {
         return _compaction_manager.perform_major_compaction(cg.as_table_state(), info);
     });
+    tlogger.info("compact_all_sstables: {}.{}: done", _schema->ks_name(), _schema->cf_name());
 }
 
 void table::start_compaction() {

@@ -83,6 +83,21 @@ protected:
     virtual future<> run() override = 0;
 };
 
+class global_major_compaction_task_impl : public major_compaction_task_impl {
+private:
+    sharded<replica::database>& _db;
+public:
+    global_major_compaction_task_impl(tasks::task_manager::module_ptr module,
+            sharded<replica::database>& db,
+            std::optional<flush_mode> fm = std::nullopt) noexcept
+        : major_compaction_task_impl(module, tasks::task_id::create_random_id(), module->new_sequence_number(), "global", "", "", "", tasks::task_id::create_null_id(),
+                fm.value_or(flush_mode::all_tables))
+        , _db(db)
+    {}
+protected:
+    virtual future<> run() override;
+};
+
 class major_keyspace_compaction_task_impl : public major_compaction_task_impl {
 private:
     sharded<replica::database>& _db;
@@ -90,10 +105,11 @@ private:
 public:
     major_keyspace_compaction_task_impl(tasks::task_manager::module_ptr module,
             std::string keyspace,
+            tasks::task_id parent_id,
             sharded<replica::database>& db,
             std::vector<table_info> table_infos,
             std::optional<flush_mode> fm = std::nullopt) noexcept
-        : major_compaction_task_impl(module, tasks::task_id::create_random_id(), module->new_sequence_number(), "keyspace", std::move(keyspace), "", "", tasks::task_id::create_null_id(),
+        : major_compaction_task_impl(module, tasks::task_id::create_random_id(), module->new_sequence_number(), "keyspace", std::move(keyspace), "", "", parent_id,
                 fm.value_or(flush_mode::all_tables))
         , _db(db)
         , _table_infos(std::move(table_infos))

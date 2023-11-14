@@ -913,3 +913,11 @@ def test_compact_keyspace(cql, test_keyspace, scylla_path, scylla_data_dir, node
 
     with scylla_sstable(simple_clustering_table, cql, test_keyspace, scylla_data_dir, lambda cql, ks, _: compact_with_scylla_nodetool(cql, scylla_path, ks, nodetool_flush=nodetool_flush)) as (schema_file, sstables):
         assert len(sstables) == SMP
+
+@pytest.mark.parametrize("nodetool_flush", [False, True])
+def test_compact_all_tables(cql, test_keyspace, scylla_path, scylla_data_dir, nodetool_flush):
+    with scylla_sstable(simple_clustering_table, cql, test_keyspace, scylla_data_dir, lambda cql, _, __: compact_with_nodetool_utils(cql, nodetool_flush=nodetool_flush)) as (schema_file, sstables):
+        assert len(sstables) == SMP
+
+    with scylla_sstable(simple_clustering_table, cql, test_keyspace, scylla_data_dir, lambda cql, _, __: compact_with_scylla_nodetool(cql, scylla_path, nodetool_flush=nodetool_flush)) as (schema_file, sstables):
+        assert len(sstables) == SMP
