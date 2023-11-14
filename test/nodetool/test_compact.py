@@ -9,7 +9,12 @@ import utils
 import pytest
 
 
-def test_all_keyspaces(nodetool):
+def test_all_keyspaces(nodetool, scylla_only):
+    nodetool("compact", expected_requests=[
+        expected_request("POST", "/storage_service/compact")])
+
+
+def test_all_keyspaces_jmx(nodetool, cassandra_only):
     nodetool("compact", expected_requests=[
         expected_request("GET", "/storage_service/keyspaces", multiple=expected_request.MULTIPLE,
                          response=["system", "system_schema"]),
@@ -96,3 +101,9 @@ def test_all_keyspaces_flush(nodetool, scylla_only, flush):
                             response=["system", "system_schema"]),
             expected_request("POST", "/storage_service/keyspace_compaction/system", params=params),
             expected_request("POST", "/storage_service/keyspace_compaction/system_schema", params=params)])
+
+@pytest.mark.parametrize("flush", ("true", "false"))
+def test_all_keyspaces_flush(nodetool, scylla_only, flush):
+    params = {"flush_memtables": flush}
+    nodetool("compact", "--flush-memtables", flush, expected_requests=[
+            expected_request("POST", "/storage_service/compact", params=params)])
