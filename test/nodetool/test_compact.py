@@ -8,7 +8,12 @@ from rest_api_mock import expected_request
 import utils
 
 
-def test_all_keyspaces(nodetool):
+def test_all_keyspaces(nodetool, scylla_only):
+    nodetool("compact", expected_requests=[
+        expected_request("POST", "/storage_service/compact")])
+
+
+def test_all_keyspaces_jmx(nodetool, cassandra_only):
     nodetool("compact", expected_requests=[
         expected_request("GET", "/storage_service/keyspaces", multiple=expected_request.MULTIPLE,
                          response=["system", "system_schema"]),
@@ -89,7 +94,4 @@ def test_keyspace_skip_flush(nodetool, scylla_only):
 def test_all_keyspaces_skip_flush(nodetool, scylla_only):
     params = {"sf": "true"}
     nodetool("compact", "--skip-flush", expected_requests=[
-            expected_request("GET", "/storage_service/keyspaces", multiple=expected_request.MULTIPLE,
-                            response=["system", "system_schema"]),
-            expected_request("POST", "/storage_service/keyspace_compaction/system", params=params),
-            expected_request("POST", "/storage_service/keyspace_compaction/system_schema", params=params)])
+            expected_request("POST", "/storage_service/compact", params=params)])
