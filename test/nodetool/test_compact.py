@@ -76,3 +76,20 @@ def test_user_defined(nodetool, scylla_only):
              "me-3g8w_11cg_4317k2ppfb6d5vgp0w-big-Data.db"),
             {},
             ["error processing arguments: --user-defined flag is unsupported"])
+
+
+def test_keyspace_skip_flush(nodetool, scylla_only):
+    params = {"sf": "true"}
+    nodetool("compact", "system_schema", "--skip-flush", expected_requests=[
+            expected_request("GET", "/storage_service/keyspaces", multiple=expected_request.MULTIPLE,
+                             response=["system", "system_schema"]),
+            expected_request("POST", "/storage_service/keyspace_compaction/system_schema", params=params)])
+
+
+def test_all_keyspaces_skip_flush(nodetool, scylla_only):
+    params = {"sf": "true"}
+    nodetool("compact", "--skip-flush", expected_requests=[
+            expected_request("GET", "/storage_service/keyspaces", multiple=expected_request.MULTIPLE,
+                            response=["system", "system_schema"]),
+            expected_request("POST", "/storage_service/keyspace_compaction/system", params=params),
+            expected_request("POST", "/storage_service/keyspace_compaction/system_schema", params=params)])

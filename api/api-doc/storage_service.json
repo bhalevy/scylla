@@ -728,6 +728,14 @@
                      "allowMultiple":false,
                      "type":"string",
                      "paramType":"query"
+                  },
+                  {
+                     "name":"sf",
+                     "description":"Skip flush. When set to \"true\", do not flush memtables before compaction (use when tables were flushed explicitly before compaction)",
+                     "required":false,
+                     "allowMultiple":false,
+                     "type":"boolean",
+                     "paramType":"query"
                   }
                ]
             }

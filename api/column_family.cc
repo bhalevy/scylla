@@ -1050,8 +1050,9 @@ void set_column_family(http_context& ctx, routes& r, sharded<db::system_keyspace
         if (req->get_query_param("split_output") != "") {
             fail(unimplemented::cause::API);
         }
+        auto sf = strcasecmp(req->get_query_param("sf").c_str(), "true") == 0;
 
-        apilog.info("column_family/force_major_compaction: name={}", req->param["name"]);
+        apilog.info("column_family/force_major_compaction: name={} skip_flush={}", req->param["name"], sf);
         auto [ks, cf] = parse_fully_qualified_cf_name(req->param["name"]);
         auto keyspace = validate_keyspace(ctx, ks);
         std::vector<table_info> table_infos = {table_info{
@@ -1060,7 +1061,11 @@ void set_column_family(http_context& ctx, routes& r, sharded<db::system_keyspace
         }};
 
         auto& compaction_module = ctx.db.local().get_compaction_manager().get_task_manager_module();
-        auto task = co_await compaction_module.make_and_start_task<major_keyspace_compaction_task_impl>({}, std::move(keyspace), ctx.db, std::move(table_infos));
+        std::optional<major_compaction_task_impl::flush_mode> fmopt;
+        if (sf) {
+            fmopt = major_compaction_task_impl::flush_mode::skip;
+        }
+        auto task = co_await compaction_module.make_and_start_task<major_keyspace_compaction_task_impl>({}, std::move(keyspace), ctx.db, std::move(table_infos), fmopt);
         co_await task->done();
         co_return json_void();
     });
