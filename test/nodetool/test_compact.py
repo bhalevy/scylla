@@ -10,10 +10,7 @@ import utils
 
 def test_all_keyspaces(nodetool):
     nodetool("compact", expected_requests=[
-        expected_request("GET", "/storage_service/keyspaces", multiple=expected_request.MULTIPLE,
-                         response=["system", "system_schema"]),
-        expected_request("POST", "/storage_service/keyspace_compaction/system"),
-        expected_request("POST", "/storage_service/keyspace_compaction/system_schema")])
+        expected_request("POST", "/storage_service/compact")])
 
 
 def test_keyspace(nodetool):
@@ -89,7 +86,4 @@ def test_keyspace_skip_flush(nodetool):
 def test_all_keyspaces_skip_flush(nodetool):
     params = {"sf": "true"}
     nodetool("compact", "--skip-flush", expected_requests=[
-            expected_request("GET", "/storage_service/keyspaces", multiple=expected_request.MULTIPLE,
-                            response=["system", "system_schema"]),
-            expected_request("POST", "/storage_service/keyspace_compaction/system", params=params),
-            expected_request("POST", "/storage_service/keyspace_compaction/system_schema", params=params)])
+            expected_request("POST", "/storage_service/compact", params=params)])

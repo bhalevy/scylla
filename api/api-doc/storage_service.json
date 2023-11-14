@@ -702,6 +702,30 @@
          ]
       },
       {
+         "path":"/storage_service/compact",
+         "operations":[
+            {
+               "method":"POST",
+               "summary":"Forces major compaction in all keyspaces",
+               "type":"void",
+               "nickname":"force_compaction",
+               "produces":[
+                  "application/json"
+               ],
+               "parameters":[
+                  {
+                     "name":"sf",
+                     "description":"Skip flush. When set to \"true\", do not flush memtables before compaction (use when tables were flushed explicitly before compaction)",
+                     "required":false,
+                     "allowMultiple":false,
+                     "type":"boolean",
+                     "paramType":"query"
+                  }
+               ]
+            }
+         ]
+      },
+      {
          "path":"/storage_service/keyspace_compaction/{keyspace}",
          "operations":[
             {
