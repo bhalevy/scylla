@@ -640,10 +640,15 @@ void set_storage_service(http_context& ctx, routes& r, sharded<service::storage_
         auto& db = ctx.db;
         auto keyspace = validate_keyspace(ctx, req->param);
         auto table_infos = parse_table_infos(keyspace, ctx, req->query_parameters, "cf");
-        apilog.debug("force_keyspace_compaction: keyspace={} tables={}", keyspace, table_infos);
+        auto sf = strcasecmp(req->get_query_param("sf").c_str(), "true") == 0;
+        apilog.debug("force_keyspace_compaction: keyspace={} tables={}, skip_flush={}", keyspace, table_infos, sf);
 
         auto& compaction_module = db.local().get_compaction_manager().get_task_manager_module();
-        auto task = co_await compaction_module.make_and_start_task<major_keyspace_compaction_task_impl>({}, std::move(keyspace), db, table_infos);
+        std::optional<major_compaction_task_impl::flush_mode> fmopt;
+        if (sf) {
+            fmopt = major_compaction_task_impl::flush_mode::skip;
+        }
+        auto task = co_await compaction_module.make_and_start_task<major_keyspace_compaction_task_impl>({}, std::move(keyspace), db, table_infos, fmopt);
         try {
             co_await task->done();
         } catch (...) {
