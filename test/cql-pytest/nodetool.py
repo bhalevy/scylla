@@ -93,22 +93,31 @@ def flush_keyspace(cql, ks):
     else:
         run_nodetool(cql, "flush", ks)
 
-def compact(cql, ks_or_table=None):
+def compact(cql, ks_or_table=None, skip_flush=False):
+    assert has_rest_api or not skip_flush, "nodetool compact does not support the skip_flush option"
+    params = dict()
+    if skip_flush:
+        params['sf'] = "true"
     if not ks_or_table:
         run_nodetool(cql, "compact")
         return
     if not '.' in ks_or_table:
-        compact_keyspace(cql, ks_or_table)
+        compact_keyspace(cql, ks_or_table, skip_flush)
         return
     ks, cf = ks_or_table.split('.')
     if has_rest_api(cql):
-        requests.post(f'{rest_api_url(cql)}/storage_service/keyspace_compaction/{ks}', params={'cf' : cf})
+        params['cf'] = cf
+        requests.post(f'{rest_api_url(cql)}/storage_service/keyspace_compaction/{ks}', params=params)
     else:
         run_nodetool(cql, "compact", ks, cf)
 
-def compact_keyspace(cql, ks):
+def compact_keyspace(cql, ks, skip_flush=False):
+    assert has_rest_api or not skip_flush, "nodetool compact does not support the skip_flush option"
+    params = dict()
+    if skip_flush:
+        params['sf'] = "true"
     if has_rest_api(cql):
-        requests.post(f'{rest_api_url(cql)}/storage_service/keyspace_compaction/{ks}')
+        requests.post(f'{rest_api_url(cql)}/storage_service/keyspace_compaction/{ks}', params=params)
     else:
         run_nodetool(cql, "compact", ks)
 

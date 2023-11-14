@@ -198,16 +198,20 @@ void compact_operation(scylla_rest_client& client, const bpo::variables_map& vm)
         throw std::invalid_argument("--user-defined flag is unsupported");
     }
 
+    std::unordered_map<sstring, sstring> params;
+    if (vm.count("skip-flush") || vm.count("sf")) {
+        params["sf"] = "true";
+    }
+
     if (vm.count("compaction_arg")) {
         const auto [keyspace, tables] = parse_keyspace_and_tables(client, vm, "compaction_arg");
-        std::unordered_map<sstring, sstring> params;
         if (!tables.empty()) {
             params["cf"] = fmt::to_string(fmt::join(tables.begin(), tables.end(), ","));
         }
         client.post(format("/storage_service/keyspace_compaction/{}", keyspace), std::move(params));
     } else {
         for (const auto& keyspace : get_keyspaces(client)) {
-            client.post(format("/storage_service/keyspace_compaction/{}", keyspace));
+            client.post(format("/storage_service/keyspace_compaction/{}", keyspace), std::move(params));
         }
     }
 }
@@ -735,6 +739,8 @@ command-line arguments, the compaction will run on these tables.
 Fore more information, see: https://opensource.docs.scylladb.com/stable/operating-scylla/nodetool-commands/compact.html
 )",
                 {
+                    typed_option<>("skip-flush,sf", "skip flushing tables before major compaction"),
+
                     typed_option<>("split-output,s", "Don't create a single big file (unused)"),
                     typed_option<>("user-defined", "Submit listed SStable files for user-defined compaction (unused)"),
                     typed_option<int64_t>("start-token", "Specify a token at which the compaction range starts (unused)"),

@@ -869,33 +869,40 @@ def test_flush_keyspace(cql, test_keyspace, scylla_path, scylla_data_dir):
         assert sstables != []
 
 
-def compact_with_nodetool_utils(cql, ks=None, table=None):
+def compact_with_nodetool_utils(cql, ks=None, table=None, nodetool_flush=False):
+    if nodetool_flush:
+        flush_with_nodetool_utils(cql, ks, table)
     if not ks:
-        nodetool.compact(cql)
+        nodetool.compact(cql, skip_flush=nodetool_flush)
     elif not table:
-        nodetool.compact(cql, ks)
+        nodetool.compact(cql, ks, skip_flush=nodetool_flush)
     else:
-        nodetool.compact(cql, f"{ks}.{table}")
+        nodetool.compact(cql, f"{ks}.{table}", skip_flush=nodetool_flush)
 
-def compact_with_scylla_nodetool(cql, scylla_path, ks=None, table=None):
+def compact_with_scylla_nodetool(cql, scylla_path, ks=None, table=None, nodetool_flush=False):
     cmd = [scylla_path, "nodetool", "compact"]
     if ks:
         cmd.append(ks)
         if table:
             cmd.append(table)
+    if nodetool_flush:
+        flush_with_scylla_nodetool(cql, scylla_path, ks, table)
+        cmd.append("--skip-flush")
     cmd.extend(["--host", cql.cluster.contact_points[0]])
     subprocess.check_call(cmd)
 
-def test_compact_table(cql, test_keyspace, scylla_path, scylla_data_dir):
-    with scylla_sstable(simple_clustering_table, cql, test_keyspace, scylla_data_dir, lambda cql, ks, tbl: compact_with_nodetool_utils(cql, ks, tbl)) as (schema_file, sstables):
+@pytest.mark.parametrize("nodetool_flush", [False, True])
+def test_compact_table(cql, test_keyspace, scylla_path, scylla_data_dir, nodetool_flush):
+    with scylla_sstable(simple_clustering_table, cql, test_keyspace, scylla_data_dir, lambda cql, ks, tbl: compact_with_nodetool_utils(cql, ks, tbl, nodetool_flush=nodetool_flush)) as (schema_file, sstables):
         assert len(sstables) == SMP
 
-    with scylla_sstable(simple_clustering_table, cql, test_keyspace, scylla_data_dir, lambda cql, ks, tbl: compact_with_scylla_nodetool(cql, scylla_path, ks, tbl)) as (schema_file, sstables):
+    with scylla_sstable(simple_clustering_table, cql, test_keyspace, scylla_data_dir, lambda cql, ks, tbl: compact_with_scylla_nodetool(cql, scylla_path, ks, tbl, nodetool_flush=nodetool_flush)) as (schema_file, sstables):
         assert len(sstables) == SMP
 
-def test_compact_keyspace(cql, test_keyspace, scylla_path, scylla_data_dir):
-    with scylla_sstable(simple_clustering_table, cql, test_keyspace, scylla_data_dir, lambda cql, ks, _: compact_with_nodetool_utils(cql, ks)) as (schema_file, sstables):
+@pytest.mark.parametrize("nodetool_flush", [False, True])
+def test_compact_keyspace(cql, test_keyspace, scylla_path, scylla_data_dir, nodetool_flush):
+    with scylla_sstable(simple_clustering_table, cql, test_keyspace, scylla_data_dir, lambda cql, ks, _: compact_with_nodetool_utils(cql, ks, nodetool_flush=nodetool_flush)) as (schema_file, sstables):
         assert len(sstables) == SMP
 
-    with scylla_sstable(simple_clustering_table, cql, test_keyspace, scylla_data_dir, lambda cql, ks, _: compact_with_scylla_nodetool(cql, scylla_path, ks)) as (schema_file, sstables):
+    with scylla_sstable(simple_clustering_table, cql, test_keyspace, scylla_data_dir, lambda cql, ks, _: compact_with_scylla_nodetool(cql, scylla_path, ks, nodetool_flush=nodetool_flush)) as (schema_file, sstables):
         assert len(sstables) == SMP

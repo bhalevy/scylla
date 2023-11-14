@@ -85,6 +85,14 @@
                      "paramType":"path"
                   },
                   {
+                     "name":"sf",
+                     "description":"Skip flush. When set to \"true\", do not flush memtables before compaction (use when flushing is done explicitly before compaction)",
+                     "required":false,
+                     "allowMultiple":false,
+                     "type":"boolean",
+                     "paramType":"query"
+                  },
+                  {
                      "name":"split_output",
                      "description":"true if the output of the major compaction should be split in several sstables",
                      "required":false,
