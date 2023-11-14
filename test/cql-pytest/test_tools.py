@@ -38,8 +38,6 @@ def simple_no_clustering_table(cql, keyspace):
         if pk == 5:
             nodetool.flush(cql, f"{keyspace}.{table}")
 
-    nodetool.flush(cql, f"{keyspace}.{table}")
-
     return table, schema
 
 
@@ -74,8 +72,6 @@ def simple_clustering_table(cql, keyspace):
             cql.execute(f"UPDATE {keyspace}.{table} SET s = 10 WHERE pk1 = {pk} AND pk2 = {pk}")
             nodetool.flush(cql, f"{keyspace}.{table}")
 
-    nodetool.flush(cql, f"{keyspace}.{table}")
-
     return table, schema
 
 
@@ -95,8 +91,6 @@ def clustering_table_with_collection(cql, keyspace):
         if pk == 5:
             nodetool.flush(cql, f"{keyspace}.{table}")
 
-    nodetool.flush(cql, f"{keyspace}.{table}")
-
     return table, schema
 
 
@@ -114,8 +108,6 @@ def clustering_table_with_udt(cql, keyspace):
         if pk == 5:
             nodetool.flush(cql, f"{keyspace}.{table}")
 
-    nodetool.flush(cql, f"{keyspace}.{table}")
-
     return table, "; ".join((create_type_schema, create_table_schema))
 
 
@@ -131,8 +123,6 @@ def table_with_counters(cql, keyspace):
         if pk == 5:
             nodetool.flush(cql, f"{keyspace}.{table}")
 
-    nodetool.flush(cql, f"{keyspace}.{table}")
-
     return table, schema
 
 
@@ -146,6 +136,7 @@ def scylla_sstable(table_factory, cql, ks, data_dir):
 
     try:
         with nodetool.no_autocompaction_context(cql, f"{ks}.{table}"):
+            nodetool.flush(cql, f"{ks}.{table}")
             sstables = glob.glob(os.path.join(data_dir, ks, table + '-*', '*-Data.db'))
             yield (schema_file, sstables)
     finally:
