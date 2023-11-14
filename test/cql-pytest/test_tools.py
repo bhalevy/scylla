@@ -144,10 +144,10 @@ def scylla_sstable(table_factory, cql, ks, data_dir):
     with open(schema_file, "w") as f:
         f.write(schema)
 
-    sstables = glob.glob(os.path.join(data_dir, ks, table + '-*', '*-Data.db'))
-
     try:
-        yield (schema_file, sstables)
+        with nodetool.no_autocompaction_context(cql, f"{ks}.{table}"):
+            sstables = glob.glob(os.path.join(data_dir, ks, table + '-*', '*-Data.db'))
+            yield (schema_file, sstables)
     finally:
         cql.execute(f"DROP TABLE {ks}.{table}")
         os.unlink(schema_file)
