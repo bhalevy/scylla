@@ -868,6 +868,13 @@ def test_flush_keyspace(cql, test_keyspace, scylla_path, scylla_data_dir):
     with scylla_sstable(simple_clustering_table, cql, test_keyspace, scylla_data_dir, lambda cql, ks, _: flush_with_scylla_nodetool(cql, scylla_path, ks)) as (schema_file, sstables):
         assert sstables != []
 
+def test_flush_all_tables(cql, test_keyspace, scylla_path, scylla_data_dir):
+    with scylla_sstable(simple_clustering_table, cql, test_keyspace, scylla_data_dir, lambda cql, _, __: flush_with_nodetool_utils(cql)) as (schema_file, sstables):
+        assert sstables != []
+
+    with scylla_sstable(simple_clustering_table, cql, test_keyspace, scylla_data_dir, lambda cql, _, __: flush_with_scylla_nodetool(cql, scylla_path)) as (schema_file, sstables):
+        assert sstables != []
+
 
 def compact_with_nodetool_utils(cql, ks=None, table=None, nodetool_flush=False):
     if nodetool_flush:

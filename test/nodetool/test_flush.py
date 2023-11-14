@@ -8,7 +8,13 @@ from rest_api_mock import expected_request
 import utils
 
 
-def test_flush(nodetool):
+def test_flush_all_tables(nodetool):
+    nodetool("flush", expected_requests=[
+        expected_request("POST", "/storage_service/flush")
+    ])
+
+
+def test_flush_one_keyspace(nodetool):
     nodetool("flush", "ks1", expected_requests=[
         expected_request("GET", "/storage_service/keyspaces", response=["ks1", "ks2"]),
         expected_request("POST", "/storage_service/keyspace_flush/ks1")
