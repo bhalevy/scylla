@@ -93,12 +93,24 @@ def flush_keyspace(cql, ks):
     else:
         run_nodetool(cql, "flush", ks)
 
-def compact(cql, table):
-    ks, cf = table.split('.')
+def compact(cql, ks_or_table=None):
+    if not ks_or_table:
+        run_nodetool(cql, "compact")
+        return
+    if not '.' in ks_or_table:
+        compact_keyspace(cql, ks_or_table)
+        return
+    ks, cf = ks_or_table.split('.')
     if has_rest_api(cql):
         requests.post(f'{rest_api_url(cql)}/storage_service/keyspace_compaction/{ks}', params={'cf' : cf})
     else:
         run_nodetool(cql, "compact", ks, cf)
+
+def compact_keyspace(cql, ks):
+    if has_rest_api(cql):
+        requests.post(f'{rest_api_url(cql)}/storage_service/keyspace_compaction/{ks}')
+    else:
+        run_nodetool(cql, "compact", ks)
 
 def take_snapshot(cql, table, tag, skip_flush):
     ks, cf = table.split('.')
