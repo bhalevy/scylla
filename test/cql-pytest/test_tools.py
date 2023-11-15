@@ -19,6 +19,8 @@ import re
 import shutil
 import util
 
+# FIXME: this is currently hard coded in `run_scylla_cmd`
+SMP = 2
 
 def simple_no_clustering_table(cql, keyspace):
     table = util.unique_name()
@@ -865,3 +867,35 @@ def test_flush_keyspace(cql, test_keyspace, scylla_path, scylla_data_dir):
 
     with scylla_sstable(simple_clustering_table, cql, test_keyspace, scylla_data_dir, lambda cql, ks, _: flush_with_scylla_nodetool(cql, scylla_path, ks)) as (schema_file, sstables):
         assert sstables != []
+
+
+def compact_with_nodetool_utils(cql, ks=None, table=None):
+    if not ks:
+        nodetool.compact(cql)
+    elif not table:
+        nodetool.compact(cql, ks)
+    else:
+        nodetool.compact(cql, f"{ks}.{table}")
+
+def compact_with_scylla_nodetool(cql, scylla_path, ks=None, table=None):
+    cmd = [scylla_path, "nodetool", "compact"]
+    if ks:
+        cmd.append(ks)
+        if table:
+            cmd.append(table)
+    cmd.extend(["--host", cql.cluster.contact_points[0]])
+    subprocess.check_call(cmd)
+
+def test_compact_table(cql, test_keyspace, scylla_path, scylla_data_dir):
+    with scylla_sstable(simple_clustering_table, cql, test_keyspace, scylla_data_dir, lambda cql, ks, tbl: compact_with_nodetool_utils(cql, ks, tbl)) as (schema_file, sstables):
+        assert len(sstables) == SMP
+
+    with scylla_sstable(simple_clustering_table, cql, test_keyspace, scylla_data_dir, lambda cql, ks, tbl: compact_with_scylla_nodetool(cql, scylla_path, ks, tbl)) as (schema_file, sstables):
+        assert len(sstables) == SMP
+
+def test_compact_keyspace(cql, test_keyspace, scylla_path, scylla_data_dir):
+    with scylla_sstable(simple_clustering_table, cql, test_keyspace, scylla_data_dir, lambda cql, ks, _: compact_with_nodetool_utils(cql, ks)) as (schema_file, sstables):
+        assert len(sstables) == SMP
+
+    with scylla_sstable(simple_clustering_table, cql, test_keyspace, scylla_data_dir, lambda cql, ks, _: compact_with_scylla_nodetool(cql, scylla_path, ks)) as (schema_file, sstables):
+        assert len(sstables) == SMP
