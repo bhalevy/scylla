@@ -71,8 +71,17 @@ def run_nodetool(cql, *args):
     host = cql.cluster.contact_points[0]
     subprocess.run([nodetool_cmd(), '-h', host, *args])
 
-def flush(cql, table):
-    ks, cf = table.split('.')
+def flush(cql, ks_or_table=None):
+    if not ks_or_table:
+        if has_rest_api(cql):
+            requests.post(f'{rest_api_url(cql)}/storage_service/flush')
+        else:
+            run_nodetool(cql, "flush")
+        return
+    if not '.' in ks_or_table:
+        flush_keyspace(cql, ks_or_table)
+        return
+    ks, cf = ks_or_table.split('.')
     if has_rest_api(cql):
         requests.post(f'{rest_api_url(cql)}/storage_service/keyspace_flush/{ks}', params={'cf' : cf})
     else:
