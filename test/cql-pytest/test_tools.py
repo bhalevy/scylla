@@ -127,7 +127,7 @@ def table_with_counters(cql, keyspace):
 
 
 @contextlib.contextmanager
-def scylla_sstable(table_factory, cql, ks, data_dir):
+def scylla_sstable(table_factory, cql, ks, data_dir, flush_func=lambda cql, ks, tbl: nodetool.flush(cql, f"{ks}.{tbl}")):
     table, schema = table_factory(cql, ks)
 
     schema_file = os.path.join(data_dir, "..", "test_tools_schema.cql")
@@ -136,7 +136,7 @@ def scylla_sstable(table_factory, cql, ks, data_dir):
 
     try:
         with nodetool.no_autocompaction_context(cql, f"{ks}.{table}"):
-            nodetool.flush(cql, f"{ks}.{table}")
+            flush_func(cql, ks, table)
             sstables = glob.glob(os.path.join(data_dir, ks, table + '-*', '*-Data.db'))
             yield (schema_file, sstables)
     finally:
@@ -834,3 +834,34 @@ def test_scrub_validate_mode(scylla_path, scrub_workdir, scrub_schema_file, scru
 
         # Check that validate did not move the bad sstable into qurantine
         assert os.path.exists(scrub_bad_sstable)
+
+def flush_with_nodetool_utils(cql, ks=None, table=None):
+    if not ks:
+        nodetool.flush(cql)
+    elif not table:
+        nodetool.flush(cql, ks)
+    else:
+        nodetool.flush(cql, f"{ks}.{table}")
+
+def flush_with_scylla_nodetool(cql, scylla_path, ks=None, table=None):
+    cmd = [scylla_path, "nodetool", "flush"]
+    if ks:
+        cmd.append(ks)
+        if table:
+            cmd.append(table)
+    cmd.extend(["--host", cql.cluster.contact_points[0]])
+    subprocess.check_call(cmd)
+
+def test_flush_table(cql, test_keyspace, scylla_path, scylla_data_dir):
+    with scylla_sstable(simple_clustering_table, cql, test_keyspace, scylla_data_dir, lambda cql, ks, tbl: flush_with_nodetool_utils(cql, ks, tbl)) as (schema_file, sstables):
+        assert sstables != []
+
+    with scylla_sstable(simple_clustering_table, cql, test_keyspace, scylla_data_dir, lambda cql, ks, tbl: flush_with_scylla_nodetool(cql, scylla_path, ks, tbl)) as (schema_file, sstables):
+        assert sstables != []
+
+def test_flush_keyspace(cql, test_keyspace, scylla_path, scylla_data_dir):
+    with scylla_sstable(simple_clustering_table, cql, test_keyspace, scylla_data_dir, lambda cql, ks, _: flush_with_nodetool_utils(cql, ks)) as (schema_file, sstables):
+        assert sstables != []
+
+    with scylla_sstable(simple_clustering_table, cql, test_keyspace, scylla_data_dir, lambda cql, ks, _: flush_with_scylla_nodetool(cql, scylla_path, ks)) as (schema_file, sstables):
+        assert sstables != []
