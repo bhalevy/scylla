@@ -1563,6 +1563,7 @@ public:
 
     const locator::shared_token_metadata& get_shared_token_metadata() const { return _shared_token_metadata; }
     const locator::token_metadata& get_token_metadata() const { return *_shared_token_metadata.get(); }
+    const locator::topology& get_topology() const { return get_token_metadata().get_topology(); }
 
     wasm::manager& wasm() noexcept { return _wasm; }
     const wasm::manager& wasm() const noexcept { return _wasm; }
