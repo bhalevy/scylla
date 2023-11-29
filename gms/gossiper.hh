@@ -144,7 +144,7 @@ public:
     }
 
     inet_address get_broadcast_address() const noexcept {
-        return utils::fb_utilities::get_broadcast_address();
+        return get_token_metadata_ptr()->get_topology().my_address();
     }
     const std::set<inet_address>& get_seeds() const noexcept;
 
@@ -414,6 +414,11 @@ public:
     // The endpoint_state is immutable (except for its update_timestamp), guaranteed not to change while
     // the endpoint_state_ptr is held.
     endpoint_state_ptr get_endpoint_state_ptr(inet_address ep) const noexcept;
+
+    // Return this node's endpoint_state_ptr
+    endpoint_state_ptr get_endpoint_state_ptr() const noexcept {
+        return get_endpoint_state_ptr(get_broadcast_address());
+    }
 
     const versioned_value* get_application_state_ptr(inet_address endpoint, application_state appstate) const noexcept;
     sstring get_application_state_value(inet_address endpoint, application_state appstate) const;
