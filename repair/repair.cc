@@ -13,7 +13,6 @@
 #include "dht/sharder.hh"
 #include "streaming/stream_reason.hh"
 #include "gms/inet_address.hh"
-#include "utils/fb_utilities.hh"
 #include "gms/gossiper.hh"
 #include "message/messaging_service.hh"
 #include "sstables/sstables.hh"
@@ -220,7 +219,8 @@ static std::vector<gms::inet_address> get_neighbors(
         auto normal_nodes = erm.get_token_metadata().get_all_endpoints();
         ret = inet_address_vector_replica_set(normal_nodes.begin(), normal_nodes.end());
     }
-    remove_item(ret, utils::fb_utilities::get_broadcast_address());
+    auto my_address = erm.get_topology().my_address();
+    remove_item(ret, my_address);
 
     if (!data_centers.empty()) {
         auto dc_endpoints_map = erm.get_token_metadata().get_topology().get_datacenter_endpoints();
@@ -241,7 +241,7 @@ static std::vector<gms::inet_address> get_neighbors(
         }
         // We require, like Cassandra does, that the current host must also
         // be part of the repair
-        if (!dc_endpoints.contains(utils::fb_utilities::get_broadcast_address())) {
+        if (!dc_endpoints.contains(my_address)) {
             throw std::runtime_error("The current host must be part of the repair");
         }
         // The resulting list of nodes is the intersection of the nodes in the
@@ -264,7 +264,7 @@ static std::vector<gms::inet_address> get_neighbors(
             } catch(...) {
                 throw std::runtime_error(format("Unknown host specified: {}", host));
             }
-            if (endpoint == utils::fb_utilities::get_broadcast_address()) {
+            if (endpoint == my_address) {
                 found_me = true;
             } else if (neighbor_set.contains(endpoint)) {
                 ret.push_back(endpoint);
@@ -285,7 +285,7 @@ static std::vector<gms::inet_address> get_neighbors(
             throw std::runtime_error("The current host must be part of the repair");
         }
         if (ret.size() < 1) {
-            auto me = utils::fb_utilities::get_broadcast_address();
+            auto me = my_address;
             auto others = erm.get_natural_endpoints(tok);
             remove_item(others, me);
             throw std::runtime_error(fmt::format("Repair requires at least two "
@@ -340,7 +340,8 @@ static future<std::list<gms::inet_address>> get_hosts_participating_in_repair(
 
     // Repair coordinator must participate in repair, but it is never
     // returned by get_neighbors - add it here
-    participating_hosts.insert(utils::fb_utilities::get_broadcast_address());
+    auto my_address = erm.get_topology().my_address();
+    participating_hosts.insert(my_address);
 
     co_await do_for_each(ranges, [&] (const dht::token_range& range) {
         const auto nbs = get_neighbors(erm, ksname, range, data_centers, hosts, ignore_nodes);
@@ -1080,6 +1081,7 @@ future<int> repair_service::do_repair_start(sstring keyspace, std::unordered_map
     auto germs = make_lw_shared(co_await locator::make_global_effective_replication_map(sharded_db, keyspace));
     auto& erm = germs->get();
     auto& topology = erm.get_token_metadata().get_topology();
+    auto my_address = topology.my_address();
 
     repair_options options(options_map);
 
@@ -1096,7 +1098,7 @@ future<int> repair_service::do_repair_start(sstring keyspace, std::unordered_map
         co_return id.id;
     }
 
-    if (!_gossiper.local().is_normal(utils::fb_utilities::get_broadcast_address())) {
+    if (!_gossiper.local().is_normal(my_address)) {
         throw std::runtime_error("Node is not in NORMAL status yet!");
     }
 
@@ -1117,15 +1119,15 @@ future<int> repair_service::do_repair_start(sstring keyspace, std::unordered_map
             // but instead of each range being assigned just one primary owner
             // across the entire cluster, here each range is assigned a primary
             // owner in each of the DCs.
-            ranges = erm.get_primary_ranges_within_dc(utils::fb_utilities::get_broadcast_address());
+            ranges = erm.get_primary_ranges_within_dc(my_address);
         } else if (options.data_centers.size() > 0 || options.hosts.size() > 0) {
             throw std::runtime_error("You need to run primary range repair on all nodes in the cluster.");
         } else {
-            ranges = erm.get_primary_ranges(utils::fb_utilities::get_broadcast_address());
+            ranges = erm.get_primary_ranges(my_address);
         }
     } else {
         // get keyspace local ranges
-        ranges = erm.get_ranges(utils::fb_utilities::get_broadcast_address());
+        ranges = erm.get_ranges(my_address);
     }
 
     if (!options.data_centers.empty() && !options.hosts.empty()) {
@@ -1493,7 +1495,7 @@ future<> repair_service::bootstrap_with_repair(locator::token_metadata_ptr tmptr
         auto ks_erms = db.get_non_local_strategy_keyspaces_erms();
         auto& topology = tmptr->get_topology();
         auto myloc = topology.get_location();
-        auto myip = utils::fb_utilities::get_broadcast_address();
+        auto myip = topology.my_address();
         auto reason = streaming::stream_reason::bootstrap;
         // Calculate number of ranges to sync data
         size_t nr_ranges_total = 0;
@@ -1667,9 +1669,9 @@ future<> repair_service::do_decommission_removenode_with_repair(locator::token_m
     using inet_address = gms::inet_address;
     return seastar::async([this, tmptr = std::move(tmptr), leaving_node = std::move(leaving_node), ops] () mutable {
         auto& db = get_db().local();
-        auto myip = utils::fb_utilities::get_broadcast_address();
-        auto ks_erms = db.get_non_local_strategy_keyspaces_erms();
         auto& topology = tmptr->get_topology();
+        auto myip = topology.my_address();
+        auto ks_erms = db.get_non_local_strategy_keyspaces_erms();
         auto local_dc = topology.get_datacenter();
         bool is_removenode = myip != leaving_node;
         auto op = is_removenode ? "removenode_with_repair" : "decommission_with_repair";
@@ -1859,7 +1861,8 @@ future<> repair_service::do_decommission_removenode_with_repair(locator::token_m
 
 future<> repair_service::decommission_with_repair(locator::token_metadata_ptr tmptr) {
     assert(this_shard_id() == 0);
-    return do_decommission_removenode_with_repair(std::move(tmptr), utils::fb_utilities::get_broadcast_address(), {});
+    auto my_address = tmptr->get_topology().my_address();
+    return do_decommission_removenode_with_repair(std::move(tmptr), my_address, {});
 }
 
 future<> repair_service::removenode_with_repair(locator::token_metadata_ptr tmptr, gms::inet_address leaving_node, shared_ptr<node_ops_info> ops) {
@@ -1880,7 +1883,7 @@ future<> repair_service::do_rebuild_replace_with_repair(locator::token_metadata_
     return seastar::async([this, tmptr = std::move(tmptr), source_dc = std::move(source_dc), op = std::move(op), reason, ignore_nodes = std::move(ignore_nodes)] () mutable {
         auto& db = get_db().local();
         auto ks_erms = db.get_non_local_strategy_keyspaces_erms();
-        auto myip = utils::fb_utilities::get_broadcast_address();
+        auto myip = tmptr->get_topology().my_address();
         size_t nr_ranges_total = 0;
         for (const auto& [keyspace_name, erm] : ks_erms) {
             if (!db.has_keyspace(keyspace_name)) {
@@ -1980,13 +1983,14 @@ future<> repair_service::replace_with_repair(locator::token_metadata_ptr tmptr, 
     auto cloned_tm = co_await tmptr->clone_async();
     auto op = sstring("replace_with_repair");
     auto& topology = tmptr->get_topology();
+    auto myip = topology.my_address();
     auto myloc = topology.get_location();
     auto reason = streaming::stream_reason::replace;
     // update a cloned version of tmptr
     // no need to set the original version
     auto cloned_tmptr = make_token_metadata_ptr(std::move(cloned_tm));
-    cloned_tmptr->update_topology(utils::fb_utilities::get_broadcast_address(), myloc, locator::node::state::replacing);
-    co_await cloned_tmptr->update_normal_tokens(replacing_tokens, utils::fb_utilities::get_broadcast_address());
+    cloned_tmptr->update_topology(myip, myloc, locator::node::state::replacing);
+    co_await cloned_tmptr->update_normal_tokens(replacing_tokens, myip);
     co_return co_await do_rebuild_replace_with_repair(std::move(cloned_tmptr), std::move(op), myloc.dc, reason, std::move(ignore_nodes));
 }
 
