@@ -69,5 +69,13 @@ public:
 
     void start_broadcasting();
     future<> stop_broadcasting();
+
+    const distributed<replica::database>& db() const noexcept {
+        return _db;
+    };
+
+    const replica::database& local_db() const noexcept {
+        return _db.local();
+    };
 };
 }
