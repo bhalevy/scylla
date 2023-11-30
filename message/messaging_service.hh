@@ -268,6 +268,7 @@ public:
     struct config {
         locator::host_id id;
         gms::inet_address ip;
+        gms::inet_address broadcast_address;
         uint16_t port;
         uint16_t ssl_port = 0;
         encrypt_what encrypt = encrypt_what::none;
@@ -342,6 +343,9 @@ public:
     future<> start_listen(locator::shared_token_metadata& stm);
     uint16_t port();
     gms::inet_address listen_address();
+    gms::inet_address broadcast_address() {
+        return _cfg.broadcast_address;
+    }
     future<> shutdown();
     future<> stop();
     static rpc::no_wait_type no_wait();
