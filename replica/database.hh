@@ -1180,6 +1180,33 @@ public:
     friend class compaction_group;
 };
 
+// Smart table pointer that guards the table object
+// while it's being accessed asynchronously
+class table_ptr {
+    gate::holder _holder;
+    lw_shared_ptr<table> _table_ptr;
+public:
+    explicit table_ptr(table&);
+    table_ptr(database& db, std::string_view ks, std::string_view name);
+    table_ptr(database& db, const table_id& id);
+
+    const table& operator*() const noexcept {
+        return *_table_ptr;
+    }
+
+    table& operator*() noexcept {
+        return *_table_ptr;
+    }
+
+    const table* operator->() const noexcept {
+        return _table_ptr.operator->();
+    }
+
+    table* operator->() noexcept {
+        return _table_ptr.operator->();
+    }
+};
+
 using user_types_metadata = data_dictionary::user_types_metadata;
 
 using keyspace_metadata = data_dictionary::keyspace_metadata;

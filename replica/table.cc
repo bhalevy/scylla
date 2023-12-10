@@ -67,6 +67,19 @@ static seastar::metrics::label keyspace_label("ks");
 
 using namespace std::chrono_literals;
 
+table_ptr::table_ptr(table& t)
+    : _holder(t.async_gate())
+    , _table_ptr(t.shared_from_this())
+{ }
+
+table_ptr::table_ptr(database& db, std::string_view ks, std::string_view name)
+    : table_ptr(db.find_column_family(ks, name))
+{ }
+
+table_ptr::table_ptr(database& db, const table_id& id)
+    : table_ptr(db.find_column_family(id))
+{ }
+
 void table::update_sstables_known_generation(sstables::generation_type generation) {
     auto gen = generation ? generation.as_int() : 0;
     if (_sstable_generation_generator) {
