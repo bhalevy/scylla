@@ -1073,10 +1073,14 @@ table::stop() {
     if (_async_gate.is_closed()) {
         co_return;
     }
-    co_await _async_gate.close();
+    // Allow `compaction_manager::stop` to stop ongoing compactions
+    // while they may still hold the _async_gate
+    // entered in `compaction_manager::start_compaction`
+    auto gate_closed_fut = _async_gate.close();
     co_await await_pending_ops();
     co_await parallel_foreach_compaction_group(std::mem_fn(&compaction_group::stop));
     co_await _sstable_deletion_gate.close();
+    co_await std::move(gate_closed_fut);
     co_await get_row_cache().invalidate(row_cache::external_updater([this] {
         for (const compaction_group_ptr& cg : compaction_groups()) {
             cg->clear_sstables();
@@ -1654,9 +1658,13 @@ future<> compaction_group::stop() noexcept {
     if (_async_gate.is_closed()) {
         co_return;
     }
-    co_await _async_gate.close();
+    // Allow `compaction_manager::remove` to stop ongoing compactions
+    // while they may still hold the _async_gate
+    // entered in `compaction_manager::start_compaction`
+    auto gate_closed_fut = _async_gate.close();
     co_await flush();
     co_await _t._compaction_manager.remove(as_table_state());
+    co_await std::move(gate_closed_fut);
 }
 
 void compaction_group::clear_sstables() {
