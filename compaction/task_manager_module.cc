@@ -197,6 +197,8 @@ future<> run_on_table(sstring op, replica::database& db, std::string keyspace, t
         co_await func(*tptr);
     } catch (const replica::no_such_column_family& e) {
         tasks::tmlogger.warn("Skipping {} of {}.{}: {}", op, keyspace, ti.name, e.what());
+    } catch (const gate_closed_exception& e) {
+        tasks::tmlogger.warn("Skipping {} of {}.{}: {}", op, keyspace, ti.name, e.what());
     } catch (...) {
         ex = std::current_exception();
         tasks::tmlogger.error("Failed {} of {}.{}: {}", op, keyspace, ti.name, ex);
