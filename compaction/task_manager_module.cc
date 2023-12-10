@@ -193,7 +193,8 @@ future<> run_on_table(sstring op, replica::database& db, std::string keyspace, t
     std::exception_ptr ex;
     tasks::tmlogger.debug("Starting {} on {}.{}", op, keyspace, ti.name);
     try {
-        co_await func(db.find_column_family(ti.id));
+        auto tptr = replica::table_ptr(db, ti.id);
+        co_await func(*tptr);
     } catch (const replica::no_such_column_family& e) {
         tasks::tmlogger.warn("Skipping {} of {}.{}: {}", op, keyspace, ti.name, e.what());
     } catch (...) {
