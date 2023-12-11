@@ -10,6 +10,7 @@
 
 #include "gms/endpoint_state.hh"
 #include "gms/i_endpoint_state_change_subscriber.hh"
+#include "gms/application_state.hh"
 #include <optional>
 #include <ostream>
 #include <boost/lexical_cast.hpp>
@@ -59,6 +60,32 @@ future<> i_endpoint_state_change_subscriber::on_application_state_change(inet_ad
         return func(endpoint, it->second, pid);
     }
     return make_ready_future<>();
+}
+
+locator::host_id endpoint_state::get_host_id() const {
+    if (auto* app_state = get_application_state_ptr(application_state::HOST_ID)) {
+        return locator::host_id(utils::UUID(app_state->value()));
+    }
+    return locator::host_id::create_null_id();
+}
+
+std::optional<locator::endpoint_dc_rack> endpoint_state::get_dc_rack() const {
+    if (auto* app_state = get_application_state_ptr(application_state::DC)) {
+        std::optional<locator::endpoint_dc_rack> ret;
+        ret->dc = app_state->value();
+        if ((app_state = get_application_state_ptr(application_state::RACK))) {
+            ret->rack = app_state->value();
+            return ret;
+        }
+    }
+    return std::nullopt;
+}
+
+std::optional<std::unordered_set<dht::token>> endpoint_state::get_tokens() const {
+    if (auto* app_state = get_application_state_ptr(application_state::TOKENS)) {
+        return versioned_value::tokens_from_string(app_state->value());
+    }
+    return std::nullopt;
 }
 
 }
