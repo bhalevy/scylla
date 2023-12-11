@@ -58,6 +58,10 @@ struct host_id_or_endpoint {
 
     host_id_or_endpoint(const sstring& s, param_type restrict = param_type::auto_detect);
 
+    bool operator==(const host_id_or_endpoint& o) const noexcept {
+        return has_host_id() ? id == o.id : endpoint == o.endpoint;
+    }
+
     bool has_host_id() const noexcept {
         return bool(id);
     }
@@ -393,4 +397,25 @@ public:
     static future<> mutate_on_all_shards(sharded<shared_token_metadata>& stm, seastar::noncopyable_function<future<> (token_metadata&)> func);
 };
 
-}
+} // namespace locator
+
+namespace std {
+
+template<>
+struct hash<locator::host_id_or_endpoint> {
+    size_t operator()(const locator::host_id_or_endpoint& i) const {
+        return i.has_host_id() ? hash<locator::host_id>()(i.id) : hash<gms::inet_address>()(i.endpoint);
+    }
+};
+
+} // namespace std
+
+template <>
+struct fmt::formatter<locator::host_id_or_endpoint> {
+    constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
+
+    template <typename FormatContext>
+    auto format(const locator::host_id_or_endpoint& hioa, FormatContext& ctx) const {
+        return fmt::format_to(ctx.out(), "{}/{}", hioa.id, hioa.endpoint);
+    }
+};
