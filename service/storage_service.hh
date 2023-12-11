@@ -16,6 +16,7 @@
 #include "gms/i_endpoint_state_change_subscriber.hh"
 #include "service/endpoint_lifecycle_subscriber.hh"
 #include "service/topology_guard.hh"
+#include "locator/token_metadata.hh"
 #include "locator/abstract_replication_strategy.hh"
 #include "locator/tablets.hh"
 #include "locator/tablet_metadata_guard.hh"
@@ -316,9 +317,10 @@ private:
         locator::endpoint_dc_rack dc_rack;
         locator::host_id host_id;
         gms::inet_address address;
+        std::unordered_set<locator::host_id_or_endpoint> ignore_nodes;
     };
     future<replacement_info> prepare_replacement_info(std::unordered_set<gms::inet_address> initial_contact_nodes,
-            const std::unordered_map<gms::inet_address, sstring>& loaded_peer_features);
+            const std::unordered_map<gms::inet_address, sstring>& loaded_peer_features, mutable_token_metadata_ptr tmptr);
 
     void run_replace_ops(std::unordered_set<token>& bootstrap_tokens, replacement_info replace_info);
     void run_bootstrap_ops(std::unordered_set<token>& bootstrap_tokens);
@@ -327,7 +329,7 @@ private:
 
 public:
 
-    static std::unordered_set<gms::inet_address> parse_node_list(sstring comma_separated_list, const locator::token_metadata& tm);
+    static std::unordered_set<locator::host_id_or_endpoint> parse_node_list(sstring comma_separated_list);
 
     future<> check_for_endpoint_collision(std::unordered_set<gms::inet_address> initial_contact_nodes,
             const std::unordered_map<gms::inet_address, sstring>& loaded_peer_features);
