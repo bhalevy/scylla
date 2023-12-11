@@ -9,6 +9,7 @@
  */
 
 #include "gms/endpoint_state.hh"
+#include "gms/application_state.hh"
 #include <optional>
 #include <ostream>
 #include <boost/lexical_cast.hpp>
@@ -53,6 +54,33 @@ bool endpoint_state::is_cql_ready() const noexcept {
     } catch (...) {
         return false;
     }
+}
+
+locator::host_id endpoint_state::get_host_id() const {
+    if (auto* app_state = get_application_state_ptr(application_state::HOST_ID)) {
+        return locator::host_id(utils::UUID(app_state->value()));
+    }
+    return locator::host_id::create_null_id();
+}
+
+std::optional<locator::endpoint_dc_rack> endpoint_state::get_dc_rack() const {
+    if (auto* app_state = get_application_state_ptr(application_state::DC)) {
+        std::optional<locator::endpoint_dc_rack> ret;
+        ret->dc = app_state->value();
+        if ((app_state = get_application_state_ptr(application_state::RACK))) {
+            ret->rack = app_state->value();
+            return ret;
+        }
+    }
+    return std::nullopt;
+}
+
+std::unordered_set<dht::token> endpoint_state::get_tokens() const {
+    std::unordered_set<dht::token> ret;
+    if (auto* app_state = get_application_state_ptr(application_state::TOKENS)) {
+        ret = versioned_value::tokens_from_string(app_state->value());
+    }
+    return ret;
 }
 
 }
