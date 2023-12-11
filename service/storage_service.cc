@@ -3045,7 +3045,7 @@ future<> storage_service::join_token_ring(sharded<db::system_distributed_keyspac
         if (_sys_ks.local().bootstrap_complete()) {
             throw std::runtime_error("Cannot replace address with a node that is already bootstrapped");
         }
-        ri = co_await prepare_replacement_info(initial_contact_nodes, loaded_peer_features);
+        ri = co_await prepare_replacement_info(initial_contact_nodes, loaded_peer_features, tmptr);
         replace_address = ri->address;
         raft_replace_info = raft_group0::replace_info {
             .ip_addr = *replace_address,
@@ -3212,10 +3212,12 @@ future<> storage_service::join_token_ring(sharded<db::system_distributed_keyspac
         // `token_metadata` has all host ID / token collisions resolved so in particular it doesn't contain
         // these obsolete IPs. Refs: #14487, #14468
         auto& tm = get_token_metadata();
-        auto ignore_nodes = ri
-                ? parse_node_list(_db.local().get_config().ignore_dead_nodes_for_replace(), tm)
-                // TODO: specify ignore_nodes for bootstrap
-                : std::unordered_set<gms::inet_address>{};
+        std::unordered_set<gms::inet_address> ignore_nodes;
+        if (ri) {
+            ignore_nodes = boost::copy_range<std::unordered_set<gms::inet_address>>(ri->ignore_nodes | boost::adaptors::transformed([] (const auto& hioa) {
+                return hioa.endpoint;
+            }));
+        }
 
         std::vector<gms::inet_address> sync_nodes;
         tm.get_topology().for_each_node([&] (const locator::node* np) {
@@ -3500,13 +3502,12 @@ future<> storage_service::mark_existing_views_as_built() {
     });
 }
 
-std::unordered_set<gms::inet_address> storage_service::parse_node_list(sstring comma_separated_list, const token_metadata& tm) {
+std::unordered_set<locator::host_id_or_endpoint> storage_service::parse_node_list(sstring comma_separated_list) {
     std::vector<sstring> ignore_nodes_strs = utils::split_comma_separated_list(std::move(comma_separated_list));
-    std::unordered_set<gms::inet_address> ignore_nodes;
+    std::unordered_set<locator::host_id_or_endpoint> ignore_nodes;
     for (const sstring& n : ignore_nodes_strs) {
         try {
-            auto ep_and_id = tm.parse_host_id_and_endpoint(n);
-            ignore_nodes.insert(ep_and_id.endpoint);
+            ignore_nodes.insert(locator::host_id_or_endpoint(n));
         } catch (...) {
             throw std::runtime_error(::format("Failed to parse node list: {}: invalid node={}: {}", ignore_nodes_strs, n, std::current_exception()));
         }
@@ -4514,7 +4515,7 @@ future<> storage_service::remove_endpoint(inet_address endpoint, gms::permit_id 
 }
 
 future<storage_service::replacement_info>
-storage_service::prepare_replacement_info(std::unordered_set<gms::inet_address> initial_contact_nodes, const std::unordered_map<gms::inet_address, sstring>& loaded_peer_features) {
+storage_service::prepare_replacement_info(std::unordered_set<gms::inet_address> initial_contact_nodes, const std::unordered_map<gms::inet_address, sstring>& loaded_peer_features, mutable_token_metadata_ptr tmptr) {
     locator::host_id replace_host_id;
     gms::inet_address replace_address;
 
@@ -4571,7 +4572,7 @@ storage_service::prepare_replacement_info(std::unordered_set<gms::inet_address> 
 
     std::unordered_set<dht::token> tokens;
     if (!_raft_topology_change_enabled) {
-        tokens = get_tokens_for(replace_address);
+        tokens = state->get_tokens();
         if (tokens.empty()) {
             throw std::runtime_error(::format("Could not find tokens for {} to replace", replace_address));
         }
@@ -4582,15 +4583,51 @@ storage_service::prepare_replacement_info(std::unordered_set<gms::inet_address> 
     if (!replace_host_id) {
         replace_host_id = _gossiper.get_host_id(replace_address);
     }
-    slogger.info("Host {}/{} is replacing {}/{}", get_token_metadata().get_my_id(), get_broadcast_address(), replace_host_id, replace_address);
-    co_await _gossiper.reset_endpoint_state_map();
 
-    co_return replacement_info {
+    auto ri = replacement_info {
         .tokens = std::move(tokens),
         .dc_rack = std::move(dc_rack),
         .host_id = std::move(replace_host_id),
         .address = replace_address,
     };
+
+    auto ignore_hioas = parse_node_list(_db.local().get_config().ignore_dead_nodes_for_replace());
+
+    for (auto hioa : ignore_hioas) {
+        gms::inet_address addr;
+        // Resolve both host_id and endpoint
+        if (!hioa.has_endpoint()) {
+            auto res = _gossiper.get_nodes_with_host_id(hioa.id);
+            if (res.size() == 0) {
+                throw std::runtime_error(::format("Could not find ignored node with host_id {}", hioa.id));
+            } else if (res.size() > 1) {
+                throw std::runtime_error(::format("Found multiple nodes to ignore with host_id {}: {}", hioa.id, res));
+            }
+            hioa.endpoint = *res.begin();
+        }
+        auto esp = _gossiper.get_endpoint_state_ptr(hioa.endpoint);
+        if (!esp) {
+            throw std::runtime_error(::format("Ignore node {}/{} has no endpoint state", hioa.id, hioa.endpoint));
+        }
+        if (!hioa.has_host_id()) {
+            hioa.id = esp->get_host_id();
+            if (!hioa.id) {
+                throw std::runtime_error(::format("Could not find host_id for ignored node {}", hioa.endpoint));
+            }
+        }
+        auto opt_dc_rack = esp->get_dc_rack();
+        tmptr->update_topology(hioa.id, opt_dc_rack);
+        if (hioa.id) {
+            tmptr->update_host_id(hioa.id, hioa.endpoint);
+        }
+        co_await tmptr->update_normal_tokens(esp->get_tokens(), hioa.id);
+        ri.ignore_nodes.insert(hioa);
+    }
+
+    slogger.info("Host {}/{} is replacing {}/{} ignore_nodes={}", get_token_metadata().get_my_id(), get_broadcast_address(), replace_host_id, replace_address, ri.ignore_nodes);
+    co_await _gossiper.reset_endpoint_state_map();
+
+    co_return ri;
 }
 
 future<std::map<gms::inet_address, float>> storage_service::get_ownership() {
@@ -5094,7 +5131,9 @@ void storage_service::run_replace_ops(std::unordered_set<token>& bootstrap_token
     auto stop_ctl = deferred_stop(ctl);
     const auto& uuid = ctl.uuid();
     gms::inet_address replace_address = replace_info.address;
-    ctl.ignore_nodes = parse_node_list(_db.local().get_config().ignore_dead_nodes_for_replace(), *ctl.tmptr);
+    ctl.ignore_nodes = boost::copy_range<std::unordered_set<gms::inet_address>>(replace_info.ignore_nodes | boost::adaptors::transformed([] (const auto& hioa) {
+        return hioa.endpoint;
+    }));
     // Step 1: Decide who needs to sync data for replace operation
     // The replacing node is not a normal token owner yet
     // Add it back explicitly after checking all other nodes.
