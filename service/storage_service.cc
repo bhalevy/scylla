@@ -1173,7 +1173,7 @@ future<> storage_service::join_token_ring(sharded<db::system_distributed_keyspac
         if (_sys_ks.local().bootstrap_complete()) {
             throw std::runtime_error("Cannot replace address with a node that is already bootstrapped");
         }
-        ri = co_await prepare_replacement_info(initial_contact_nodes, loaded_peer_features);
+        ri = co_await prepare_replacement_info(initial_contact_nodes, loaded_peer_features, tmptr);
         replace_address = ri->address;
         raft_replace_info = raft_group0::replace_info {
             .ip_addr = *replace_address,
@@ -1342,10 +1342,10 @@ future<> storage_service::join_token_ring(sharded<db::system_distributed_keyspac
         // `token_metadata` has all host ID / token collisions resolved so in particular it doesn't contain
         // these obsolete IPs. Refs: #14487, #14468
         auto& tm = get_token_metadata();
-        auto ignore_nodes = ri
-                ? parse_node_list(_db.local().get_config().ignore_dead_nodes_for_replace(), tm)
-                // TODO: specify ignore_nodes for bootstrap
-                : std::unordered_set<gms::inet_address>{};
+        std::unordered_set<gms::inet_address> ignore_nodes;
+        if (ri) {
+            ignore_nodes = boost::copy_range<std::unordered_set<gms::inet_address>>(ri->ignore_nodes | boost::adaptors::map_values);
+        }
 
         std::vector<gms::inet_address> sync_nodes;
         tm.get_topology().for_each_node([&] (const locator::node* np) {
@@ -1642,13 +1642,12 @@ future<> storage_service::mark_existing_views_as_built() {
     });
 }
 
-std::unordered_set<gms::inet_address> storage_service::parse_node_list(sstring comma_separated_list, const token_metadata& tm) {
+std::list<locator::host_id_or_endpoint> storage_service::parse_node_list(sstring comma_separated_list) {
     std::vector<sstring> ignore_nodes_strs = utils::split_comma_separated_list(std::move(comma_separated_list));
-    std::unordered_set<gms::inet_address> ignore_nodes;
+    std::list<locator::host_id_or_endpoint> ignore_nodes;
     for (const sstring& n : ignore_nodes_strs) {
         try {
-            auto hoep = locator::host_id_or_endpoint(n);
-            ignore_nodes.insert(hoep.resolve_endpoint(tm));
+            ignore_nodes.push_back(locator::host_id_or_endpoint(n));
         } catch (...) {
             throw std::runtime_error(::format("Failed to parse node list: {}: invalid node={}: {}", ignore_nodes_strs, n, std::current_exception()));
         }
@@ -2689,7 +2688,7 @@ future<> storage_service::remove_endpoint(inet_address endpoint, gms::permit_id 
 }
 
 future<storage_service::replacement_info>
-storage_service::prepare_replacement_info(std::unordered_set<gms::inet_address> initial_contact_nodes, const std::unordered_map<gms::inet_address, sstring>& loaded_peer_features) {
+storage_service::prepare_replacement_info(std::unordered_set<gms::inet_address> initial_contact_nodes, const std::unordered_map<gms::inet_address, sstring>& loaded_peer_features, mutable_token_metadata_ptr tmptr) {
     locator::host_id replace_host_id;
     gms::inet_address replace_address;
 
@@ -2746,10 +2745,11 @@ storage_service::prepare_replacement_info(std::unordered_set<gms::inet_address> 
 
     std::unordered_set<dht::token> tokens;
     if (!_raft_topology_change_enabled) {
-        tokens = get_tokens_for(replace_address);
-        if (tokens.empty()) {
+        auto tokens_opt = state->get_tokens();
+        if (!tokens_opt || tokens_opt->empty()) {
             throw std::runtime_error(::format("Could not find tokens for {} to replace", replace_address));
         }
+        tokens = std::move(*tokens_opt);
     }
 
     auto dc_rack = get_dc_rack_for(replace_address).value_or(locator::endpoint_dc_rack::default_location);
@@ -2757,15 +2757,56 @@ storage_service::prepare_replacement_info(std::unordered_set<gms::inet_address> 
     if (!replace_host_id) {
         replace_host_id = _gossiper.get_host_id(replace_address);
     }
-    slogger.info("Host {}/{} is replacing {}/{}", get_token_metadata().get_my_id(), get_broadcast_address(), replace_host_id, replace_address);
-    co_await _gossiper.reset_endpoint_state_map();
 
-    co_return replacement_info {
+    auto ri = replacement_info {
         .tokens = std::move(tokens),
         .dc_rack = std::move(dc_rack),
         .host_id = std::move(replace_host_id),
         .address = replace_address,
     };
+
+    for (auto& hoep : parse_node_list(_db.local().get_config().ignore_dead_nodes_for_replace())) {
+        locator::host_id id;
+        gms::inet_address endpoint;
+        // Resolve both host_id and endpoint
+        if (hoep.has_endpoint()) {
+            endpoint = hoep.endpoint();
+        } else {
+            id = hoep.id();
+            auto res = _gossiper.get_nodes_with_host_id(id);
+            if (res.size() == 0) {
+                throw std::runtime_error(::format("Could not find ignored node with host_id {}", id));
+            } else if (res.size() > 1) {
+                throw std::runtime_error(::format("Found multiple nodes to ignore with host_id {}: {}", id, res));
+            }
+            endpoint = *res.begin();
+        }
+        auto esp = _gossiper.get_endpoint_state_ptr(endpoint);
+        if (!esp) {
+            throw std::runtime_error(::format("Ignore node {}/{} has no endpoint state", id, endpoint));
+        }
+        if (!id) {
+            id = esp->get_host_id();
+            if (!id) {
+                throw std::runtime_error(::format("Could not find host_id for ignored node {}", endpoint));
+            }
+        }
+        auto opt_dc_rack = esp->get_dc_rack();
+        tmptr->update_topology(id, opt_dc_rack);
+        tmptr->update_host_id(id, endpoint);
+        auto tokens_opt = esp->get_tokens();
+        if (tokens_opt && !tokens_opt->empty()) {
+            co_await tmptr->update_normal_tokens(std::move(*tokens_opt), id);
+        } else {
+            slogger.warn("Ignore node {}/{} has no tokens", id, endpoint);
+        }
+        ri.ignore_nodes.emplace(id, endpoint);
+    }
+
+    slogger.info("Host {}/{} is replacing {}/{} ignore_nodes={}", get_token_metadata().get_my_id(), get_broadcast_address(), replace_host_id, replace_address, ri.ignore_nodes);
+    co_await _gossiper.reset_endpoint_state_map();
+
+    co_return ri;
 }
 
 future<std::map<gms::inet_address, float>> storage_service::get_ownership() {
@@ -3255,7 +3296,7 @@ void storage_service::run_replace_ops(std::unordered_set<token>& bootstrap_token
     auto stop_ctl = deferred_stop(ctl);
     const auto& uuid = ctl.uuid();
     gms::inet_address replace_address = replace_info.address;
-    ctl.ignore_nodes = parse_node_list(_db.local().get_config().ignore_dead_nodes_for_replace(), *ctl.tmptr);
+    ctl.ignore_nodes = boost::copy_range<std::unordered_set<gms::inet_address>>(replace_info.ignore_nodes | boost::adaptors::map_values);
     // Step 1: Decide who needs to sync data for replace operation
     // The replacing node is not a normal token owner yet
     // Add it back explicitly after checking all other nodes.
