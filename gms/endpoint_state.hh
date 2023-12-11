@@ -13,6 +13,8 @@
 #include "gms/heart_beat_state.hh"
 #include "gms/application_state.hh"
 #include "gms/versioned_value.hh"
+#include "locator/types.hh"
+
 #include <optional>
 #include <chrono>
 
@@ -148,6 +150,12 @@ public:
     }
 
     bool is_cql_ready() const noexcept;
+
+    locator::host_id get_host_id() const;
+
+    std::optional<locator::endpoint_dc_rack> get_dc_rack() const;
+
+    std::unordered_set<dht::token> get_tokens() const;
 
     friend std::ostream& operator<<(std::ostream& os, const endpoint_state& x);
 };
