@@ -7,6 +7,7 @@
  */
 
 #include <boost/test/unit_test.hpp>
+#include "gms/inet_address.hh"
 #include "test/lib/scylla_test_case.hh"
 #include "locator/token_metadata.hh"
 #include "locator/simple_strategy.hh"
@@ -303,4 +304,80 @@ SEASTAR_THREAD_TEST_CASE(test_replace_node_with_same_endpoint) {
     BOOST_REQUIRE_EQUAL(erm->get_natural_endpoints_without_node_being_replaced(dht::token::from_int64(1)),
         inet_address_vector_replica_set{});
     BOOST_REQUIRE_EQUAL(token_metadata->get_endpoint(t1), e1_id1);
+}
+
+SEASTAR_TEST_CASE(test_host_id_or_endpoint_equality) {
+    std::array<locator::host_id_or_endpoint, 4> values = {
+        locator::host_id_or_endpoint("127.0.0.1"),
+        locator::host_id_or_endpoint("127.0.0.2"),
+        locator::host_id_or_endpoint("3d5524bb-f1c9-4d76-83c2-35bd83538076"),
+        locator::host_id_or_endpoint("bddd9950-a8ff-4279-b815-3eafc34bc834")
+    };
+
+    for (const auto& i : values) {
+        for (const auto& j : values) {
+            BOOST_REQUIRE_EQUAL(i == j, &i == &j);
+        }
+    }
+
+    auto v0 = values[0];
+    auto v1 = values[0];
+    BOOST_REQUIRE(!v0.id);
+    BOOST_REQUIRE(!v1.id);
+    BOOST_REQUIRE(v0.endpoint != gms::inet_address{});
+    BOOST_REQUIRE(v0.endpoint == v1.endpoint);
+    // Test that without valid host_id on both, we compare the address instead, in a symmetrical way
+    v0.id = values[2].id;
+    BOOST_REQUIRE(v0.id);
+    BOOST_REQUIRE(!v1.id);
+    BOOST_REQUIRE(v0 == v1);
+    BOOST_REQUIRE(v1 == v0);
+    // Test that with valid host_id on both, we compare the host_id, in a symmetrical way
+    v1.id = values[3].id;
+    BOOST_REQUIRE(v0.id);
+    BOOST_REQUIRE(v1.id);
+    BOOST_REQUIRE(v0.id != v1.id);
+    BOOST_REQUIRE(v0 != v1);
+    BOOST_REQUIRE(v1 != v0);
+    // Test that with equal host_id on both, we ignore the address, in a symmetrical way
+    v1 = v0;
+    v1.endpoint = values[1].endpoint;
+    BOOST_REQUIRE(v0.id);
+    BOOST_REQUIRE(v1.id);
+    BOOST_REQUIRE(v0.id == v1.id);
+    BOOST_REQUIRE(v0.endpoint != v1.endpoint);
+    BOOST_REQUIRE(v0 == v1);
+    BOOST_REQUIRE(v1 == v0);
+
+    co_return;
+}
+
+SEASTAR_TEST_CASE(test_host_id_or_endpoint_format) {
+    std::vector<locator::host_id_or_endpoint> v;
+    std::unordered_set<locator::host_id_or_endpoint> s;
+
+    v.emplace_back(locator::host_id_or_endpoint("00000000-0000-0000-0000-000000000000"));
+    s.insert(v.back());
+    BOOST_REQUIRE_EQUAL(fmt::format("{}", v.back()), "00000000-0000-0000-0000-000000000000");
+
+    v.emplace_back(locator::host_id_or_endpoint("127.0.0.1"));
+    s.insert(v.back());
+    BOOST_REQUIRE_EQUAL(fmt::format("{}", v.back()), "127.0.0.1");
+
+    v.emplace_back(locator::host_id_or_endpoint("3d5524bb-f1c9-4d76-83c2-35bd83538076"));
+    s.insert(v.back());
+    BOOST_REQUIRE_EQUAL(fmt::format("{}", v.back()), "3d5524bb-f1c9-4d76-83c2-35bd83538076");
+
+    locator::host_id_or_endpoint hioa("10.0.0.1");
+    hioa.id = locator::host_id(utils::UUID("bddd9950-a8ff-4279-b815-3eafc34bc834"));
+    v.emplace_back(std::move(hioa));
+    s.insert(v.back());
+    BOOST_REQUIRE_EQUAL(fmt::format("{}", v.back()), "bddd9950-a8ff-4279-b815-3eafc34bc834/10.0.0.1");
+
+    auto str = fmt::format("{}", s);
+    for (const auto& i : v) {
+        BOOST_REQUIRE(str.find(fmt::format("{}", i)) != std::string::npos);
+    }
+
+    return make_ready_future<>();
 }
