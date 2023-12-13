@@ -56,10 +56,6 @@ prepared_statement::prepared_statement(::shared_ptr<cql_statement> statement_, p
     : prepared_statement(statement_, std::move(ctx).get_variable_specifications(), std::move(partition_key_bind_indices))
 { }
 
-prepared_statement::prepared_statement(::shared_ptr<cql_statement>&& statement_)
-    : prepared_statement(statement_, std::vector<lw_shared_ptr<column_specification>>(), std::vector<uint16_t>())
-{ }
-
 }
 
 }
