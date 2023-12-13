@@ -229,6 +229,9 @@ std::unique_ptr<prepared_statement> create_table_statement::raw_statement::prepa
     }
 
     stmt->_use_compact_storage = _properties.use_compact_storage();
+    if (stmt->_use_compact_storage && !db.get_config().enable_create_table_with_compact_storage()) {
+        throw exceptions::invalid_request_exception("CREATE TABLE WITH COMPACT STORAGE support is disabled");
+    }
 
     auto& key_aliases = _key_aliases[0];
     std::vector<data_type> key_types;
