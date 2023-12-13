@@ -112,7 +112,8 @@ def make_scylla_conf(workdir: pathlib.Path, host_addr: str, seed_addrs: List[str
 
         'maintenance_socket': 'workdir',
 
-        'service_levels_interval_ms': 500,
+        # Required for cql/cdc_compact_storage_test
+        'enable_create_table_with_compact_storage': True,
     }
 
 # Seastar options can not be passed through scylla.yaml, use command line
