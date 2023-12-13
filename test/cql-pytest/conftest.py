@@ -21,7 +21,7 @@ import tempfile
 import time
 import random
 
-from util import unique_name, new_test_table, cql_session, local_process_id
+from util import unique_name, new_test_table, cql_session, local_process_id, config_value_context
 
 
 print(f"Driver name {DRIVER_NAME}, version {DRIVER_VERSION}")
@@ -221,3 +221,14 @@ def temp_workdir():
     """ Creates a temporary work directory, for the scope of a single test. """
     with tempfile.TemporaryDirectory() as workdir:
         yield workdir
+
+@pytest.fixture(scope="function")
+def compact_storage(cql):
+    try:
+        with config_value_context(cql, 'enable_create_table_with_compact_storage', 'true') as ctx:
+            yield ctx
+    except:
+        # enable_create_table_with_compact_storage is a scylla only feature
+        # so the above may fail on cassandra.
+        # This is fine since compact storage is enabled there by default.
+        pass
