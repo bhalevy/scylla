@@ -623,3 +623,6 @@ strict_is_not_null_in_views: true
 # replication_strategy_warn_list:
 #  - SimpleStrategy
 # replication_strategy_fail_list:
+
+# Guardrails to enable the deprecated feature of CREATE TABLE WITH COMPACT STORAGE.
+enable_create_table_with_compact_storage: false
