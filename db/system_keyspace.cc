@@ -1569,18 +1569,6 @@ data_value system_keyspace::make_tokens_data_value(const std::unordered_set<dht:
     return make_set_value(set_type, prepare_tokens(tokens));
 }
 
-future<> system_keyspace::update_tokens(gms::inet_address ep, const std::unordered_set<dht::token>& tokens)
-{
-    if (_db.get_token_metadata().get_topology().is_me(ep)) {
-        on_internal_error(slogger, format("update_tokens called for this node: {}", ep));
-    }
-
-    sstring req = format("INSERT INTO system.{} (peer, tokens) VALUES (?, ?)", PEERS);
-    slogger.debug("INSERT INTO system.{} (peer, tokens) VALUES ({}, {})", PEERS, ep, tokens);
-    co_await execute_cql(req, ep.addr(), make_tokens_data_value(tokens)).discard_result();
-}
-
-
 future<std::unordered_map<gms::inet_address, std::unordered_set<dht::token>>> system_keyspace::load_tokens() {
     sstring req = format("SELECT peer, tokens FROM system.{}", PEERS);
     return execute_cql(req).then([] (::shared_ptr<cql3::untyped_result_set> cql_result) {
