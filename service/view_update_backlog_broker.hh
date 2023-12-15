@@ -39,7 +39,7 @@ public:
 
     seastar::future<> stop();
 
-    virtual future<> on_change(gms::inet_address, gms::application_state, const gms::versioned_value&, gms::permit_id) override;
+    virtual future<> on_change(gms::inet_address, const gms::endpoint_state::map_type& states, gms::permit_id) override;
 
     virtual future<> on_remove(gms::inet_address, gms::permit_id) override;
 

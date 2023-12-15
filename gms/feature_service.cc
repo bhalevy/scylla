@@ -230,8 +230,8 @@ public:
     future<> on_join(inet_address ep, endpoint_state_ptr state, gms::permit_id) override {
         return enable_features();
     }
-    future<> on_change(inet_address ep, application_state state, const versioned_value&, gms::permit_id) override {
-        if (state == application_state::SUPPORTED_FEATURES) {
+    future<> on_change(inet_address ep, const gms::endpoint_state::map_type& states, gms::permit_id pid) override {
+        if (states.contains(application_state::SUPPORTED_FEATURES)) {
             return enable_features();
         }
         return make_ready_future();
