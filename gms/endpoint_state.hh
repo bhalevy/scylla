@@ -26,9 +26,10 @@ namespace gms {
 class endpoint_state {
 public:
     using clk = seastar::lowres_system_clock;
+    using map_type = std::map<application_state, versioned_value>;
 private:
     heart_beat_state _heart_beat_state;
-    std::map<application_state, versioned_value> _application_state;
+    map_type _application_state;
     /* fields below do not get serialized */
     clk::time_point _update_timestamp;
     bool _is_normal = false;
@@ -55,7 +56,7 @@ public:
     }
 
     endpoint_state(heart_beat_state&& initial_hb_state,
-            const std::map<application_state, versioned_value>& application_state)
+            const map_type& application_state)
         : _heart_beat_state(std::move(initial_hb_state))
         , _application_state(application_state)
         , _update_timestamp(clk::now())
@@ -84,11 +85,11 @@ public:
      * TODO replace this with operations that don't expose private state
      */
     // @Deprecated
-    std::map<application_state, versioned_value>& get_application_state_map() noexcept {
+    map_type& get_application_state_map() noexcept {
         return _application_state;
     }
 
-    const std::map<application_state, versioned_value>& get_application_state_map() const noexcept {
+    const map_type& get_application_state_map() const noexcept {
         return _application_state;
     }
 
