@@ -331,6 +331,12 @@ public:
     class cache_internal_tag;
     using cache_internal = bool_class<cache_internal_tag>;
     
+private:
+    static service::query_state query_state_for_internal_call() {
+        return {service::client_state::for_internal_calls(), empty_service_permit()};
+    }
+
+public:
     // NOTICE: Internal queries should be used with care, as they are expected
     // to be used for local tables (e.g. from the `system` keyspace).
     // Data modifications will usually be performed with consistency level ONE
@@ -341,9 +347,13 @@ public:
     // note: optimized for convenience, not performance.
     future<::shared_ptr<untyped_result_set>> execute_internal(
             const sstring& query_string,
-            db::consistency_level,
-            const std::initializer_list<data_value>&,
-            cache_internal cache);
+            db::consistency_level cl,
+            const std::initializer_list<data_value>& values,
+            cache_internal cache) {
+        auto qs = query_state_for_internal_call();
+        co_return co_await execute_internal(query_string, cl, qs, values, cache);
+    }
+
     future<::shared_ptr<untyped_result_set>> execute_internal(
             const sstring& query_string,
             db::consistency_level,
