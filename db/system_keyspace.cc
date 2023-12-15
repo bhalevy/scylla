@@ -1668,6 +1668,37 @@ template future<> system_keyspace::update_peer_info<sstring>(gms::inet_address e
 template future<> system_keyspace::update_peer_info<utils::UUID>(gms::inet_address ep, sstring column_name, utils::UUID);
 template future<> system_keyspace::update_peer_info<net::inet_address>(gms::inet_address ep, sstring column_name, net::inet_address);
 
+future<> system_keyspace::update_peer_info(gms::inet_address ep, data_values_map columns) {
+    if (_db.get_token_metadata().get_topology().is_me(ep)) {
+        on_internal_error(slogger, format("update_peer_info called for this node: {}", ep));
+    }
+
+    std::vector<std::string> column_names;
+    std::vector<data_value> data_values;
+    auto num_columns = columns.size() + 1;
+    column_names.reserve(num_columns);
+    data_values.reserve(num_columns);
+    column_names.emplace_back("peer");
+    data_values.emplace_back(ep.addr());
+    auto& map = columns.get_map();
+    while (!map.empty()) {
+        auto nh = map.extract(map.begin());
+        column_names.emplace_back(std::move(nh.key()));
+        data_values.emplace_back(std::move(nh.mapped()));
+    }
+    sstring values_ph_str(sstring::initialized_later(), num_columns * 2 - 1);
+    auto it = values_ph_str.begin();
+    *it = '?';
+    while (++it < values_ph_str.end()) {
+        *it = ',';
+        *++it = '?';
+    }
+
+    auto req = fmt::format("INSERT INTO system.{} ({}) VALUES ({})", PEERS, fmt::join(column_names, ","), values_ph_str);
+    slogger.debug("INSERT INTO system.{} ({}) VALUES ({})", PEERS, fmt::join(column_names, ","), fmt::join(data_values, ","));
+    co_await execute_cql_query(req, data_values).discard_result();
+}
+
 template <typename T>
 future<> system_keyspace::set_scylla_local_param_as(const sstring& key, const T& value, bool visible_before_cl_replay) {
     sstring req = format("UPDATE system.{} SET value = ? WHERE key = ?", system_keyspace::SCYLLA_LOCAL);
@@ -2829,5 +2860,8 @@ future<::shared_ptr<cql3::untyped_result_set>> system_keyspace::execute_cql_quer
 // Explicit specializations of execute_cql_query
 template
 future<::shared_ptr<cql3::untyped_result_set>> system_keyspace::execute_cql_query(const sstring&, const std::initializer_list<data_value>&);
+
+template
+future<::shared_ptr<cql3::untyped_result_set>> system_keyspace::execute_cql_query(const sstring&, const std::vector<data_value>&);
 
 } // namespace db
