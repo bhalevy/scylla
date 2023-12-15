@@ -520,14 +520,17 @@ public:
     future<> shutdown();
 
 private:
-    future<::shared_ptr<cql3::untyped_result_set>> execute_cql(const sstring& query_string, const std::initializer_list<data_value>& values);
+    template <std::ranges::range Range>
+    requires std::convertible_to<std::ranges::range_value_t<Range>, data_value>
+    future<::shared_ptr<cql3::untyped_result_set>> execute_cql_query(const sstring& query_string, const Range& values);
+
     template <typename... Args>
     future<::shared_ptr<cql3::untyped_result_set>> execute_cql_with_timeout(sstring req, db::timeout_clock::time_point timeout, Args&&... args);
 
 public:
     template <typename... Args>
     future<::shared_ptr<cql3::untyped_result_set>> execute_cql(sstring req, Args&&... args) {
-        return execute_cql(req, { data_value(std::forward<Args>(args))... });
+        return execute_cql_query(req, std::initializer_list<data_value>({ data_value(std::forward<Args>(args))... }));
     }
 
     friend future<column_mapping> db::schema_tables::get_column_mapping(db::system_keyspace& sys_ks, ::table_id table_id, table_schema_version version);

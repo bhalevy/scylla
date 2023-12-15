@@ -912,6 +912,14 @@ future<::shared_ptr<untyped_result_set>> query_processor::do_execute_internal(
         const std::initializer_list<data_value>& values,
         cache_internal cache);
 
+template
+future<::shared_ptr<untyped_result_set>> query_processor::do_execute_internal(
+        const sstring& query_string,
+        db::consistency_level cl,
+        service::query_state& query_state,
+        const std::vector<data_value>& values,
+        cache_internal cache);
+
 template <std::ranges::range Range>
 requires std::convertible_to<std::ranges::range_value_t<Range>, data_value>
 future<::shared_ptr<untyped_result_set>>
