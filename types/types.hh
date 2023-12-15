@@ -1002,3 +1002,52 @@ struct appending_hash<data_type> {
         feed_hash(h, v->name());
     }
 };
+
+class data_values_map {
+    std::unordered_map<std::string, data_value> _map;
+
+public:
+    const std::unordered_map<std::string, data_value>& get_map() const noexcept {
+        return _map;
+    }
+
+    std::unordered_map<std::string, data_value>& get_map() noexcept {
+        return _map;
+    }
+
+    bool empty() const noexcept {
+        return _map.empty();
+    }
+
+    size_t size() const noexcept {
+        return _map.size();
+    }
+
+    void reserve(size_t size) {
+        _map.reserve(size);
+    }
+
+    /// Returns true if \c name, \c value were inserted to the map
+    /// or false if \c name already exists in the map.
+    bool emplace(std::string name, data_value value) {
+        auto [_, inserted] = _map.emplace(std::move(name), std::move(value));
+        return inserted;
+    }
+
+    /// Returns true if \c name, \c value were inserted to the map
+    /// or false if \c name already exists in the map and was updated.
+    bool update(std::string name, data_value value) {
+        auto it = _map.find(name);
+        if (it == _map.end()) {
+            _map.emplace(std::move(name), std::move(value));
+            return true;
+        }
+        it->second = std::move(value);
+        return false;
+    }
+
+    /// Returns true iff \c name was found in the map and was erased.
+    bool erase(std::string name) {
+        return _map.erase(name);
+    }
+};
