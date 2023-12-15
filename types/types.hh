@@ -12,6 +12,8 @@
 #include <boost/functional/hash.hpp>
 #include <iosfwd>
 #include <sstream>
+#include <vector>
+#include <initializer_list>
 
 #include <seastar/core/sstring.hh>
 #include <seastar/core/shared_ptr.hh>
@@ -1001,4 +1003,15 @@ struct appending_hash<data_type> {
     void operator()(Hasher& h, const data_type& v) const {
         feed_hash(h, v->name());
     }
+};
+
+class data_values_list : public std::vector<data_value> {
+public:
+    using vector::vector;
+
+    data_values_list(const std::initializer_list<data_value>& values) : vector(values) { }
+
+    template <std::ranges::range Range>
+    requires std::convertible_to<std::ranges::range_value_t<Range>, data_value>
+    data_values_list(const Range& values) : vector(values) { }
 };
