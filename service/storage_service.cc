@@ -4135,18 +4135,74 @@ future<> storage_service::do_update_system_peers_table(gms::inet_address endpoin
     }
 }
 
-future<> storage_service::update_peer_info(gms::inet_address endpoint) {
-    slogger.debug("Update peer info: endpoint={}", endpoint);
-    using namespace gms;
+data_values_map storage_service::get_peer_info_for_update(inet_address endpoint) {
     auto ep_state = _gossiper.get_endpoint_state_ptr(endpoint);
     if (!ep_state) {
-        co_return;
+        return {};
     }
-    for (auto& entry : ep_state->get_application_state_map()) {
-        auto& app_state = entry.first;
-        auto& value = entry.second;
-        co_await do_update_system_peers_table(endpoint, app_state, value);
+    return get_peer_info_for_update(endpoint, ep_state->get_application_state_map());
+}
+
+data_values_map storage_service::get_peer_info_for_update(inet_address endpoint, const gms::application_states_map& app_state_map) {
+    data_values_map columns;
+    auto insert_string = [&] (std::string name, const gms::versioned_value& value) {
+        columns.emplace(std::move(name), value.value());
+    };
+    auto insert_address = [&] (std::string name, const gms::versioned_value& value) {
+        inet_address ep;
+        try {
+            ep = gms::inet_address(value.value());
+        } catch (...) {
+            on_internal_error(slogger, format("failed to parse {} {} for {}: {}", name, value.value(), endpoint, std::current_exception()));
+        }
+        columns.emplace(std::move(name), ep.addr());
+    };
+    auto insert_uuid = [&] (std::string name, const gms::versioned_value& value) {
+        utils::UUID id;
+        try {
+            id = utils::UUID(value.value());
+        } catch (...) {
+            on_internal_error(slogger, format("failed to parse {} {} for {}: {}", name, value.value(), endpoint, std::current_exception()));
+        }
+        columns.emplace(std::move(name), id);
+    };
+    columns.reserve(app_state_map.size());
+    for (const auto& [state, value] : app_state_map) {
+        switch (state) {
+        case application_state::RELEASE_VERSION:
+            insert_string("release_version", value);
+            break;
+        case application_state::DC:
+            insert_string("data_center", value);
+            break;
+        case application_state::RACK:
+            insert_string("rack", value);
+            break;
+        case application_state::INTERNAL_IP:
+            insert_address("preferred_ip", value);
+            break;
+        case application_state::RPC_ADDRESS:
+            insert_address("rpc_address", value);
+            break;
+        case application_state::SCHEMA:
+            insert_uuid("schema_version", value);
+            break;
+        case application_state::HOST_ID:
+            insert_uuid("host_id", value);
+            break;
+        case application_state::SUPPORTED_FEATURES:
+            insert_string("supported_features", value);
+            break;
+        default:
+            break;
+        }
     }
+    return columns;
+}
+
+future<> storage_service::update_peer_info(gms::inet_address endpoint) {
+    slogger.debug("Update peer info: endpoint={}", endpoint);
+    return _sys_ks.local().update_peer_info(endpoint, get_peer_info_for_update(endpoint));
 }
 
 std::unordered_set<locator::token> storage_service::get_tokens_for(inet_address endpoint) {
