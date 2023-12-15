@@ -252,6 +252,8 @@ public:
     future<std::unordered_map<table_id, db_clock::time_point>> load_truncation_times();
     future<> update_schema_version(table_schema_version version);
 
+    static data_value make_tokens_data_value(const std::unordered_set<dht::token>& tokens);
+
     /*
     * Save tokens used by this node in the LOCAL table.
     */

@@ -1564,6 +1564,11 @@ static std::vector<cdc::generation_id_v2> decode_cdc_generations_ids(const set_t
     return gen_ids_list;
 }
 
+data_value system_keyspace::make_tokens_data_value(const std::unordered_set<dht::token>& tokens) {
+    auto set_type = set_type_impl::get_instance(utf8_type, true);
+    return make_set_value(set_type, prepare_tokens(tokens));
+}
+
 future<> system_keyspace::update_tokens(gms::inet_address ep, const std::unordered_set<dht::token>& tokens)
 {
     if (_db.get_token_metadata().get_topology().is_me(ep)) {
@@ -1572,8 +1577,7 @@ future<> system_keyspace::update_tokens(gms::inet_address ep, const std::unorder
 
     sstring req = format("INSERT INTO system.{} (peer, tokens) VALUES (?, ?)", PEERS);
     slogger.debug("INSERT INTO system.{} (peer, tokens) VALUES ({}, {})", PEERS, ep, tokens);
-    auto set_type = set_type_impl::get_instance(utf8_type, true);
-    co_await execute_cql(req, ep.addr(), make_set_value(set_type, prepare_tokens(tokens))).discard_result();
+    co_await execute_cql(req, ep.addr(), make_tokens_data_value(tokens)).discard_result();
 }
 
 
@@ -1752,8 +1756,7 @@ future<> system_keyspace::update_tokens(const std::unordered_set<dht::token>& to
     }
 
     sstring req = format("INSERT INTO system.{} (key, tokens) VALUES (?, ?)", LOCAL);
-    auto set_type = set_type_impl::get_instance(utf8_type, true);
-    co_await execute_cql(req, sstring(LOCAL), make_set_value(set_type, prepare_tokens(tokens)));
+    co_await execute_cql(req, sstring(LOCAL), make_tokens_data_value(tokens));
 }
 
 future<> system_keyspace::force_blocking_flush(sstring cfname) {
