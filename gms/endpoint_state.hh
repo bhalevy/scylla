@@ -26,7 +26,7 @@ namespace gms {
 class endpoint_state {
 public:
     using clk = seastar::lowres_system_clock;
-    using map_type = std::map<application_state, versioned_value>;
+    using map_type = std::unordered_map<application_state, versioned_value>;
 private:
     heart_beat_state _heart_beat_state;
     map_type _application_state;
