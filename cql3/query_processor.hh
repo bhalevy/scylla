@@ -10,6 +10,7 @@
 
 #pragma once
 
+#include <initializer_list>
 #include <string_view>
 #include <unordered_map>
 
@@ -27,6 +28,7 @@
 #include "service/qos/service_level_controller.hh"
 #include "service/client_state.hh"
 #include "service/broadcast_tables/experimental/query_result.hh"
+#include "types/types.hh"
 #include "utils/observable.hh"
 #include "lang/wasm.hh"
 #include "service/raft/raft_group0_client.hh"
@@ -345,47 +347,70 @@ public:
     // creating namespaces, etc) is explicitly forbidden via this interface.
     //
     // note: optimized for convenience, not performance.
+    template <std::ranges::range Range>
+    requires std::convertible_to<std::ranges::range_value_t<Range>, data_value>
+    future<::shared_ptr<untyped_result_set>> do_execute_internal(
+            const sstring& query_string,
+            db::consistency_level cl,
+            const Range& values,
+            cache_internal cache) {
+        auto qs = query_state_for_internal_call();
+        co_return co_await do_execute_internal(query_string, cl, qs, values, cache);
+    }
+
+    template <std::ranges::range Range>
+    requires std::convertible_to<std::ranges::range_value_t<Range>, data_value>
+    future<::shared_ptr<untyped_result_set>> do_execute_internal(
+            const sstring& query_string,
+            db::consistency_level,
+            service::query_state& query_state,
+            const Range& values,
+            cache_internal cache);
+
     future<::shared_ptr<untyped_result_set>> execute_internal(
             const sstring& query_string,
             db::consistency_level cl,
             const std::initializer_list<data_value>& values,
             cache_internal cache) {
-        auto qs = query_state_for_internal_call();
-        co_return co_await execute_internal(query_string, cl, qs, values, cache);
-    }
-
-    future<::shared_ptr<untyped_result_set>> execute_internal(
-            const sstring& query_string,
-            db::consistency_level,
-            service::query_state& query_state,
-            const std::initializer_list<data_value>&,
-            cache_internal cache);
-    future<::shared_ptr<untyped_result_set>> execute_internal(
-            const sstring& query_string,
-            db::consistency_level cl,
-            cache_internal cache) {
-        return execute_internal(query_string, cl, {}, cache);
+        return do_execute_internal(query_string, cl, values, cache);
     }
     future<::shared_ptr<untyped_result_set>> execute_internal(
             const sstring& query_string,
             db::consistency_level cl,
             service::query_state& query_state,
+            const std::initializer_list<data_value>& values,
             cache_internal cache) {
-        return execute_internal(query_string, cl, query_state, {}, cache);
+        return do_execute_internal(query_string, cl, query_state, values, cache);
+    }
+    future<::shared_ptr<untyped_result_set>> execute_internal(
+            const sstring& query_string,
+            db::consistency_level cl,
+            cache_internal cache) {
+        return do_execute_internal(query_string, cl, std::initializer_list<data_value>{}, cache);
+    }
+    future<::shared_ptr<untyped_result_set>> execute_internal(
+            const sstring& query_string,
+            db::consistency_level cl,
+            service::query_state& query_state,
+            cache_internal cache) {
+        return do_execute_internal(query_string, cl, query_state, std::initializer_list<data_value>{}, cache);
     }
     future<::shared_ptr<untyped_result_set>>
     execute_internal(const sstring& query_string, const std::initializer_list<data_value>& values, cache_internal cache) {
-        return execute_internal(query_string, db::consistency_level::ONE, values, cache);
+        return do_execute_internal(query_string, db::consistency_level::ONE, values, cache);
     }
     future<::shared_ptr<untyped_result_set>>
     execute_internal(const sstring& query_string, cache_internal cache) {
-        return execute_internal(query_string, db::consistency_level::ONE, {}, cache);
+        return do_execute_internal(query_string, db::consistency_level::ONE, std::initializer_list<data_value>{}, cache);
     }
+
+    template <std::ranges::range Range>
+    requires std::convertible_to<std::ranges::range_value_t<Range>, data_value>
     future<::shared_ptr<untyped_result_set>> execute_with_params(
             statements::prepared_statement::checked_weak_ptr p,
             db::consistency_level,
             service::query_state& query_state,
-            const std::initializer_list<data_value>& = { });
+            const Range& values = { });
 
     future<::shared_ptr<cql_transport::messages::result_message>> do_execute_with_params(
             service::query_state& query_state,
@@ -459,9 +484,11 @@ private:
     // Keep the holder until you stop using the `remote` services.
     std::pair<std::reference_wrapper<remote>, gate::holder> remote();
 
+    template <std::ranges::range Range>
+    requires std::convertible_to<std::ranges::range_value_t<Range>, data_value>
     query_options make_internal_options(
             const statements::prepared_statement::checked_weak_ptr& p,
-            const std::initializer_list<data_value>&,
+            const Range& values,
             db::consistency_level,
             int32_t page_size = -1) const;
 
@@ -473,10 +500,12 @@ private:
      *
      * When using paging internally a state object is needed.
      */
+    template <std::ranges::range Range>
+    requires std::convertible_to<std::ranges::range_value_t<Range>, data_value>
     internal_query_state create_paged_state(
             const sstring& query_string,
             db::consistency_level,
-            const std::initializer_list<data_value>&,
+            const Range& values,
             int32_t page_size);
 
     /*!

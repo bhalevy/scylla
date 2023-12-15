@@ -10,6 +10,7 @@
 
 #include "cql3/query_processor.hh"
 
+#include <initializer_list>
 #include <seastar/core/metrics.hh>
 #include <seastar/coroutine/parallel_for_each.hh>
 
@@ -757,9 +758,11 @@ std::pair<std::reference_wrapper<struct query_processor::remote>, gate::holder> 
     on_internal_error(log, "attempted to perform distributed query when `query_processor::remote` is unavailable");
 }
 
+template <std::ranges::range Range>
+requires std::convertible_to<std::ranges::range_value_t<Range>, data_value>
 query_options query_processor::make_internal_options(
         const statements::prepared_statement::checked_weak_ptr& p,
-        const std::initializer_list<data_value>& values,
+        const Range& values,
         db::consistency_level cl,
         int32_t page_size) const {
     if (p->bound_names.size() != values.size()) {
@@ -807,10 +810,12 @@ struct internal_query_state {
     bool more_results = true;
 };
 
+template <std::ranges::range Range>
+requires std::convertible_to<std::ranges::range_value_t<Range>, data_value>
 internal_query_state query_processor::create_paged_state(
         const sstring& query_string,
         db::consistency_level cl,
-        const std::initializer_list<data_value>& values,
+        const Range& values,
         int32_t page_size) {
     auto p = prepare_internal(query_string);
     auto opts = make_internal_options(p, values, cl, page_size);
@@ -874,12 +879,14 @@ query_processor::execute_paged_internal(internal_query_state& state) {
     co_return ::make_shared<untyped_result_set>(msg);
 }
 
+template <std::ranges::range Range>
+requires std::convertible_to<std::ranges::range_value_t<Range>, data_value>
 future<::shared_ptr<untyped_result_set>>
-query_processor::execute_internal(
+query_processor::do_execute_internal(
         const sstring& query_string,
         db::consistency_level cl,
         service::query_state& query_state,
-        const std::initializer_list<data_value>& values,
+        const Range& values,
         cache_internal cache) {
 
     if (log.is_enabled(logging::log_level::trace)) {
@@ -896,12 +903,23 @@ query_processor::execute_internal(
     }
 }
 
+// Explicit specializations for the execute_internal template
+template
+future<::shared_ptr<untyped_result_set>> query_processor::do_execute_internal(
+        const sstring& query_string,
+        db::consistency_level cl,
+        service::query_state& query_state,
+        const std::initializer_list<data_value>& values,
+        cache_internal cache);
+
+template <std::ranges::range Range>
+requires std::convertible_to<std::ranges::range_value_t<Range>, data_value>
 future<::shared_ptr<untyped_result_set>>
 query_processor::execute_with_params(
         statements::prepared_statement::checked_weak_ptr p,
         db::consistency_level cl,
         service::query_state& query_state,
-        const std::initializer_list<data_value>& values) {
+        const Range& values) {
     auto opts = make_internal_options(p, values, cl);
     auto statement = p->statement;
 
