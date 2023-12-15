@@ -1505,7 +1505,7 @@ future<replay_positions> system_keyspace::get_truncated_positions(table_id cf_id
         co_return result;
     }
     const auto req = format("SELECT * from system.{} WHERE table_uuid = ?", TRUNCATED);
-    auto result_set = co_await execute_cql(req, {cf_id.uuid()});
+    auto result_set = co_await execute_cql_query(req, {cf_id.uuid()});
     result.reserve(result_set->size());
     for (const auto& row: *result_set) {
         result.emplace_back(row.get_as<int32_t>("shard"),
@@ -2820,8 +2820,8 @@ future<> system_keyspace::shutdown() {
     co_return;
 }
 
-future<::shared_ptr<cql3::untyped_result_set>> system_keyspace::execute_cql(const sstring& query_string, const std::initializer_list<data_value>& values) {
-    return _qp.execute_internal(query_string, values, cql3::query_processor::cache_internal::yes);
+future<::shared_ptr<cql3::untyped_result_set>> system_keyspace::execute_cql_query(const sstring& query_string, const data_values_list& values) {
+    return _qp.execute_internal(query_string, db::consistency_level::ONE, values, cql3::query_processor::cache_internal::yes);
 }
 
 } // namespace db
