@@ -1668,6 +1668,34 @@ template future<> system_keyspace::update_peer_info<sstring>(gms::inet_address e
 template future<> system_keyspace::update_peer_info<utils::UUID>(gms::inet_address ep, sstring column_name, utils::UUID);
 template future<> system_keyspace::update_peer_info<net::inet_address>(gms::inet_address ep, sstring column_name, net::inet_address);
 
+future<> system_keyspace::update_peer_info(gms::inet_address ep, data_values_map columns) {
+    if (_db.get_token_metadata().get_topology().is_me(ep)) {
+        on_internal_error(slogger, format("update_peer_info called for this node: {}", ep));
+    }
+
+    std::ostringstream ss;
+    data_values_list values;
+    values.reserve(columns.size() * 2);
+
+    if (slogger.is_enabled(log_level::debug)) {
+        slogger.debug("BEGIN BATCH");
+        for (const auto& [col, value] : columns) {
+            slogger.debug("  INSERT INTO system.{} (peer, {}) VALUES ({}, {});", PEERS, col, ep.addr(), value);
+        }
+        slogger.debug("APPLY BATCH");
+    }
+
+    ss << "BEGIN BATCH";
+    for (auto& [col, value] : columns) {
+        ss << ::format("\n  INSERT INTO system.{} (peer, {}) VALUES (?, ?);", PEERS, col);
+        values.emplace_back(ep.addr());
+        values.emplace_back(std::move(value));
+    }
+    ss << "\nAPPLY BATCH";
+
+    co_await execute_cql_query(ss.str(), values).discard_result();
+}
+
 template <typename T>
 future<> system_keyspace::set_scylla_local_param_as(const sstring& key, const T& value, bool visible_before_cl_replay) {
     sstring req = format("UPDATE system.{} SET value = ? WHERE key = ?", system_keyspace::SCYLLA_LOCAL);
