@@ -14,6 +14,7 @@
 #include <sstream>
 #include <vector>
 #include <initializer_list>
+#include <unordered_map>
 
 #include <seastar/core/sstring.hh>
 #include <seastar/core/shared_ptr.hh>
@@ -1015,3 +1016,5 @@ public:
     requires std::convertible_to<std::ranges::range_value_t<Range>, data_value>
     data_values_list(const Range& values) : vector(values) { }
 };
+
+using data_values_map = std::unordered_map<sstring, data_value>;
