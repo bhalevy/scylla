@@ -2088,7 +2088,7 @@ future<> gossiper::add_saved_endpoint(inet_address ep) {
     if (es) {
         ep_state = *es;
         logger.debug("not replacing a previous ep_state for {}, but reusing it: {}", ep, ep_state);
-        ep_state.set_heart_beat_state_and_update_timestamp(heart_beat_state());
+        ep_state.update_timestamp();
     }
     const auto tmptr = get_token_metadata_ptr();
     auto host_id = tmptr->get_host_id_if_known(ep);
