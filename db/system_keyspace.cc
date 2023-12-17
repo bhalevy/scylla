@@ -1717,58 +1717,6 @@ future<> system_keyspace::update_peer_info(gms::inet_address ep, peer_info info)
     co_await _qp.execute_internal(query, db::consistency_level::ONE, opt_values, cql3::query_processor::cache_internal::yes);
 }
 
-// FIXME: implement update_peer_info specializations temporarily,
-// until all callers are converted to use peer_info
-template<> future<> system_keyspace::update_peer_info<sstring>(gms::inet_address ep, sstring column_name, sstring value) {
-    peer_info info;
-    if (column_name == "data_center") {
-        info.data_center.emplace(value);
-    } else if (column_name == "rack") {
-        info.rack.emplace(value);
-    } else if (column_name == "release_version") {
-        info.release_version.emplace(value);
-    } else if (column_name == "supported_features") {
-        info.supported_features.emplace(value);
-    } else {
-        on_fatal_internal_error(slogger, fmt::format("unsupported sstring peer info column_name \"{}\"", column_name));
-    }
-    co_await update_peer_info(ep, info);
-}
-
-template<> future<> system_keyspace::update_peer_info<utils::UUID>(gms::inet_address ep, sstring column_name, utils::UUID value) {
-    peer_info info;
-    if (column_name == "host_id") {
-        info.host_id.emplace(value);
-    } else if (column_name == "schema_version") {
-        info.schema_version.emplace(value);
-    } else {
-        on_fatal_internal_error(slogger, fmt::format("unsupported utils::UUID peer info column_name \"{}\"", column_name));
-    }
-    co_await update_peer_info(ep, info);
-}
-
-template<> future<> system_keyspace::update_peer_info<net::inet_address>(gms::inet_address ep, sstring column_name, net::inet_address value) {
-    peer_info info;
-    if (column_name == "preferred_ip") {
-        info.preferred_ip.emplace(value);
-    } else if (column_name == "rpc_address") {
-        info.rpc_address.emplace(value);
-    } else {
-        on_fatal_internal_error(slogger, fmt::format("unsupported net::inet_address peer info column_name \"{}\"", column_name));
-    }
-    co_await update_peer_info(ep, info);
-}
-
-template<> future<> system_keyspace::update_peer_info<std::unordered_set<dht::token>>(gms::inet_address ep, sstring column_name, std::unordered_set<dht::token> value) {
-    peer_info info;
-    if (column_name == "tokens") {
-        info.tokens.emplace(std::move(value));
-    } else {
-        on_fatal_internal_error(slogger, fmt::format("unsupported std::unordered_set<dht::token>> peer info column_name \"{}\"", column_name));
-    }
-    co_await update_peer_info(ep, info);
-}
-
 template <typename T>
 future<> system_keyspace::set_scylla_local_param_as(const sstring& key, const T& value, bool visible_before_cl_replay) {
     sstring req = format("UPDATE system.{} SET value = ? WHERE key = ?", system_keyspace::SCYLLA_LOCAL);

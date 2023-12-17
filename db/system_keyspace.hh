@@ -273,9 +273,6 @@ public:
 
     future<> update_peer_info(gms::inet_address ep, peer_info info);
 
-    template <typename Value>
-    future<> update_peer_info(gms::inet_address ep, sstring column_name, Value value);
-
     future<> remove_endpoint(gms::inet_address ep);
 
     // Saves the key-value pair into system.scylla_local table.
