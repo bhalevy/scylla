@@ -1663,21 +1663,6 @@ future<std::unordered_map<gms::inet_address, gms::inet_address>> system_keyspace
     });
 }
 
-template <typename Value>
-future<> system_keyspace::update_peer_info(gms::inet_address ep, sstring column_name, Value value) {
-    if (_db.get_token_metadata().get_topology().is_me(ep)) {
-        on_internal_error(slogger, format("update_peer_info called for this node: {}", ep));
-    }
-
-    sstring req = format("INSERT INTO system.{} (peer, {}) VALUES (?, ?)", PEERS, column_name);
-    slogger.debug("INSERT INTO system.{} (peer, {}) VALUES ({}, {})", PEERS, column_name, ep, value);
-    co_await execute_cql(req, ep.addr(), value).discard_result();
-}
-// sets are not needed, since tokens are updated by another method
-template future<> system_keyspace::update_peer_info<sstring>(gms::inet_address ep, sstring column_name, sstring);
-template future<> system_keyspace::update_peer_info<utils::UUID>(gms::inet_address ep, sstring column_name, utils::UUID);
-template future<> system_keyspace::update_peer_info<net::inet_address>(gms::inet_address ep, sstring column_name, net::inet_address);
-
 future<> system_keyspace::update_peer_info(gms::inet_address ep, data_values_map columns) {
     if (_db.get_token_metadata().get_topology().is_me(ep)) {
         on_internal_error(slogger, format("update_peer_info called for this node: {}", ep));
