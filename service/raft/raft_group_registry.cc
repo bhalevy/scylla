@@ -123,24 +123,35 @@ public:
 
     virtual future<>
     on_alive(gms::inet_address endpoint, gms::endpoint_state_ptr ep_state, gms::permit_id) override {
-        co_await utils::get_local_injector().inject_with_handler("raft_group_registry::on_alive", [endpoint, ep_state] (auto& handler) -> future<> {
-            auto app_state_ptr = ep_state->get_application_state_ptr(gms::application_state::HOST_ID);
-            if (!app_state_ptr) {
-                co_return;
-            }
-            
-            raft::server_id id(utils::UUID(app_state_ptr->value()));
-            rslog.info("gossiper_state_change_subscriber_proxy::on_alive() {} {}", endpoint, id);
-            auto second_node_ip = handler.get("second_node_ip");
-            assert(second_node_ip);
+        auto app_state_ptr = ep_state->get_application_state_ptr(gms::application_state::HOST_ID);
+        if (!app_state_ptr) {
+            return make_ready_future<>();
+        }
+        raft::server_id id(utils::UUID(app_state_ptr->value()));
+        auto generation = ep_state->get_heart_beat_state().get_generation();
 
-            if (endpoint == gms::inet_address(sstring{*second_node_ip})) {
-                rslog.info("Sleeping before handling on_alive");
-                co_await handler.wait_for_message(std::chrono::steady_clock::now() + std::chrono::minutes{1});
-                rslog.info("Finished Sleeping before handling on_alive");
-            }
+#ifndef SCYLLA_ENABLE_ERROR_INJECTION
+        on_endpoint_change(endpoint, id, generation);
+#else
+        // wait in the background since this notification callabck is called
+        // with the endpoint locked
+        // It is safe to discard this future as the gate is closed in stop()
+        (void)with_gate(_registry.async_gate(), [this, endpoint, id, generation] () -> future<> {
+            co_await utils::get_local_injector().inject_with_handler("raft_group_registry::on_alive", [endpoint, id] (auto& handler) -> future<> {
+                rslog.info("gossiper_state_change_subscriber_proxy::on_alive() {} {}", endpoint, id);
+                auto second_node_ip = handler.get("second_node_ip");
+                assert(second_node_ip);
+
+                if (endpoint == gms::inet_address(sstring{*second_node_ip})) {
+                    rslog.info("Sleeping before handling on_alive");
+                    co_await handler.wait_for_message(std::chrono::steady_clock::now() + std::chrono::minutes{1});
+                    rslog.info("Finished Sleeping before handling on_alive");
+                }
+            });
+            on_endpoint_change(endpoint, id, generation);
         });
-        co_await on_endpoint_change(endpoint, ep_state);
+#endif
+        return make_ready_future<>();
     }
 
     virtual future<>
