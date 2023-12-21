@@ -377,14 +377,14 @@ future<> raft_group_registry::stop_server(raft::group_id gid, sstring reason) {
 }
 
 future<> raft_group_registry::stop_servers() noexcept {
-    gate g;
+    auto& g = async_gate();
     for (auto it = _servers.begin(); it != _servers.end(); it = _servers.erase(it)) {
         ensure_aborted(it->second, "raft group registry is stopped");
         auto aborted = std::move(it->second.aborted);
-        // discarded future is waited via g.close()
+        // discarded future is waited via g.close() in stop()
         (void)std::move(aborted)->finally([rsfg = std::move(it->second), gh = g.hold()]{});
     }
-    co_await g.close();
+    return make_ready_future();
 }
 
 seastar::future<> raft_group_registry::start() {
