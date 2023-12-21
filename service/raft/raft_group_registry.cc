@@ -394,6 +394,7 @@ const raft::server_id& raft_group_registry::get_my_raft_id() {
 
 seastar::future<> raft_group_registry::stop() {
     co_await drain_on_shutdown();
+    co_await async_gate().close();
     co_await uninit_rpc_verbs();
     _direct_fd_subscription.reset();
     co_await _gossiper.unregister_(_gossiper_proxy);
