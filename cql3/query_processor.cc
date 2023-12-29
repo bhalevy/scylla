@@ -794,6 +794,49 @@ query_options query_processor::make_internal_options(
     return query_options(cl, bound_values);
 }
 
+query_options query_processor::make_internal_options(
+        const statements::prepared_statement::checked_weak_ptr& p,
+        const std::vector<std::optional<data_value>>& opt_values,
+        db::consistency_level cl,
+        int32_t page_size) const {
+    if (p->bound_names.size() != opt_values.size()) {
+        throw std::invalid_argument(
+                format("Invalid number of values. Expecting {:d} but got {:d}", p->bound_names.size(), opt_values.size()));
+    }
+    auto ni = p->bound_names.begin();
+    cql3::raw_value_vector_with_unset bound_values;
+    bound_values.values.reserve(opt_values.size());
+    bound_values.unset.reserve(opt_values.size());
+
+    for (auto& opt : opt_values) {
+        auto& n = *ni++;
+        if (!opt) {
+            bound_values.values.emplace_back(cql3::raw_value::make_null());
+            bound_values.unset.emplace_back(true);
+            continue;
+        }
+        const auto& v = *opt;
+        if (v.type() == bytes_type) {
+            bound_values.values.emplace_back(cql3::raw_value::make_value(value_cast<bytes>(v)));
+        } else if (v.is_null()) {
+            bound_values.values.emplace_back(cql3::raw_value::make_null());
+        } else {
+            bound_values.values.emplace_back(cql3::raw_value::make_value(n->type->decompose(v)));
+        }
+        bound_values.unset.emplace_back(false);
+    }
+    if (page_size > 0) {
+        lw_shared_ptr<service::pager::paging_state> paging_state;
+        db::consistency_level serial_consistency = db::consistency_level::SERIAL;
+        api::timestamp_type ts = api::missing_timestamp;
+        return query_options(
+                cl,
+                bound_values,
+                cql3::query_options::specific_options{page_size, std::move(paging_state), serial_consistency, ts});
+    }
+    return query_options(cl, bound_values);
+}
+
 statements::prepared_statement::checked_weak_ptr query_processor::prepare_internal(const sstring& query_string) {
     auto& p = _internal_statements[query_string];
     if (p == nullptr) {
@@ -916,6 +959,51 @@ query_processor::execute_with_params(
         db::consistency_level cl,
         service::query_state& query_state,
         const std::initializer_list<data_value>& values) {
+    auto opts = make_internal_options(p, values, cl);
+    auto statement = p->statement;
+
+    auto msg = co_await execute_maybe_with_guard(query_state, std::move(statement), opts, &query_processor::do_execute_with_params);
+    co_return ::make_shared<untyped_result_set>(msg);
+}
+
+future<::shared_ptr<untyped_result_set>>
+query_processor::execute_internal(
+        const sstring& query_string,
+        db::consistency_level cl,
+        const std::vector<std::optional<data_value>>& values,
+        cache_internal cache) {
+    auto qs = query_state_for_internal_call();
+    co_return co_await execute_internal(query_string, cl, qs, values, cache);
+}
+
+future<::shared_ptr<untyped_result_set>>
+query_processor::execute_internal(
+        const sstring& query_string,
+        db::consistency_level cl,
+        service::query_state& query_state,
+        const std::vector<std::optional<data_value>>& values,
+        cache_internal cache) {
+
+    if (log.is_enabled(logging::log_level::trace)) {
+        log.trace("execute_internal: {}\"{}\" ({})", cache ? "(cached) " : "", query_string, fmt::join(values, ", "));
+    }
+    if (cache) {
+        auto p = prepare_internal(query_string);
+        return execute_with_params(std::move(p), cl, query_state, values);
+    } else {
+        auto p = parse_statement(query_string)->prepare(_db, _cql_stats);
+        p->statement->raw_cql_statement = query_string;
+        auto checked_weak_ptr = p->checked_weak_from_this();
+        return execute_with_params(std::move(checked_weak_ptr), cl, query_state, values).finally([p = std::move(p)] {});
+    }
+}
+
+future<::shared_ptr<untyped_result_set>>
+query_processor::execute_with_params(
+        statements::prepared_statement::checked_weak_ptr p,
+        db::consistency_level cl,
+        service::query_state& query_state,
+        const std::vector<std::optional<data_value>>& values) {
     auto opts = make_internal_options(p, values, cl);
     auto statement = p->statement;
 

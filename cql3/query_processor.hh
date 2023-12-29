@@ -377,6 +377,25 @@ public:
             service::query_state& query_state,
             const std::initializer_list<data_value>& = { });
 
+    future<::shared_ptr<untyped_result_set>> execute_internal(
+            const sstring& query_string,
+            db::consistency_level,
+            const std::vector<std::optional<data_value>>&,
+            cache_internal cache);
+    future<::shared_ptr<untyped_result_set>> execute_internal(
+            const sstring& query_string,
+            db::consistency_level,
+            service::query_state& query_state,
+            const std::vector<std::optional<data_value>>&,
+            cache_internal cache);
+
+    future<::shared_ptr<untyped_result_set>> execute_with_params(
+            statements::prepared_statement::checked_weak_ptr p,
+            db::consistency_level,
+            service::query_state& query_state,
+            const std::vector<std::optional<data_value>>&);
+
+
     future<::shared_ptr<cql_transport::messages::result_message>> do_execute_with_params(
             service::query_state& query_state,
             shared_ptr<cql_statement> statement,
@@ -452,6 +471,12 @@ private:
     query_options make_internal_options(
             const statements::prepared_statement::checked_weak_ptr& p,
             const std::initializer_list<data_value>&,
+            db::consistency_level,
+            int32_t page_size = -1) const;
+
+    query_options make_internal_options(
+            const statements::prepared_statement::checked_weak_ptr& p,
+            const std::vector<std::optional<data_value>>&,
             db::consistency_level,
             int32_t page_size = -1) const;
 
