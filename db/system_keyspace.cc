@@ -1567,13 +1567,10 @@ static std::vector<cdc::generation_id_v2> decode_cdc_generations_ids(const set_t
 future<> system_keyspace::update_tokens(gms::inet_address ep, const std::unordered_set<dht::token>& tokens)
 {
     if (_db.get_token_metadata().get_topology().is_me(ep)) {
-        on_internal_error(slogger, format("update_tokens called for this node: {}", ep));
+        co_return co_await remove_endpoint(ep);
     }
 
-    sstring req = format("INSERT INTO system.{} (peer, tokens) VALUES (?, ?)", PEERS);
-    slogger.debug("INSERT INTO system.{} (peer, tokens) VALUES ({}, {})", PEERS, ep, tokens);
-    auto set_type = set_type_impl::get_instance(utf8_type, true);
-    co_await execute_cql(req, ep.addr(), make_set_value(set_type, prepare_tokens(tokens))).discard_result();
+    co_await update_peer_info(ep, peer_info{ .tokens = tokens });
 }
 
 
@@ -1653,20 +1650,116 @@ future<std::unordered_map<gms::inet_address, gms::inet_address>> system_keyspace
     });
 }
 
-template <typename Value>
-future<> system_keyspace::update_peer_info(gms::inet_address ep, sstring column_name, Value value) {
+namespace {
+template <typename T>
+static bool ingest_opt_value(std::vector<std::optional<data_value>>& opt_values, const std::optional<T>& opt) {
+    if (opt) {
+        opt_values.emplace_back(*opt);
+        return true;
+    } else {
+        opt_values.emplace_back(std::nullopt);
+        return false;
+    }
+};
+
+static bool ingest_opt_value(std::vector<std::optional<data_value>>& opt_values, const std::optional<std::unordered_set<dht::token>>& opt) {
+    if (opt) {
+        auto set_type = set_type_impl::get_instance(utf8_type, true);
+        opt_values.emplace_back(make_set_value(set_type, prepare_tokens(*opt)));
+        return true;
+    } else {
+        opt_values.emplace_back(std::nullopt);
+        return false;
+    }
+};
+}
+
+future<> system_keyspace::update_peer_info(gms::inet_address ep, peer_info info) {
     if (_db.get_token_metadata().get_topology().is_me(ep)) {
-        on_internal_error(slogger, format("update_peer_info called for this node: {}", ep));
+        //on_internal_error(slogger, format("update_peer_info called for this node: {}", ep));
+        co_return;
     }
 
-    sstring req = format("INSERT INTO system.{} (peer, {}) VALUES (?, ?)", PEERS, column_name);
-    slogger.debug("INSERT INTO system.{} (peer, {}) VALUES ({}, {})", PEERS, column_name, ep, value);
-    co_await execute_cql(req, ep.addr(), value).discard_result();
+    std::vector<std::optional<data_value>> opt_values;
+    opt_values.reserve(10);
+    bool any_set = false;
+
+    any_set |= ingest_opt_value(opt_values, info.data_center);
+    any_set |= ingest_opt_value(opt_values, info.host_id);
+    any_set |= ingest_opt_value(opt_values, info.preferred_ip);
+    any_set |= ingest_opt_value(opt_values, info.rack);
+    any_set |= ingest_opt_value(opt_values, info.release_version);
+    any_set |= ingest_opt_value(opt_values, info.rpc_address);
+    any_set |= ingest_opt_value(opt_values, info.schema_version);
+    any_set |= ingest_opt_value(opt_values, info.tokens);
+    any_set |= ingest_opt_value(opt_values, info.supported_features);
+
+    if (!any_set) {
+        co_return;
+    }
+
+    opt_values.emplace_back(ep);
+
+    auto query = fmt::format("UPDATE system.{} "
+            "SET data_center=?, host_id=?, preferred_ip=?, rack=?, release_version=?, rpc_address=?, schema_version=?, tokens=?, supported_features=? "
+            "WHERE peer=?", PEERS);
+
+    slogger.info("{}: values={}", query, opt_values);
+
+    co_await _qp.execute_internal(query, db::consistency_level::ONE, opt_values, cql3::query_processor::cache_internal::yes);
 }
-// sets are not needed, since tokens are updated by another method
-template future<> system_keyspace::update_peer_info<sstring>(gms::inet_address ep, sstring column_name, sstring);
-template future<> system_keyspace::update_peer_info<utils::UUID>(gms::inet_address ep, sstring column_name, utils::UUID);
-template future<> system_keyspace::update_peer_info<net::inet_address>(gms::inet_address ep, sstring column_name, net::inet_address);
+
+// FIXME: implement update_peer_info specializations temporarily,
+// until all callers are converted to use peer_info
+template<> future<> system_keyspace::update_peer_info<sstring>(gms::inet_address ep, sstring column_name, sstring value) {
+    peer_info info;
+    if (column_name == "data_center") {
+        info.data_center.emplace(value);
+    } else if (column_name == "rack") {
+        info.rack.emplace(value);
+    } else if (column_name == "release_version") {
+        info.release_version.emplace(value);
+    } else if (column_name == "supported_features") {
+        info.supported_features.emplace(value);
+    } else {
+        on_fatal_internal_error(slogger, fmt::format("unsupported sstring peer info column_name \"{}\"", column_name));
+    }
+    co_await update_peer_info(ep, info);
+}
+
+template<> future<> system_keyspace::update_peer_info<utils::UUID>(gms::inet_address ep, sstring column_name, utils::UUID value) {
+    peer_info info;
+    if (column_name == "host_id") {
+        info.host_id.emplace(value);
+    } else if (column_name == "schema_version") {
+        info.schema_version.emplace(value);
+    } else {
+        on_fatal_internal_error(slogger, fmt::format("unsupported utils::UUID peer info column_name \"{}\"", column_name));
+    }
+    co_await update_peer_info(ep, info);
+}
+
+template<> future<> system_keyspace::update_peer_info<net::inet_address>(gms::inet_address ep, sstring column_name, net::inet_address value) {
+    peer_info info;
+    if (column_name == "preferred_ip") {
+        info.preferred_ip.emplace(value);
+    } else if (column_name == "rpc_address") {
+        info.rpc_address.emplace(value);
+    } else {
+        on_fatal_internal_error(slogger, fmt::format("unsupported net::inet_address peer info column_name \"{}\"", column_name));
+    }
+    co_await update_peer_info(ep, info);
+}
+
+template<> future<> system_keyspace::update_peer_info<std::unordered_set<dht::token>>(gms::inet_address ep, sstring column_name, std::unordered_set<dht::token> value) {
+    peer_info info;
+    if (column_name == "tokens") {
+        info.tokens.emplace(std::move(value));
+    } else {
+        on_fatal_internal_error(slogger, fmt::format("unsupported std::unordered_set<dht::token>> peer info column_name \"{}\"", column_name));
+    }
+    co_await update_peer_info(ep, info);
+}
 
 template <typename T>
 future<> system_keyspace::set_scylla_local_param_as(const sstring& key, const T& value, bool visible_before_cl_replay) {

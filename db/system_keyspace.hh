@@ -264,6 +264,20 @@ public:
     future<std::unordered_map<gms::inet_address, gms::inet_address>> get_preferred_ips();
 
 public:
+    struct peer_info {
+        std::optional<sstring> data_center;
+        std::optional<utils::UUID> host_id;
+        std::optional<gms::inet_address> preferred_ip;
+        std::optional<sstring> rack;
+        std::optional<sstring> release_version;
+        std::optional<gms::inet_address> rpc_address;
+        std::optional<utils::UUID> schema_version;
+        std::optional<std::unordered_set<dht::token>> tokens;
+        std::optional<sstring> supported_features;
+    };
+
+    future<> update_peer_info(gms::inet_address ep, peer_info info);
+
     template <typename Value>
     future<> update_peer_info(gms::inet_address ep, sstring column_name, Value value);
 
