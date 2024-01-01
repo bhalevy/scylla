@@ -548,3 +548,30 @@ def test_storage_service_system_keyspace_repair(rest_api):
     resp = rest_api.send("GET", "task_manager/list_module_tasks/repair")
     resp.raise_for_status()
     assert not [stats for stats in resp.json() if stats["sequence_number"] == sequence_number], "Repair task for keyspace with local replication strategy was created"
+
+def test_storage_service_natural_endpoints(cql, this_dc, rest_api):
+    with new_test_keyspace(cql, f"WITH REPLICATION = {{ 'class' : 'NetworkTopologyStrategy', '{this_dc}' : 1 }}") as keyspace:
+        def test_natural_endpoints(cql, ks, cf, key, expected_status=None):
+            resp = rest_api.send("GET", f"storage_service/natural_endpoints/{ks}", params={'cf': cf, 'key': key})
+            if expected_status:
+                assert resp.status_code == expected_status
+                return
+            resp.raise_for_status()
+            assert resp.json() == [cql.cluster.metadata.all_hosts()[0].address]
+
+        with new_test_table(cql, keyspace, 'p text, v text, primary key (p)') as t0:
+            ks, cf = t0.split('.')
+            stmt = cql.prepare(f"INSERT INTO {t0} (p, v) VALUES (?, ?)")
+            cql.execute(stmt, ['hello', 'world'])
+            test_natural_endpoints(cql, ks, cf, "hello")
+            test_natural_endpoints(cql, ks, cf, "hello:world", requests.codes.bad_request)
+
+        with new_test_table(cql, keyspace, 'p0 text, p1 text, v int, primary key ((p0, p1))') as t1:
+            ks, cf = t0.split('.')
+            stmt = cql.prepare(f"INSERT INTO {t1} (p0, p1, v) VALUES (?, ?, ?)")
+            cql.execute(stmt, [f'foo', 'bar', 0])
+
+            test_natural_endpoints(cql, ks, cf, "foo", requests.codes.bad_request)
+            test_natural_endpoints(cql, ks, cf, "foo:bar:zed", requests.codes.bad_request)
+
+            test_natural_endpoints(cql, ks, cf, "foo:bar")

@@ -13,8 +13,10 @@
 #include "db/config.hh"
 #include "db/schema_tables.hh"
 #include "utils/hash.hh"
+#include <exception>
 #include <optional>
 #include <sstream>
+#include <stdexcept>
 #include <time.h>
 #include <algorithm>
 #include <boost/range/adaptor/map.hpp>
@@ -698,8 +700,14 @@ void set_storage_service(http_context& ctx, routes& r, sharded<service::storage_
 
     ss::get_natural_endpoints.set(r, [&ctx, &ss](const_req req) {
         auto keyspace = validate_keyspace(ctx, req.param);
-        return container_to_vec(ss.local().get_natural_endpoints(keyspace, req.get_query_param("cf"),
-                req.get_query_param("key")));
+        auto cf = req.get_query_param("cf");
+        auto key = req.get_query_param("key");
+        try {
+            return container_to_vec(ss.local().get_natural_endpoints(keyspace, cf, key));
+        } catch (const std::invalid_argument& e) {
+            apilog.error("get_natural_endpoints: keyspace={} cf={} key={}: {}", keyspace, cf, key, e.what());
+            throw httpd::bad_param_exception(e.what());
+        }
     });
 
     ss::cdc_streams_check_and_repair.set(r, [&ss] (std::unique_ptr<http::request> req) {
