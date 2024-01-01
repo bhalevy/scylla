@@ -702,10 +702,21 @@ future<> gossiper::remove_endpoint(inet_address endpoint, permit_id pid) {
 
     auto state = get_endpoint_state_ptr(endpoint);
 
-    bool was_alive;
+    bool was_alive = false;
     co_await mutate_live_and_unreachable_endpoints([endpoint, &was_alive] (gossiper& g) {
-        was_alive = g._live_endpoints.erase(endpoint);
-        g._unreachable_endpoints.erase(endpoint);
+        return live_and_unreachable_endpoints{
+            boost::copy_range<std::unordered_set<inet_address>>(g._live_endpoints | boost::adaptors::filtered([endpoint, &was_alive] (const auto& node) {
+                if (node == endpoint) {
+                    was_alive = true;
+                    return false;
+                } else {
+                    return true;
+                }
+            })),
+            boost::copy_range<std::unordered_map<inet_address, clk::time_point>>(g._unreachable_endpoints | boost::adaptors::filtered([endpoint] (const auto& node) {
+                return node.first != endpoint;
+            }))
+        };
     });
     _syn_handlers.erase(endpoint);
     _ack_handlers.erase(endpoint);
@@ -853,34 +864,30 @@ future<semaphore_units<>> gossiper::lock_endpoint_update_semaphore() {
     return get_units(_endpoint_update_semaphore, 1, _abort_source);
 }
 
-future<> gossiper::mutate_live_and_unreachable_endpoints(std::function<void(gossiper&)> func) {
+future<> gossiper::mutate_live_and_unreachable_endpoints(std::function<live_and_unreachable_endpoints(gossiper&)> func,
+        std::function<void(gossiper&)> on_success) {
     auto lock = co_await lock_endpoint_update_semaphore();
-    func(*this);
+    auto data0 = make_foreign(std::make_unique<live_and_unreachable_endpoints>(func(*this)));
 
     // Bump the _live_endpoints_version unconditionally,
     // even if only _unreachable_endpoints changed.
     // It will trigger a new round in the failure_detector_loop
     // but that's not too bad as changing _unreachable_endpoints
     // is rare enough.
-    _live_endpoints_version++;
-    co_await replicate_live_endpoints_on_change();
+    co_await replicate_live_endpoints_on_change(std::move(data0), _live_endpoints_version + 1);
+
+    on_success(*this);
 }
 
 future<std::set<inet_address>> gossiper::get_live_members_synchronized() {
-    return container().invoke_on(0, [] (gms::gossiper& g) -> future<std::set<inet_address>> {
-        auto lock = co_await g.lock_endpoint_update_semaphore();
-        std::set<inet_address> live_members = g.get_live_members();
-        co_await g.replicate_live_endpoints_on_change();
-        co_return live_members;
+    return container().invoke_on(0, [] (gms::gossiper& g) {
+        return g.get_live_members();
     });
 }
 
 future<std::set<inet_address>> gossiper::get_unreachable_members_synchronized() {
-    return container().invoke_on(0, [] (gms::gossiper& g) -> future<std::set<inet_address>> {
-        auto lock = co_await g.lock_endpoint_update_semaphore();
-        std::set<inet_address> unreachable_members = g.get_unreachable_members();
-        co_await g.replicate_live_endpoints_on_change();
-        co_return unreachable_members;
+    return container().invoke_on(0, [] (gms::gossiper& g) {
+        return g.get_unreachable_members();
     });
 }
 
@@ -984,8 +991,9 @@ future<> gossiper::failure_detector_loop() {
 }
 
 // This needs to be run with a lock
-future<> gossiper::replicate_live_endpoints_on_change() {
-    assert(this_shard_id() == 0);
+future<> gossiper::replicate_live_endpoints_on_change(foreign_ptr<std::unique_ptr<live_and_unreachable_endpoints>> data0, uint64_t new_version) {
+    auto coordinator = this_shard_id();
+    assert(coordinator == 0);
     //
     // Gossiper task runs only on CPU0:
     //
@@ -997,18 +1005,31 @@ future<> gossiper::replicate_live_endpoints_on_change() {
     //
     logger.debug("replicating live and unreachable endpoints to other shards");
 
-    co_await container().invoke_on_others([this] (gossiper& local_gossiper) {
-        if (local_gossiper._live_endpoints_version != _live_endpoints_version) {
-            local_gossiper._live_endpoints = _live_endpoints;
-            local_gossiper._unreachable_endpoints = _unreachable_endpoints;
+    std::vector<foreign_ptr<std::unique_ptr<live_and_unreachable_endpoints>>> per_shard_data;
+    per_shard_data.resize(smp::count);
+    per_shard_data[coordinator] = std::move(data0);
 
-            // Set local _live_endpoints_version last to protect against exceptions
-            // on this shards.  In this case replicate_live_endpoints_on_change will
-            // retry setting the above next time around.
-            local_gossiper._live_endpoints_version = _live_endpoints_version;
-        } else {
-            logger.trace("shard already has the latest live and unreachable endpoints");
+    // Prepare copies on each other shard
+    co_await coroutine::parallel_for_each(boost::irange(0u, smp::count), [&per_shard_data, coordinator] (auto shard) -> future<> {
+        if (shard != this_shard_id()) {
+            const auto& src = *per_shard_data[coordinator];
+            per_shard_data[shard] = co_await smp::submit_to(shard, [&] {
+                return make_foreign(std::make_unique<live_and_unreachable_endpoints>(src));
+            });
         }
+    });
+
+    // Apply copies on each other shard
+    co_await container().invoke_on_all([&] (gossiper& local_gossiper) noexcept {
+        if (local_gossiper._live_endpoints_version >= new_version) {
+            on_fatal_internal_error(logger, fmt::format("shard already has unexpected live_endpoints_version {} > {}",
+                    local_gossiper._live_endpoints_version, new_version));
+        }
+
+        auto data = per_shard_data[this_shard_id()].release();
+        local_gossiper._live_endpoints = std::move(data->live);
+        local_gossiper._unreachable_endpoints = std::move(data->unreachable);
+        local_gossiper._live_endpoints_version = new_version;
     });
 }
 
@@ -1206,8 +1227,14 @@ version_type gossiper::get_max_endpoint_state_version(const endpoint_state& stat
 future<> gossiper::evict_from_membership(inet_address endpoint, permit_id pid) {
     verify_permit(endpoint, pid);
     co_await mutate_live_and_unreachable_endpoints([endpoint] (gossiper& g) {
-        g._unreachable_endpoints.erase(endpoint);
-        g._live_endpoints.erase(endpoint);
+        return live_and_unreachable_endpoints{
+            boost::copy_range<std::unordered_set<inet_address>>(g._live_endpoints | boost::adaptors::filtered([endpoint] (const auto& node) {
+                return node != endpoint;
+            })),
+            boost::copy_range<std::unordered_map<inet_address, clk::time_point>>(g._unreachable_endpoints | boost::adaptors::filtered([endpoint] (const auto& node) {
+                return node.first != endpoint;
+            }))
+        };
     });
     co_await container().invoke_on_all([endpoint] (auto& g) {
         g._endpoint_state_map.erase(endpoint);
@@ -1642,11 +1669,18 @@ future<> gossiper::real_mark_alive(inet_address addr) {
     logger.debug("removing expire time for endpoint : {}", addr);
     bool was_live = false;
     co_await mutate_live_and_unreachable_endpoints([addr, &was_live] (gossiper& g) {
-        g._unreachable_endpoints.erase(addr);
-        g._expire_time_endpoint_map.erase(addr);
+        auto ret = live_and_unreachable_endpoints{
+            g._live_endpoints,
+            boost::copy_range<std::unordered_map<inet_address, clk::time_point>>(g._unreachable_endpoints | boost::adaptors::filtered([addr] (const auto& node) {
+                return node.first != addr;
+            }))
+        };
 
-        auto [it_, inserted] = g._live_endpoints.insert(addr);
+        auto [it_, inserted] = ret.live.insert(addr);
         was_live = !inserted;
+        return ret;
+    }, [addr] (gossiper& g) {
+        g._expire_time_endpoint_map.erase(addr);
     });
     if (was_live) {
         co_return;
@@ -1672,8 +1706,14 @@ future<> gossiper::mark_dead(inet_address addr, endpoint_state_ptr state, permit
     logger.trace("marking as down {}", addr);
     verify_permit(addr, pid);
     co_await mutate_live_and_unreachable_endpoints([addr] (gossiper& g) {
-        g._live_endpoints.erase(addr);
-        g._unreachable_endpoints[addr] = now();
+        auto ret = live_and_unreachable_endpoints{
+            boost::copy_range<std::unordered_set<inet_address>>(g._live_endpoints | boost::adaptors::filtered([addr] (const auto& node) {
+                return node != addr;
+            })),
+            g._unreachable_endpoints
+        };
+        ret.unreachable[addr] = now();
+        return ret;
     });
     logger.info("InetAddress {} is now DOWN, status = {}", addr, get_gossip_status(*state));
     co_await do_on_dead_notifications(addr, std::move(state), pid);
