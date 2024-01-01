@@ -573,5 +573,4 @@ def test_storage_service_natural_endpoints(cql, this_dc, rest_api):
 
             test_natural_endpoints(cql, ks, cf, "foo", requests.codes.bad_request)
             test_natural_endpoints(cql, ks, cf, "foo:bar:zed", requests.codes.bad_request)
-
             test_natural_endpoints(cql, ks, cf, "foo:bar")

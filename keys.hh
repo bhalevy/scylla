@@ -704,6 +704,8 @@ public:
      */
     static partition_key from_nodetool_style_string(const schema_ptr s, const sstring& key);
 
+    static partition_key from_nodetool_style_string(const schema_ptr s, const std::vector<sstring>& key);
+
     partition_key(std::vector<bytes> v)
         : compound_wrapper(managed_bytes(c_type::serialize_value(std::move(v))))
     { }
