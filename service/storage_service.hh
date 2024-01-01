@@ -584,7 +584,7 @@ public:
      * @return the endpoint responsible for this key
      */
     inet_address_vector_replica_set get_natural_endpoints(const sstring& keyspace,
-            const sstring& cf, const sstring& key) const;
+            const sstring& cf, const std::vector<sstring>& key_vec) const;
 
     /**
      * This method returns the N endpoints that are responsible for storing the

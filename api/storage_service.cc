@@ -29,6 +29,7 @@
 #include "db/commitlog/commitlog.hh"
 #include "gms/gossiper.hh"
 #include "db/system_keyspace.hh"
+#include <seastar/http/url.hh>
 #include <seastar/http/exception.hh>
 #include <seastar/core/coroutine.hh>
 #include <seastar/coroutine/parallel_for_each.hh>
@@ -90,6 +91,31 @@ bool validate_bool(const sstring& param) {
 static
 int64_t validate_int(const sstring& param) {
     return std::atoll(param.c_str());
+}
+
+static sstring decode_key(const sstring& key) {
+    auto pos = key.find("%");
+    if (pos == sstring::npos || pos == key.size() - 1) {
+        return key;
+    }
+    sstring decoded;
+    seastar::http::internal::url_decode(key, decoded);
+    return decoded;
+}
+
+static
+std::vector<sstring> parse_key(const sstring& key) {
+    std::vector<sstring> vec;
+    for (auto it = key.begin(); it < key.end(); ) {
+        auto pos = key.find(":", it - key.begin());
+        if (pos == sstring::npos) {
+            vec.emplace_back(decode_key(sstring(it, key.end())));
+            break;
+        }
+        vec.emplace_back(decode_key(sstring(it, key.begin() + pos)));
+        it = key.begin() + pos + 1;
+    }
+    return vec;
 }
 
 // splits a request parameter assumed to hold a comma-separated list of table names
@@ -702,10 +728,11 @@ void set_storage_service(http_context& ctx, routes& r, sharded<service::storage_
         auto keyspace = validate_keyspace(ctx, req.param);
         auto cf = req.get_query_param("cf");
         auto key = req.get_query_param("key");
+        auto key_vec = parse_key(key);
         try {
-            return container_to_vec(ss.local().get_natural_endpoints(keyspace, cf, key));
+            return container_to_vec(ss.local().get_natural_endpoints(keyspace, cf, key_vec));
         } catch (const std::invalid_argument& e) {
-            apilog.error("get_natural_endpoints: keyspace={} cf={} key={}: {}", keyspace, cf, key, e.what());
+            apilog.error("get_natural_endpoints: keyspace={} cf={} key={} ({}): {}", keyspace, cf, key, key_vec, e.what());
             throw httpd::bad_param_exception(e.what());
         }
     });

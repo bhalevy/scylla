@@ -7473,9 +7473,9 @@ storage_service::get_all_ranges(const std::vector<token>& sorted_tokens) const {
 
 inet_address_vector_replica_set
 storage_service::get_natural_endpoints(const sstring& keyspace,
-        const sstring& cf, const sstring& key) const {
+        const sstring& cf, const std::vector<sstring>& key_vec) const {
     auto schema = _db.local().find_schema(keyspace, cf);
-    partition_key pk = partition_key::from_nodetool_style_string(schema, key);
+    partition_key pk = partition_key::from_nodetool_style_string(schema, key_vec);
     dht::token token = schema->get_partitioner().get_token(*schema, pk.view());
     return get_natural_endpoints(keyspace, token);
 }

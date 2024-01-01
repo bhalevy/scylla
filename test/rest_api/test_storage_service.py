@@ -566,6 +566,10 @@ def test_storage_service_natural_endpoints(cql, this_dc, rest_api):
             test_natural_endpoints(cql, ks, cf, "hello")
             test_natural_endpoints(cql, ks, cf, "hello:world", requests.codes.bad_request)
 
+            cql.execute(stmt, ['hello:world', '!'])
+            test_natural_endpoints(cql, ks, cf, "hello:world", requests.codes.bad_request)
+            test_natural_endpoints(cql, ks, cf, r"hello%%3Aworld")
+
         with new_test_table(cql, keyspace, 'p0 text, p1 text, v int, primary key ((p0, p1))') as t1:
             ks, cf = t0.split('.')
             stmt = cql.prepare(f"INSERT INTO {t1} (p0, p1, v) VALUES (?, ?, ?)")
@@ -574,3 +578,7 @@ def test_storage_service_natural_endpoints(cql, this_dc, rest_api):
             test_natural_endpoints(cql, ks, cf, "foo", requests.codes.bad_request)
             test_natural_endpoints(cql, ks, cf, "foo:bar:zed", requests.codes.bad_request)
             test_natural_endpoints(cql, ks, cf, "foo:bar")
+
+            cql.execute(stmt, [f'foo:bar', 'zed', 0])
+            test_natural_endpoints(cql, ks, cf, "foo:bar:zed", requests.codes.bad_request)
+            test_natural_endpoints(cql, ks, cf, r"foo%%3Abar:zed")
