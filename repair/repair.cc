@@ -21,6 +21,7 @@
 #include "utils/error_injection.hh"
 #include "utils/hashers.hh"
 #include "locator/network_topology_strategy.hh"
+#include "locator/abstract_replication_strategy.hh"
 #include "service/migration_manager.hh"
 #include "partition_range_compat.hh"
 #include "gms/feature_service.hh"
@@ -1909,6 +1910,26 @@ future<> repair_service::do_rebuild_replace_with_repair(locator::token_metadata_
             }).get();
         }
         rlogger.info("{}: started with keyspaces={}, source_dc={}, nr_ranges_total={}, ignore_nodes={}", op, ks_erms | boost::adaptors::map_keys, source_dc, nr_ranges_total, ignore_nodes);
+        std::unordered_set<gms::inet_address> source_dc_nodes;
+        std::unordered_set<sstring> full_racks_in_source_dc;
+        if (!source_dc.empty()) {
+            std::unordered_set<sstring> dead_nodes_in_rack;
+            tmptr->get_topology().for_each_node([&] (const locator::node* node) {
+                if (node->dc_rack().dc != source_dc) {
+                    return;
+                }
+                const auto& rack = node->dc_rack().rack;
+                if (node->is_this_node() || ignore_nodes.contains(node->endpoint())) {
+                    dead_nodes_in_rack.insert(rack);
+                    full_racks_in_source_dc.erase(rack);
+                } else {
+                    source_dc_nodes.insert(node->endpoint());
+                    if (!dead_nodes_in_rack.contains(rack)) {
+                        full_racks_in_source_dc.emplace(rack);
+                    }
+                }
+            });
+        }
         for (const auto& [keyspace_name, erm] : ks_erms) {
             size_t nr_ranges_skipped = 0;
             if (!db.has_keyspace(keyspace_name)) {
@@ -1917,23 +1938,46 @@ future<> repair_service::do_rebuild_replace_with_repair(locator::token_metadata_
             }
             auto& strat = erm->get_replication_strategy();
             dht::token_range_vector ranges = strat.get_ranges(myid, *tmptr).get0();
-            auto& topology = erm->get_token_metadata().get_topology();
             std::unordered_map<dht::token_range, repair_neighbors> range_sources;
             auto nr_tables = get_nr_tables(db, keyspace_name);
-            rlogger.info("{}: started with keyspace={}, source_dc={}, nr_ranges={}, ignore_nodes={}", op, keyspace_name, source_dc, ranges.size() * nr_tables, ignore_nodes);
+            sstring ks_source_dc;
+            // Allow repairing in the source_dc only if there are enough replicas remaining
+            if (!source_dc_nodes.empty()) {
+                switch (strat.get_type()) {
+                case locator::replication_strategy_type::network_topology: {
+                    const auto& nt_strat = dynamic_cast<const locator::network_topology_strategy&>(strat);
+                    ssize_t rf = nt_strat.get_replication_factor(source_dc);
+                    // Can we ensure a quorum in source_dc?
+                    if (full_racks_in_source_dc.size() > rf / 2) {
+                        ks_source_dc = source_dc;
+                    }
+                    break;
+                }
+                case locator::replication_strategy_type::everywhere_topology:
+                    ks_source_dc = source_dc;
+                    break;
+                case locator::replication_strategy_type::simple:
+                    // With simple strategy, we have no assurance that source_dc will contain
+                    // another replica for all token ranges.
+                    break;
+                default:
+                    break;
+                }
+            }
+            rlogger.info("{}: started with keyspace={}, source_dc={}, nr_ranges={}, ignore_nodes={}", op, keyspace_name, ks_source_dc, ranges.size() * nr_tables, ignore_nodes);
             for (auto it = ranges.begin(); it != ranges.end();) {
                 auto& r = *it;
                 seastar::thread::maybe_yield();
                 auto end_token = r.end() ? r.end()->value() : dht::maximum_token();
                 auto neighbors = boost::copy_range<std::vector<gms::inet_address>>(strat.calculate_natural_ips(end_token, *tmptr).get0() |
-                    boost::adaptors::filtered([myip, &source_dc, &topology, &ignore_nodes] (const gms::inet_address& node) {
+                    boost::adaptors::filtered([&] (const gms::inet_address& node) {
                         if (node == myip) {
                             return false;
                         }
                         if (ignore_nodes.contains(node)) {
                             return false;
                         }
-                        return source_dc.empty() ? true : topology.get_datacenter(node) == source_dc;
+                        return ks_source_dc.empty() ? true : source_dc_nodes.contains(node);
                     })
                 );
                 rlogger.debug("{}: keyspace={}, range={}, neighbors={}", op, keyspace_name, r, neighbors);
