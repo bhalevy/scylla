@@ -21,6 +21,7 @@
 #include "utils/error_injection.hh"
 #include "utils/hashers.hh"
 #include "locator/network_topology_strategy.hh"
+#include "locator/abstract_replication_strategy.hh"
 #include "service/migration_manager.hh"
 #include "partition_range_compat.hh"
 #include "gms/feature_service.hh"
@@ -1909,6 +1910,7 @@ future<> repair_service::do_rebuild_replace_with_repair(locator::token_metadata_
             }).get();
         }
         rlogger.info("{}: started with keyspaces={}, source_dc={}, nr_ranges_total={}, ignore_nodes={}", op, ks_erms | boost::adaptors::map_keys, source_dc, nr_ranges_total, ignore_nodes);
+        ssize_t ignored_in_my_dc = -1;
         for (const auto& [keyspace_name, erm] : ks_erms) {
             size_t nr_ranges_skipped = 0;
             if (!db.has_keyspace(keyspace_name)) {
@@ -1920,20 +1922,57 @@ future<> repair_service::do_rebuild_replace_with_repair(locator::token_metadata_
             auto& topology = erm->get_token_metadata().get_topology();
             std::unordered_map<dht::token_range, repair_neighbors> range_sources;
             auto nr_tables = get_nr_tables(db, keyspace_name);
-            rlogger.info("{}: started with keyspace={}, source_dc={}, nr_ranges={}, ignore_nodes={}", op, keyspace_name, source_dc, ranges.size() * nr_tables, ignore_nodes);
+            std::unordered_set<gms::inet_address> dc_nodes;
+            sstring ks_source_dc;
+            if (ignored_in_my_dc < 0) {
+                size_t ignored_in_my_dc = 0;
+                topology.for_each_node([&] (const locator::node* node) {
+                    if (node->dc_rack().dc != source_dc) {
+                        return;
+                    }
+                    if (ignore_nodes.contains(node->endpoint())) {
+                        ++ignored_in_my_dc;
+                    } else {
+                        dc_nodes.insert(node->endpoint());
+                    }
+                });
+            }
+            // Allow repairing in the dc only if there are enough replicas
+            if (!source_dc.empty() && !dc_nodes.empty()) {
+                switch (strat.get_type()) {
+                case locator::replication_strategy_type::network_topology: {
+                    if (ignored_in_my_dc) {
+                        // Don't take any chances if there are ignored nodes in this dc
+                        break;
+                    }
+                    auto opts = strat.get_config_options();
+                    auto rf = opts.contains(source_dc) ? std::atoi(opts[source_dc].c_str()) : 0;
+                    if (rf > 1) {
+                        ks_source_dc = source_dc;
+                    }
+                    break;
+                }
+                case locator::replication_strategy_type::everywhere_topology:
+                    ks_source_dc = source_dc;
+                    break;
+                default:
+                    break;
+                }
+            }
+            rlogger.info("{}: started with keyspace={}, source_dc={}, nr_ranges={}, ignore_nodes={}", op, keyspace_name, ks_source_dc, ranges.size() * nr_tables, ignore_nodes);
             for (auto it = ranges.begin(); it != ranges.end();) {
                 auto& r = *it;
                 seastar::thread::maybe_yield();
                 auto end_token = r.end() ? r.end()->value() : dht::maximum_token();
                 auto neighbors = boost::copy_range<std::vector<gms::inet_address>>(strat.calculate_natural_ips(end_token, *tmptr).get0() |
-                    boost::adaptors::filtered([myip, &source_dc, &topology, &ignore_nodes] (const gms::inet_address& node) {
+                    boost::adaptors::filtered([&] (const gms::inet_address& node) {
                         if (node == myip) {
                             return false;
                         }
                         if (ignore_nodes.contains(node)) {
                             return false;
                         }
-                        return source_dc.empty() ? true : topology.get_datacenter(node) == source_dc;
+                        return ks_source_dc.empty() ? true : dc_nodes.contains(node);
                     })
                 );
                 rlogger.debug("{}: keyspace={}, range={}, neighbors={}", op, keyspace_name, r, neighbors);
