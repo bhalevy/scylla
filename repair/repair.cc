@@ -45,6 +45,7 @@
 #include <cfloat>
 #include <algorithm>
 #include <atomic>
+#include <stdexcept>
 
 #include "idl/position_in_partition.dist.hh"
 #include "idl/partition_checksum.dist.hh"
@@ -1999,6 +2000,14 @@ future<> repair_service::do_rebuild_replace_with_repair(locator::token_metadata_
                     // Can we ensure a quorum in source_dc?
                     if (full_racks_in_source_dc.size() > rf / 2) {
                         ks_source_dc = source_dc;
+                    } else if (reason == streaming::stream_reason::rebuild) {
+                        if (rf == 0) {
+                            throw std::runtime_error(fmt::format("Cannot rebuild with source_dc={}: Replication factor in this data center is 0."
+                                    " Use a different source_dc, or no source_dc option to consider the whole cluster for repair", source_dc));
+                        }
+                        rlogger.warn("Cannot ensure quorum for rebuild with source_dc={}: full racks={} rf={}: rebuilding using source_dc anyway",
+                                source_dc, full_racks_in_source_dc.size(), rf);
+                        ks_source_dc = source_dc;
                     }
                     break;
                 }
@@ -2012,6 +2021,9 @@ future<> repair_service::do_rebuild_replace_with_repair(locator::token_metadata_
                 default:
                     break;
                 }
+            } else if (reason == streaming::stream_reason::rebuild && !source_dc.empty()) {
+                throw std::runtime_error(fmt::format("Cannot rebuild with source_dc={}: No live nodes remained in the data center."
+                        " Use a different source_dc or no source_dc option to consider the whole cluster for repair", source_dc));
             }
             rlogger.info("{}: started with keyspace={}, source_dc={}, nr_ranges={}, ignore_nodes={}", op, keyspace_name, ks_source_dc, ranges.size() * nr_tables, ignore_nodes);
             for (auto it = ranges.begin(); it != ranges.end();) {
