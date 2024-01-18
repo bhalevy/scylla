@@ -2003,6 +2003,14 @@ future<> repair_service::do_rebuild_replace_with_repair(locator::token_metadata_
                     // Can we ensure a quorum in source_dc?
                     if (possibly_lost_replicas < rf / 2) {
                         ks_source_dc = source_dc;
+                    } else if (reason == streaming::stream_reason::rebuild) {
+                        if (rf == 0) {
+                            throw std::runtime_error(fmt::format("Cannot rebuild with source_dc={}: Replication factor in this data center is 0."
+                                    " Use a different source_dc, or no source_dc option to consider the whole cluster for repair", source_dc));
+                        }
+                        rlogger.warn("{}: keyspace={}: Cannot ensure quorum in source_dc={}: possibly lost {} replicas out of {}: rebuilding using source_dc anyway",
+                                op, keyspace_name, source_dc, possibly_lost_replicas, rf);
+                        ks_source_dc = source_dc;
                     } else {
                         rlogger.warn("{}: keyspace={}: Cannot ensure quorum in source_dc={}: possibly lost {} replicas out of {}: Falling back to full-cluster repair",
                                 op, keyspace_name, source_dc, possibly_lost_replicas, rf);
@@ -2019,6 +2027,9 @@ future<> repair_service::do_rebuild_replace_with_repair(locator::token_metadata_
                 default:
                     break;
                 }
+            } else if (reason == streaming::stream_reason::rebuild && !source_dc.empty()) {
+                throw std::runtime_error(fmt::format("Cannot rebuild with source_dc={}: No live nodes remained in the data center."
+                        " Use a different source_dc or no source_dc option to consider the whole cluster for repair", source_dc));
             }
             rlogger.info("{}: started with keyspace={}, source_dc={}, nr_ranges={}, ignore_nodes={}", op, keyspace_name, ks_source_dc, ranges.size() * nr_tables, ignore_nodes);
             for (auto it = ranges.begin(); it != ranges.end();) {
