@@ -108,6 +108,10 @@ public:
         return _token_range;
     }
 
+    // Returns an optional token that follows the compaction_group's token range
+    // or dht::maximum_token if this compaction_group ends at the last token
+    dht::token next_compaction_group_token() const noexcept;
+
     void set_compaction_strategy_state(compaction::compaction_strategy_state compaction_strategy_state) noexcept;
 
     lw_shared_ptr<memtable_list>& memtables() noexcept;

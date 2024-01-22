@@ -377,6 +377,21 @@ std::vector<memtable*> table::active_memtables() {
     }));
 }
 
+dht::token compaction_group::next_compaction_group_token() const noexcept {
+    auto end_bound_opt = token_range().end();
+    if (!end_bound_opt) [[unlikely]] {
+        return dht::maximum_token();
+    }
+    auto token = end_bound_opt->value();
+    if (token.is_maximum() || token.is_last()) [[unlikely]] {
+        return dht::maximum_token();
+    }
+    if (!end_bound_opt->is_inclusive()) {
+        return token;
+    }
+    return dht::next_token(token);
+}
+
 api::timestamp_type compaction_group::min_memtable_timestamp() const {
     if (_memtables->empty()) {
         return api::max_timestamp;
