@@ -81,6 +81,7 @@ struct loaded_endpoint_state {
     locator::host_id host_id;
     std::unordered_set<dht::token> tokens;
     std::optional<locator::endpoint_dc_rack> opt_dc_rack;
+    std::optional<gms::versioned_value> opt_status;
 };
 
 /**
