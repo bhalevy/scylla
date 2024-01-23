@@ -776,7 +776,7 @@ compaction_group_list& table::compaction_groups() const noexcept {
 }
 
 future<> table::parallel_foreach_compaction_group(std::function<future<>(compaction_group&)> action) {
-    // TODO: place a barrier here when we allow dynamic groups.
+    auto lock = co_await _storage_groups_lock.hold_read_lock();
     co_await coroutine::parallel_for_each(compaction_groups(), [&] (compaction_group& cg) {
         return action(cg);
     });

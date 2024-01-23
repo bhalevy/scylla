@@ -452,6 +452,7 @@ private:
     // The compaction group list is only a helper for accessing the groups managed by the storage groups.
     // The list entries are unlinked automatically when the storage group, they belong to, is removed.
     mutable compaction_group_list _compaction_groups;
+    rwlock _storage_groups_lock;
     storage_group_vector _storage_groups;
     // Compound SSTable set for all the compaction groups, which is useful for operations spanning all of them.
     lw_shared_ptr<sstables::sstable_set> _sstables;
@@ -588,6 +589,8 @@ private:
     // Select a compaction group from a given token.
     compaction_group& compaction_group_for_token(dht::token token) const noexcept;
     // Return compaction groups, present in this shard, that own a particular token range.
+    // Note: caller should acquire the _storage_groups_lock read/write lock if the returned
+    // compaction_groups need to be valid across yields
     utils::chunked_vector<compaction_group*> compaction_groups_for_token_range(dht::token_range tr) const;
     // Select a compaction group from a given key.
     compaction_group& compaction_group_for_key(partition_key_view key, const schema_ptr& s) const noexcept;
