@@ -416,12 +416,7 @@ future<> storage_service::sync_raft_topology_nodes(mutable_token_metadata_ptr tm
 
         rtlogger.trace("loading topology: raft id={} ip={} node state={} dc={} rack={} tokens state={} tokens={} shards={}",
                       id, ip, rs.state, rs.datacenter, rs.rack, _topology_state_machine._topology.tstate, rs.ring.value().tokens, rs.shard_count, rs.cleanup);
-        // Save tokens, not needed for raft topology management, but needed by legacy
-        // Also ip -> id mapping is needed for address map recreation on reboot
-        if (is_me(host_id)) {
-            co_await _sys_ks.local().update_tokens(rs.ring.value().tokens);
-            co_await _gossiper.add_local_application_state({{ gms::application_state::STATUS, gms::versioned_value::normal(rs.ring.value().tokens) }});
-        } else if (ip && !is_me(*ip)) {
+        if (!is_me(host_id) && ip && !is_me(*ip)) {
             // In replace-with-same-ip scenario the replaced node IP will be the same
             // as ours, we shouldn't put it into system.peers.
 
@@ -634,6 +629,11 @@ future<> storage_service::topology_state_load() {
             st.host_id = node->host_id();
             st.tokens = boost::copy_range<std::unordered_set<dht::token>>(tmptr->get_tokens(e));
             st.opt_dc_rack = node->dc_rack();
+            // Save tokens, not needed for raft topology management, but needed by legacy
+            // Also ip -> id mapping is needed for address map recreation on reboot
+            if (node->is_this_node() && !st.tokens.empty()) {
+                st.opt_status = gms::versioned_value::normal(st.tokens);
+            }
             co_await _gossiper.add_saved_endpoint(ep, std::move(st), permit.id());
         }
     }
