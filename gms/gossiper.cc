@@ -2175,6 +2175,9 @@ future<> gossiper::add_saved_endpoint(locator::host_id host_id, gms::loaded_endp
         std::unordered_set<dht::token> tokens_set(tokens.begin(), tokens.end());
         ep_state.add_application_state(gms::application_state::TOKENS, versioned_value::tokens(tokens_set));
     }
+    if (st.opt_status) {
+        ep_state.add_application_state(gms::application_state::STATUS, std::move(*st.opt_status));
+    }
     auto generation = ep_state.get_heart_beat_state().get_generation();
     co_await replicate(ep, std::move(ep_state), permit.id());
     _unreachable_endpoints[ep] = now();

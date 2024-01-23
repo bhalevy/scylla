@@ -680,6 +680,11 @@ future<> storage_service::topology_state_load() {
             st.endpoint = ep;
             st.tokens = boost::copy_range<std::unordered_set<dht::token>>(tmptr->get_tokens(e));
             st.opt_dc_rack = node->dc_rack();
+            // When loading this node endpoint state and it has tokens in token_metadata,
+            // its status can already be set to normal.
+            if (node->is_this_node() && !st.tokens.empty()) {
+                st.opt_status = gms::versioned_value::normal(st.tokens);
+            }
             co_await _gossiper.add_saved_endpoint(e, std::move(st), permit.id());
         }
     }
