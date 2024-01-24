@@ -594,8 +594,8 @@ public:
     storage_group_vector make_storage_groups(compaction_group_list& list) const override {
         storage_group_vector ret;
 
-        auto& tmap = tablet_map();
         auto& tm = erm()->get_token_metadata();
+        auto& tmap = tm.tablets().get_tablet_map(schema()->id());
         ret.reserve(tmap.tablet_count());
 
         for (auto tid : tmap.tablet_ids()) {
