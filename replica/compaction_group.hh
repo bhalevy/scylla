@@ -214,6 +214,7 @@ public:
     virtual ~storage_group_manager() {}
     virtual storage_group_vector make_storage_groups(compaction_group_list& list) const = 0;
     virtual std::pair<size_t, locator::tablet_range_side> storage_group_of(dht::token) const = 0;
+    virtual storage_group* storage_group_at(const storage_group_vector&, size_t idx) const noexcept = 0;
     virtual size_t log2_storage_groups() const = 0;
 };
 
