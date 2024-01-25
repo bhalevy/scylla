@@ -575,6 +575,9 @@ public:
         ret.push_back(&_compaction_groups.front());
         return ret;
     }
+    future<> parallel_foreach_compaction_group(std::function<future<>(compaction_group&)> action) override {
+        co_await action(_compaction_groups.front());
+    }
 private:
     void do_make_storage_group(std::unique_ptr<compaction_group> cg) {
         _storage_groups.push_back(std::make_unique<storage_group>(std::move(cg), _compaction_groups));
@@ -669,6 +672,12 @@ public:
         }
 
         return ret;
+    }
+    future<> parallel_foreach_compaction_group(std::function<future<>(compaction_group&)> action) override {
+        // TODO: place a barrier here when we allow dynamic groups.
+        co_await coroutine::parallel_for_each(compaction_groups(), [&] (compaction_group& cg) {
+            return action(cg);
+        });
     }
 };
 
@@ -815,10 +824,7 @@ const storage_group_vector& table::storage_groups() const noexcept {
 }
 
 future<> table::parallel_foreach_compaction_group(std::function<future<>(compaction_group&)> action) {
-    // TODO: place a barrier here when we allow dynamic groups.
-    co_await coroutine::parallel_for_each(compaction_groups(), [&] (compaction_group& cg) {
-        return action(cg);
-    });
+    return _sg_manager->parallel_foreach_compaction_group(std::move(action));
 }
 
 future<utils::chunked_vector<sstables::sstable_files_snapshot>> table::take_storage_snapshot(dht::token_range tr) {
