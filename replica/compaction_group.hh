@@ -80,6 +80,11 @@ public:
 
     compaction_group(table& t, size_t gid, dht::token_range token_range);
 
+    // Deep copy for cloning/snapshot purpose
+    compaction_group(const compaction_group&);
+
+    std::unique_ptr<compaction_group> clone() const;
+
     size_t group_id() const noexcept {
         return _group_id;
     }
@@ -183,6 +188,9 @@ private:
 public:
     storage_group(compaction_group_ptr cg, compaction_group_list& list);
 
+    // Deep copy for cloning/snapshot purpose
+    storage_group(const storage_group&, compaction_group_list& list);
+
     const dht::token_range& token_range() const noexcept;
 
     size_t memtable_count() const noexcept;
@@ -221,6 +229,7 @@ protected:
 
 public:
     storage_group_manager(table& t);
+    storage_group_manager(const storage_group_manager&) = delete;
     virtual ~storage_group_manager();
 
     compaction_group_list& compaction_groups() noexcept {
@@ -236,6 +245,9 @@ public:
         return _storage_groups;
     }
 
+    // Deep copy of the instance.
+    // Used for taking a snapshot of the table's storage_groups
+    virtual std::unique_ptr<storage_group_manager> clone() const = 0;
     virtual void make_storage_groups() = 0;
     virtual std::pair<size_t, locator::tablet_range_side> storage_group_of(dht::token) const = 0;
     virtual storage_group* shard_local_storage_group_at(size_t idx) const noexcept = 0;
