@@ -757,11 +757,12 @@ future<> gossiper::do_status_check() {
 
         // check for dead state removal
         auto expire_time = get_expire_time_for_endpoint(endpoint);
-        const auto host_id = get_host_id(endpoint);
-        if (!is_alive && (now > expire_time)
-             && (!get_token_metadata_ptr()->is_normal_token_owner(host_id))) {
+        if (!is_alive && (now > expire_time)) {
+          const auto host_id = get_host_id(*eps);
+          if (!host_id || !get_token_metadata_ptr()->is_normal_token_owner(host_id)) {
             logger.debug("time is expiring for endpoint : {} ({})", endpoint, expire_time.time_since_epoch().count());
             co_await evict_from_membership(endpoint, pid);
+          }
         }
     }
 
@@ -1538,12 +1539,22 @@ bool gossiper::is_cql_ready(const inet_address& endpoint) const {
     return ready;
 }
 
+locator::host_id gossiper::get_host_id(const endpoint_state& ep_state) noexcept {
+    if (auto app_state = ep_state.get_application_state_ptr(application_state::HOST_ID)) {
+        return locator::host_id(utils::UUID(app_state->value()));
+    }
+    return locator::host_id::create_null_id();
+}
+
 locator::host_id gossiper::get_host_id(inet_address endpoint) const {
-    auto app_state = get_application_state_ptr(endpoint, application_state::HOST_ID);
-    if (!app_state) {
+    locator::host_id host_id;
+    if (auto eps = get_endpoint_state_ptr(endpoint)) {
+        host_id = get_host_id(*eps);
+    }
+    if (!host_id) {
         throw std::runtime_error(format("Host {} does not have HOST_ID application_state", endpoint));
     }
-    return locator::host_id(utils::UUID(app_state->value()));
+    return host_id;
 }
 
 std::set<gms::inet_address> gossiper::get_nodes_with_host_id(locator::host_id host_id) const {
