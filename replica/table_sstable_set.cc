@@ -25,6 +25,7 @@ extern logging::logger tlogger;
 // the managed sets cannot be modified through table_sstable_set, but only jointly read from, so insert() and erase() are disabled.
 class table_sstable_set : public sstable_set_impl {
     table& _table;
+    std::unique_ptr<storage_group_manager> _cloned_sg_manager;
     storage_group_manager& _sg_manager;
 
 public:
@@ -33,20 +34,14 @@ public:
         , _sg_manager(t.get_storage_group_manager())
     {}
 
+    table_sstable_set(const table_sstable_set& o) noexcept
+        : _table(o._table)
+        , _cloned_sg_manager(o._sg_manager.clone())
+        , _sg_manager(*_cloned_sg_manager)
+    {}
+
     virtual std::unique_ptr<sstable_set_impl> clone() const override {
-        // Clone needs to return an sstable_set containing a snapshot of all sstables in the table.
-        // Otherwise, cloning this object does not gurantee immutability (by design).
-        // FIXME: implement more efficient cloning.
-        auto ret = std::make_unique<partitioned_sstable_set>(_table.schema(), false);
-        _sg_manager.foreach_storage_group_until(dht::partition_range::make_open_ended_both_sides(), [&] (storage_group& sg) {
-            for (auto* cg : sg.compaction_groups()) {
-                cg->make_compound_sstable_set()->for_each_sstable([&] (auto& sst) {
-                    ret->insert(sst);
-                });
-            }
-            return stop_iteration::no;
-        });
-        return ret;
+        return std::make_unique<table_sstable_set>(*this);
     }
 
     static sstable_set make(table& t) {

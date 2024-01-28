@@ -537,6 +537,15 @@ class single_storage_group_manager final : public storage_group_manager {
 public:
     using storage_group_manager::storage_group_manager;
 
+    single_storage_group_manager(const single_storage_group_manager& o)
+            : storage_group_manager(o._t)
+    {
+        auto cg = std::make_unique<compaction_group>(o._compaction_groups.front());
+        do_make_storage_group(std::move(cg));
+    }
+    std::unique_ptr<storage_group_manager> clone() const override {
+        return std::make_unique<single_storage_group_manager>(*this);
+    }
     void make_storage_groups() override {
         auto cg = std::make_unique<compaction_group>(_t, size_t(0), dht::token_range::make_open_ended_both_sides());
         do_make_storage_group(std::move(cg));
@@ -584,6 +593,8 @@ private:
 
 class tablet_storage_group_manager final : public storage_group_manager {
     locator::host_id _my_host_id;
+    // static tablet_map is avialable if cloned
+    std::optional<locator::tablet_map> _tablet_map;
 private:
     const locator::effective_replication_map_ptr& erm() const {
         return _t.get_effective_replication_map();
@@ -594,6 +605,9 @@ private:
     }
 
     const locator::tablet_map& tablet_map() const {
+        if (_tablet_map) {
+            return *_tablet_map;
+        }
         // FIXME: cheaper way to retrieve tablet_map than looking up every time in tablet_metadata's map.
         auto& tm = erm()->get_token_metadata();
         return tm.tablets().get_tablet_map(schema()->id());
@@ -603,6 +617,29 @@ public:
         : storage_group_manager(t)
         , _my_host_id(erm()->get_token_metadata().get_my_id())
     {}
+
+    tablet_storage_group_manager(const tablet_storage_group_manager& o)
+            : storage_group_manager(o._t)
+            , _my_host_id(o._my_host_id)
+            , _tablet_map(o.tablet_map())
+    {
+        auto& tmap = *_tablet_map;
+        _storage_groups.reserve(tmap.tablet_count());
+        auto it = o._storage_groups.begin();
+        for (auto tid : tmap.tablet_ids()) {
+            auto shard = tmap.get_shard(tid, _my_host_id);
+            if (shard && *shard == this_shard_id()) {
+                _storage_groups.emplace_back(std::make_unique<storage_group>(**it, _compaction_groups));
+            } else {
+                _storage_groups.emplace_back(nullptr);
+            }
+            ++it;
+        }
+    }
+
+    std::unique_ptr<storage_group_manager> clone() const override {
+        return std::make_unique<tablet_storage_group_manager>(*this);
+    }
 
     void make_storage_groups() override {
         auto& tmap = tablet_map();
@@ -727,6 +764,18 @@ bool table::uses_tablets() const {
 storage_group::storage_group(compaction_group_ptr cg, compaction_group_list& list)
         : _main_cg(std::move(cg)) {
     list.push_back(*_main_cg);
+}
+
+storage_group::storage_group(const storage_group& o, compaction_group_list& list)
+        : _main_cg(std::make_unique<compaction_group>(*o._main_cg))
+{
+    list.push_back(*_main_cg);
+    if (o.splitting_mode()) {
+        _left_cg = std::make_unique<compaction_group>(*o._left_cg);
+        _right_cg = std::make_unique<compaction_group>(*o._right_cg);
+        list.push_back(*_left_cg);
+        list.push_back(*_right_cg);
+    }
 }
 
 const dht::token_range& storage_group::token_range() const noexcept {
@@ -1878,6 +1927,23 @@ compaction_group::compaction_group(table& t, size_t group_id, dht::token_range t
     , _maintenance_sstables(t.make_maintenance_sstable_set())
 {
     _t._compaction_manager.add(as_table_state());
+}
+
+compaction_group::compaction_group(const compaction_group& o)
+    : _t(o._t)
+    , _table_state(std::make_unique<table_state>(_t, *this))
+    , _group_id(o._group_id)
+    , _token_range(o._token_range)
+    , _compaction_strategy_state(compaction::compaction_strategy_state::make(_t._compaction_strategy))
+    // Okay to keep a shallow copy of the other compaction_group sstable sets
+    // Since they are never updated in place,
+    // but rather replaced with modified sets when sstables are added or deleted
+    , _main_sstables(o._main_sstables)
+    , _maintenance_sstables(o._maintenance_sstables)
+{}
+
+std::unique_ptr<compaction_group> compaction_group::clone() const {
+    return std::make_unique<compaction_group>(*this);
 }
 
 future<> compaction_group::stop() noexcept {
