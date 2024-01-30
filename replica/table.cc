@@ -652,6 +652,7 @@ public:
                 tlogger.debug("Tablet with id {} and range {} present for {}.{}", tid, range, schema()->ks_name(), schema()->cf_name());
             }
             // FIXME: don't allocate compaction groups for tablets that aren't present in this shard.
+            // See https://github.com/scylladb/scylladb/issues/17042
             auto cg = std::make_unique<compaction_group>(_t, tid.value(), std::move(range));
             ret.emplace_back(std::make_unique<storage_group>(std::move(cg), _compaction_groups));
         }
@@ -866,8 +867,14 @@ future<> storage_group::split(compaction_group_list& list, sstables::compaction_
 }
 
 bool table::all_storage_groups_split() {
-    return std::ranges::all_of(storage_groups(),
-                               std::bind(&storage_group::set_split_mode, std::placeholders::_1, std::ref(compaction_groups())));
+    auto& cg_list = compaction_groups();
+    bool all_split = true;
+    for (auto& storage_group : storage_groups()) {
+        if (storage_group) {
+            all_split &= storage_group->set_split_mode(cg_list);
+        }
+    }
+    return all_split;
 }
 
 future<> table::split_all_storage_groups() {
@@ -880,7 +887,9 @@ future<> table::split_all_storage_groups() {
     auto holder = async_gate().hold();
 
     for (auto& storage_group : storage_groups()) {
-        co_await storage_group->split(compaction_groups(), opt);
+        if (storage_group) {
+            co_await storage_group->split(compaction_groups(), opt);
+        }
     }
 }
 
