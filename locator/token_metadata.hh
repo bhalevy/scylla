@@ -44,7 +44,7 @@ using token = dht::token;
 class token_metadata;
 class tablet_metadata;
 
-struct host_id_or_endpoint {
+struct host_id_and_or_endpoint {
     host_id id;
     gms::inet_address endpoint;
 
@@ -54,9 +54,9 @@ struct host_id_or_endpoint {
         auto_detect
     };
 
-    host_id_or_endpoint(const sstring& s, param_type restrict = param_type::auto_detect);
+    host_id_and_or_endpoint(const sstring& s, param_type restrict = param_type::auto_detect);
 
-    bool operator==(const host_id_or_endpoint& o) const noexcept {
+    bool operator==(const host_id_and_or_endpoint& o) const noexcept {
         return (has_host_id() && o.has_host_id()) ? id == o.id : endpoint == o.endpoint;
     }
 
@@ -181,7 +181,7 @@ public:
 
     /// Parses the \c host_id_string either as a host uuid or as an ip address and returns the mapping.
     /// Throws std::invalid_argument on parse error or std::runtime_error if the host_id wasn't found.
-    host_id_or_endpoint parse_host_id_and_endpoint(const sstring& host_id_string) const;
+    host_id_and_or_endpoint parse_host_id_and_endpoint(const sstring& host_id_string) const;
 
     /** @return a copy of the endpoint-to-id map for read-only operations */
     std::unordered_map<inet_address, host_id> get_endpoint_to_host_id_map_for_reading() const;
@@ -397,8 +397,8 @@ public:
 namespace std {
 
 template<>
-struct hash<locator::host_id_or_endpoint> {
-    size_t operator()(const locator::host_id_or_endpoint& i) const {
+struct hash<locator::host_id_and_or_endpoint> {
+    size_t operator()(const locator::host_id_and_or_endpoint& i) const {
         return i.has_host_id() ? hash<locator::host_id>()(i.id) : hash<gms::inet_address>()(i.endpoint);
     }
 };
@@ -406,11 +406,11 @@ struct hash<locator::host_id_or_endpoint> {
 } // namespace std
 
 template <>
-struct fmt::formatter<locator::host_id_or_endpoint> {
+struct fmt::formatter<locator::host_id_and_or_endpoint> {
     constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
 
     template <typename FormatContext>
-    auto format(const locator::host_id_or_endpoint& hioa, FormatContext& ctx) const {
+    auto format(const locator::host_id_and_or_endpoint& hioa, FormatContext& ctx) const {
         if (!hioa.has_endpoint()) {
             return fmt::format_to(ctx.out(), "{}", hioa.id);
         } else if (!hioa.has_host_id()) {

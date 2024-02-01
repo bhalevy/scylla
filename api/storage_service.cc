@@ -74,7 +74,7 @@ sstring validate_keyspace(http_context& ctx, const parameters& param) {
 }
 
 locator::host_id validate_host_id(const sstring& param) {
-    auto hoep = locator::host_id_or_endpoint(param, locator::host_id_or_endpoint::param_type::host_id);
+    auto hoep = locator::host_id_and_or_endpoint(param, locator::host_id_and_or_endpoint::param_type::host_id);
     return hoep.id;
 }
 
@@ -879,10 +879,10 @@ void set_storage_service(http_context& ctx, routes& r, sharded<service::storage_
         auto host_id = validate_host_id(req->get_query_param("host_id"));
         std::vector<sstring> ignore_nodes_strs = utils::split_comma_separated_list(req->get_query_param("ignore_nodes"));
         apilog.info("remove_node: host_id={} ignore_nodes={}", host_id, ignore_nodes_strs);
-        auto ignore_nodes = std::list<locator::host_id_or_endpoint>();
+        auto ignore_nodes = std::list<locator::host_id_and_or_endpoint>();
         for (const sstring& n : ignore_nodes_strs) {
             try {
-                auto hoep = locator::host_id_or_endpoint(n);
+                auto hoep = locator::host_id_and_or_endpoint(n);
                 if (!ignore_nodes.empty() && hoep.has_host_id() != ignore_nodes.front().has_host_id()) {
                     throw std::runtime_error("All nodes should be identified using the same method: either Host IDs or ip addresses.");
                 }

@@ -975,8 +975,8 @@ token_metadata::get_endpoint_for_host_id(host_id host_id) const {
     return _impl->get_endpoint_for_host_id(host_id);
 }
 
-host_id_or_endpoint token_metadata::parse_host_id_and_endpoint(const sstring& host_id_string) const {
-    auto res = host_id_or_endpoint(host_id_string);
+host_id_and_or_endpoint token_metadata::parse_host_id_and_endpoint(const sstring& host_id_string) const {
+    auto res = host_id_and_or_endpoint(host_id_string);
     res.resolve(*this);
     return res;
 }
@@ -1222,7 +1222,7 @@ future<> shared_token_metadata::mutate_on_all_shards(sharded<shared_token_metada
     });
 }
 
-host_id_or_endpoint::host_id_or_endpoint(const sstring& s, param_type restrict) {
+host_id_and_or_endpoint::host_id_and_or_endpoint(const sstring& s, param_type restrict) {
     switch (restrict) {
     case param_type::host_id:
         try {
@@ -1251,7 +1251,7 @@ host_id_or_endpoint::host_id_or_endpoint(const sstring& s, param_type restrict) 
     }
 }
 
-void host_id_or_endpoint::resolve(const token_metadata& tm) {
+void host_id_and_or_endpoint::resolve(const token_metadata& tm) {
     if (id) {
         auto endpoint_opt = tm.get_endpoint_for_host_id_if_known(id);
         if (!endpoint_opt) {

@@ -901,7 +901,7 @@ future<> storage_service::raft_state_monitor_fiber(raft::server& raft, sharded<d
     }
 }
 
-std::unordered_set<raft::server_id> storage_service::find_raft_nodes_from_hoeps(const std::list<locator::host_id_or_endpoint>& hoeps) {
+std::unordered_set<raft::server_id> storage_service::find_raft_nodes_from_hoeps(const std::list<locator::host_id_and_or_endpoint>& hoeps) {
     std::unordered_set<raft::server_id> ids;
     for (const auto& hoep : hoeps) {
         std::optional<raft::server_id> id;
@@ -935,7 +935,7 @@ std::vector<canonical_mutation> storage_service::build_mutation_from_join_params
         .set("supported_features", boost::copy_range<std::set<sstring>>(params.supported_features));
 
     if (params.replaced_id) {
-        std::list<locator::host_id_or_endpoint> ignore_nodes_params;
+        std::list<locator::host_id_and_or_endpoint> ignore_nodes_params;
         for (const auto& n : params.ignore_nodes) {
             ignore_nodes_params.emplace_back(n);
         }
@@ -3302,7 +3302,7 @@ void storage_service::run_replace_ops(std::unordered_set<token>& bootstrap_token
     }
 }
 
-future<> storage_service::raft_removenode(locator::host_id host_id, std::list<locator::host_id_or_endpoint> ignore_nodes_params) {
+future<> storage_service::raft_removenode(locator::host_id host_id, std::list<locator::host_id_and_or_endpoint> ignore_nodes_params) {
     auto id = raft::server_id{host_id.uuid()};
     utils::UUID request_id;
 
@@ -3379,7 +3379,7 @@ future<> storage_service::raft_removenode(locator::host_id host_id, std::list<lo
     }
 }
 
-future<> storage_service::removenode(locator::host_id host_id, std::list<locator::host_id_or_endpoint> ignore_nodes_params) {
+future<> storage_service::removenode(locator::host_id host_id, std::list<locator::host_id_and_or_endpoint> ignore_nodes_params) {
     return run_with_api_lock(sstring("removenode"), [host_id, ignore_nodes_params = std::move(ignore_nodes_params)] (storage_service& ss) mutable {
         return seastar::async([&ss, host_id, ignore_nodes_params = std::move(ignore_nodes_params)] () mutable {
             if (ss._raft_topology_change_enabled) {
