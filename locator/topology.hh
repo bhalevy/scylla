@@ -392,46 +392,49 @@ public:
     std::unordered_set<sstring> get_datacenter_names() const;
 
     // Get dc/rack location of this node
-    endpoint_dc_rack get_location() const {
-        return _this_node ? _this_node->dc_rack() : _cfg.local_dc_rack;
+    const location get_location() const noexcept {
+        if (!_this_node) {
+            return _default_location;
+        }
+        return _this_node->location();
     }
     // Get dc/rack location of a node identified by host_id
     // The specified node must exist.
-    endpoint_dc_rack get_location(host_id id) const {
-        return find_node(id)->dc_rack();
+    const location get_location(host_id id) const noexcept {
+        return find_node(id)->location();
     }
     // Get dc/rack location of a node identified by endpoint
     // The specified node must exist.
-    endpoint_dc_rack get_location(const inet_address& ep) const;
+    const location get_location(const inet_address& ep) const noexcept;
 
     // Get datacenter of this node
-    sstring get_datacenter() const {
-        return get_location().dc;
+    const datacenter* get_datacenter() const noexcept {
+        return get_location().dc();
     }
     // Get datacenter of a node identified by host_id
     // The specified node must exist.
-    sstring get_datacenter(host_id id) const {
-        return get_location(id).dc;
+    const datacenter* get_datacenter(host_id id) const noexcept {
+        return get_location(id).dc();
     }
     // Get datacenter of a node identified by endpoint
     // The specified node must exist.
-    sstring get_datacenter(inet_address ep) const {
-        return get_location(ep).dc;
+    const datacenter* get_datacenter(inet_address ep) const noexcept {
+        return get_location(ep).dc();
     }
 
     // Get rack of this node
-    sstring get_rack() const {
-        return get_location().rack;
+    const rack* get_rack() const noexcept {
+        return get_location().rack();
     }
     // Get rack of a node identified by host_id
     // The specified node must exist.
-    sstring get_rack(host_id id) const {
-        return get_location(id).rack;
+    const rack* get_rack(host_id id) const noexcept {
+        return get_location(id).rack();
     }
     // Get rack of a node identified by endpoint
     // The specified node must exist.
-    sstring get_rack(inet_address ep) const {
-        return get_location(ep).rack;
+    const rack* get_rack(inet_address ep) const noexcept {
+        return get_location(ep).rack();
     }
 
     auto get_local_dc_filter() const noexcept {

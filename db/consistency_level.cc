@@ -58,7 +58,7 @@ size_t block_for_local_serial(const locator::effective_replication_map& erm) {
     //
 
     const auto& topo = erm.get_topology();
-    return local_quorum_for(erm, topo.get_datacenter());
+    return local_quorum_for(erm, topo.get_datacenter()->name());
 }
 
 size_t block_for_each_quorum(const locator::effective_replication_map& erm) {
@@ -115,22 +115,15 @@ bool is_datacenter_local(consistency_level l) {
 }
 
 template <typename Range, typename PendingRange = std::array<gms::inet_address, 0>>
-std::unordered_map<sstring, dc_node_count> count_per_dc_endpoints(
+std::unordered_map<const locator::datacenter*, dc_node_count> count_per_dc_endpoints(
         const locator::effective_replication_map& erm,
         const Range& live_endpoints,
         const PendingRange& pending_endpoints = std::array<gms::inet_address, 0>()) {
     using namespace locator;
 
-    auto& rs = erm.get_replication_strategy();
     const auto& topo = erm.get_topology();
 
-    const network_topology_strategy* nrs =
-            static_cast<const network_topology_strategy*>(&rs);
-
-    std::unordered_map<sstring, dc_node_count> dc_endpoints;
-    for (auto& dc : nrs->get_datacenters()) {
-        dc_endpoints.emplace(dc, dc_node_count());
-    }
+    std::unordered_map<const locator::datacenter*, dc_node_count> dc_endpoints;
 
     //
     // Since live_endpoints are a subset of a get_natural_endpoints() output we
@@ -161,7 +154,7 @@ bool assure_sufficient_live_nodes_each_quorum(
 
     if (rs.get_type() == replication_strategy_type::network_topology) {
         for (auto& entry : count_per_dc_endpoints(erm, live_endpoints, pending_endpoints)) {
-            auto dc_block_for = local_quorum_for(erm, entry.first);
+            auto dc_block_for = local_quorum_for(erm, entry.first->name());
             auto dc_live = entry.second.live;
             auto dc_pending = entry.second.pending;
 
@@ -367,7 +360,7 @@ is_sufficient_live_nodes(consistency_level cl,
 
         if (rs.get_type() == replication_strategy_type::network_topology) {
             for (auto& entry : count_per_dc_endpoints(erm, live_endpoints)) {
-                if (entry.second.live < local_quorum_for(erm, entry.first)) {
+                if (entry.second.live < local_quorum_for(erm, entry.first->name())) {
                     return false;
                 }
             }

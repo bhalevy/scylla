@@ -120,7 +120,7 @@ void endpoints_check(
     // Check the per-DC RF
     std::unordered_map<sstring, size_t> dc_rf;
     for (auto ep : endpoints) {
-        sstring dc = topo.get_location(ep).dc;
+        sstring dc = topo.get_location(ep).dc()->name();
 
         auto rf = dc_rf.find(dc);
         if (rf == dc_rf.end()) {
@@ -571,7 +571,7 @@ static locator::host_id_set calculate_natural_endpoints(
         }
 
         host_id ep = *tm.get_endpoint(next);
-        sstring dc = topo.get_location(ep).dc;
+        sstring dc = topo.get_location(ep).dc()->name();
 
         auto& seen_racks_dc_set = seen_racks[dc];
         auto& racks_dc_map = racks.at(dc);
@@ -592,7 +592,7 @@ static locator::host_id_set calculate_natural_endpoints(
             dc_replicas_dc_set.insert(ep);
             replicas.push_back(ep);
         } else {
-            sstring rack = topo.get_location(ep).rack;
+            sstring rack = topo.get_location(ep).rack()->name();
             // is this a new rack? - we prefer to replicate on different racks
             if (seen_racks_dc_set.contains(rack)) {
                 skipped_dc_endpoints_set.push_back(ep);
@@ -754,9 +754,9 @@ namespace locator {
 
 void topology::test_compare_endpoints(const inet_address& address, const inet_address& a1, const inet_address& a2) const {
     std::optional<std::partial_ordering> expected;
-    const auto& loc = get_location(address);
-    const auto& loc1 = get_location(a1);
-    const auto& loc2 = get_location(a2);
+    const auto loc = get_location(address);
+    const auto loc1 = get_location(a1);
+    const auto loc2 = get_location(a2);
     if (a1 == a2) {
         expected = std::partial_ordering::equivalent;
     } else {
@@ -765,28 +765,28 @@ void topology::test_compare_endpoints(const inet_address& address, const inet_ad
         } else if (a2 == address) {
             expected = std::partial_ordering::greater;
         } else {
-            if (loc1.dc == loc.dc) {
-                if (loc2.dc != loc.dc) {
+            if (loc1.dc() == loc.dc()) {
+                if (loc2.dc() != loc.dc()) {
                     expected = std::partial_ordering::less;
                 } else {
-                    if (loc1.rack == loc.rack) {
-                        if (loc2.rack != loc.rack) {
+                    if (loc1.rack() == loc.rack()) {
+                        if (loc2.rack() != loc.rack()) {
                             expected = std::partial_ordering::less;
                         }
-                    } else if (loc2.rack == loc.rack) {
+                    } else if (loc2.rack() == loc.rack()) {
                         expected = std::partial_ordering::greater;
                     }
                 }
-            } else if (loc2.dc == loc.dc) {
+            } else if (loc2.dc() == loc.dc()) {
                 expected = std::partial_ordering::greater;
             }
         }
     }
     auto res = compare_endpoints(address, a1, a2);
     testlog.debug("compare_endpoint: address={} [{}/{}] a1={} [{}/{}] a2={} [{}/{}]: res={} expected={} expected_value={}",
-            address, loc.dc, loc.rack,
-            a1, loc1.dc, loc1.rack,
-            a2, loc2.dc, loc2.rack,
+            address, loc.dc()->name(), loc.rack()->name(),
+            a1, loc1.dc()->name(), loc1.rack()->name(),
+            a2, loc2.dc()->name(), loc2.rack()->name(),
             res, bool(expected), expected.value_or(std::partial_ordering::unordered));
     if (expected) {
         BOOST_REQUIRE_EQUAL(res, *expected);
@@ -867,7 +867,7 @@ SEASTAR_THREAD_TEST_CASE(test_topology_tracks_local_node) {
 
     // get_location() should work before any node is added
 
-    BOOST_REQUIRE(stm.get()->get_topology().get_location() == ip1_dc_rack);
+    BOOST_REQUIRE(stm.get()->get_topology().get_location().get_dc_rack() == ip1_dc_rack);
 
     stm.mutate_token_metadata([&] (token_metadata& tm) {
         tm.update_host_id(host2, ip2);
@@ -881,7 +881,7 @@ SEASTAR_THREAD_TEST_CASE(test_topology_tracks_local_node) {
     BOOST_REQUIRE_EQUAL(n1->host_id(), host1);
     BOOST_REQUIRE_EQUAL(n1->endpoint(), ip1);
     BOOST_REQUIRE(n1->dc_rack() == ip1_dc_rack);
-    BOOST_REQUIRE(stm.get()->get_topology().get_location() == ip1_dc_rack);
+    BOOST_REQUIRE(stm.get()->get_topology().get_location().get_dc_rack() == ip1_dc_rack);
 
     const node* n2 = stm.get()->get_topology().find_node(host2);
     BOOST_REQUIRE(n2);
@@ -929,7 +929,7 @@ SEASTAR_THREAD_TEST_CASE(test_topology_tracks_local_node) {
     BOOST_REQUIRE_EQUAL(n1->host_id(), host1);
     BOOST_REQUIRE_EQUAL(n1->endpoint(), ip1);
     BOOST_REQUIRE(n1->dc_rack() == ip1_dc_rack);
-    BOOST_REQUIRE(stm.get()->get_topology().get_location() == ip1_dc_rack);
+    BOOST_REQUIRE(stm.get()->get_topology().get_location().get_dc_rack() == ip1_dc_rack);
 
     n2 = stm.get()->get_topology().find_node(host2);
     BOOST_REQUIRE(n2);
@@ -951,5 +951,5 @@ SEASTAR_THREAD_TEST_CASE(test_topology_tracks_local_node) {
     BOOST_REQUIRE_EQUAL(n1->host_id(), host1);
     BOOST_REQUIRE_EQUAL(n1->endpoint(), ip1);
     BOOST_REQUIRE(n1->dc_rack() == ip1_dc_rack_v2);
-    BOOST_REQUIRE(stm.get()->get_topology().get_location() == ip1_dc_rack_v2);
+    BOOST_REQUIRE(stm.get()->get_topology().get_location().get_dc_rack() == ip1_dc_rack_v2);
 }

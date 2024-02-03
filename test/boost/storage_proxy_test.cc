@@ -8,6 +8,7 @@
 
 
 #include <seastar/core/thread.hh>
+#include "locator/topology.hh"
 #include "test/lib/scylla_test_case.hh"
 
 #include "test/lib/cql_test_env.hh"
@@ -129,6 +130,7 @@ SEASTAR_THREAD_TEST_CASE(test_split_stats) {
     // Point being is that either the above should not happen, or 
     // split_stats should be resilient to being called from different
     // scheduling group.
-    stats1->register_metrics_for("DC1", ep1);
-    stats2->register_metrics_for("DC1", ep1);
+    auto dc_id = locator::datacenter_id::create_random_id();
+    stats1->register_metrics_for(dc_id, ep1);
+    stats2->register_metrics_for(dc_id, ep1);
 }

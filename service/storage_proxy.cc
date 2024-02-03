@@ -1700,10 +1700,10 @@ class datacenter_sync_write_response_handler : public abstract_write_response_ha
         size_t total_endpoints;
         size_t failures;
     };
-    std::unordered_map<sstring, dc_info> _dc_responses;
+    std::unordered_map<const locator::datacenter*, dc_info> _dc_responses;
     bool waited_for(gms::inet_address from) override {
         auto& topology = _effective_replication_map_ptr->get_topology();
-        sstring data_center = topology.get_datacenter(from);
+        auto data_center = topology.get_datacenter(from);
         auto dc_resp = _dc_responses.find(data_center);
 
         if (dc_resp->second.acks < dc_resp->second.total_block_for) {
@@ -1722,7 +1722,7 @@ public:
         auto& topology = erm->get_topology();
 
         for (auto& target : targets) {
-            auto dc = topology.get_datacenter(target);
+            const auto* dc = topology.get_datacenter(target);
 
             if (!_dc_responses.contains(dc)) {
                 auto pending_for_dc = boost::range::count_if(pending_endpoints, [&topology, &dc] (const gms::inet_address& ep){
@@ -1731,14 +1731,14 @@ public:
                 size_t total_endpoints_for_dc = boost::range::count_if(targets, [&topology, &dc] (const gms::inet_address& ep){
                     return topology.get_datacenter(ep) == dc;
                 });
-                _dc_responses.emplace(dc, dc_info{0, db::local_quorum_for(*erm, dc) + pending_for_dc, total_endpoints_for_dc, 0});
+                _dc_responses.emplace(dc, dc_info{0, db::local_quorum_for(*erm, dc->name()) + pending_for_dc, total_endpoints_for_dc, 0});
                 _total_block_for += pending_for_dc;
             }
         }
     }
     bool failure(gms::inet_address from, size_t count, error err) override {
         auto& topology = _effective_replication_map_ptr->get_topology();
-        const sstring& dc = topology.get_datacenter(from);
+        const auto* dc = topology.get_datacenter(from);
         auto dc_resp = _dc_responses.find(dc);
 
         dc_resp->second.failures += count;
@@ -2765,7 +2765,7 @@ inline uint64_t& storage_proxy_stats::split_stats::get_ep_stat(const locator::to
     }
 
     try {
-        sstring dc = topo.get_datacenter(ep);
+        const auto dc = topo.get_datacenter(ep)->id();
         if (_auto_register_metrics) {
             register_metrics_for(dc, ep);
         }
@@ -2787,12 +2787,12 @@ void storage_proxy_stats::split_stats::register_metrics_local() {
     _metrics = std::exchange(new_metrics, {});
 }
 
-void storage_proxy_stats::split_stats::register_metrics_for(sstring dc, gms::inet_address ep) {
+void storage_proxy_stats::split_stats::register_metrics_for(locator::datacenter_id dc, gms::inet_address ep) {
     namespace sm = seastar::metrics;
 
     // if this is the first time we see an endpoint from this DC - add a
     // corresponding collectd metric
-    if (auto [ignored, added] = _dc_stats.try_emplace(dc); added) {
+    if (_dc_stats.try_emplace(dc).second) {
         _metrics.add_group(_category, {
             sm::make_counter(_short_description_prefix + sstring("_remote_node"), [this, dc] { return _dc_stats[dc].val; },
                             sm::description(seastar::format("{} when communicating with external Nodes in another DC", _long_description_prefix)), {storage_proxy_stats::make_scheduling_group_label(_sg), datacenter_label(dc), op_type_label(_op_type)})
@@ -3586,28 +3586,30 @@ storage_proxy::mutate_atomically(std::vector<mutation> mutations, db::consistenc
             .then(utils::result_into_future<result<>>);
 }
 
-static inet_address_vector_replica_set endpoint_filter(
-        const noncopyable_function<bool(const gms::inet_address&)>& is_alive, gms::inet_address my_address,
-        const sstring& local_rack, const std::unordered_map<sstring, std::unordered_set<gms::inet_address>>& endpoints) {
+static inet_address_vector_replica_set endpoint_filter(const locator::topology& topology,
+        const noncopyable_function<bool(const gms::inet_address&)>& is_alive, gms::inet_address my_address) {
+    const auto& dc_map = topology.get_datacenters();
     // special case for single-node data centers
-    if (endpoints.size() == 1 && endpoints.begin()->second.size() == 1) {
-        return boost::copy_range<inet_address_vector_replica_set>(endpoints.begin()->second);
+    if (dc_map.size() == 1 && dc_map.begin()->second->size() == 1) {
+        return { topology.this_node()->endpoint() };
     }
 
     // strip out dead endpoints and localhost
-    std::unordered_multimap<sstring, gms::inet_address> validated;
+    std::unordered_multimap<const locator::rack*, gms::inet_address> validated;
 
     auto is_valid = [&is_alive, my_address] (gms::inet_address input) {
         return input != my_address && is_alive(input);
     };
 
-    for (auto& e : endpoints) {
-        for (auto& a : e.second) {
+    auto loc = topology.get_location();
+    loc.dc()->for_each_rack([&] (const locator::rack* rack) {
+        rack->for_each_node([&] (const locator::node* node) {
+            const auto& a = node->endpoint();
             if (is_valid(a)) {
-                validated.emplace(e.first, a);
+                validated.emplace(rack, a);
             }
-        }
-    }
+        });
+    });
 
     typedef inet_address_vector_replica_set return_type;
 
@@ -3615,9 +3617,9 @@ static inet_address_vector_replica_set endpoint_filter(
         return boost::copy_range<return_type>(validated | boost::adaptors::map_values);
     }
 
-    if (validated.size() - validated.count(local_rack) >= 2) {
+    if (validated.size() - validated.count(loc.rack()) >= 2) {
         // we have enough endpoints in other racks
-        validated.erase(local_rack);
+        validated.erase(loc.rack());
     }
 
     if (validated.bucket_count() == 1) {
@@ -3633,7 +3635,7 @@ static inet_address_vector_replica_set endpoint_filter(
 
     // randomize which racks we pick from if more than 2 remaining
 
-    std::vector<sstring> racks = boost::copy_range<std::vector<sstring>>(validated | boost::adaptors::map_keys);
+    auto racks = boost::copy_range<std::vector<const locator::rack*>>(validated | boost::adaptors::map_keys);
 
     static thread_local std::default_random_engine rnd_engine{std::random_device{}()};
 
@@ -3691,12 +3693,7 @@ storage_proxy::mutate_atomically_result(std::vector<mutation> mutations, db::con
                         [this]() -> inet_address_vector_replica_set {
                             auto local_addr = _p.my_address();
                             auto& topology = _ermp->get_topology();
-                            auto local_dc = topology.get_datacenter();
-                            auto dc_racks_map = topology.get_datacenter_racks();
-                            auto& local_endpoints = dc_racks_map.at(local_dc);
-                            auto local_rack = topology.get_rack();
-                            auto chosen_endpoints = endpoint_filter(std::bind_front(&storage_proxy::is_alive, &_p), local_addr,
-                                                                    local_rack, local_endpoints);
+                            auto chosen_endpoints = endpoint_filter(topology, std::bind_front(&storage_proxy::is_alive, &_p), local_addr);
 
                             if (chosen_endpoints.empty()) {
                                 if (_cl == db::consistency_level::ANY) {
@@ -3969,8 +3966,9 @@ future<> storage_proxy::send_hint_to_all_replicas(frozen_mutation_and_schema fm_
 void storage_proxy::send_to_live_endpoints(storage_proxy::response_id_type response_id, clock_type::time_point timeout)
 {
     // extra-datacenter replicas, grouped by dc
-    std::unordered_map<sstring, inet_address_vector_replica_set> dc_groups;
-    std::vector<std::pair<const sstring, inet_address_vector_replica_set>> local;
+    using dc_groups_map_t = std::unordered_map<const locator::datacenter*, inet_address_vector_replica_set>;
+    dc_groups_map_t dc_groups;
+    std::vector<dc_groups_map_t::value_type> local;
     local.reserve(3);
 
     auto handler_ptr = get_write_response_handler(response_id);
@@ -3992,20 +3990,24 @@ void storage_proxy::send_to_live_endpoints(storage_proxy::response_id_type respo
                 // (See https://github.com/scylladb/scylladb/issues/15138)
                 on_internal_error(slogger, fmt::format("Node {} was not found in topology", dest));
             }
-            const auto& dc = node->dc_rack().dc;
+            auto dc = node->location().dc();
             // read repair writes do not go through coordinator since mutations are per destination
             if (handler.read_repair_write() || dc == local_dc) {
-                local.emplace_back("", inet_address_vector_replica_set({dest}));
+                local.emplace_back(nullptr, inet_address_vector_replica_set({dest}));
             } else {
                 dc_groups[dc].push_back(dest);
             }
         }
     } else {
         // There is only one target replica and it is me
-        local.emplace_back("", handler.get_targets());
+        local.emplace_back(nullptr, handler.get_targets());
     }
 
-    auto all = boost::range::join(local, dc_groups);
+    // boost::range::join does not allow mutable reference for
+    // std::unordered_map<const datacenter*, inet_address_vector_replica_set>
+    // so manually append dc_groups to `all`.
+    //std::move(dc_groups.begin(), dc_groups.end(), std::back_inserter(all));
+
     auto my_address = this->my_address();
 
     // lambda for applying mutation locally
@@ -4031,8 +4033,7 @@ void storage_proxy::send_to_live_endpoints(storage_proxy::response_id_type respo
     };
 
     // OK, now send and/or apply locally
-    for (typename decltype(dc_groups)::value_type& dc_targets : all) {
-        auto& forward = dc_targets.second;
+    for (auto& [dc, forward] : boost::range::join(local, dc_groups)) {
         // last one in forward list is a coordinator
         auto coordinator = forward.back();
         forward.pop_back();

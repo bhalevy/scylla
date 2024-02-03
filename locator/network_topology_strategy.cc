@@ -297,24 +297,21 @@ effective_replication_map_ptr network_topology_strategy::make_replication_map(ta
 
 static unsigned calculate_initial_tablets_from_topology(const schema& s, const topology& topo, const std::unordered_map<sstring, size_t>& rf) {
     unsigned initial_tablets = std::numeric_limits<unsigned>::min();
-    for (const auto& dc : topo.get_datacenter_endpoints()) {
+    topo.for_each_datacenter([&] (const datacenter* dc) {
         unsigned shards_in_dc = 0;
         unsigned rf_in_dc = 1;
 
-        for (const auto& ep : dc.second) {
-            const auto* node = topo.find_node(ep);
-            if (node != nullptr) {
-                shards_in_dc += node->get_shard_count();
-            }
-        }
+        dc->for_each_node([&] (const node* node) {
+            shards_in_dc += node->get_shard_count();
+        });
 
-        if (auto it = rf.find(dc.first); it != rf.end()) {
+        if (auto it = rf.find(dc->name()); it != rf.end()) {
             rf_in_dc = it->second;
         }
 
         unsigned tablets_in_dc = rf_in_dc > 0 ? (shards_in_dc + rf_in_dc - 1) / rf_in_dc : 0;
         initial_tablets = std::max(initial_tablets, tablets_in_dc);
-    }
+    });
     rslogger.debug("Estimated {} initial tablets for table {}.{}", initial_tablets, s.ks_name(), s.cf_name());
     return initial_tablets;
 }
