@@ -22,6 +22,7 @@
 
 #include "locator/types.hh"
 #include "inet_address_vectors.hh"
+#include "utils/UUID.hh"
 
 using namespace seastar;
 
@@ -39,6 +40,70 @@ class node;
 using node_holder = std::unique_ptr<node>;
 
 using shard_id = seastar::shard_id;
+
+class rack {
+public:
+    using node_set_t = std::unordered_set<const node*>;
+
+private:
+    sstring _name;
+    node_set_t _nodes;
+
+    friend class topology;
+    friend class datacenter;
+public:
+    rack() = delete;
+    rack(const rack&) = delete;
+    explicit rack(sstring name) noexcept
+        : _name(std::move(name))
+    {}
+
+    const sstring& name() const noexcept { return _name; }
+
+    node_set_t& nodes() noexcept { return _nodes; }
+    const node_set_t& nodes() const noexcept { return _nodes; }
+
+    bool empty() const noexcept {
+        return _nodes.empty();
+    }
+    size_t size() const noexcept {
+        return _nodes.size();
+    }
+
+    void for_each_node(std::function<void(const node*)>) const;
+};
+
+class datacenter {
+public:
+    using rack_ptr = std::unique_ptr<const rack>;
+    using rack_map_t = std::unordered_map<sstring_view, rack_ptr>;
+
+private:
+    sstring _name;
+    rack_map_t _racks;
+
+public:
+    datacenter() = delete;
+    datacenter(const datacenter&) = delete;
+    explicit datacenter(sstring name) noexcept
+        : _name(std::move(name))
+    {}
+
+    const sstring& name() const noexcept { return _name; }
+
+    rack_map_t& racks() noexcept { return _racks; }
+    const rack_map_t& racks() const noexcept { return _racks; }
+
+    // empty and size refer to the total number of nodes in the datacenter
+    bool empty() const noexcept;
+    size_t size() const noexcept;
+
+    stop_iteration for_each_rack_until(std::function<stop_iteration(const rack*)>) const;
+    void for_each_rack(std::function<void(const rack*)> func) const;
+    void for_each_node(std::function<void(const node*)>) const;
+
+    friend class topology;
+};
 
 class node {
 public:
@@ -186,6 +251,9 @@ public:
     future<> clear_gently() noexcept;
 
 public:
+    using datacenter_ptr = std::unique_ptr<const datacenter>;
+    using datacenter_map_t = std::unordered_map<sstring_view, datacenter_ptr>;
+
     const config& get_config() const noexcept { return _cfg; }
 
     void set_host_id_cfg(host_id this_host_id) {
@@ -256,28 +324,28 @@ public:
      */
     bool has_endpoint(inet_address) const;
 
-    std::unordered_map<sstring,
-                           std::unordered_set<inet_address>>
-    get_datacenter_endpoints() const {
-        return _dc_endpoints;
+    void for_each_datacenter(std::function<void(const datacenter*)> func) const;
+
+    const datacenter* find_datacenter(sstring_view name) const noexcept;
+
+    const datacenter_map_t& get_datacenters() const noexcept {
+        return _datacenters;
     }
 
     std::unordered_map<sstring,
+                           std::unordered_set<inet_address>>
+    get_datacenter_endpoints() const;
+
+    std::unordered_map<sstring,
                             std::unordered_set<const node*>>
-    get_datacenter_nodes() const {
-        return _dc_nodes;
-    }
+    get_datacenter_nodes() const;
 
     std::unordered_map<sstring,
                        std::unordered_map<sstring,
                                           std::unordered_set<inet_address>>>
-    get_datacenter_racks() const {
-        return _dc_racks;
-    }
+    get_datacenter_racks() const;
 
-    std::unordered_set<sstring> get_datacenter_names() const noexcept {
-        return _datacenters;
-    }
+    std::unordered_set<sstring> get_datacenter_names() const;
 
     // Get dc/rack location of this node
     const endpoint_dc_rack& get_location() const noexcept {
@@ -394,23 +462,9 @@ private:
     std::unordered_map<host_id, const node*> _nodes_by_host_id;
     std::unordered_map<inet_address, const node*> _nodes_by_endpoint;
 
-    std::unordered_map<sstring, std::unordered_set<const node*>> _dc_nodes;
-    std::unordered_map<sstring, std::unordered_map<sstring, std::unordered_set<const node*>>> _dc_rack_nodes;
-
-    /** multi-map: DC -> endpoints in that DC */
-    std::unordered_map<sstring,
-                       std::unordered_set<inet_address>>
-        _dc_endpoints;
-
-    /** map: DC -> (multi-map: rack -> endpoints in that rack) */
-    std::unordered_map<sstring,
-                       std::unordered_map<sstring,
-                                          std::unordered_set<inet_address>>>
-        _dc_racks;
-
     bool _sort_by_proximity = true;
 
-    std::unordered_set<sstring> _datacenters;
+    datacenter_map_t _datacenters;
 
     const std::unordered_map<inet_address, const node*>& get_nodes_by_endpoint() const noexcept {
         return _nodes_by_endpoint;
