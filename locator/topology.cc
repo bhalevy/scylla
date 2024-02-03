@@ -598,21 +598,27 @@ void topology::sort_by_proximity(inet_address address, inet_address_vector_repli
 }
 
 std::weak_ordering topology::compare_endpoints(const inet_address& address, const inet_address& a1, const inet_address& a2) const {
-    const auto& loc = get_location(address);
-    const auto& loc1 = get_location(a1);
-    const auto& loc2 = get_location(a2);
+    auto get_node_location = [this] (const inet_address& addr) {
+        if (const auto* node = find_node(addr)) [[likely]] {
+            return node->location();
+        }
+        return location{};
+    };
+    const auto& loc = get_node_location(address);
+    const auto& loc1 = get_node_location(a1);
+    const auto& loc2 = get_node_location(a2);
 
     // The farthest nodes from a given node are:
     // 1. Nodes in other DCs then the reference node
     // 2. Nodes in the other RACKs in the same DC as the reference node
     // 3. Other nodes in the same DC/RACk as the reference node
-    int same_dc1 = loc1.dc == loc.dc;
-    int same_rack1 = same_dc1 & (loc1.rack == loc.rack);
+    int same_dc1 = loc1.dc() == loc.dc();
+    int same_rack1 = same_dc1 & (loc1.rack() == loc.rack());
     int same_node1 = a1 == address;
     int d1 = ((same_dc1 << 2) | (same_rack1 << 1) | same_node1) ^ 7;
 
-    int same_dc2 = loc2.dc == loc.dc;
-    int same_rack2 = same_dc2 & (loc2.rack == loc.rack);
+    int same_dc2 = loc2.dc() == loc.dc();
+    int same_rack2 = same_dc2 & (loc2.rack() == loc.rack());
     int same_node2 = a2 == address;
     int d2 = ((same_dc2 << 2) | (same_rack2 << 1) | same_node2) ^ 7;
 
