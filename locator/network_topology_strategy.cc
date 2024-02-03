@@ -67,7 +67,7 @@ network_topology_strategy::network_topology_strategy(replication_strategy_params
     rslogger.debug("Configured datacenter replicas are: {}", _dc_rep_factor);
 }
 
-using endpoint_dc_rack_set = std::unordered_set<endpoint_dc_rack>;
+using rack_set = std::unordered_set<const rack*>;
 
 class natural_endpoints_tracker {
     /**
@@ -82,13 +82,13 @@ class natural_endpoints_tracker {
          * For efficiency the set is shared between the instances, using the location pair (dc, rack) to make sure
          * clashing names aren't a problem.
          */
-        endpoint_dc_rack_set& _racks;
+        rack_set& _racks;
 
         /** Number of replicas left to fill from this DC. */
         size_t _rf_left;
         ssize_t _acceptable_rack_repeats;
 
-        data_center_endpoints(size_t rf, size_t rack_count, size_t node_count, host_id_set& endpoints, endpoint_dc_rack_set& racks)
+        data_center_endpoints(size_t rf, size_t rack_count, size_t node_count, host_id_set& endpoints, rack_set& racks)
             : _endpoints(endpoints)
             , _racks(racks)
             // If there aren't enough nodes in this DC to fill the RF, the number of nodes is the effective RF.
@@ -102,12 +102,12 @@ class natural_endpoints_tracker {
          * Attempts to add an endpoint to the replicas for this datacenter, adding to the endpoints set if successful.
          * Returns true if the endpoint was added, and this datacenter does not require further replicas.
          */
-        bool add_endpoint_and_check_if_done(const host_id& ep, const endpoint_dc_rack& location) {
+        bool add_endpoint_and_check_if_done(const host_id& ep, const location& location) {
             if (done()) {
                 return false;
             }
 
-            if (_racks.emplace(location).second) {
+            if (_racks.emplace(location.rack()).second) {
                 // New rack.
                 --_rf_left;
                 auto added = _endpoints.insert(ep).second;
@@ -162,9 +162,9 @@ class natural_endpoints_tracker {
     //
     host_id_set _replicas;
     // tracks the racks we have already placed replicas in
-    endpoint_dc_rack_set _seen_racks;
+    rack_set _seen_racks;
 
-    std::unordered_map<sstring, data_center_endpoints> _dcs;
+    std::unordered_map<const datacenter*, data_center_endpoints> _dcs;
 
     size_t _dcs_to_fill;
 
@@ -197,14 +197,18 @@ public:
             }
 
             // Create a data_center_endpoints object for each non-empty DC.
-            _dcs.emplace(dc->name(), data_center_endpoints(rf, racks, nodes, _replicas, _seen_racks));
+            _dcs.emplace(dc, data_center_endpoints(rf, racks, nodes, _replicas, _seen_racks));
             _dcs_to_fill = _dcs.size();
         }
     }
 
     bool add_endpoint_and_check_if_done(host_id ep) {
-        auto loc = _tp.get_location(ep);
-        auto i = _dcs.find(loc.dc);
+        const auto* node = _tp.find_node(ep);
+        if (!node) {
+            on_internal_error(rslogger, format("Node {} not found", ep));
+        }
+        const auto& loc = node->location();
+        auto i = _dcs.find(loc.dc());
         if (i != _dcs.end() && i->second.add_endpoint_and_check_if_done(ep, loc)) {
             --_dcs_to_fill;
         }
