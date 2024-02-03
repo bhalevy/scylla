@@ -6,6 +6,9 @@
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
+#include <boost/range/numeric.hpp>
+#include <boost/range/adaptors.hpp>
+
 #include <seastar/core/coroutine.hh>
 #include <seastar/coroutine/maybe_yield.hh>
 #include <seastar/core/on_internal_error.hh>
@@ -60,11 +63,7 @@ std::string node::to_string(node::state s) {
 
 future<> topology::clear_gently() noexcept {
     _this_node = nullptr;
-    co_await utils::clear_gently(_dc_endpoints);
-    co_await utils::clear_gently(_dc_racks);
-    _datacenters.clear();
-    _dc_rack_nodes.clear();
-    _dc_nodes.clear();
+    co_await utils::clear_gently(_datacenters);
     _nodes_by_endpoint.clear();
     _nodes_by_host_id.clear();
     co_await utils::clear_gently(_nodes);
@@ -86,10 +85,6 @@ topology::topology(topology&& o) noexcept
     , _nodes(std::move(o._nodes))
     , _nodes_by_host_id(std::move(o._nodes_by_host_id))
     , _nodes_by_endpoint(std::move(o._nodes_by_endpoint))
-    , _dc_nodes(std::move(o._dc_nodes))
-    , _dc_rack_nodes(std::move(o._dc_rack_nodes))
-    , _dc_endpoints(std::move(o._dc_endpoints))
-    , _dc_racks(std::move(o._dc_racks))
     , _sort_by_proximity(o._sort_by_proximity)
     , _datacenters(std::move(o._datacenters))
 {
@@ -114,6 +109,20 @@ topology& topology::operator=(topology&& o) noexcept {
 future<topology> topology::clone_gently() const {
     topology ret(_cfg);
     tlogger.debug("topology[{}]: clone_gently to {} from shard {}", fmt::ptr(this), fmt::ptr(&ret), _shard);
+    // Copy the dc/rack tree structure to preserve their respective id:s
+    // The nodes are added and indexed one at a time below
+    for (const auto& [dc_name, dc] : _datacenters) {
+        auto new_dc = std::make_unique<datacenter>(dc->name(), dc->id());
+        for (const auto& [rack_name, rack] : dc->racks()) {
+            if (!rack->empty()) {
+                auto new_rack = std::make_unique<locator::rack>(rack->name(), rack->id());
+                new_dc->_racks.emplace(new_rack->name(), std::move(new_rack));
+            }
+        }
+        if (!new_dc->racks().empty()) {
+            ret._datacenters.emplace(new_dc->name(), std::move(new_dc));
+        }
+    }
     for (const auto& nptr : _nodes) {
         if (nptr) {
             ret.add_node(nptr->clone(), nptr->dc_rack());
@@ -337,20 +346,38 @@ void topology::index_node(node* node, const endpoint_dc_rack& dr) {
             loc.rack = _cfg.local_dc_rack.rack;
         }
     }
-    const auto& endpoint = node->endpoint();
-    // FIXME: provide storing exception safety guarantees
-    auto& dc = loc.dc;
-    auto& rack = loc.rack;
-    _dc_nodes[dc].emplace(node);
-    _dc_rack_nodes[dc][rack].emplace(node);
-    _dc_endpoints[dc].insert(endpoint);
-    _dc_racks[dc][rack].insert(endpoint);
-    _datacenters.insert(dc);
 
-    node->_dc_rack = std::move(loc);
+    datacenter* dc = nullptr;
+    if (auto dc_it = _datacenters.find(loc.dc); dc_it != _datacenters.end()) {
+        dc = const_cast<datacenter*>(dc_it->second.get());
+    } else {
+        auto new_dc = std::make_unique<datacenter>(loc.dc);
+        dc = new_dc.get();
+        _datacenters.emplace(new_dc->name(), std::move(new_dc));
+    }
 
-    if (node->is_this_node()) {
-        _this_node = node;
+    rack* rack = nullptr;
+    if (auto rack_it = dc->racks().find(loc.rack); rack_it != dc->racks().end()) {
+        rack = const_cast<locator::rack*>(rack_it->second.get());
+    } else {
+        auto new_rack = std::make_unique<locator::rack>(loc.rack);
+        rack = new_rack.get();
+        dc->racks().emplace(new_rack->name(), std::move(new_rack));
+    }
+
+    // Provide strong exception safety guarantees.
+    // No exceptions are allowed after insertion of node succeeded
+    // Note: it is okay to leave behind empty dc/rack since they are ignored
+    rack->nodes().insert(node);
+
+    try {
+        node->_dc_rack = std::move(loc);
+
+        if (node->is_this_node()) {
+            _this_node = node;
+        }
+    } catch (...) {
+        std::terminate();
     }
 }
 
@@ -359,32 +386,21 @@ void topology::unindex_node(const node* node) {
         tlogger.trace("topology[{}]: unindex_node: {}, at {}", fmt::ptr(this), debug_format(node), current_backtrace());
     }
 
-    const auto& dc = node->dc_rack().dc;
-    const auto& rack = node->dc_rack().rack;
-    if (_dc_nodes.contains(dc)) {
-        bool found = _dc_nodes.at(dc).erase(node);
-        if (found) {
-            if (auto dit = _dc_endpoints.find(dc); dit != _dc_endpoints.end()) {
-                const auto& ep = node->endpoint();
-                auto& eps = dit->second;
-                eps.erase(ep);
-                if (eps.empty()) {
-                    _dc_rack_nodes.erase(dc);
-                    _dc_racks.erase(dc);
-                    _dc_endpoints.erase(dit);
-                    _datacenters.erase(dc);
-                } else {
-                    _dc_rack_nodes[dc][rack].erase(node);
-                    auto& racks = _dc_racks[dc];
-                    if (auto rit = racks.find(rack); rit != racks.end()) {
-                        auto& rack_eps = rit->second;
-                        rack_eps.erase(ep);
-                        if (rack_eps.empty()) {
-                            racks.erase(rit);
-                        }
-                    }
-                }
+    const auto& dc_name = node->dc_rack().dc;
+    const auto& rack_name = node->dc_rack().rack;
+    if (auto dc_it = _datacenters.find(dc_name); dc_it != _datacenters.end()) {
+        auto& dc = const_cast<datacenter&>(*dc_it->second);
+        auto& racks = dc.racks();
+        if (auto rack_it = racks.find(rack_name); rack_it != racks.end()) {
+            auto& rack = const_cast<locator::rack&>(*rack_it->second);
+            auto& nodes = rack.nodes();
+            nodes.erase(node);
+            if (nodes.empty()) {
+                racks.erase(rack_it);
             }
+        }
+        if (racks.empty()) {
+            _datacenters.erase(dc_it);
         }
     }
     auto host_it = _nodes_by_host_id.find(node->host_id());
@@ -556,6 +572,129 @@ void topology::for_each_node(std::function<void(const node*)> func) const {
         if (np) {
             func(np.get());
         }
+    }
+}
+
+void topology::for_each_datacenter(std::function<void(const datacenter*)> func) const {
+    for (const auto& [dc_name, dc_ptr] : _datacenters) {
+        // process only non-empty datacenters
+        dc_ptr->for_each_rack_until([&] (const rack* rack) {
+            if (!rack->nodes().empty()) [[likely]] {
+                func(dc_ptr.get());
+                return stop_iteration::yes;
+            }
+            return stop_iteration::no;
+        });
+    }
+}
+
+const datacenter* topology::find_datacenter(sstring_view name) const noexcept {
+    if (auto it = _datacenters.find(name); it != _datacenters.end()) {
+        const datacenter* dc = it->second.get();
+        if (!dc->empty()) {
+            return dc;
+        }
+    }
+    return nullptr;
+}
+
+std::unordered_map<sstring, std::unordered_set<inet_address>> topology::get_datacenter_endpoints() const {
+    std::unordered_map<sstring, std::unordered_set<inet_address>> ret;
+
+    for_each_datacenter([&] (const datacenter* dc) {
+        std::unordered_set<inet_address> endpoints;
+        dc->for_each_node([&] (const node* node) {
+            endpoints.insert(node->endpoint());
+        });
+        if (!endpoints.empty()) {
+            ret.emplace(dc->name(), std::move(endpoints));
+        }
+    });
+
+    return ret;
+}
+
+std::unordered_map<sstring, std::unordered_set<const node*>> topology::get_datacenter_nodes() const {
+    std::unordered_map<sstring, std::unordered_set<const node*>> ret;
+
+    for_each_datacenter([&] (const datacenter* dc) {
+        std::unordered_set<const node*> nodes;
+        dc->for_each_node([&] (const node* node) {
+            nodes.insert(node);
+        });
+        if (!nodes.empty()) {
+            ret.emplace(dc->name(), std::move(nodes));
+        }
+    });
+
+    return ret;
+}
+
+std::unordered_map<sstring, std::unordered_map<sstring, std::unordered_set<inet_address>>> topology::get_datacenter_racks() const {
+    std::unordered_map<sstring, std::unordered_map<sstring, std::unordered_set<inet_address>>> ret;
+
+    for_each_datacenter([&] (const datacenter* dc) {
+        std::unordered_map<sstring, std::unordered_set<inet_address>> rack_endpoints;
+        dc->for_each_rack([&] (const rack* rack) {
+            std::unordered_set<inet_address> endpoints;
+            rack->for_each_node([&] (const node* node) {
+                endpoints.insert(node->endpoint());
+            });
+            if (!endpoints.empty()) {
+                rack_endpoints.emplace(rack->name(), std::move(endpoints));
+            }
+        });
+        if (!rack_endpoints.empty()) {
+            ret.emplace(dc->name(), std::move(rack_endpoints));
+        }
+    });
+
+    return ret;
+}
+
+std::unordered_set<sstring> topology::get_datacenter_names() const {
+    std::unordered_set<sstring> ret;
+
+    for_each_datacenter([&] (const datacenter* dc) {
+        ret.insert(dc->name());
+    });
+
+    return ret;
+}
+
+void rack::for_each_node(std::function<void(const node*)> func) const {
+    for (const auto* node : _nodes) {
+        func(node);
+    }
+}
+
+bool datacenter::empty() const noexcept {
+    for (const auto& [rack_name, rack_ptr] : _racks) {
+        if (!rack_ptr->empty()) [[likely]] {
+            return false;
+        }
+    }
+    return true;
+}
+
+size_t datacenter::size() const noexcept {
+    return boost::accumulate(_racks | boost::adaptors::transformed([] (const auto& x) { return x.second->size(); }), size_t(0));
+}
+
+stop_iteration datacenter::for_each_rack_until(std::function<stop_iteration(const rack*)> func) const {
+    for (const auto& [rack_name, rack_ptr] : _racks) {
+        if (!rack_ptr->empty()) [[likely]] {
+            if (func(rack_ptr.get()) == stop_iteration::yes) {
+                return stop_iteration::yes;
+            }
+        }
+    }
+    return stop_iteration::no;
+}
+
+void datacenter::for_each_node(std::function<void(const node*)> func) const {
+    for (const auto& [rack_name, rack_ptr] : _racks) {
+        rack_ptr->for_each_node(func);
     }
 }
 
