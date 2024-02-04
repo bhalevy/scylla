@@ -101,7 +101,7 @@ void endpoints_check(
     const locator::topology& topo,
     bool strict_dc_rf = false) {
 
-    auto&& nodes_per_dc = tm->get_topology().get_datacenter_endpoints();
+    auto nodes_per_dc = tm->get_topology().get_datacenter_endpoints();
     const network_topology_strategy* nts_ptr =
             dynamic_cast<const network_topology_strategy*>(ars_ptr.get());
 
