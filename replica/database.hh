@@ -1248,6 +1248,8 @@ public:
     friend class compaction_group;
 };
 
+lw_shared_ptr<sstables::sstable_set> make_tablet_sstable_set(const storage_group_manager&);
+
 using user_types_metadata = data_dictionary::user_types_metadata;
 
 using keyspace_metadata = data_dictionary::keyspace_metadata;
