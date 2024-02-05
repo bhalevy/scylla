@@ -92,7 +92,7 @@ static void ensure_tablets_disabled(const http_context& ctx, const sstring& ks_n
 
 locator::host_id validate_host_id(const sstring& param) {
     auto hoep = locator::host_id_or_endpoint(param, locator::host_id_or_endpoint::param_type::host_id);
-    return hoep.id;
+    return hoep.id();
 }
 
 bool validate_bool(const sstring& param) {
