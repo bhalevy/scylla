@@ -1993,9 +1993,10 @@ locator::table_load_stats table::table_load_stats(std::function<bool(locator::gl
 void tablet_storage_group_manager::handle_tablet_split_completion(const locator::tablet_map& old_tmap, const locator::tablet_map& new_tmap) {
     auto table_id = schema()->id();
     size_t old_tablet_count = old_tmap.tablet_count();
+    size_t new_tablet_count = new_tmap.tablet_count();
     auto new_storage_groups_ptr = make_lw_shared<storage_group_vector>();
     auto& new_storage_groups = *new_storage_groups_ptr;
-    new_storage_groups.resize(new_tmap.tablet_count());
+    new_storage_groups.resize(new_tablet_count);
 
     if (!old_tablet_count) {
         on_internal_error(tlogger, format("Table {} had zero tablets, it should never happen when splitting.", table_id));
@@ -2004,13 +2005,13 @@ void tablet_storage_group_manager::handle_tablet_split_completion(const locator:
     // NOTE: exception when applying replica changes to reflect token metadata will abort for obvious reasons,
     //  so exception safety is not required here.
 
-    unsigned growth_factor = log2ceil(new_tmap.tablet_count() / old_tablet_count);
+    unsigned growth_factor = log2ceil(new_tablet_count / old_tablet_count);
     unsigned split_size = 1 << growth_factor;
     tlogger.debug("Growth factor: {}, split size {}", growth_factor, split_size);
 
-    if (old_tablet_count*split_size != new_tmap.tablet_count()) {
+    if (old_tablet_count * split_size != new_tablet_count) {
         on_internal_error(tlogger, format("New tablet count for table {} is unexpected, actual: {}, expected {}.",
-            table_id, new_tmap.tablet_count(), old_tablet_count*split_size));
+            table_id, new_tablet_count, old_tablet_count * split_size));
     }
 
     for (auto id = 0; id < storage_groups().size(); id++) {
