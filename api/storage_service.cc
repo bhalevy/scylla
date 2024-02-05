@@ -85,7 +85,7 @@ static void validate_table(const http_context& ctx, sstring ks_name, sstring tab
 
 locator::host_id validate_host_id(const sstring& param) {
     auto hoep = locator::host_id_or_endpoint(param, locator::host_id_or_endpoint::param_type::host_id);
-    return hoep.id;
+    return hoep.id();
 }
 
 bool validate_bool(const sstring& param) {
