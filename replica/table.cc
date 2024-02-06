@@ -1931,7 +1931,7 @@ locator::table_load_stats table::table_load_stats(std::function<bool(locator::gl
     return stats;
 }
 
-void table::handle_tablet_split_completion(size_t old_tablet_count, const locator::tablet_map& new_tmap) {
+future<> table::handle_tablet_split_completion(size_t old_tablet_count, const locator::tablet_map& new_tmap) {
     auto table_id = _schema->id();
     storage_group_vector new_storage_groups;
     new_storage_groups.resize(new_tmap.tablet_count());
@@ -1962,6 +1962,8 @@ void table::handle_tablet_split_completion(size_t old_tablet_count, const locato
                                               "therefore groups cannot be remapped with the new tablet count.",
                                               id, table_id));
         }
+        // Remove old main groups, they're unused, but they need to be deregistered properly
+        co_await sg->main_compaction_group()->stop();
         unsigned first_new_id = id << growth_factor;
         auto split_ready_groups = std::move(*sg).split_ready_compaction_groups();
         if (split_ready_groups.size() != split_size) {
@@ -1978,16 +1980,9 @@ void table::handle_tablet_split_completion(size_t old_tablet_count, const locato
     }
 
     auto old_groups = std::exchange(_storage_groups, std::move(new_storage_groups));
-
-    // Remove old main groups in background, they're unused, but they need to be deregistered properly
-    (void) do_with(std::move(old_groups), _async_gate.hold(), [] (storage_group_vector& groups, gate::holder&) {
-        return do_for_each(groups, [] (std::unique_ptr<storage_group>& sg) {
-            return sg->main_compaction_group()->stop();
-        });
-    });
 }
 
-void table::update_effective_replication_map(locator::effective_replication_map_ptr erm) {
+future<> table::update_effective_replication_map(locator::effective_replication_map_ptr erm) {
     auto old_erm = std::exchange(_erm, std::move(erm));
 
     if (uses_tablets()) {
@@ -2002,7 +1997,7 @@ void table::update_effective_replication_map(locator::effective_replication_map_
         if (new_tablet_count > old_tablet_count) {
             tlogger.info0("Detected tablet split for table {}.{}, increasing from {} to {} tablets",
                           _schema->ks_name(), _schema->cf_name(), old_tablet_count, new_tablet_count);
-            handle_tablet_split_completion(old_tablet_count, _erm->get_token_metadata().tablets().get_tablet_map(table_id));
+            co_await handle_tablet_split_completion(old_tablet_count, _erm->get_token_metadata().tablets().get_tablet_map(table_id));
         }
     }
     if (old_erm) {
