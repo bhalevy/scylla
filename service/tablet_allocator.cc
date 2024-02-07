@@ -48,17 +48,17 @@ struct load_balancer_cluster_stats {
     uint64_t resizes_finalized = 0;
 };
 
-using dc_name = sstring;
+using dc_id = locator::datacenter_id;
 
 class load_balancer_stats_manager {
-    std::unordered_map<dc_name, std::unique_ptr<load_balancer_dc_stats>> _dc_stats;
+    std::unordered_map<dc_id, std::unique_ptr<load_balancer_dc_stats>> _dc_stats;
     std::unordered_map<host_id, std::unique_ptr<load_balancer_node_stats>> _node_stats;
     load_balancer_cluster_stats _cluster_stats;
     seastar::metrics::label dc_label{"target_dc"};
     seastar::metrics::label node_label{"target_node"};
     seastar::metrics::metric_groups _metrics;
 
-    void setup_metrics(const dc_name& dc, load_balancer_dc_stats& stats) {
+    void setup_metrics(const dc_id& dc, load_balancer_dc_stats& stats) {
         namespace sm = seastar::metrics;
         auto dc_lb = dc_label(dc);
         _metrics.add_group("load_balancer", {
@@ -71,7 +71,7 @@ class load_balancer_stats_manager {
         });
     }
 
-    void setup_metrics(const dc_name& dc, host_id node, load_balancer_node_stats& stats) {
+    void setup_metrics(const dc_id& dc, host_id node, load_balancer_node_stats& stats) {
         namespace sm = seastar::metrics;
         auto dc_lb = dc_label(dc);
         auto node_lb = node_label(node);
@@ -98,7 +98,7 @@ public:
         setup_metrics(_cluster_stats);
     }
 
-    load_balancer_dc_stats& for_dc(const dc_name& dc) {
+    load_balancer_dc_stats& for_dc(const dc_id& dc) {
         auto it = _dc_stats.find(dc);
         if (it == _dc_stats.end()) {
             auto stats = std::make_unique<load_balancer_dc_stats>();
@@ -108,7 +108,7 @@ public:
         return *it->second;
     }
 
-    load_balancer_node_stats& for_node(const dc_name& dc, host_id node) {
+    load_balancer_node_stats& for_node(const dc_id& dc, host_id node) {
         auto it = _node_stats.find(node);
         if (it == _node_stats.end()) {
             auto stats = std::make_unique<load_balancer_node_stats>();
@@ -444,11 +444,11 @@ public:
         migration_plan plan;
 
         // Prepare plans for each DC separately and combine them to be executed in parallel.
-        for (auto&& dc : topo.get_datacenter_names()) {
-            auto dc_plan = co_await make_plan(dc);
-            lblogger.info("Prepared {} migrations in DC {}", dc_plan.size(), dc);
+        co_await topo.for_each_datacenter_gently([&] (const datacenter* dc) -> future<> {
+            auto dc_plan = co_await make_plan(topo, dc);
+            lblogger.info("Prepared {} migrations in DC {}", dc_plan.size(), dc->name());
             plan.merge(std::move(dc_plan));
-        }
+        });
         plan.set_resize_plan(co_await make_resize_plan());
 
         lblogger.info("Prepared {} migration plans, out of which there were {} tablet migration(s) and {} resize decision(s)",
@@ -575,11 +575,13 @@ public:
         co_return std::move(resize_plan);
     }
 
-    future<migration_plan> make_plan(dc_name dc) {
+    future<migration_plan> make_plan(const locator::topology& topo, const locator::datacenter* dc) {
         migration_plan plan;
 
-        _stats.for_dc(dc).calls++;
-        lblogger.info("Examining DC {}", dc);
+        const auto& dc_id = dc->id();
+
+        _stats.for_dc(dc_id).calls++;
+        lblogger.info("Examining DC {}", dc->name());
 
         // Causes load balancer to move some tablet even though load is balanced.
         auto shuffle = utils::get_local_injector().enter("tablet_allocator_shuffle");
@@ -587,16 +589,11 @@ public:
             lblogger.warn("Running without convergence checks");
         }
 
-        const locator::topology& topo = _tm->get_topology();
-
         // Select subset of nodes to balance.
 
         std::unordered_map<host_id, node_load> nodes;
         std::unordered_set<host_id> nodes_to_drain;
-        topo.for_each_node([&] (const locator::node* node_ptr) {
-            if (node_ptr->dc_rack().dc != dc) {
-                return;
-            }
+        dc->for_each_node([&] (const locator::node* node_ptr) {
             bool is_drained = node_ptr->get_state() == locator::node::state::being_decommissioned
                               || node_ptr->get_state() == locator::node::state::being_removed
                               || node_ptr->get_state() == locator::node::state::being_replaced;
@@ -609,7 +606,7 @@ public:
                     throw std::runtime_error(format("Shard count of {} not found in topology", node_ptr->host_id()));
                 }
                 if (is_drained) {
-                    lblogger.info("Will drain node {} ({}) from DC {}", node_ptr->host_id(), node_ptr->get_state(), dc);
+                    lblogger.info("Will drain node {} ({}) from DC {}", node_ptr->host_id(), node_ptr->get_state(), dc->name());
                     nodes_to_drain.emplace(node_ptr->host_id());
                 } else if (node_ptr->is_excluded()) {
                     // Excluded nodes should not be chosen as targets for migration.
@@ -621,7 +618,7 @@ public:
 
         if (nodes.empty()) {
             lblogger.debug("No nodes to balance.");
-            _stats.for_dc(dc).stop_balance++;
+            _stats.for_dc(dc_id).stop_balance++;
             co_return plan;
         }
 
@@ -670,7 +667,7 @@ public:
         std::optional<host_id> min_load_node = std::nullopt;
         for (auto&& [host, load] : nodes) {
             load.update();
-            _stats.for_node(dc, host).load = load.avg_load;
+            _stats.for_node(dc_id, host).load = load.avg_load;
 
             if (!nodes_to_drain.contains(host)) {
                 if (!min_load_node || load.avg_load < min_load) {
@@ -691,7 +688,7 @@ public:
 
         if (!min_load_node) {
             lblogger.debug("No candidate nodes");
-            _stats.for_dc(dc).stop_no_candidates++;
+            _stats.for_dc(dc_id).stop_no_candidates++;
             co_return plan;
         }
 
@@ -699,7 +696,7 @@ public:
             if (!shuffle && (max_load == min_load || !_tm->tablets().balancing_enabled())) {
                 // load is balanced.
                 // TODO: Evaluate and fix intra-node balance.
-                _stats.for_dc(dc).stop_balance++;
+                _stats.for_dc(dc_id).stop_balance++;
                 co_return plan;
             }
             lblogger.info("target node: {}, avg_load: {}, max: {}", *min_load_node, min_load, max_load);
@@ -839,7 +836,7 @@ public:
 
             if (nodes_by_load.empty()) {
                 lblogger.debug("No more candidate nodes");
-                _stats.for_dc(dc).stop_no_candidates++;
+                _stats.for_dc(dc_id).stop_no_candidates++;
                 break;
             }
 
@@ -879,7 +876,7 @@ public:
 
             if (nodes_by_load_dst.empty()) {
                 lblogger.debug("No more target nodes");
-                _stats.for_dc(dc).stop_no_candidates++;
+                _stats.for_dc(dc_id).stop_no_candidates++;
                 break;
             }
 
@@ -889,14 +886,14 @@ public:
                 std::pop_heap(nodes_by_load_dst.begin(), nodes_by_load_dst.end(), nodes_dst_cmp);
             } else {
                 std::unordered_set<host_id> replicas;
-                std::unordered_map<sstring, int> rack_load;
+                std::unordered_map<const locator::rack*, int> rack_load;
                 int max_rack_load = 0;
                 for (auto&& r : tmap.get_tablet_info(source_tablet.tablet).replicas) {
                     replicas.insert(r.host);
                     if (nodes.contains(r.host)) {
                         const locator::node& node = topo.get_node(r.host);
-                        rack_load[node.dc_rack().rack] += 1;
-                        max_rack_load = std::max(max_rack_load, rack_load[node.dc_rack().rack]);
+                        auto load = ++rack_load[node.location().rack()];
+                        max_rack_load = std::max(max_rack_load, load);
                     }
                 }
 
@@ -919,12 +916,12 @@ public:
 
                     const locator::node& target_node = topo.get_node(new_target);
                     const locator::node& source_node = topo.get_node(src_host);
-                    if (target_node.dc_rack().rack != source_node.dc_rack().rack
-                            && (rack_load[target_node.dc_rack().rack] + 1 > max_rack_load)) {
+                    if (target_node.location().rack() != source_node.location().rack()
+                            && (rack_load[target_node.location().rack()] + 1 > max_rack_load)) {
                         lblogger.debug("next best target {} (avg_load={}) skipped because it would overload rack {} "
                                        "with {} replicas of {}, current max is {}",
                                        new_target, nodes[new_target].avg_load, target_node.dc_rack().rack,
-                                       rack_load[target_node.dc_rack().rack] + 1, source_tablet, max_rack_load);
+                                       rack_load[target_node.location().rack()] + 1, source_tablet, max_rack_load);
                         continue;
                     }
 
@@ -962,7 +959,7 @@ public:
                 // to handle the case of off-candidates being empty. In that case, max_off_candidate_load is 0.
                 if (std::max(max_off_candidate_load, src_node_info.avg_load) == target_info.avg_load) {
                     lblogger.debug("Balance achieved.");
-                    _stats.for_dc(dc).stop_balance++;
+                    _stats.for_dc(dc_id).stop_balance++;
                     break;
                 }
 
@@ -971,7 +968,7 @@ public:
                 if (src_node_info.avg_load <= target_info.avg_load) {
                     lblogger.debug("No more candidate nodes. Next candidate is {} with avg_load={}, target's avg_load={}",
                             src_host, src_node_info.avg_load, target_info.avg_load);
-                    _stats.for_dc(dc).stop_no_candidates++;
+                    _stats.for_dc(dc_id).stop_no_candidates++;
                     break;
                 }
 
@@ -981,7 +978,7 @@ public:
                     lblogger.debug("No more candidate nodes, load would be inverted. Next candidate is {} with "
                                    "avg_load={}, target's avg_load={}",
                             src_host, src_node_info.avg_load, target_info.avg_load);
-                    _stats.for_dc(dc).stop_load_inversion++;
+                    _stats.for_dc(dc_id).stop_load_inversion++;
                     break;
                 }
             }
@@ -990,10 +987,10 @@ public:
 
             bool check_rack_load = false;
             bool has_replica_on_target = false;
-            std::unordered_map<sstring, int> rack_load; // Will be built if check_rack_load
+            std::unordered_map<const locator::rack*, int> rack_load; // Will be built if check_rack_load
 
             if (nodes_to_drain.empty()) {
-                check_rack_load = target_node.dc_rack().rack != topo.get_node(src.host).dc_rack().rack;
+                check_rack_load = target_node.location().rack() != topo.get_node(src.host).location().rack();
                 for (auto&& r: tmap.get_tablet_info(source_tablet.tablet).replicas) {
                     if (r.host == target) {
                         has_replica_on_target = true;
@@ -1001,15 +998,15 @@ public:
                     }
                     if (check_rack_load) {
                         const locator::node& node = topo.get_node(r.host);
-                        if (node.dc_rack().dc == dc) {
-                            rack_load[node.dc_rack().rack] += 1;
+                        if (node.location().dc() == dc) {
+                            rack_load[node.location().rack()] += 1;
                         }
                     }
                 }
             }
 
             if (has_replica_on_target) {
-                _stats.for_dc(dc).tablets_skipped_node++;
+                _stats.for_dc(dc_id).tablets_skipped_node++;
                 lblogger.debug("candidate tablet {} skipped because it has a replica on target node", source_tablet);
                 continue;
             }
@@ -1018,11 +1015,11 @@ public:
             if (check_rack_load) {
                 auto max_rack_load = std::max_element(rack_load.begin(), rack_load.end(),
                                                  [] (auto& a, auto& b) { return a.second < b.second; })->second;
-                auto new_rack_load = rack_load[target_node.dc_rack().rack] + 1;
+                auto new_rack_load = rack_load[target_node.location().rack()] + 1;
                 if (new_rack_load > max_rack_load) {
                     lblogger.debug("candidate tablet {} skipped because it would increase load on rack {} to {}, max={}",
                                    source_tablet, target_node.dc_rack().rack, new_rack_load, max_rack_load);
-                    _stats.for_dc(dc).tablets_skipped_rack++;
+                    _stats.for_dc(dc_id).tablets_skipped_rack++;
                     continue;
                 }
             }
@@ -1040,7 +1037,7 @@ public:
             if (can_accept_load(mig_streaming_info)) {
                 apply_load(mig_streaming_info);
                 lblogger.debug("Adding migration: {}", mig);
-                _stats.for_dc(dc).migrations_produced++;
+                _stats.for_dc(dc_id).migrations_produced++;
                 plan.add(std::move(mig));
             } else {
                 // Shards are overloaded with streaming. Do not include the migration in the plan, but
@@ -1050,10 +1047,10 @@ public:
                 // Just because the next migration is blocked doesn't mean we could not proceed with migrations
                 // for other shards which are produced by the planner subsequently.
                 skipped_migrations++;
-                _stats.for_dc(dc).migrations_skipped++;
+                _stats.for_dc(dc_id).migrations_skipped++;
                 if (skipped_migrations >= max_skipped_migrations) {
                     lblogger.debug("Too many migrations skipped, aborting balancing");
-                    _stats.for_dc(dc).stop_skip_limit++;
+                    _stats.for_dc(dc_id).stop_skip_limit++;
                     break;
                 }
             }
@@ -1076,7 +1073,7 @@ public:
         }
 
         if (plan.size() == batch_size) {
-            _stats.for_dc(dc).stop_batch_size++;
+            _stats.for_dc(dc_id).stop_batch_size++;
         }
 
         if (plan.empty()) {

@@ -647,6 +647,18 @@ void topology::for_each_datacenter(std::function<void(const datacenter*)> func) 
     }
 }
 
+future<> topology::for_each_datacenter_gently(std::function<future<>(const datacenter*)> func) const {
+    for (const auto& [dc_name, dc_ptr] : _datacenters) {
+        // process only non-empty datacenters
+        for (const auto& [rack_name, rack_ptr] : dc_ptr->racks()) {
+            if (!rack_ptr->empty()) [[likely]] {
+                co_await func(dc_ptr.get());
+                break;
+            }
+        }
+    }
+}
+
 const datacenter* topology::find_datacenter(sstring_view name) const noexcept {
     if (auto it = _datacenters.find(name); it != _datacenters.end()) {
         const datacenter* dc = it->second.get();

@@ -370,6 +370,8 @@ public:
 
     void for_each_datacenter(std::function<void(const datacenter*)> func) const;
 
+    future<> for_each_datacenter_gently(std::function<future<>(const datacenter*)> func) const;
+
     const datacenter* find_datacenter(sstring_view name) const noexcept;
 
     const std::unordered_map<sstring_view, std::unique_ptr<const datacenter>>& get_datacenters() const noexcept {
