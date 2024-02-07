@@ -94,7 +94,7 @@ public:
         return _endpoint;
     }
 
-    const endpoint_dc_rack& dc_rack() const noexcept {
+    endpoint_dc_rack dc_rack() const noexcept {
         return _dc_rack;
     }
 
@@ -357,45 +357,45 @@ public:
     std::unordered_set<sstring> get_datacenter_names() const;
 
     // Get dc/rack location of this node
-    const endpoint_dc_rack& get_location() const noexcept {
+    endpoint_dc_rack get_location() const {
         return _this_node ? _this_node->dc_rack() : _cfg.local_dc_rack;
     }
     // Get dc/rack location of a node identified by host_id
     // The specified node must exist.
-    const endpoint_dc_rack& get_location(host_id id) const {
+    endpoint_dc_rack get_location(host_id id) const {
         return find_node(id)->dc_rack();
     }
     // Get dc/rack location of a node identified by endpoint
     // The specified node must exist.
-    const endpoint_dc_rack& get_location(const inet_address& ep) const;
+    endpoint_dc_rack get_location(const inet_address& ep) const;
 
     // Get datacenter of this node
-    const sstring& get_datacenter() const noexcept {
+    sstring get_datacenter() const {
         return get_location().dc;
     }
     // Get datacenter of a node identified by host_id
     // The specified node must exist.
-    const sstring& get_datacenter(host_id id) const {
+    sstring get_datacenter(host_id id) const {
         return get_location(id).dc;
     }
     // Get datacenter of a node identified by endpoint
     // The specified node must exist.
-    const sstring& get_datacenter(inet_address ep) const {
+    sstring get_datacenter(inet_address ep) const {
         return get_location(ep).dc;
     }
 
     // Get rack of this node
-    const sstring& get_rack() const noexcept {
+    sstring get_rack() const {
         return get_location().rack;
     }
     // Get rack of a node identified by host_id
     // The specified node must exist.
-    const sstring& get_rack(host_id id) const {
+    sstring get_rack(host_id id) const {
         return get_location(id).rack;
     }
     // Get rack of a node identified by endpoint
     // The specified node must exist.
-    const sstring& get_rack(inet_address ep) const {
+    sstring get_rack(inet_address ep) const {
         return get_location(ep).rack;
     }
 

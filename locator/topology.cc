@@ -519,7 +519,7 @@ bool topology::has_endpoint(inet_address ep) const
     return has_node(ep);
 }
 
-const endpoint_dc_rack& topology::get_location(const inet_address& ep) const {
+endpoint_dc_rack topology::get_location(const inet_address& ep) const {
     if (auto node = find_node(ep)) {
         return node->dc_rack();
     }
