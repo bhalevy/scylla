@@ -105,6 +105,35 @@ public:
     friend class topology;
 };
 
+class location {
+    const datacenter* _dc = nullptr;
+    const rack* _rack = nullptr;
+
+public:
+    location() = default;
+    location(location&&) = default;
+    location(const datacenter* dc, const rack* rack) noexcept : _dc(dc), _rack(rack) {}
+
+    location& operator=(location&&) = default;
+
+    bool operator==(const location&) const = default;
+
+    const datacenter* dc() const noexcept { return _dc; }
+    const rack* rack() const noexcept { return _rack; }
+
+    explicit operator bool() const noexcept {
+        return !_dc; // rack is set iff dc is set
+    }
+
+    endpoint_dc_rack get_dc_rack() const;
+
+private:
+    void set_dc(const locator::datacenter* dc) noexcept { _dc = dc; }
+    void set_rack(const locator::rack* rack) noexcept { _rack = rack; }
+
+    friend class topology;
+};
+
 class node {
 public:
     using this_node = bool_class<struct this_node_tag>;
@@ -125,7 +154,7 @@ private:
     const locator::topology* _topology;
     locator::host_id _host_id;
     inet_address _endpoint;
-    endpoint_dc_rack _dc_rack;
+    location _location;
     state _state;
     shard_id _shard_count = 0;
     bool _excluded = false;
@@ -158,9 +187,19 @@ public:
         return _endpoint;
     }
 
-    endpoint_dc_rack dc_rack() const noexcept {
-        return _dc_rack;
+    const location& location() const noexcept {
+        return _location;
     }
+
+    const datacenter* dc() const noexcept {
+        return _location.dc();
+    }
+
+    const rack* rack() const noexcept {
+        return _location.rack();
+    }
+
+    endpoint_dc_rack dc_rack() const;
 
     // Is this "localhost"?
     this_node is_this_node() const noexcept { return _is_this_node; }
@@ -242,13 +281,17 @@ public:
 
         bool operator==(const config&) const = default;
     };
-    topology(config cfg);
+    topology(config cfg) : topology(std::move(cfg), set_default_location::yes) {}
     topology(topology&&) noexcept;
 
     topology& operator=(topology&&) noexcept;
 
     future<topology> clone_gently() const;
     future<> clear_gently() noexcept;
+
+private:
+    using set_default_location = bool_class<struct set_default_location_tag>;
+    topology(config cfg, set_default_location set_default_location);
 
 public:
     using datacenter_ptr = std::unique_ptr<const datacenter>;
@@ -465,6 +508,7 @@ private:
     bool _sort_by_proximity = true;
 
     datacenter_map_t _datacenters;
+    location _default_location;
 
     const std::unordered_map<inet_address, const node*>& get_nodes_by_endpoint() const noexcept {
         return _nodes_by_endpoint;

@@ -63,19 +63,51 @@ std::string node::to_string(node::state s) {
 
 future<> topology::clear_gently() noexcept {
     _this_node = nullptr;
-    co_await utils::clear_gently(_datacenters);
+    // Keep the default dc and rack even if empty
+    // since _default_location points to them
+    for (auto dc_it = _datacenters.begin(); dc_it != _datacenters.end(); ) {
+        auto* dc = const_cast<datacenter*>(dc_it->second.get());
+        for (auto rack_it = dc->racks().begin(); rack_it != dc->racks().end(); ) {
+            auto* rack = const_cast<locator::rack*>(rack_it->second.get());
+            rack->_nodes.clear();
+            if (rack != _default_location.rack()) {
+                rack_it = dc->racks().erase(rack_it);
+            } else {
+                ++rack_it;
+            }
+            co_await coroutine::maybe_yield();
+        }
+        if (dc != _default_location.dc()) {
+            dc_it = _datacenters.erase(dc_it);
+        } else {
+            ++dc_it;
+        }
+    }
     _nodes_by_endpoint.clear();
     _nodes_by_host_id.clear();
     co_await utils::clear_gently(_nodes);
 }
 
-topology::topology(config cfg)
+topology::topology(config cfg, set_default_location set_default_location)
         : _shard(this_shard_id())
         , _cfg(cfg)
         , _sort_by_proximity(!cfg.disable_proximity_sorting)
 {
+    if (_cfg.local_dc_rack.dc.empty()) {
+        _cfg.local_dc_rack = endpoint_dc_rack::default_location;
+    } else if (_cfg.local_dc_rack.rack.empty()) {
+        _cfg.local_dc_rack.rack = endpoint_dc_rack::default_location.rack;
+    }
     tlogger.trace("topology[{}]: constructing using config: endpoint={} dc={} rack={}", fmt::ptr(this),
-            cfg.this_endpoint, cfg.local_dc_rack.dc, cfg.local_dc_rack.rack);
+            _cfg.this_endpoint, _cfg.local_dc_rack.dc, _cfg.local_dc_rack.rack);
+
+    if (set_default_location) {
+        auto dc = std::make_unique<locator::datacenter>(_cfg.local_dc_rack.dc);
+        auto rack = std::make_unique<locator::rack>(_cfg.local_dc_rack.rack);
+        _default_location = location(dc.get(), rack.get());
+        dc->racks().emplace(rack->name(), std::move(rack));
+        _datacenters.emplace(dc->name(), std::move(dc));
+    }
 }
 
 topology::topology(topology&& o) noexcept
@@ -87,6 +119,7 @@ topology::topology(topology&& o) noexcept
     , _nodes_by_endpoint(std::move(o._nodes_by_endpoint))
     , _sort_by_proximity(o._sort_by_proximity)
     , _datacenters(std::move(o._datacenters))
+    , _default_location(std::exchange(o._default_location, location{}))
 {
     assert(_shard == this_shard_id());
     tlogger.trace("topology[{}]: move from [{}]", fmt::ptr(this), fmt::ptr(&o));
@@ -107,18 +140,26 @@ topology& topology::operator=(topology&& o) noexcept {
 }
 
 future<topology> topology::clone_gently() const {
-    topology ret(_cfg);
+    topology ret(_cfg, set_default_location::no);
     tlogger.debug("topology[{}]: clone_gently to {} from shard {}", fmt::ptr(this), fmt::ptr(&ret), _shard);
     // Copy the dc/rack tree structure.
     // The nodes are added and indexed one at a time below
     for (const auto& [dc_name, dc] : _datacenters) {
         auto new_dc = std::make_unique<locator::datacenter>(dc->name());
+        if (_default_location.dc() == dc.get()) {
+            ret._default_location.set_dc(new_dc.get());
+        }
         for (const auto& [rack_name, rack] : dc->racks()) {
-            if (!rack->empty()) {
+            if (!rack->empty() || _default_location.rack() == rack.get()) {
                 auto new_rack = std::make_unique<locator::rack>(rack->name());
+                if (_default_location.rack() == rack.get()) {
+                    ret._default_location.set_rack(new_rack.get());
+                }
                 new_dc->_racks.emplace(new_rack->name(), std::move(new_rack));
             }
+            co_await coroutine::maybe_yield();
         }
+        // Note that the default dc must have at least one rack
         if (!new_dc->racks().empty()) {
             ret._datacenters.emplace(new_dc->name(), std::move(new_dc));
         }
@@ -137,8 +178,23 @@ std::string topology::debug_format(const node* node) {
     if (!node) {
         return format("node={}", fmt::ptr(node));
     }
+    auto dc_rack = endpoint_dc_rack{
+        .dc = node->dc() ? node->dc()->name() : "(null)",
+        .rack = node->rack() ? node->rack()->name() : "(null)"
+    };
     return format("node={} idx={} host_id={} endpoint={} dc={} rack={} state={} shards={} this_node={}", fmt::ptr(node),
-            node->idx(), node->host_id(), node->endpoint(), node->dc_rack().dc, node->dc_rack().rack, node::to_string(node->get_state()), node->get_shard_count(), bool(node->is_this_node()));
+            node->idx(), node->host_id(), node->endpoint(), dc_rack.dc, dc_rack.rack, node::to_string(node->get_state()), node->get_shard_count(), bool(node->is_this_node()));
+}
+
+endpoint_dc_rack location::get_dc_rack() const {
+     return endpoint_dc_rack{
+        .dc = _dc ? _dc->name() : endpoint_dc_rack::default_location.dc,
+        .rack = _rack ? _rack->name() : endpoint_dc_rack::default_location.rack
+     };
+ }
+ 
+endpoint_dc_rack node::dc_rack() const {
+    return _location.get_dc_rack();
 }
 
 const node* topology::add_node(host_id id, const inet_address& ep, const endpoint_dc_rack& dr, node::state state, shard_id shard_count) {
@@ -233,14 +289,15 @@ const node* topology::update_node(node* node, std::optional<host_id> opt_id, std
             opt_ep.reset();
         }
     }
+    auto node_dc_rack = node->dc_rack();
     if (opt_dr) {
         if (opt_dr->dc.empty() || opt_dr->dc == production_snitch_base::default_dc) {
-            opt_dr->dc = node->dc_rack().dc;
+            opt_dr->dc = node_dc_rack.dc;
         }
         if (opt_dr->rack.empty() || opt_dr->rack == production_snitch_base::default_rack) {
-            opt_dr->rack = node->dc_rack().rack;
+            opt_dr->rack = node_dc_rack.rack;
         }
-        if (*opt_dr != node->dc_rack()) {
+        if (*opt_dr != node_dc_rack) {
             changed = true;
         }
     }
@@ -258,7 +315,7 @@ const node* topology::update_node(node* node, std::optional<host_id> opt_id, std
     // Populate opt_dr even if it is set for update.
     // It is used for reindexing the node below.
     if (!opt_dr) {
-        opt_dr = node->dc_rack();
+        opt_dr = std::move(node_dc_rack);
     }
 
     unindex_node(node);
@@ -339,35 +396,35 @@ void topology::index_node(node* node, const endpoint_dc_rack& dr) {
         }
     }
 
-    endpoint_dc_rack loc = dr;
+    const locator::datacenter* dc = nullptr;
+    const locator::rack* rack = nullptr;
     if (dr.dc.empty() || dr.dc == production_snitch_base::default_dc) {
-        loc.dc = _cfg.local_dc_rack.dc;
+        dc = _default_location.dc();
         if (dr.rack.empty() || dr.rack == production_snitch_base::default_rack) {
-            loc.rack = _cfg.local_dc_rack.rack;
+            rack = _default_location.rack();
         }
-    }
-
-    datacenter* dc = nullptr;
-    if (auto dc_it = _datacenters.find(loc.dc); dc_it != _datacenters.end()) {
-        dc = const_cast<datacenter*>(dc_it->second.get());
+    } else if (auto it = _datacenters.find(dr.dc); it != _datacenters.end()) {
+        dc = it->second.get();
     } else {
-        auto new_dc = std::make_unique<datacenter>(loc.dc);
+        auto new_dc = std::make_unique<locator::datacenter>(dr.dc);
         dc = new_dc.get();
         _datacenters.emplace(new_dc->name(), std::move(new_dc));
     }
 
-    rack* rack = nullptr;
-    if (auto rack_it = dc->racks().find(loc.rack); rack_it != dc->racks().end()) {
-        rack = const_cast<locator::rack*>(rack_it->second.get());
-    } else {
-        auto new_rack = std::make_unique<locator::rack>(loc.rack);
-        rack = new_rack.get();
-        dc->racks().emplace(new_rack->name(), std::move(new_rack));
+    if (!rack) {
+        if (auto it = dc->racks().find(dr.rack); it != dc->racks().end()) {
+            rack = it->second.get();
+        } else {
+            auto new_rack = std::make_unique<locator::rack>(dr.rack);
+            rack = new_rack.get();
+            const_cast<locator::datacenter*>(dc)->racks().emplace(new_rack->name(), std::move(new_rack));
+        }
     }
 
-    rack->nodes().insert(node);
+    const_cast<locator::rack*>(rack)->nodes().insert(node);
 
-    node->_dc_rack = std::move(loc);
+    node->_location.set_dc(dc);
+    node->_location.set_rack(rack);
 
     if (node->is_this_node()) {
         _this_node = node;
@@ -379,21 +436,17 @@ void topology::unindex_node(const node* node) {
         tlogger.trace("topology[{}]: unindex_node: {}, at {}", fmt::ptr(this), debug_format(node), current_backtrace());
     }
 
-    const auto& dc_name = node->dc_rack().dc;
-    const auto& rack_name = node->dc_rack().rack;
-    if (auto dc_it = _datacenters.find(dc_name); dc_it != _datacenters.end()) {
-        auto& dc = const_cast<datacenter&>(*dc_it->second);
-        auto& racks = dc.racks();
-        if (auto rack_it = racks.find(rack_name); rack_it != racks.end()) {
-            auto& rack = const_cast<locator::rack&>(*rack_it->second);
-            auto& nodes = rack.nodes();
-            nodes.erase(node);
-            if (nodes.empty()) {
-                racks.erase(rack_it);
+    // Keep the default dc and rack even if empty
+    // since _default_location points to them
+    if (auto* dc = const_cast<datacenter*>(node->dc())) {
+        if (auto* r = const_cast<rack*>(node->rack())) {
+            r->nodes().erase(node);
+            if (r != _default_location.rack() && r->empty()) {
+                dc->racks().erase(r->name());
             }
         }
-        if (racks.empty()) {
-            _datacenters.erase(dc_it);
+        if (dc != _default_location.dc() && dc->empty()) {
+            _datacenters.erase(dc->name());
         }
     }
     auto host_it = _nodes_by_host_id.find(node->host_id());
