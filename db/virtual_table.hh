@@ -26,6 +26,10 @@ protected: // opt-ins
 
 protected:
     void set_cell(row&, const bytes& column_name, data_value);
+    template <typename T>
+    void set_cell(row& r, const bytes& column_name, const T& value) {
+        set_cell(r, column_name, data_value(value));
+    }
     bool contains_key(const dht::partition_range&, const dht::decorated_key&) const;
     bool this_shard_owns(const dht::decorated_key&) const;
 

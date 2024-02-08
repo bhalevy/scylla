@@ -60,27 +60,39 @@ auto I(int32_t x) { return int32_type->decompose(x); }
 auto F(float f) { return float_type->decompose(f); }
 auto T(const char* t) { return utf8_type->decompose(t); }
 
-auto SI(const set_type_impl::native_type& val) {
+auto SI(const std::initializer_list<int>& val) {
     const auto int_set_type = set_type_impl::get_instance(int32_type, true);
     return int_set_type->decompose(make_set_value(int_set_type, val));
 };
 
-auto ST(const set_type_impl::native_type& val) {
+auto ST(const std::initializer_list<sstring>& val) {
     const auto text_set_type = set_type_impl::get_instance(utf8_type, true);
     return text_set_type->decompose(make_set_value(text_set_type, val));
 };
 
-auto LI(const list_type_impl::native_type& val) {
+auto LI(const std::initializer_list<int32_t>& val) {
     const auto int_list_type = list_type_impl::get_instance(int32_type, true);
     return int_list_type->decompose(make_list_value(int_list_type, val));
 }
 
-auto LF(const list_type_impl::native_type& val) {
+auto LF(const std::initializer_list<float>& val) {
     const auto float_list_type = list_type_impl::get_instance(float_type, true);
     return float_list_type->decompose(make_list_value(float_list_type, val));
 }
 
-auto LT(const list_type_impl::native_type& val) {
+auto LF(const std::initializer_list<std::variant<float, data_value>>& val) {
+    const auto float_list_type = list_type_impl::get_instance(float_type, true);
+    list_type_impl::native_type data;
+    for (auto& i : val) {
+        std::visit(overloaded_functor {
+            [&] (const float& f) { data.push_back(data_value(f)); },
+            [&] (const data_value& v) { data.push_back(v); }
+        }, i);
+    }
+    return float_list_type->decompose(make_list_value(float_list_type, std::move(data)));
+}
+
+auto LT(const std::initializer_list<sstring>& val) {
     const auto text_list_type = list_type_impl::get_instance(utf8_type, true);
     return text_list_type->decompose(make_list_value(text_list_type, val));
 }
@@ -126,7 +138,7 @@ SEASTAR_THREAD_TEST_CASE(map_eq) {
         cquery_nofail(e, "insert into t (p, m) values (2, {1:21, 2:22, 3:23})");
         const auto my_map_type = map_type_impl::get_instance(int32_type, int32_type, true);
         const auto m1 = my_map_type->decompose(
-                make_map_value(my_map_type, map_type_impl::native_type({{1, 11}, {2, 12}, {3, 13}})));
+                make_map_value(my_map_type, {std::make_pair(1, 11), std::make_pair(2, 12), std::make_pair(3, 13)}));
         require_rows(e, "select p from t where m={1:11, 2:12, 3:13} allow filtering", {{I(1), m1}});
         require_rows(e, "select p from t where m={1:11, 2:12} allow filtering", {});
     }).get();
@@ -186,7 +198,7 @@ SEASTAR_THREAD_TEST_CASE(map_entry_eq) {
         cquery_nofail(e, "insert into t (p, m) values (3, {1:31, 2:32, 3:33})");
         const auto my_map_type = map_type_impl::get_instance(int32_type, int32_type, true);
         const auto m2 = my_map_type->decompose(
-                make_map_value(my_map_type, map_type_impl::native_type({{1, 21}, {2, 22}, {3, 23}})));
+                make_map_value(my_map_type, {std::make_pair(1, 21), std::make_pair(2, 22), std::make_pair(3, 23)}));
         require_rows(e, "select p from t where m[1]=21 allow filtering", {{I(2), m2}});
         require_rows(e, "select p from t where m[1]=21 and m[3]=23 allow filtering", {{I(2), m2}});
         require_rows(e, "select p from t where m[99]=21 allow filtering", {});
@@ -195,17 +207,17 @@ SEASTAR_THREAD_TEST_CASE(map_entry_eq) {
         require_rows(e, "select p from t where m[1]=21 allow filtering", {});
         require_rows(e, "select p from t where m[1]=21 and m[3]=23 allow filtering", {});
         const auto m3 = my_map_type->decompose(
-                make_map_value(my_map_type, map_type_impl::native_type({{1, 31}, {2, 32}, {3, 33}})));
+                make_map_value(my_map_type, {std::make_pair(1, 31), std::make_pair(2, 32), std::make_pair(3, 33)}));
         require_rows(e, "select m from t where m[1]=31 allow filtering", {{m3}});
         cquery_nofail(e, "update t set m={1:111} where p=3");
         require_rows(e, "select p from t where m[1]=31 allow filtering", {});
         require_rows(e, "select p from t where m[1]=21 allow filtering", {});
         const auto m3new = my_map_type->decompose(
-                make_map_value(my_map_type, map_type_impl::native_type({{1, 111}})));
+                make_map_value(my_map_type, {std::make_pair(1, 111)}));
         require_rows(e, "select p from t where m[1]=111 allow filtering", {{I(3), m3new}});
         const auto stmt = e.prepare("select p from t where m[1]=:uno and m[3]=:tres allow filtering").get();
         const auto m1 = my_map_type->decompose(
-                make_map_value(my_map_type, map_type_impl::native_type({{1, 11}, {2, 12}, {3, 13}})));
+                make_map_value(my_map_type, {std::make_pair(1, 11), std::make_pair(2, 12), std::make_pair(3, 13)}));
         require_rows(e, stmt, {{"uno", "tres"}}, {I(11), I(13)}, {{I(1), m1}});
         require_rows(e, stmt, {{"uno", "tres"}}, {I(21), I(99)}, {});
     }).get();
@@ -318,10 +330,11 @@ SEASTAR_THREAD_TEST_CASE(null_rhs) {
 }
 
 /// Creates a tuple value from individual values.
+template <typename... Values>
 bytes make_tuple(std::vector<data_type> types, std::vector<data_value> values) {
     const auto tuple_type = tuple_type_impl::get_instance(std::move(types));
     return tuple_type->decompose(
-            make_tuple_value(tuple_type, tuple_type_impl::native_type(std::move(values))));
+            make_tuple_value(tuple_type, tuple_type_impl::native_type({ data_type(std::forward<Values>(values))... })));
 }
 
 SEASTAR_THREAD_TEST_CASE(multi_col_eq) {
@@ -338,15 +351,15 @@ SEASTAR_THREAD_TEST_CASE(multi_col_eq) {
         require_rows(e, "select c1 from t where (c1)=('one') allow filtering", {{T("one")}});
         require_rows(e, "select c1 from t where (c1)=('x') allow filtering", {});
         auto stmt = e.prepare("select p from t where (c1,c2)=:t allow filtering").get();
-        require_rows(e, stmt, {{"t"}}, {make_tuple({utf8_type, float_type}, {sstring("two"), 12.f})}, {{I(2)}});
-        require_rows(e, stmt, {{"t"}}, {make_tuple({utf8_type, float_type}, {sstring("x"), 12.f})}, {});
+        require_rows(e, stmt, {{"t"}}, {make_tuple({utf8_type, float_type}, make_data_value_vector(sstring("two"), 12.f))}, {{I(2)}});
+        require_rows(e, stmt, {{"t"}}, {make_tuple({utf8_type, float_type}, make_data_value_vector(sstring("x"), 12.f))}, {});
         stmt = e.prepare("select p from t where (c1,c2)=('two',?) allow filtering").get();
         require_rows(e, stmt, {}, {F(12)}, {{I(2)}});
         require_rows(e, stmt, {}, {F(99)}, {});
         stmt = e.prepare("select c1 from t where (c1)=? allow filtering").get();
-        require_rows(e, stmt, {}, {make_tuple({utf8_type}, {sstring("one")})}, {{T("one")}});
-        require_rows(e, stmt, {}, {make_tuple({utf8_type}, {sstring("two")})}, {{T("two")}});
-        require_rows(e, stmt, {}, {make_tuple({utf8_type}, {sstring("three")})}, {});
+        require_rows(e, stmt, {}, {make_tuple({utf8_type}, make_data_value_vector(sstring("one")))}, {{T("one")}});
+        require_rows(e, stmt, {}, {make_tuple({utf8_type}, make_data_value_vector(sstring("two")))}, {{T("two")}});
+        require_rows(e, stmt, {}, {make_tuple({utf8_type}, make_data_value_vector(sstring("three")))}, {});
         stmt = e.prepare("select c1 from t where (c1)=(:c1) allow filtering").get();
         require_rows(e, stmt, {{"c1"}}, {T("one")}, {{T("one")}});
         require_rows(e, stmt, {{"c1"}}, {T("two")}, {{T("two")}});
@@ -368,14 +381,14 @@ SEASTAR_THREAD_TEST_CASE(multi_col_slice) {
         require_rows(e, "select c1 from t where (c1,c2)<=('c',13) allow filtering", {{T("a")}, {T("b")}, {T("c")}});
         require_rows(e, "select c1 from t where (c1,c2)>=('b',2) and (c1,c2)<=('b',2) allow filtering", {{T("b")}});
         auto stmt = e.prepare("select c1 from t where (c1,c2)<? allow filtering").get();
-        require_rows(e, stmt, {}, {make_tuple({utf8_type, float_type}, {sstring("a"), 12.f})}, {{T("a")}});
-        require_rows(e, stmt, {}, {make_tuple({utf8_type, float_type}, {sstring("a"), 11.f})}, {});
+        require_rows(e, stmt, {}, {make_tuple({utf8_type, float_type}, make_data_value_vector(sstring("a"), 12.f))}, {{T("a")}});
+        require_rows(e, stmt, {}, {make_tuple({utf8_type, float_type}, make_data_value_vector(sstring("a"), 11.f))}, {});
         stmt = e.prepare("select c1 from t where (c1,c2)<('a',:c2) allow filtering").get();
         require_rows(e, stmt, {{"c2"}}, {F(12)}, {{T("a")}});
         require_rows(e, stmt, {{"c2"}}, {F(11)}, {});
         stmt = e.prepare("select c1 from t where (c1)>=? allow filtering").get();
-        require_rows(e, stmt, {}, {make_tuple({utf8_type}, {sstring("c")})}, {{T("c")}});
-        require_rows(e, stmt, {}, {make_tuple({utf8_type}, {sstring("x")})}, {});
+        require_rows(e, stmt, {}, {make_tuple({utf8_type}, make_data_value_vector(sstring("c")))}, {{T("c")}});
+        require_rows(e, stmt, {}, {make_tuple({utf8_type}, make_data_value_vector(sstring("x")))}, {});
         stmt = e.prepare("select c1 from t where (c1)>=(:c1) allow filtering").get();
         require_rows(e, stmt, {{"c1"}}, {T("c")}, {{T("c")}});
         require_rows(e, stmt, {{"c1"}}, {T("x")}, {});
@@ -500,19 +513,19 @@ SEASTAR_THREAD_TEST_CASE(map_contains) {
         cquery_nofail(e, "insert into t (p, c, s) values ({3:3}, {31:31}, {3:100})");
         cquery_nofail(e, "insert into t (p, c, s) values ({4:4}, {40:40}, {4:100})");
         const auto my_map_type = map_type_impl::get_instance(int32_type, int32_type, true);
-        const auto p3 = my_map_type->decompose(make_map_value(my_map_type, map_type_impl::native_type({{3, 3}})));
+        const auto p3 = my_map_type->decompose(make_map_value(my_map_type, {std::make_pair(3, 3)}));
         require_rows(e, "select p from t where p contains 3 allow filtering", {{p3}, {p3}});
-        const auto p1 = my_map_type->decompose(make_map_value(my_map_type, map_type_impl::native_type({{1, 1}})));
-        const auto p2 = my_map_type->decompose(make_map_value(my_map_type, map_type_impl::native_type({{2, 2}})));
-        const auto p4 = my_map_type->decompose(make_map_value(my_map_type, map_type_impl::native_type({{4, 4}})));
+        const auto p1 = my_map_type->decompose(make_map_value(my_map_type, {std::make_pair(1, 1)}));
+        const auto p2 = my_map_type->decompose(make_map_value(my_map_type, {std::make_pair(2, 2)}));
+        const auto p4 = my_map_type->decompose(make_map_value(my_map_type, {std::make_pair(4, 4)}));
         require_rows(e, "select p from t where p contains null allow filtering", {});
-        const auto c4 = my_map_type->decompose(make_map_value(my_map_type, map_type_impl::native_type({{40, 40}})));
+        const auto c4 = my_map_type->decompose(make_map_value(my_map_type, {std::make_pair(40, 40)}));
         require_rows(e, "select c from t where c contains 40 allow filtering", {{c4}});
         const auto m2 = my_map_type->decompose(
-                make_map_value(my_map_type, map_type_impl::native_type({{1, 21}, {2, 12}})));
+                make_map_value(my_map_type, {std::make_pair(1, 21), std::make_pair(2, 12)}));
         require_rows(e, "select m from t where m contains 21 allow filtering", {{m2}});
         const auto m1 = my_map_type->decompose(
-                make_map_value(my_map_type, map_type_impl::native_type({{1, 11}, {2, 12}})));
+                make_map_value(my_map_type, {std::make_pair(1, 11), std::make_pair(2, 12)}));
         require_rows(e, "select m from t where m contains 11 allow filtering", {{m1}});
         require_rows(e, "select m from t where m contains 12 allow filtering", {{m1}, {m2}});
         require_rows(e, "select m from t where m contains null allow filtering", {});
@@ -520,9 +533,9 @@ SEASTAR_THREAD_TEST_CASE(map_contains) {
         cquery_nofail(e, "delete from t where p={2:2}");
         require_rows(e, "select m from t where m contains 12 allow filtering", {{m1}});
         const auto s3 = my_map_type->decompose(
-                make_map_value(my_map_type, map_type_impl::native_type({{3, 100}})));
+                make_map_value(my_map_type, {std::make_pair(3, 100)}));
         const auto s4 = my_map_type->decompose(
-                make_map_value(my_map_type, map_type_impl::native_type({{4, 100}})));
+                make_map_value(my_map_type, {std::make_pair(4, 100)}));
         require_rows(e, "select s from t where s contains 100 allow filtering", {{s3}, {s3}, {s4}});
     }).get();
 }
@@ -540,24 +553,24 @@ SEASTAR_THREAD_TEST_CASE(contains_key) {
         cquery_nofail(e, "insert into t (p,c,m) values ({3:33}, {'th':33}, {11:33})");
         const auto int_map_type = map_type_impl::get_instance(int32_type, int32_type, true);
         const auto m1 = int_map_type->decompose(
-                make_map_value(int_map_type, map_type_impl::native_type({{11, 11}, {12, 12}})));
-        const auto m3 = int_map_type->decompose(make_map_value(int_map_type, map_type_impl::native_type({{11, 33}})));
+                make_map_value(int_map_type, {std::make_pair(11, 11), std::make_pair(12, 12)}));
+        const auto m3 = int_map_type->decompose(make_map_value(int_map_type, {std::make_pair(11, 33)}));
         require_rows(e, "select m from t where m contains key 12 allow filtering", {{m1}});
         require_rows(e, "select m from t where m contains key 11 allow filtering", {{m1}, {m3}});
         require_rows(e, "select m from t where m contains key null allow filtering", {});
         const auto text_map_type = map_type_impl::get_instance(utf8_type, int32_type, true);
         const auto c1 = text_map_type->decompose(
-                make_map_value(text_map_type, map_type_impl::native_type({{"el", 11}, {"twel", 12}})));
+                make_map_value(text_map_type, {std::make_pair("el", 11), std::make_pair("twel", 12)}));
         require_rows(e, "select c from t where c contains key 'el' allow filtering", {{c1}});
         require_rows(e, "select c from t where c contains key 'twel' allow filtering", {{c1}});
         const auto c3 = text_map_type->decompose(
-                make_map_value(text_map_type, map_type_impl::native_type({{"th", 33}})));
+                make_map_value(text_map_type, {std::make_pair("th", 33)}));
         require_rows(e, "select c from t where c contains key null allow filtering", {});
-        const auto p3 = int_map_type->decompose(make_map_value(int_map_type, map_type_impl::native_type({{3, 33}})));
+        const auto p3 = int_map_type->decompose(make_map_value(int_map_type, {std::make_pair(3, 33)}));
         require_rows(e, "select p from t where p contains key 3 allow filtering", {{p3}});
         require_rows(e, "select p from t where p contains key 3 and m contains key null allow filtering", {});
         const auto p1 = int_map_type->decompose(
-                make_map_value(int_map_type, map_type_impl::native_type({{1, 11}, {2, 12}})));
+                make_map_value(int_map_type, {std::make_pair(1, 11), std::make_pair(2, 12)}));
         require_rows(e, "select p from t where p contains key null allow filtering", {});
         cquery_nofail(e, "insert into t (p,c) values ({4:44}, {'aaaa':44})");
         require_rows(e, "select m from t where m contains key 12 allow filtering", {{m1}});
@@ -568,19 +581,19 @@ SEASTAR_THREAD_TEST_CASE(contains_key) {
         cquery_nofail(e, "insert into t (p,c,s) values ({5:55}, {'aaa':55}, {55:'aaaa'})");
         const auto int_text_map_type = map_type_impl::get_instance(int32_type, utf8_type, true);
         const auto s5 = int_text_map_type->decompose(
-                make_map_value(int_text_map_type, map_type_impl::native_type({{55, "aaaa"}})));
+                make_map_value(int_text_map_type, {std::make_pair(55, "aaaa")}));
         require_rows(e, "select s from t where s contains key 55 allow filtering", {{s5}, {s5}});
         require_rows(e, "select s from t where s contains key 55 and s contains key null allow filtering", {});
         const auto c51 = text_map_type->decompose(
-                make_map_value(text_map_type, map_type_impl::native_type({{"aaaa", 55}})));
+                make_map_value(text_map_type, {std::make_pair("aaaa", 55)}));
         const auto c52 = text_map_type->decompose(
-                make_map_value(text_map_type, map_type_impl::native_type({{"aaa", 55}})));
+                make_map_value(text_map_type, {std::make_pair("aaa", 55)}));
         require_rows(e, "select c from t where s contains key 55 allow filtering", {{c51, s5}, {c52, s5}});
         cquery_nofail(e, "insert into t (p,c,s) values ({6:66}, {'bbb':66}, {66:'bbbb', 55:'bbbb'})");
-        const auto p5 = int_map_type->decompose(make_map_value(int_map_type, map_type_impl::native_type({{5, 55}})));
-        const auto p6 = int_map_type->decompose(make_map_value(int_map_type, map_type_impl::native_type({{6, 66}})));
+        const auto p5 = int_map_type->decompose(make_map_value(int_map_type, {std::make_pair(5, 55)}));
+        const auto p6 = int_map_type->decompose(make_map_value(int_map_type, {std::make_pair(6, 66)}));
         const auto s6 = int_text_map_type->decompose(
-                make_map_value(int_text_map_type, map_type_impl::native_type({{55, "bbbb"}, {66, "bbbb"}})));
+                make_map_value(int_text_map_type, {std::make_pair(55, "bbbb"), std::make_pair(66, "bbbb")}));
         require_rows(e, "select p from t where s contains key 55 allow filtering", {{p5, s5}, {p5, s5}, {p6, s6}});
         const auto stmt = e.prepare("select p from t where s contains key :k allow filtering").get();
         require_rows(e, stmt, {{"k"}}, {I(55)}, {{p5, s5}, {p5, s5}, {p6, s6}});
@@ -710,10 +723,10 @@ SEASTAR_THREAD_TEST_CASE(map_in) {
         cquery_nofail(e, "insert into t (p, c, r) values ({1:1}, {10:10,11:11}, 12)");
         require_rows(e, "select * from t where c in ({10:11},{10:11},{11:11}) allow filtering", {});
         const auto my_map_type = map_type_impl::get_instance(int32_type, int32_type, true);
-        const auto c1a = my_map_type->decompose(make_map_value(my_map_type, map_type_impl::native_type({{10, 10}})));
+        const auto c1a = my_map_type->decompose(make_map_value(my_map_type, {std::make_pair(10, 10)}));
         require_rows(e, "select c from t where c in ({10:11}, {10:10}, {11:11}) allow filtering", {{c1a}});
         const auto c1b = my_map_type->decompose(
-                make_map_value(my_map_type, map_type_impl::native_type({{10, 10}, {11, 11}})));
+                make_map_value(my_map_type, {std::make_pair(10, 10), std::make_pair(11, 11)}));
         require_rows(e, "select c from t where c in ({10:11}, {10:10}, {10:10,11:11}) allow filtering",
                          {{c1a}, {c1b}});
         require_rows(e, "select c from t where c in ({10:11}, {10:10}, {10:10,11:11}) and r=12 allow filtering",
@@ -747,7 +760,7 @@ SEASTAR_THREAD_TEST_CASE(multi_col_in) {
             const auto tuple_type = tuple_type_impl::get_instance({int32_type, float_type});
             const auto list_type = list_type_impl::get_instance(tuple_type, true);
             const auto tvals = tuples | transformed([&] (const std::tuple<int32_t, float>& t) {
-                return make_tuple_value(tuple_type, tuple_type_impl::native_type({std::get<0>(t), std::get<1>(t)}));
+                return make_tuple_value(tuple_type, tuple_type_impl::make_native_type(std::get<0>(t), std::get<1>(t)));
             });
             return list_type->decompose(
                     make_list_value(list_type, std::vector<data_value>(tvals.begin(), tvals.end())));
@@ -760,7 +773,7 @@ SEASTAR_THREAD_TEST_CASE(multi_col_in) {
         require_rows(e, stmt, {}, {bound_tuples({{12, 21}, {12, 21}, {13, 21}, {14, 21}})}, {});
         stmt = e.prepare("select ck1 from t where (ck1,ck2) in (?) allow filtering").get();
         auto tpl = [] (int32_t e1, float e2) {
-            return make_tuple({int32_type, float_type}, {e1, e2});
+            return make_tuple({int32_type, float_type}, make_data_value_vector(e1, e2));
         };
         require_rows(e, stmt, {}, {tpl(11, 21)}, {{I(11)}});
         require_rows(e, stmt, {}, {tpl(12, 22)}, {{I(12)}});
@@ -794,8 +807,8 @@ SEASTAR_THREAD_TEST_CASE(bounds) {
         require_rows(e, stmt, {}, {I(13)}, {{I(11)}, {I(12)}});
         require_rows(e, stmt, {}, {I(10)}, {});
         stmt = e.prepare("select c from t where p in (1,2,3) and (c) < ?").get();
-        require_rows(e, stmt, {}, {make_tuple({int32_type}, {13})}, {{I(11)}, {I(12)}});
-        require_rows(e, stmt, {}, {make_tuple({int32_type}, {11})}, {});
+        require_rows(e, stmt, {}, {make_tuple({int32_type}, make_data_value_vector(13))}, {{I(11)}, {I(12)}});
+        require_rows(e, stmt, {}, {make_tuple({int32_type}, make_data_value_vector(11))}, {});
     }).get();
 }
 
@@ -889,17 +902,17 @@ SEASTAR_THREAD_TEST_CASE(tuples) {
         cquery_nofail(e, "insert into t (p,q,r) values (1,(1),(1,1));");
         cquery_nofail(e, "insert into t (p,q,r) values (2,(2),(2,2));");
         require_rows(e, "select r from t where r=(1,1) allow filtering",
-                     {{make_tuple({int32_type, int32_type}, {1, 1})}});
+                     {{make_tuple({int32_type, int32_type}, make_data_value_vector(1, 1))}});
         require_rows(e, "select r from t where r<(2,2) allow filtering",
-                     {{make_tuple({int32_type, int32_type}, {1, 1})}});
+                     {{make_tuple({int32_type, int32_type}, make_data_value_vector(1, 1))}});
         require_rows(e, "select r from t where r<(1,99) allow filtering",
-                     {{make_tuple({int32_type, int32_type}, {1, 1})}});
+                     {{make_tuple({int32_type, int32_type}, make_data_value_vector(1, 1))}});
         require_rows(e, "select r from t where r<=(2, 2) allow filtering",
-                     {{make_tuple({int32_type, int32_type}, {1, 1})}, {make_tuple({int32_type, int32_type}, {2, 2})}});
-        require_rows(e, "select q from t where q=(1) allow filtering", {{make_tuple({int32_type}, {1})}});
+                     {{make_tuple({int32_type, int32_type}, make_data_value_vector(1, 1)), make_tuple({int32_type, int32_type}, make_data_value_vector(2, 2))}});
+        require_rows(e, "select q from t where q=(1) allow filtering", {{make_tuple({int32_type}, make_data_value_vector(1))}});
         require_rows(e, "select q from t where q>=(1) allow filtering",
-                     {{make_tuple({int32_type}, {1})}, {make_tuple({int32_type}, {2})}});
-        require_rows(e, "select q from t where q>=(2) allow filtering", {{make_tuple({int32_type}, {2})}});
+                     {{make_tuple({int32_type}, make_data_value_vector(1))}, {make_tuple({int32_type}, make_data_value_vector(2))}});
+        require_rows(e, "select q from t where q>=(2) allow filtering", {{make_tuple({int32_type}, make_data_value_vector(2))}});
         require_rows(e, "select q from t where q>(99) allow filtering", {});
     }).get();
 }

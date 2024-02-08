@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include <concepts>
 #include <seastar/core/shared_ptr.hh>
 #include <seastar/core/sstring.hh>
 #include <vector>
@@ -60,6 +61,13 @@ public:
 };
 
 data_value make_map_value(data_type tuple_type, map_type_impl::native_type value);
+
+template <typename K, typename V>
+auto make_map_value(data_type type, const std::initializer_list<std::pair<K, V>>& values) {
+    return make_map_value(type, boost::copy_range<map_type_impl::native_type>(values | boost::adaptors::transformed([] (const auto& x) {
+        return std::make_pair(data_value(x.first), data_value(x.second));
+    })));
+}
 
 template <std::ranges::range Range>
 requires std::convertible_to<std::ranges::range_value_t<Range>, std::pair<const bytes, bytes>>

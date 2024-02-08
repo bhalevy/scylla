@@ -699,7 +699,7 @@ SEASTAR_TEST_CASE(test_json_tuple) {
         auto msg = e.execute_cql("SELECT * FROM t;").get();
         assert_that(msg).is_rows().with_rows({{
             {int32_type->decompose(7)},
-            {tt->decompose(make_tuple_value(tt, tuple_type_impl::native_type({int32_t(5), sstring("test123"), float(2.5)})))},
+            {tt->decompose(make_tuple_value(tt, tuple_type_impl::make_native_type(int32_t(5), sstring("test123"), float(2.5))))},
         }});
 
         e.execute_cql("INSERT INTO t (id, v) VALUES (3, (5, 'test543', 4.5));").get();
@@ -727,7 +727,7 @@ static future<> test_json_udt(bool frozen) {
         auto msg = e.execute_cql("SELECT * FROM t;").get();
         assert_that(msg).is_rows().with_rows({{
             {int32_type->decompose(7)},
-            {ut->decompose(make_user_value(ut, user_type_impl::native_type({int32_t(5), sstring("test123"), float(2.5)})))},
+            {ut->decompose(make_user_value(ut, user_type_impl::make_native_type(int32_t(5), sstring("test123"), float(2.5))))},
         }});
 
         e.execute_cql("INSERT INTO t (id, v) VALUES (3, (5, 'test543', 4.5));").get();
@@ -778,9 +778,9 @@ SEASTAR_TEST_CASE(test_unpack_decimal){
                 {to_bytes("d1"), to_bytes("d2"), to_bytes("d3")},
                 {decimal_type, varint_type, int32_type}, false);
         auto ut_val = make_user_value(ut,
-                user_type_impl::native_type({big_decimal{0, utils::multiprecision_int(1)},
+                user_type_impl::make_native_type(big_decimal{0, utils::multiprecision_int(1)},
                 utils::multiprecision_int(2),
-                3}));
+                3));
 
         auto lt = list_type_impl::get_instance(ut, true);
         auto lt_val = lt->decompose(make_list_value(lt, list_type_impl::native_type{{ut_val}}));

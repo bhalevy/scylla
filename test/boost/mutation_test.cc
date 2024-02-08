@@ -13,6 +13,7 @@
 #include <boost/range/algorithm_ext/push_back.hpp>
 #include <boost/range/combine.hpp>
 #include "mutation_query.hh"
+#include "types/types.hh"
 #include "utils/hashers.hh"
 #include "utils/xx_hasher.hh"
 
@@ -153,21 +154,21 @@ SEASTAR_TEST_CASE(test_multi_level_row_tombstones) {
         return clustering_key::from_deeply_exploded(*s, v);
     };
 
-    m.partition().apply_row_tombstone(*s, make_prefix({1, 2}), tombstone(9, ttl));
-    BOOST_REQUIRE_EQUAL(m.partition().tombstone_for_row(*s, make_key({1, 2, 3})), row_tombstone(tombstone(9, ttl)));
+    m.partition().apply_row_tombstone(*s, make_prefix(make_data_value_vector(1, 2)), tombstone(9, ttl));
+    BOOST_REQUIRE_EQUAL(m.partition().tombstone_for_row(*s, make_key(make_data_value_vector(1, 2, 3))), row_tombstone(tombstone(9, ttl)));
 
-    m.partition().apply_row_tombstone(*s, make_prefix({1, 3}), tombstone(8, ttl));
-    BOOST_REQUIRE_EQUAL(m.partition().tombstone_for_row(*s, make_key({1, 2, 0})), row_tombstone(tombstone(9, ttl)));
-    BOOST_REQUIRE_EQUAL(m.partition().tombstone_for_row(*s, make_key({1, 3, 0})), row_tombstone(tombstone(8, ttl)));
+    m.partition().apply_row_tombstone(*s, make_prefix(make_data_value_vector(1, 3)), tombstone(8, ttl));
+    BOOST_REQUIRE_EQUAL(m.partition().tombstone_for_row(*s, make_key(make_data_value_vector(1, 2, 0))), row_tombstone(tombstone(9, ttl)));
+    BOOST_REQUIRE_EQUAL(m.partition().tombstone_for_row(*s, make_key(make_data_value_vector(1, 3, 0))), row_tombstone(tombstone(8, ttl)));
 
-    m.partition().apply_row_tombstone(*s, make_prefix({1}), tombstone(11, ttl));
-    BOOST_REQUIRE_EQUAL(m.partition().tombstone_for_row(*s, make_key({1, 2, 0})), row_tombstone(tombstone(11, ttl)));
-    BOOST_REQUIRE_EQUAL(m.partition().tombstone_for_row(*s, make_key({1, 3, 0})), row_tombstone(tombstone(11, ttl)));
+    m.partition().apply_row_tombstone(*s, make_prefix(make_data_value_vector(1)), tombstone(11, ttl));
+    BOOST_REQUIRE_EQUAL(m.partition().tombstone_for_row(*s, make_key(make_data_value_vector(1, 2, 0))), row_tombstone(tombstone(11, ttl)));
+    BOOST_REQUIRE_EQUAL(m.partition().tombstone_for_row(*s, make_key(make_data_value_vector(1, 3, 0))), row_tombstone(tombstone(11, ttl)));
 
-    m.partition().apply_row_tombstone(*s, make_prefix({1, 4}), tombstone(6, ttl));
-    BOOST_REQUIRE_EQUAL(m.partition().tombstone_for_row(*s, make_key({1, 2, 0})), row_tombstone(tombstone(11, ttl)));
-    BOOST_REQUIRE_EQUAL(m.partition().tombstone_for_row(*s, make_key({1, 3, 0})), row_tombstone(tombstone(11, ttl)));
-    BOOST_REQUIRE_EQUAL(m.partition().tombstone_for_row(*s, make_key({1, 4, 0})), row_tombstone(tombstone(11, ttl)));
+    m.partition().apply_row_tombstone(*s, make_prefix(make_data_value_vector(1, 4)), tombstone(6, ttl));
+    BOOST_REQUIRE_EQUAL(m.partition().tombstone_for_row(*s, make_key(make_data_value_vector(1, 2, 0))), row_tombstone(tombstone(11, ttl)));
+    BOOST_REQUIRE_EQUAL(m.partition().tombstone_for_row(*s, make_key(make_data_value_vector(1, 3, 0))), row_tombstone(tombstone(11, ttl)));
+    BOOST_REQUIRE_EQUAL(m.partition().tombstone_for_row(*s, make_key(make_data_value_vector(1, 4, 0))), row_tombstone(tombstone(11, ttl)));
     return make_ready_future<>();
 }
 
@@ -176,10 +177,10 @@ SEASTAR_TEST_CASE(test_row_tombstone_updates) {
         {{"p1", utf8_type}}, {{"c1", int32_type}, {"c2", int32_type}}, {{"r1", int32_type}}, {}, utf8_type);
 
     auto key = partition_key::from_exploded(*s, {to_bytes("key1")});
-    auto c_key1 = clustering_key::from_deeply_exploded(*s, {1, 0});
-    auto c_key1_prefix = clustering_key_prefix::from_deeply_exploded(*s, {1});
-    auto c_key2 = clustering_key::from_deeply_exploded(*s, {2, 0});
-    auto c_key2_prefix = clustering_key_prefix::from_deeply_exploded(*s, {2});
+    auto c_key1 = clustering_key::from_deeply_exploded(*s, make_data_value_vector(1, 0));
+    auto c_key1_prefix = clustering_key_prefix::from_deeply_exploded(*s, make_data_value_vector(1));
+    auto c_key2 = clustering_key::from_deeply_exploded(*s, make_data_value_vector(2, 0));
+    auto c_key2_prefix = clustering_key_prefix::from_deeply_exploded(*s, make_data_value_vector(2));
 
     auto ttl = gc_clock::now() + std::chrono::seconds(1);
 

@@ -1545,7 +1545,7 @@ future<> system_keyspace::drop_truncation_rp_records() {
 
 future<> system_keyspace::save_truncation_record(const replica::column_family& cf, db_clock::time_point truncated_at, db::replay_position rp) {
     sstring req = format("INSERT INTO system.{} (table_uuid, shard, position, segment_id, truncated_at) VALUES(?,?,?,?,?)", TRUNCATED);
-    co_await _qp.execute_internal(req, {cf.schema()->id().uuid(), int32_t(rp.shard_id()), int32_t(rp.pos), int64_t(rp.base_id()), truncated_at}, cql3::query_processor::cache_internal::yes);
+    co_await _qp.execute_internal(req, cql3::query_processor::cache_internal::yes, cf.schema()->id().uuid(), int32_t(rp.shard_id()), int32_t(rp.pos), int64_t(rp.base_id()), truncated_at);
     // Flush the table so that the value is available on boot before commitlog replay.
     // Commit log replay depends on truncation records to determine the minimum replay position.
     co_await force_blocking_flush(TRUNCATED);
@@ -1557,7 +1557,7 @@ future<replay_positions> system_keyspace::get_truncated_positions(table_id cf_id
         co_return result;
     }
     const auto req = format("SELECT * from system.{} WHERE table_uuid = ?", TRUNCATED);
-    auto result_set = co_await execute_cql(req, {cf_id.uuid()});
+    auto result_set = co_await execute_cql(req, cf_id.uuid());
     result.reserve(result_set->size());
     for (const auto& row: *result_set) {
         result.emplace_back(row.get_as<int32_t>("shard"),
@@ -1587,19 +1587,19 @@ future<> system_keyspace::drop_all_commitlog_cleanup_records() {
 }
 
 future<> system_keyspace::drop_old_commitlog_cleanup_records(replay_position min_position) {
-    auto pos = make_tuple_value(replay_position_type, tuple_type_impl::native_type({
+    auto pos = make_tuple_value(replay_position_type, tuple_type_impl::make_native_type(
         int64_t(min_position.base_id()),
         int32_t(min_position.pos)
-    }));
+    ));
     sstring req = format("DELETE FROM system.{} WHERE shard = ? AND position < ?", COMMITLOG_CLEANUPS);
-    co_await _qp.execute_internal(req, {int32_t(min_position.shard_id()), pos}, cql3::query_processor::cache_internal::yes);
+    co_await _qp.execute_internal(req, cql3::query_processor::cache_internal::yes, int32_t(min_position.shard_id()), pos);
 }
 
 future<> system_keyspace::save_commitlog_cleanup_record(table_id table, dht::token_range tr, db::replay_position rp) {
     auto [start_token_exclusive, end_token_inclusive] = canonical_token_range(tr);
-    auto pos = make_tuple_value(replay_position_type, tuple_type_impl::native_type({int64_t(rp.base_id()), int32_t(rp.pos)}));
+    auto pos = make_tuple_value(replay_position_type, tuple_type_impl::make_native_type(int64_t(rp.base_id()), int32_t(rp.pos)));
     sstring req = format("INSERT INTO system.{} (shard, position, table_uuid, start_token_exclusive, end_token_inclusive) VALUES(?,?,?,?,?)", COMMITLOG_CLEANUPS);
-    co_await _qp.execute_internal(req, {int32_t(rp.shard_id()), pos, table.uuid(), start_token_exclusive, end_token_inclusive}, cql3::query_processor::cache_internal::yes);
+    co_await _qp.execute_internal(req, cql3::query_processor::cache_internal::yes, int32_t(rp.shard_id()), pos, table.uuid(), start_token_exclusive, end_token_inclusive);
 }
 
 std::pair<int64_t, int64_t> system_keyspace::canonical_token_range(dht::token_range tr) {
@@ -1696,7 +1696,7 @@ static set_type_impl::native_type deserialize_set_column(const schema& s, const 
 static set_type_impl::native_type prepare_tokens(const std::unordered_set<dht::token>& tokens) {
     set_type_impl::native_type tset;
     for (auto& t: tokens) {
-        tset.push_back(t.to_sstring());
+        tset.push_back(data_value(t.to_sstring()));
     }
     return tset;
 }
@@ -2266,7 +2266,7 @@ future<int> system_keyspace::increment_and_get_generation() {
         }
     }
     req = format("INSERT INTO system.{} (key, gossip_generation) VALUES ('{}', ?)", LOCAL, LOCAL);
-    co_await _qp.execute_internal(req, {generation.value()}, cql3::query_processor::cache_internal::yes);
+    co_await _qp.execute_internal(req, cql3::query_processor::cache_internal::yes, generation.value());
     co_return generation;
 }
 
@@ -2965,7 +2965,7 @@ system_keyspace::read_cdc_generation_opt(utils::UUID id) {
             format("SELECT range_end, streams, ignore_msb FROM {}.{} WHERE key = '{}' AND id = ?",
                    NAME, CDC_GENERATIONS_V3, cdc::CDC_GENERATIONS_V3_KEY),
             db::consistency_level::ONE,
-            { id },
+            { data_value(id) },
             1000, // for ~1KB rows, ~1MB page size
             [&] (const cql3::untyped_result_set_row& row) {
         std::vector<cdc::stream_id> streams;
@@ -2998,7 +2998,7 @@ mutation system_keyspace::make_cleanup_candidate_mutation(std::optional<cdc::gen
     auto s = cdc_generations_v3();
     mutation m(s, partition_key::from_singular(*s, cdc::CDC_GENERATIONS_V3_KEY));
     data_value dv = value
-        ? make_tuple_value(db::cdc_generation_ts_id_type, tuple_type_impl::native_type({value->ts, timeuuid_native_type{value->id}}))
+        ? make_tuple_value(db::cdc_generation_ts_id_type, tuple_type_impl::make_native_type(value->ts, timeuuid_native_type{value->id}))
         : data_value::make_null(db::cdc_generation_ts_id_type);
     m.set_static_cell("cleanup_candidate", dv, ts);
     return m;
@@ -3033,7 +3033,7 @@ future<> system_keyspace::sstables_registry_list(sstring location, sstable_regis
     static const auto req = format("SELECT status, state, generation, version, format FROM system.{} WHERE location = ?", SSTABLES_REGISTRY);
     slogger.trace("Listing {} entries from {}", location, SSTABLES_REGISTRY);
 
-    co_await _qp.query_internal(req, db::consistency_level::ONE, { location }, 1000, [ consumer = std::move(consumer) ] (const cql3::untyped_result_set::row& row) -> future<stop_iteration> {
+    co_await _qp.query_internal(req, db::consistency_level::ONE, { data_value(location) }, 1000, [ consumer = std::move(consumer) ] (const cql3::untyped_result_set::row& row) -> future<stop_iteration> {
         auto status = row.get_as<sstring>("status");
         auto state = sstables::state_from_dir(row.get_as<sstring>("state"));
         auto gen = sstables::generation_type(row.get_as<utils::UUID>("generation"));

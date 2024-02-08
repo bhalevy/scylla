@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include <boost/range/iterator_range_core.hpp>
 #include <seastar/core/shared_ptr.hh>
 #include <seastar/core/sstring.hh>
 #include <vector>
@@ -39,3 +40,9 @@ public:
 
 data_value make_list_value(data_type type, list_type_impl::native_type value);
 
+template <typename T>
+auto make_list_value(data_type type, const std::initializer_list<T>& values) {
+    return make_list_value(type, boost::copy_range<list_type_impl::native_type>(values | boost::adaptors::transformed([] (const T& v) {
+        return data_value(v);
+    })));
+}

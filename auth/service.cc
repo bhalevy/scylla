@@ -260,8 +260,8 @@ future<bool> service::has_existing_legacy_users() const {
     return _qp.execute_internal(
             default_user_query,
             db::consistency_level::ONE,
-            {meta::DEFAULT_SUPERUSER_NAME},
-            cql3::query_processor::cache_internal::yes).then([this](auto results) {
+            cql3::query_processor::cache_internal::yes,
+            meta::DEFAULT_SUPERUSER_NAME).then([this](auto results) {
         if (!results->empty()) {
             return make_ready_future<bool>(true);
         }
@@ -269,8 +269,8 @@ future<bool> service::has_existing_legacy_users() const {
         return _qp.execute_internal(
                 default_user_query,
                 db::consistency_level::QUORUM,
-                {meta::DEFAULT_SUPERUSER_NAME},
-                cql3::query_processor::cache_internal::yes).then([this](auto results) {
+                cql3::query_processor::cache_internal::yes,
+                meta::DEFAULT_SUPERUSER_NAME).then([this](auto results) {
             if (!results->empty()) {
                 return make_ready_future<bool>(true);
             }

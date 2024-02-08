@@ -31,6 +31,7 @@
 #include "schema_tables.hh"
 #include "schema/schema_builder.hh"
 #include "service/storage_proxy.hh"
+#include "types/types.hh"
 #include "utils/rjson.hh"
 #include "utils/fmt-compat.hh"
 #include "cql3/query_processor.hh"
@@ -132,9 +133,9 @@ public:
 
         typedef std::tuple<future<result_set_type>, future<result_set_type>, future<result_set_type>, future<db::schema_tables::legacy::schema_mutations>> result_tuple;
 
-        return when_all(_qp.execute_internal(tq, { dst.name, cf_name }, cql3::query_processor::cache_internal::yes),
-                        _qp.execute_internal(cq, { dst.name, cf_name }, cql3::query_processor::cache_internal::yes),
-                        _qp.execute_internal(zq, { dst.name, cf_name }, cql3::query_processor::cache_internal::yes),
+        return when_all(_qp.execute_internal(tq, cql3::query_processor::cache_internal::yes, dst.name, cf_name),
+                        _qp.execute_internal(cq, cql3::query_processor::cache_internal::yes, dst.name, cf_name),
+                        _qp.execute_internal(zq, cql3::query_processor::cache_internal::yes, dst.name, cf_name),
                         db::schema_tables::legacy::read_table_mutations(_sp, dst.name, cf_name, db::system_keyspace::legacy::column_families()))
                     .then([&dst, cf_name, timestamp](result_tuple&& t) {
 
@@ -437,7 +438,7 @@ public:
     future<> read_tables(keyspace& dst) {
         auto query = fmt_query("SELECT columnfamily_name, writeTime(type) AS timestamp FROM {}.{} WHERE keyspace_name = ?",
                         db::system_keyspace::legacy::COLUMNFAMILIES);
-        return _qp.execute_internal(query, {dst.name}, cql3::query_processor::cache_internal::yes).then([this, &dst](result_set_type result) {
+        return _qp.execute_internal(query, cql3::query_processor::cache_internal::yes, dst.name).then([this, &dst](result_set_type result) {
             return parallel_for_each(*result, [this, &dst](row_type& row) {
                 return read_table(dst, row.get_as<sstring>("columnfamily_name"), row.get_as<time_point>("timestamp"));
             }).finally([result] {});
@@ -454,7 +455,7 @@ public:
 
     future<> read_types(keyspace& dst) {
         auto query = fmt_query("SELECT * FROM {}.{} WHERE keyspace_name = ?", db::system_keyspace::legacy::USERTYPES);
-        return _qp.execute_internal(query, {dst.name}, cql3::query_processor::cache_internal::yes).then([this, &dst](result_set_type result) {
+        return _qp.execute_internal(query, cql3::query_processor::cache_internal::yes, dst.name).then([this, &dst](result_set_type result) {
             return parallel_for_each(*result, [this, &dst](row_type& row) {
                 auto name = row.get_blob("type_name");
                 auto columns = row.get_list<bytes>("field_names");
@@ -473,7 +474,7 @@ public:
 
     future<> read_functions(keyspace& dst) {
         auto query = fmt_query("SELECT * FROM {}.{} WHERE keyspace_name = ?", db::system_keyspace::legacy::FUNCTIONS);
-        return _qp.execute_internal(query, {dst.name}, cql3::query_processor::cache_internal::yes).then([](result_set_type result) {
+        return _qp.execute_internal(query, cql3::query_processor::cache_internal::yes, dst.name).then([](result_set_type result) {
             if (!result->empty()) {
                 throw unsupported_feature("functions");
             }
@@ -482,7 +483,7 @@ public:
 
     future<> read_aggregates(keyspace& dst) {
         auto query = fmt_query("SELECT * FROM {}.{} WHERE keyspace_name = ?", db::system_keyspace::legacy::AGGREGATES);
-        return _qp.execute_internal(query, {dst.name}, cql3::query_processor::cache_internal::yes).then([](result_set_type result) {
+        return _qp.execute_internal(query, cql3::query_processor::cache_internal::yes, dst.name).then([](result_set_type result) {
             if (!result->empty()) {
                 throw unsupported_feature("aggregates");
             }

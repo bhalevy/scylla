@@ -696,7 +696,7 @@ SEASTAR_TEST_CASE(test_user_function_tuple_return) {
         auto res = e.execute_cql("SELECT my_func(val) FROM my_table;").get();
         auto tuple_type = tuple_type_impl::get_instance({int32_type, double_type, utf8_type});
         assert_that(res).is_rows().with_rows({
-            {make_tuple_value(tuple_type, {1, 2.4, "foo"}).serialize()}
+            {make_tuple_value(tuple_type, tuple_type_impl::make_native_type(1, 2.4, "foo")).serialize()}
         });
 
         e.execute_cql("CREATE FUNCTION my_func2(val int) CALLED ON NULL INPUT RETURNS tuple<int, double, text> LANGUAGE Lua AS 'return {1.2, 1.2, \"foo\"}';").get();
@@ -768,8 +768,8 @@ SEASTAR_TEST_CASE(test_user_function_nested_types) {
                       'return {[42] = {[{{\"foo\", 41}, {\"bar\", 40}}] = true, [{{\"bar\", 40}}] = true}, [39] = {}}';").get();
         auto res = e.execute_cql("SELECT my_func(val) FROM my_table;").get();
         auto tuple_type = tuple_type_impl::get_instance({utf8_type, long_type});
-        auto tuple_value1 = make_tuple_value(tuple_type, {"foo", int64_t(41)});
-        auto tuple_value2 = make_tuple_value(tuple_type, {"bar", int64_t(40)});
+        auto tuple_value1 = make_tuple_value(tuple_type, tuple_type_impl::make_native_type("foo", int64_t(41)));
+        auto tuple_value2 = make_tuple_value(tuple_type, tuple_type_impl::make_native_type("bar", int64_t(40)));
         auto list_type = list_type_impl::get_instance(tuple_type, false);
         data_value list_value1 = make_list_value(list_type, {tuple_value1, tuple_value2});
         data_value list_value2 = make_list_value(list_type, {tuple_value2});
@@ -777,7 +777,7 @@ SEASTAR_TEST_CASE(test_user_function_nested_types) {
         data_value set_value1 = make_set_value(set_type, {list_value2, list_value1});
         data_value set_value2 = make_set_value(set_type, {});
         auto map_type = map_type_impl::get_instance(int32_type, set_type, false);
-        data_value map_value = make_map_value(map_type, {{39, set_value2}, {42, set_value1}});
+        data_value map_value = make_map_value(map_type, {std::make_pair(39, set_value2), std::make_pair(42, set_value1)});
         assert_that(res).is_rows().with_rows({{map_value.serialize()}});
     });
 }
@@ -821,7 +821,7 @@ SEASTAR_TEST_CASE(test_user_function_map_return) {
         auto res = e.execute_cql("SELECT my_func(val) FROM my_table;").get();
         auto map_type = map_type_impl::get_instance(utf8_type, int32_type, false);
         assert_that(res).is_rows().with_rows({
-            {make_map_value(map_type, {{"bar", 2}, {"foo", 1}}).serialize()}
+            {make_map_value(map_type, {std::make_pair("bar", 2), std::make_pair("foo", 1)}).serialize()}
         });
     });
 }
@@ -847,7 +847,7 @@ SEASTAR_TEST_CASE(test_user_function_udt_return) {
         auto user_type =
                 user_type_impl::get_instance("ks", "my_type", {"my_int", "my_double"}, {int32_type, double_type}, false);
         assert_that(res).is_rows().with_rows({
-            {make_user_value(user_type, {1, 2.5}).serialize()}
+            {make_user_value(user_type, user_type_impl::make_native_type(1, 2.5)).serialize()}
         });
 
         e.execute_cql("CREATE FUNCTION my_func2(val int) CALLED ON NULL INPUT RETURNS my_type LANGUAGE Lua AS 'return {my_int = 1, my_float = 2.5}';").get();

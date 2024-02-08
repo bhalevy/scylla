@@ -192,7 +192,7 @@ SEASTAR_THREAD_TEST_CASE(test_conversion_to_legacy_form_same_token_singular) {
                   .build();
 
     dht::murmur3_partitioner partitioner;
-    auto key = partition_key::from_deeply_exploded(*s, {tests::random::get_int<int32_t>()});
+    auto key = partition_key::from_deeply_exploded(*s, make_data_value_vector(tests::random::get_int<int32_t>()));
     auto dk = partitioner.decorate_key(*s, key);
 
     auto b = to_legacy(*key.get_compound_type(*s), key.representation());
@@ -214,7 +214,7 @@ SEASTAR_THREAD_TEST_CASE(test_conversion_to_legacy_form_same_token_two_component
                   .build();
 
     dht::murmur3_partitioner partitioner;
-    auto key = partition_key::from_deeply_exploded(*s, {tests::random::get_int<int32_t>(), tests::random::get_int<int32_t>()});
+    auto key = partition_key::from_deeply_exploded(*s, make_data_value_vector(tests::random::get_int<int32_t>(), tests::random::get_int<int32_t>()));
     auto dk = partitioner.decorate_key(*s, key);
 
     auto b = to_legacy(*key.get_compound_type(*s), key.representation());

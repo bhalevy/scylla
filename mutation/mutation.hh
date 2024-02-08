@@ -102,9 +102,21 @@ public:
 
     void set_static_cell(const column_definition& def, atomic_cell_or_collection&& value);
     void set_static_cell(const bytes& name, const data_value& value, api::timestamp_type timestamp, ttl_opt ttl = {});
+    template <typename T>
+    void set_static_cell(const bytes& name, const T& value, api::timestamp_type timestamp, ttl_opt ttl = {}) {
+        set_static_cell(name, data_value(value), timestamp, ttl);
+    }
     void set_clustered_cell(const clustering_key& key, const bytes& name, const data_value& value, api::timestamp_type timestamp, ttl_opt ttl = {});
+    template <typename T>
+    void set_clustered_cell(const clustering_key& key, const bytes& name, const T& value, api::timestamp_type timestamp, ttl_opt ttl = {}) {
+        set_clustered_cell(key, name, data_value(value),  timestamp, ttl);
+    }
     void set_clustered_cell(const clustering_key& key, const column_definition& def, atomic_cell_or_collection&& value);
     void set_cell(const clustering_key_prefix& prefix, const bytes& name, const data_value& value, api::timestamp_type timestamp, ttl_opt ttl = {});
+    template <typename T>
+    void set_cell(const clustering_key_prefix& prefix, const bytes& name, const T& value, api::timestamp_type timestamp, ttl_opt ttl = {}) {
+        set_cell(prefix, name, data_value(value), timestamp, ttl);
+    }
     void set_cell(const clustering_key_prefix& prefix, const column_definition& def, atomic_cell_or_collection&& value);
 
     // Upgrades this mutation to a newer schema. The new schema must

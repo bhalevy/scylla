@@ -267,7 +267,7 @@ future<> db::batchlog_manager::replay_all_failed_batches() {
                     if (page->empty()) {
                         return make_ready_future<stop_iteration>(stop_iteration::yes);
                     }
-                    auto id = page->back().get_as<utils::UUID>("id");
+                    auto id = data_value(page->back().get_as<utils::UUID>("id"));
                     return parallel_for_each(*page, batch).then([this, &page, id]() {
                         if (page->size() < page_size) {
                             return make_ready_future<stop_iteration>(stop_iteration::yes); // we've exhausted the batchlog, next query would be empty.

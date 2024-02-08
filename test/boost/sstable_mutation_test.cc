@@ -36,6 +36,7 @@
 
 #include <boost/range/algorithm/sort.hpp>
 #include "readers/from_fragments_v2.hh"
+#include "types/types.hh"
 
 using namespace sstables;
 using namespace std::chrono_literals;
@@ -82,25 +83,25 @@ future<> test_no_clustered(sstables::test_env& env, bytes&& key, std::unordered_
 
 SEASTAR_TEST_CASE(uncompressed_1) {
   return test_env::do_with_async([] (test_env& env) {
-    test_no_clustered(env, "vinna", {{ "col1", to_sstring("daughter") }, { "col2", 3 }}).get();
+    test_no_clustered(env, "vinna", {{ "col1", data_value(to_sstring("daughter")) }, { "col2", data_value(3) }}).get();
   });
 }
 
 SEASTAR_TEST_CASE(uncompressed_2) {
   return test_env::do_with_async([] (test_env& env) {
-    test_no_clustered(env, "gustaf", {{ "col1", to_sstring("son") }, { "col2", 0 }}).get();
+    test_no_clustered(env, "gustaf", {{ "col1", data_value(to_sstring("son")) }, { "col2", data_value(0) }}).get();
   });
 }
 
 SEASTAR_TEST_CASE(uncompressed_3) {
   return test_env::do_with_async([] (test_env& env) {
-    test_no_clustered(env, "isak", {{ "col1", to_sstring("son") }, { "col2", 1 }}).get();
+    test_no_clustered(env, "isak", {{ "col1", data_value(to_sstring("son")) }, { "col2", data_value(1) }}).get();
   });
 }
 
 SEASTAR_TEST_CASE(uncompressed_4) {
   return test_env::do_with_async([] (test_env& env) {
-    test_no_clustered(env, "finna", {{ "col1", to_sstring("daughter") }, { "col2", 2 }}).get();
+    test_no_clustered(env, "finna", {{ "col1", data_value(to_sstring("daughter")) }, { "col2", data_value(2) }}).get();
   });
 }
 
@@ -504,7 +505,7 @@ SEASTAR_TEST_CASE(broken_ranges_collection) {
           return repeat([s, &reader] {
             return read_mutation_from_flat_mutation_reader(reader).then([s] (mutation_opt mut) {
                 auto key_equal = [s, &mut] (sstring ip) {
-                    return mut->key().equal(*s, partition_key::from_deeply_exploded(*s, { net::inet_address(ip) }));
+                    return mut->key().equal(*s, partition_key::from_deeply_exploded(*s, make_data_value_vector(net::inet_address(ip))));
                 };
 
                 if (!mut) {

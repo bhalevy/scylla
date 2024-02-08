@@ -3413,7 +3413,7 @@ SEASTAR_TEST_CASE(test_write_composite_partition_key) {
     // INSERT INTO composite_partition_key (a,b,c,d,e,f,g) values (1, 'hello', true, 2, 'dear', 3, 'world') USING TIMESTAMP 1525385507816568;
     auto key = partition_key::from_deeply_exploded(*s, { data_value{1}, data_value{"hello"}, data_value{true} });
     mutation mut{s, key};
-    clustering_key ckey = clustering_key::from_deeply_exploded(*s, { 2, "dear" });
+    clustering_key ckey = clustering_key::from_deeply_exploded(*s, make_data_value_vector(2, "dear"));
     mut.partition().apply_insert(*s, ckey, write_timestamp);
     mut.set_cell(ckey, "f", data_value{3}, write_timestamp);
     mut.set_cell(ckey, "g", data_value{"world"}, write_timestamp);
@@ -3437,9 +3437,9 @@ SEASTAR_TEST_CASE(test_write_composite_clustering_key) {
     schema_ptr s = builder.build(schema_builder::compact_storage::no);
 
     // INSERT INTO composite_clustering_key (a,b,c,d,e,f) values (1, 'hello', 2, 'dear', 3, 'world') USING TIMESTAMP 1525385507816568;
-    auto key = partition_key::from_deeply_exploded(*s, { 1 });
+    auto key = partition_key::from_deeply_exploded(*s, make_data_value_vector(1));
     mutation mut{s, key};
-    clustering_key ckey = clustering_key::from_deeply_exploded(*s, { "hello", 2, "dear" });
+    clustering_key ckey = clustering_key::from_deeply_exploded(*s, make_data_value_vector("hello", 2, "dear"));
     mut.partition().apply_insert(*s, ckey, write_timestamp);
     mut.set_cell(ckey, "e", data_value{3}, write_timestamp);
     mut.set_cell(ckey, "f", data_value{"world"}, write_timestamp);
@@ -3468,7 +3468,7 @@ SEASTAR_TEST_CASE(test_write_wide_partitions) {
     {
         mut1.set_static_cell("st", data_value{"hello"}, ts);
         for (auto idx: boost::irange(0, 1024)) {
-            clustering_key ckey = clustering_key::from_deeply_exploded(*s, {format("{}{}", ck_base, idx)});
+            clustering_key ckey = clustering_key::from_deeply_exploded(*s, make_data_value_vector(format("{}{}", ck_base, idx)));
             mut1.partition().apply_insert(*s, ckey, ts);
             mut1.set_cell(ckey, "rc", data_value{format("{}{}", rc_base, idx)}, ts);
             seastar::thread::yield();
@@ -3480,7 +3480,7 @@ SEASTAR_TEST_CASE(test_write_wide_partitions) {
     {
         mut2.set_static_cell("st", data_value{"goodbye"}, ts);
         for (auto idx: boost::irange(0, 1024)) {
-            clustering_key ckey = clustering_key::from_deeply_exploded(*s, {format("{}{}", ck_base, idx)});
+            clustering_key ckey = clustering_key::from_deeply_exploded(*s, make_data_value_vector(format("{}{}", ck_base, idx)));
             mut2.partition().apply_insert(*s, ckey, ts);
             mut2.set_cell(ckey, "rc", data_value{format("{}{}", rc_base, idx)}, ts);
             seastar::thread::yield();
@@ -3503,9 +3503,9 @@ SEASTAR_TEST_CASE(test_write_ttled_row) {
     schema_ptr s = builder.build(schema_builder::compact_storage::no);
 
     // INSERT INTO ttled_row (pk, ck, rc) VALUES ( 1, 2, 3) USING TTL 1135 AND TIMESTAMP 1525385507816568;
-    auto key = partition_key::from_deeply_exploded(*s, { 1 });
+    auto key = partition_key::from_deeply_exploded(*s, make_data_value_vector(1));
     mutation mut{s, key};
-    clustering_key ckey = clustering_key::from_deeply_exploded(*s, { 2 });
+    clustering_key ckey = clustering_key::from_deeply_exploded(*s, make_data_value_vector(2));
     gc_clock::time_point tp = gc_clock::time_point{} + gc_clock::duration{1543904331};
     gc_clock::duration ttl{1135};
 
@@ -3562,7 +3562,7 @@ SEASTAR_TEST_CASE(test_write_deleted_column) {
 
     // DELETE rc FROM deleted_column USING TIMESTAMP 1525385507816568 WHERE pk=1;
     gc_clock::time_point tp = gc_clock::time_point{} + gc_clock::duration{1543905926};
-    auto key = partition_key::from_deeply_exploded(*s, { 1 });
+    auto key = partition_key::from_deeply_exploded(*s, make_data_value_vector(1));
     mutation mut{s, key};
     auto column_def = s->get_column_definition("rc");
     if (!column_def) {
@@ -3586,9 +3586,9 @@ SEASTAR_TEST_CASE(test_write_deleted_row) {
 
     // DELETE FROM deleted_row USING TIMESTAMP 1525385507816568 WHERE pk=1 and ck=2;
     gc_clock::time_point tp = gc_clock::time_point{} + gc_clock::duration{1543907978};
-    auto key = partition_key::from_deeply_exploded(*s, { 1 });
+    auto key = partition_key::from_deeply_exploded(*s, make_data_value_vector(1));
     mutation mut{s, key};
-    clustering_key ckey = clustering_key::from_deeply_exploded(*s, { 2 });
+    clustering_key ckey = clustering_key::from_deeply_exploded(*s, make_data_value_vector(2));
     mut.partition().apply_delete(*s, ckey, tombstone{write_timestamp, tp});
 
     write_mut_and_validate(env, s, table_name, mut);
@@ -3608,7 +3608,7 @@ SEASTAR_TEST_CASE(test_write_collection_wide_update) {
 
     // INSERT INTO collection_wide_update (pk, col) VALUES (1, {2, 3}) USING TIMESTAMP 1525385507816568;
     gc_clock::time_point tp = gc_clock::time_point{} + gc_clock::duration{1543908589};
-    auto key = partition_key::from_deeply_exploded(*s, { 1 });
+    auto key = partition_key::from_deeply_exploded(*s, make_data_value_vector(1));
     mutation mut{s, key};
 
     mut.partition().apply_insert(*s, clustering_key::make_empty(), write_timestamp);
@@ -3635,7 +3635,7 @@ SEASTAR_TEST_CASE(test_write_collection_incremental_update) {
     schema_ptr s = builder.build(schema_builder::compact_storage::no);
 
     // UPDATE collection_incremental_update USING TIMESTAMP 1525385507816568 SET col = col + {2} WHERE pk = 1;
-    auto key = partition_key::from_deeply_exploded(*s, { 1 });
+    auto key = partition_key::from_deeply_exploded(*s, make_data_value_vector(1));
     mutation mut{s, key};
 
     collection_mutation_description set_values;
@@ -3665,7 +3665,7 @@ SEASTAR_TEST_CASE(test_write_multiple_partitions) {
     // INSERT INTO multiple_partitions (pk, rc3) VALUES (3, 30) USING TIMESTAMP 1525385507816588;
     std::vector<mutation> muts;
     for (auto i : boost::irange(1, 4)) {
-        auto key = partition_key::from_deeply_exploded(*s, {i});
+        auto key = partition_key::from_deeply_exploded(*s, make_data_value_vector(i));
         muts.emplace_back(s, key);
 
         clustering_key ckey = clustering_key::make_empty();
@@ -3688,7 +3688,7 @@ static future<> test_write_many_partitions(sstring table_name, tombstone partiti
 
     std::vector<mutation> muts;
     for (auto i : boost::irange(0, 65536)) {
-        auto key = partition_key::from_deeply_exploded(*s, {i});
+        auto key = partition_key::from_deeply_exploded(*s, make_data_value_vector(i));
         muts.emplace_back(s, key);
         if (partition_tomb) {
             muts.back().partition().apply(partition_tomb);
@@ -3762,7 +3762,7 @@ SEASTAR_TEST_CASE(test_write_multiple_rows) {
     builder.set_compressor_params(compression_parameters::no_compression());
     schema_ptr s = builder.build(schema_builder::compact_storage::no);
 
-    auto key = partition_key::from_deeply_exploded(*s, {0});
+    auto key = partition_key::from_deeply_exploded(*s, make_data_value_vector(0));
     api::timestamp_type ts = write_timestamp;
     mutation mut{s, key};
 
@@ -3770,7 +3770,7 @@ SEASTAR_TEST_CASE(test_write_multiple_rows) {
     // INSERT INTO multiple_rows (pk, ck, rc2) VALUES (0, 2, 20) USING TIMESTAMP 1525385507816578;
     // INSERT INTO multiple_rows (pk, ck, rc3) VALUES (0, 3, 30) USING TIMESTAMP 1525385507816588;
     for (auto i : boost::irange(1, 4)) {
-        clustering_key ckey = clustering_key::from_deeply_exploded(*s, { i });
+        clustering_key ckey = clustering_key::from_deeply_exploded(*s, make_data_value_vector(i));
         mut.partition().apply_insert(*s, ckey, ts);
         mut.set_cell(ckey, to_bytes(format("rc{}", i)), data_value{i * 10}, ts);
         ts += 10;
@@ -3795,14 +3795,14 @@ SEASTAR_TEST_CASE(test_write_missing_columns_large_set) {
     builder.set_compressor_params(compression_parameters::no_compression());
     schema_ptr s = builder.build(schema_builder::compact_storage::no);
 
-    auto key = partition_key::from_deeply_exploded(*s, {0});
+    auto key = partition_key::from_deeply_exploded(*s, make_data_value_vector(0));
     api::timestamp_type ts = write_timestamp;
     mutation mut{s, key};
 
     // INSERT INTO missing_columns_large_set (pk, ck, rc1, ..., rc62) VALUES (0, 0, 1, ..., 62) USING TIMESTAMP 1525385507816568;
     // For missing columns, the missing ones will be written as majority are present.
     {
-        clustering_key ckey = clustering_key::from_deeply_exploded(*s, {0});
+        clustering_key ckey = clustering_key::from_deeply_exploded(*s, make_data_value_vector(0));
         mut.partition().apply_insert(*s, ckey, ts);
         for (auto idx: boost::irange(1, 63)) {
             mut.set_cell(ckey, to_bytes(format("rc{}", idx)), data_value{idx}, ts);
@@ -3813,7 +3813,7 @@ SEASTAR_TEST_CASE(test_write_missing_columns_large_set) {
     // INSERT INTO missing_columns_large_set (pk, ck, rc63, rc64) VALUES (0, 1, 63, 64) USING TIMESTAMP 1525385507816578;
     // For missing columns, the present ones will be written as majority are missing.
     {
-        clustering_key ckey = clustering_key::from_deeply_exploded(*s, {1});
+        clustering_key ckey = clustering_key::from_deeply_exploded(*s, make_data_value_vector(1));
         mut.partition().apply_insert(*s, ckey, ts);
         mut.set_cell(ckey, to_bytes("rc63"), data_value{63}, ts);
         mut.set_cell(ckey, to_bytes("rc64"), data_value{64}, ts);
@@ -3975,11 +3975,11 @@ SEASTAR_TEST_CASE(test_write_empty_clustering_values) {
     builder.set_compressor_params(compression_parameters::no_compression());
     schema_ptr s = builder.build(schema_builder::compact_storage::no);
 
-    auto key = partition_key::from_deeply_exploded(*s, {0});
+    auto key = partition_key::from_deeply_exploded(*s, make_data_value_vector(0));
     mutation mut{s, key};
 
     // INSERT INTO empty_clustering_values (pk, ck1, ck2, ck3, rc) VALUES (0, '', 1, '', 2) USING TIMESTAMP 1525385507816568;
-    clustering_key ckey = clustering_key::from_deeply_exploded(*s, { "", 1, "" });
+    clustering_key ckey = clustering_key::from_deeply_exploded(*s, make_data_value_vector("", 1, ""));
     mut.partition().apply_insert(*s, ckey, write_timestamp);
     mut.set_cell(ckey, "rc", data_value{2}, write_timestamp);
 
@@ -4000,7 +4000,7 @@ SEASTAR_TEST_CASE(test_write_large_clustering_key) {
     builder.set_compressor_params(compression_parameters::no_compression());
     schema_ptr s = builder.build(schema_builder::compact_storage::no);
 
-    auto key = partition_key::from_deeply_exploded(*s, {0});
+    auto key = partition_key::from_deeply_exploded(*s, make_data_value_vector(0));
     mutation mut{s, key};
 
     // Clustering columns ckX are filled the following way:
@@ -4031,11 +4031,11 @@ SEASTAR_TEST_CASE(test_write_compact_table) {
     builder.set_compressor_params(compression_parameters::no_compression());
     schema_ptr s = builder.build(schema_builder::compact_storage::yes);
 
-    auto key = partition_key::from_deeply_exploded(*s, {1});
+    auto key = partition_key::from_deeply_exploded(*s, make_data_value_vector(1));
     mutation mut{s, key};
 
     // INSERT INTO compact_table (pk, ck1, rc) VALUES (1, 1, 1) USING TIMESTAMP 1525385507816568;
-    clustering_key ckey = clustering_key::from_deeply_exploded(*s, { 1 });
+    clustering_key ckey = clustering_key::from_deeply_exploded(*s, make_data_value_vector(1));
     mut.set_cell(ckey, "rc", data_value{1}, write_timestamp);
 
     write_mut_and_validate(env, s, table_name, mut);
@@ -4057,13 +4057,13 @@ SEASTAR_TEST_CASE(test_write_user_defined_type_table) {
     builder.set_compressor_params(compression_parameters::no_compression());
     schema_ptr s = builder.build(schema_builder::compact_storage::no);
 
-    auto key = partition_key::from_deeply_exploded(*s, {0});
+    auto key = partition_key::from_deeply_exploded(*s, make_data_value_vector(0));
     mutation mut{s, key};
 
     // INSERT INTO user_defined_type_table (pk, rc) VALUES (0, {my_int: 1703, my_boolean: true, my_text: 'Санкт-Петербург'}) USING TIMESTAMP 1525385507816568;
     clustering_key ckey = clustering_key::make_empty();
     mut.partition().apply_insert(*s, ckey, write_timestamp);
-    auto ut_val = make_user_value(ut, user_type_impl::native_type({int32_t(1703), true, sstring("Санкт-Петербург")}));
+    auto ut_val = make_user_value(ut, user_type_impl::make_native_type(int32_t(1703), true, sstring("Санкт-Петербург")));
     mut.set_cell(ckey, "rc", ut_val, write_timestamp);
 
     write_mut_and_validate(env, s, table_name, mut);
@@ -4083,7 +4083,7 @@ SEASTAR_TEST_CASE(test_write_simple_range_tombstone) {
     schema_ptr s = builder.build(schema_builder::compact_storage::no);
 
     // DELETE FROM simple_range_tombstone USING TIMESTAMP 1525385507816568 WHERE pk = 0 and ck1 = 'aaa';
-    auto key = partition_key::from_deeply_exploded(*s, {0});
+    auto key = partition_key::from_deeply_exploded(*s, make_data_value_vector(0));
     mutation mut{s, key};
     gc_clock::time_point tp = gc_clock::time_point{} + gc_clock::duration{1544042952};
     tombstone tomb{write_timestamp, tp};
@@ -4125,8 +4125,8 @@ SEASTAR_TEST_CASE(test_write_adjacent_range_tombstones) {
     {
         gc_clock::time_point tp = gc_clock::time_point{} + gc_clock::duration{1544056893};
         tombstone tomb{ts, tp};
-        range_tombstone rt{clustering_key::from_deeply_exploded(*s, {"aaa", "bbb"}),
-                           clustering_key::from_deeply_exploded(*s, {"aaa", "bbb"}), tomb};
+        range_tombstone rt{clustering_key::from_deeply_exploded(*s, make_data_value_vector("aaa", "bbb")),
+                           clustering_key::from_deeply_exploded(*s, make_data_value_vector("aaa", "bbb")), tomb};
         mut.partition().apply_delete(*s, std::move(rt));
     }
 
@@ -4202,7 +4202,7 @@ SEASTAR_TEST_CASE(test_write_mixed_rows_and_range_tombstones) {
 
     // INSERT INTO mixed_rows_and_range_tombstones (pk, ck1, ck2) VALUES ('key', 'aaa', 'bbb') USING TIMESTAMP 1525385507816578;
     {
-        clustering_key ckey = clustering_key::from_deeply_exploded(*s, {"aaa", "bbb"});
+        clustering_key ckey = clustering_key::from_deeply_exploded(*s, make_data_value_vector("aaa", "bbb"));
         mut.partition().apply_insert(*s, ckey, ts);
     }
     ts += 10;
@@ -4212,14 +4212,14 @@ SEASTAR_TEST_CASE(test_write_mixed_rows_and_range_tombstones) {
         gc_clock::time_point tp = gc_clock::time_point{} + gc_clock::duration{1544077944};
         tombstone tomb{ts, tp};
         range_tombstone rt{clustering_key_prefix::from_single_value(*s, to_bytes("bbb")),
-                           clustering_key_prefix::from_deeply_exploded(*s, {"bbb", "ccc"}), tomb};
+                           clustering_key_prefix::from_deeply_exploded(*s, make_data_value_vector("bbb", "ccc")), tomb};
         mut.partition().apply_delete(*s, std::move(rt));
     }
     ts += 10;
 
     // INSERT INTO mixed_rows_and_range_tombstones (pk, ck1, ck2) VALUES ('key', 'bbb', 'ccc') USING TIMESTAMP 1525385507816598;
     {
-        clustering_key ckey = clustering_key::from_deeply_exploded(*s, {"bbb", "ccc"});
+        clustering_key ckey = clustering_key::from_deeply_exploded(*s, make_data_value_vector("bbb", "ccc"));
         mut.partition().apply_insert(*s, ckey, ts);
     }
     ts += 10;
@@ -4228,7 +4228,7 @@ SEASTAR_TEST_CASE(test_write_mixed_rows_and_range_tombstones) {
     {
         gc_clock::time_point tp = gc_clock::time_point{} + gc_clock::duration{1544077980};
         tombstone tomb{ts, tp};
-        range_tombstone rt{clustering_key_prefix::from_deeply_exploded(*s, {"ddd", "eee"}),
+        range_tombstone rt{clustering_key_prefix::from_deeply_exploded(*s, make_data_value_vector("ddd", "eee")),
                            clustering_key_prefix::from_single_value(*s, to_bytes("ddd")), tomb};
         mut.partition().apply_delete(*s, std::move(rt));
     }
@@ -4236,7 +4236,7 @@ SEASTAR_TEST_CASE(test_write_mixed_rows_and_range_tombstones) {
 
     // INSERT INTO mixed_rows_and_range_tombstones (pk, ck1, ck2) VALUES ('key', 'ddd', 'eee') USING TIMESTAMP 1525385507816618;
     {
-        clustering_key ckey = clustering_key::from_deeply_exploded(*s, {"ddd", "eee"});
+        clustering_key ckey = clustering_key::from_deeply_exploded(*s, make_data_value_vector("ddd", "eee"));
         mut.partition().apply_insert(*s, ckey, ts);
     }
 
@@ -4302,7 +4302,7 @@ SEASTAR_TEST_CASE(test_write_adjacent_range_tombstones_with_rows) {
 
     // INSERT INTO adjacent_range_tombstones_with_rows (pk, ck1, ck2, ck3) VALUES ('key', 'aaa', 'aaa', 'aaa') USING TIMESTAMP 1525385507816578;
     {
-        clustering_key ckey = clustering_key::from_deeply_exploded(*s, {"aaa", "aaa", "aaa"});
+        clustering_key ckey = clustering_key::from_deeply_exploded(*s, make_data_value_vector("aaa", "aaa", "aaa"));
         mut.partition().apply_insert(*s, ckey, ts);
     }
     ts += 10;
@@ -4311,15 +4311,15 @@ SEASTAR_TEST_CASE(test_write_adjacent_range_tombstones_with_rows) {
     {
         gc_clock::time_point tp = gc_clock::time_point{} + gc_clock::duration{1544081449};
         tombstone tomb{ts, tp};
-        range_tombstone rt{clustering_key::from_deeply_exploded(*s, {"aaa", "bbb"}),
-                           clustering_key::from_deeply_exploded(*s, {"aaa", "bbb"}), tomb};
+        range_tombstone rt{clustering_key::from_deeply_exploded(*s, make_data_value_vector("aaa", "bbb")),
+                           clustering_key::from_deeply_exploded(*s, make_data_value_vector("aaa", "bbb")), tomb};
         mut.partition().apply_delete(*s, std::move(rt));
     }
     ts += 10;
 
     // INSERT INTO adjacent_range_tombstones_with_rows (pk, ck1, ck2, ck3) VALUES ('key', 'aaa', 'ccc', 'ccc') USING TIMESTAMP 1525385507816598;
     {
-        clustering_key ckey = clustering_key::from_deeply_exploded(*s, {"aaa", "ccc", "ccc"});
+        clustering_key ckey = clustering_key::from_deeply_exploded(*s, make_data_value_vector("aaa", "ccc", "ccc"));
         mut.partition().apply_insert(*s, ckey, ts);
     }
 
@@ -4338,7 +4338,7 @@ SEASTAR_TEST_CASE(test_write_range_tombstone_same_start_with_row) {
     builder.set_compressor_params(compression_parameters::no_compression());
     schema_ptr s = builder.build(schema_builder::compact_storage::no);
 
-    auto key = partition_key::from_deeply_exploded(*s, {0});
+    auto key = partition_key::from_deeply_exploded(*s, make_data_value_vector(0));
     mutation mut{s, key};
     api::timestamp_type ts = write_timestamp;
 
@@ -4346,7 +4346,7 @@ SEASTAR_TEST_CASE(test_write_range_tombstone_same_start_with_row) {
     {
         gc_clock::time_point tp = gc_clock::time_point{} + gc_clock::duration{1544085558};
         tombstone tomb{ts, tp};
-        range_tombstone rt{clustering_key_prefix::from_deeply_exploded(*s, {"aaa", "bbb"}),
+        range_tombstone rt{clustering_key_prefix::from_deeply_exploded(*s, make_data_value_vector("aaa", "bbb")),
                            clustering_key_prefix::from_single_value(*s, bytes("aaa")), tomb};
         mut.partition().apply_delete(*s, std::move(rt));
     }
@@ -4354,7 +4354,7 @@ SEASTAR_TEST_CASE(test_write_range_tombstone_same_start_with_row) {
 
     // INSERT INTO range_tombstone_same_start_with_row (pk, ck1, ck2) VALUES (0, 'aaa', 'bbb') USING TIMESTAMP 1525385507816578;
     {
-        clustering_key ckey = clustering_key::from_deeply_exploded(*s, {"aaa", "bbb"});
+        clustering_key ckey = clustering_key::from_deeply_exploded(*s, make_data_value_vector("aaa", "bbb"));
         mut.partition().apply_insert(*s, ckey, ts);
     }
 
@@ -4373,7 +4373,7 @@ SEASTAR_TEST_CASE(test_write_range_tombstone_same_end_with_row) {
     builder.set_compressor_params(compression_parameters::no_compression());
     schema_ptr s = builder.build(schema_builder::compact_storage::no);
 
-    auto key = partition_key::from_deeply_exploded(*s, {0});
+    auto key = partition_key::from_deeply_exploded(*s, make_data_value_vector(0));
     mutation mut{s, key};
     api::timestamp_type ts = write_timestamp;
 
@@ -4382,14 +4382,14 @@ SEASTAR_TEST_CASE(test_write_range_tombstone_same_end_with_row) {
         gc_clock::time_point tp = gc_clock::time_point{} + gc_clock::duration{1544091863};
         tombstone tomb{ts, tp};
         range_tombstone rt{clustering_key_prefix::from_single_value(*s, bytes("aaa")),
-                           clustering_key_prefix::from_deeply_exploded(*s, {"aaa", "bbb"}), tomb};
+                           clustering_key_prefix::from_deeply_exploded(*s, make_data_value_vector("aaa", "bbb")), tomb};
         mut.partition().apply_delete(*s, std::move(rt));
     }
     ts += 10;
 
     // INSERT INTO range_tombstone_same_end_with_row (pk, ck1, ck2) VALUES (0, 'aaa', 'bbb') USING TIMESTAMP 1525385507816578;
     {
-        clustering_key ckey = clustering_key::from_deeply_exploded(*s, {"aaa", "bbb"});
+        clustering_key ckey = clustering_key::from_deeply_exploded(*s, make_data_value_vector("aaa", "bbb"));
         mut.partition().apply_insert(*s, ckey, ts);
     }
 
@@ -4409,7 +4409,7 @@ SEASTAR_TEST_CASE(test_write_overlapped_start_range_tombstones) {
     schema_ptr s = builder.build(schema_builder::compact_storage::no);
 
 
-    auto key = partition_key::from_deeply_exploded(*s, {0});
+    auto key = partition_key::from_deeply_exploded(*s, make_data_value_vector(0));
     mutation mut1{s, key};
     mutation mut2{s, key};
     api::timestamp_type ts = write_timestamp;
@@ -4426,7 +4426,7 @@ SEASTAR_TEST_CASE(test_write_overlapped_start_range_tombstones) {
 
     // INSERT INTO overlapped_start_range_tombstones (pk, ck1, ck2) VALUES (0, 'aaa', 'bbb') USING TIMESTAMP 1525385507816578;
     {
-        clustering_key ckey = clustering_key::from_deeply_exploded(*s, {"aaa", "bbb"});
+        clustering_key ckey = clustering_key::from_deeply_exploded(*s, make_data_value_vector("aaa", "bbb"));
         mut2.partition().apply_insert(*s, ckey, ts);
     }
     ts += 10;
@@ -4435,7 +4435,7 @@ SEASTAR_TEST_CASE(test_write_overlapped_start_range_tombstones) {
     {
         gc_clock::time_point tp = gc_clock::time_point{} + gc_clock::duration{1529099152};
         tombstone tomb{ts, tp};
-        range_tombstone rt{clustering_key::from_deeply_exploded(*s, {"aaa", "bbb"}), tomb,
+        range_tombstone rt{clustering_key::from_deeply_exploded(*s, make_data_value_vector("aaa", "bbb")), tomb,
                            bound_kind::excl_start,
                            clustering_key::from_single_value(*s, bytes("aaa")),
                            bound_kind::incl_end};
@@ -4457,7 +4457,7 @@ SEASTAR_TEST_CASE(test_write_two_non_adjacent_range_tombstones) {
     builder.set_compressor_params(compression_parameters::no_compression());
     schema_ptr s = builder.build(schema_builder::compact_storage::no);
 
-    auto key = partition_key::from_deeply_exploded(*s, {0});
+    auto key = partition_key::from_deeply_exploded(*s, make_data_value_vector(0));
     mutation mut{s, key};
     api::timestamp_type ts = write_timestamp;
 
@@ -4467,7 +4467,7 @@ SEASTAR_TEST_CASE(test_write_two_non_adjacent_range_tombstones) {
         tombstone tomb{ts, tp};
         range_tombstone rt{clustering_key_prefix::from_single_value(*s, bytes("aaa")),
                            bound_kind::incl_start,
-                           clustering_key_prefix::from_deeply_exploded(*s, {"aaa", "bbb"}),
+                           clustering_key_prefix::from_deeply_exploded(*s, make_data_value_vector("aaa", "bbb")),
                            bound_kind::excl_end, tomb};
         mut.partition().apply_delete(*s, std::move(rt));
     }
@@ -4477,7 +4477,7 @@ SEASTAR_TEST_CASE(test_write_two_non_adjacent_range_tombstones) {
     {
         gc_clock::time_point tp = gc_clock::time_point{} + gc_clock::duration{1544094676};
         tombstone tomb{ts, tp};
-        range_tombstone rt{clustering_key_prefix::from_deeply_exploded(*s, {"aaa", "bbb"}),
+        range_tombstone rt{clustering_key_prefix::from_deeply_exploded(*s, make_data_value_vector("aaa", "bbb")),
                            bound_kind::excl_start,
                            clustering_key_prefix::from_single_value(*s, bytes("aaa")),
                            bound_kind::incl_end, tomb};
@@ -4522,8 +4522,8 @@ SEASTAR_TEST_CASE(test_write_overlapped_range_tombstones) {
     {
         gc_clock::time_point tp = gc_clock::time_point{} + gc_clock::duration{1527821308};
         tombstone tomb{ts, tp};
-        range_tombstone rt{clustering_key::from_deeply_exploded(*s, {"aaa", "bbb"}),
-                           clustering_key::from_deeply_exploded(*s, {"aaa", "bbb"}), tomb};
+        range_tombstone rt{clustering_key::from_deeply_exploded(*s, make_data_value_vector("aaa", "bbb")),
+                           clustering_key::from_deeply_exploded(*s, make_data_value_vector("aaa", "bbb")), tomb};
         mut2.partition().apply_delete(*s, std::move(rt));
     }
 
@@ -4777,11 +4777,11 @@ SEASTAR_TEST_CASE(test_dead_row_marker) {
     builder.set_compressor_params(compression_parameters::no_compression());
     schema_ptr s = builder.build(schema_builder::compact_storage::no);
 
-    auto key = partition_key::from_deeply_exploded(*s, { 1 });
+    auto key = partition_key::from_deeply_exploded(*s, make_data_value_vector( 1 ));
     mutation mut{s, key};
     mut.set_static_cell("st", data_value{1135}, ts);
 
-    clustering_key ckey = clustering_key::from_deeply_exploded(*s, { 2 });
+    clustering_key ckey = clustering_key::from_deeply_exploded(*s, make_data_value_vector( 2 ));
     auto& clustered_row = mut.partition().clustered_row(*s, ckey);
     clustered_row.apply(row_marker{ts, gc_clock::duration{90} /* TTL */, tp});
 
@@ -4808,14 +4808,14 @@ SEASTAR_TEST_CASE(test_shadowable_deletion) {
     builder.set_compressor_params(compression_parameters::no_compression());
     schema_ptr s = builder.build(schema_builder::compact_storage::no);
 
-    clustering_key ckey = clustering_key::from_deeply_exploded(*s, { 1 });
-    mutation mut1{s, partition_key::from_deeply_exploded(*s, {1})};
+    clustering_key ckey = clustering_key::from_deeply_exploded(*s, make_data_value_vector( 1 ));
+    mutation mut1{s, partition_key::from_deeply_exploded(*s, make_data_value_vector(1))};
     {
         auto& clustered_row = mut1.partition().clustered_row(*s, ckey);
         clustered_row.apply(row_marker{api::timestamp_type{1540230880370422}});
     }
 
-    mutation mut2{s, partition_key::from_deeply_exploded(*s, {0})};
+    mutation mut2{s, partition_key::from_deeply_exploded(*s, make_data_value_vector(0))};
     {
         auto& clustered_row = mut2.partition().clustered_row(*s, ckey);
         api::timestamp_type ts {1540230874370065};
@@ -4854,8 +4854,8 @@ SEASTAR_TEST_CASE(test_regular_and_shadowable_deletion) {
 
     lw_shared_ptr<replica::memtable> mt = make_lw_shared<replica::memtable>(s);
 
-    clustering_key ckey = clustering_key::from_deeply_exploded(*s, { {1}, {1} });
-    mutation mut1{s, partition_key::from_deeply_exploded(*s, {1})};
+    clustering_key ckey = clustering_key::from_deeply_exploded(*s, make_data_value_vector(1, 1));
+    mutation mut1{s, partition_key::from_deeply_exploded(*s, make_data_value_vector(1))};
     {
         auto& clustered_row = mut1.partition().clustered_row(*s, ckey);
         clustered_row.apply(row_marker{api::timestamp_type{1540230874370003}});
@@ -4863,7 +4863,7 @@ SEASTAR_TEST_CASE(test_regular_and_shadowable_deletion) {
         mt->apply(mut1);
     }
 
-    mutation mut2{s, partition_key::from_deeply_exploded(*s, {0})};
+    mutation mut2{s, partition_key::from_deeply_exploded(*s, make_data_value_vector(0))};
     {
         auto& clustered_row = mut2.partition().clustered_row(*s, ckey);
         clustered_row.apply(row_marker{api::timestamp_type{1540230874370002}});
@@ -4890,9 +4890,9 @@ SEASTAR_TEST_CASE(test_write_static_row_with_missing_columns) {
     schema_ptr s = builder.build(schema_builder::compact_storage::no);
 
     // INSERT INTO static_row (pk, ck, st1, rc) VALUES (0, 1, 2, 3);
-    auto key = partition_key::from_deeply_exploded(*s, {0});
+    auto key = partition_key::from_deeply_exploded(*s, make_data_value_vector(0));
     mutation mut{s, key};
-    clustering_key ckey = clustering_key::from_deeply_exploded(*s, { 1 });
+    clustering_key ckey = clustering_key::from_deeply_exploded(*s, make_data_value_vector( 1 ));
     mut.partition().apply_insert(*s, ckey, write_timestamp);
     mut.set_static_cell("st1", data_value{2}, write_timestamp);
     mut.set_cell(ckey, "rc", data_value{3}, write_timestamp);
@@ -4921,9 +4921,9 @@ SEASTAR_TEST_CASE(test_write_interleaved_atomic_and_collection_columns) {
 
     // INSERT INTO interleaved_atomic_and_collection_columns (pk, ck, rc1, rc4, rc5)
     //     VALUES (0, 1, 2, {3, 4}, 5) USING TIMESTAMP 1525385507816568;
-    auto key = partition_key::from_deeply_exploded(*s, {0});
+    auto key = partition_key::from_deeply_exploded(*s, make_data_value_vector(0));
     mutation mut{s, key};
-    clustering_key ckey = clustering_key::from_deeply_exploded(*s, { 1 });
+    clustering_key ckey = clustering_key::from_deeply_exploded(*s, make_data_value_vector( 1 ));
     mut.partition().apply_insert(*s, ckey, write_timestamp);
     mut.set_cell(ckey, "rc1", data_value{2}, write_timestamp);
 
@@ -4960,9 +4960,9 @@ SEASTAR_TEST_CASE(test_write_static_interleaved_atomic_and_collection_columns) {
 
     // INSERT INTO static_interleaved_atomic_and_collection_columns (pk, ck, st1, st4, st5)
     //     VALUES (0, 1, 2, {3, 4}, 5) USING TIMESTAMP 1525385507816568;
-    auto key = partition_key::from_deeply_exploded(*s, {0});
+    auto key = partition_key::from_deeply_exploded(*s, make_data_value_vector(0));
     mutation mut{s, key};
-    clustering_key ckey = clustering_key::from_deeply_exploded(*s, { 1 });
+    clustering_key ckey = clustering_key::from_deeply_exploded(*s, make_data_value_vector( 1 ));
     mut.partition().apply_insert(*s, ckey, write_timestamp);
     mut.set_static_cell("st1", data_value{2}, write_timestamp);
 
@@ -4993,16 +4993,16 @@ SEASTAR_TEST_CASE(test_write_empty_static_row) {
     api::timestamp_type ts = write_timestamp;
 
     // INSERT INTO empty_static_row (pk, ck, rc) VALUES ( 0, 1, 2) USING TIMESTAMP 1525385507816568;
-    auto key1 = partition_key::from_deeply_exploded(*s, {0});
+    auto key1 = partition_key::from_deeply_exploded(*s, make_data_value_vector(0));
     mutation mut1{s, key1};
-    clustering_key ckey = clustering_key::from_deeply_exploded(*s, { 1 });
+    clustering_key ckey = clustering_key::from_deeply_exploded(*s, make_data_value_vector( 1 ));
     mut1.partition().apply_insert(*s, ckey, ts);
     mut1.set_cell(ckey, "rc", data_value{2}, ts);
 
     ts += 10;
 
     // INSERT INTO empty_static_row (pk, ck, st, rc) VALUES ( 1, 1, 2, 3) USING TIMESTAMP 1525385507816578;
-    auto key2 = partition_key::from_deeply_exploded(*s, {1});
+    auto key2 = partition_key::from_deeply_exploded(*s, make_data_value_vector(1));
     mutation mut2{s, key2};
     mut2.partition().apply_insert(*s, ckey, ts);
     mut2.set_static_cell("st", data_value{2}, ts);
@@ -5395,12 +5395,12 @@ SEASTAR_TEST_CASE(test_legacy_udt_in_collection_table) {
     BOOST_REQUIRE(m_cdef && fm_cdef && mm_cdef && fmm_cdef && s_cdef && fs_cdef && l_cdef && fl_cdef);
 
     auto ut_val = make_user_value(ut, {int32_t(0), int32_t(0)});
-    auto fm_val = make_map_value(fm_type, {{int32_t(0), ut_val}});
-    auto fmm_val = make_map_value(fmm_type, {{int32_t(0), fm_val}});
+    auto fm_val = make_map_value(fm_type, {std::make_pair(int32_t(0), ut_val)});
+    auto fmm_val = make_map_value(fmm_type, {std::make_pair(int32_t(0), fm_val)});
     auto fs_val = make_set_value(fs_type, {ut_val});
     auto fl_val = make_list_value(fl_type, {ut_val});
 
-    mutation mut{s, partition_key::from_deeply_exploded(*s, {0})};
+    mutation mut{s, partition_key::from_deeply_exploded(*s, make_data_value_vector(0))};
     auto ckey = clustering_key::make_empty();
 
     // m[0] = {a: 0, b: 0}

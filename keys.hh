@@ -17,6 +17,7 @@
 #include "replica/database_fwd.hh"
 #include "schema/schema_fwd.hh"
 #include <compare>
+#include <concepts>
 #include <span>
 
 //

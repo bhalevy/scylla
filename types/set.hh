@@ -43,6 +43,13 @@ public:
 
 data_value make_set_value(data_type tuple_type, set_type_impl::native_type value);
 
+template <typename T>
+auto make_set_value(data_type type, const std::initializer_list<T>& values) {
+    return make_set_value(type, boost::copy_range<set_type_impl::native_type>(values | boost::adaptors::transformed([] (const T& v) {
+        return data_value(v);
+    })));
+}
+
 template <typename NativeType>
 data_value::data_value(const std::unordered_set<NativeType>& v)
     : data_value(new set_type_impl::native_type(v.begin(), v.end()), set_type_impl::get_instance(data_type_for<NativeType>(), true))

@@ -205,4 +205,9 @@ private:
 
 data_value make_tuple_value(data_type tuple_type, tuple_type_impl::native_type value);
 
-
+template <typename T>
+auto make_tuple_value(data_type type, const std::initializer_list<T>& values) {
+    return make_tuple_value(type, boost::copy_range<tuple_type_impl::native_type>(values | boost::adaptors::transformed([] (const T& v) {
+        return data_value(v);
+    })));
+}

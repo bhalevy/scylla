@@ -217,7 +217,7 @@ static future<> save_system_schema_to_keyspace(cql3::query_processor& qp, const 
     co_await coroutine::parallel_for_each(all_table_names(schema_features::full()), [&qp, ksm] (sstring cf) -> future<> {
         auto deletion_timestamp = system_keyspace::schema_creation_timestamp() - 1;
         co_await qp.execute_internal(format("DELETE FROM {}.{} USING TIMESTAMP {} WHERE keyspace_name = ?", NAME, cf,
-            deletion_timestamp), { ksm->name() }, cql3::query_processor::cache_internal::yes).discard_result();
+            deletion_timestamp), cql3::query_processor::cache_internal::yes, ksm->name()).discard_result();
     });
     {
         auto mvec  = make_create_keyspace_mutations(qp.db().features().cluster_schema_features(), ksm, system_keyspace::schema_creation_timestamp(), true);
@@ -2393,7 +2393,7 @@ std::vector<mutation> make_create_function_mutations(shared_ptr<cql3::functions:
     clustering_key& ckey = p.second;
     auto argument_names_column = s->get_column_definition("argument_names");
     auto argument_names = make_list_mutation(func->arg_names(), *argument_names_column, timestamp, [] (auto&& name) {
-        return name;
+        return data_value(name);
     });
     m.set_clustered_cell(ckey, *argument_names_column, std::move(argument_names));
     m.set_clustered_cell(ckey, "body", func->body(), timestamp);
@@ -3137,14 +3137,14 @@ schema_ptr create_table_from_mutations(const schema_ctxt& ctxt, schema_mutations
 
     if (flags) {
         for (auto& s : *flags) {
-            if (s == "super") {
+            if (s == data_value("super")) {
                 // cf = cf_type::super;
                 fail(unimplemented::cause::SUPER);
-            } else if (s == "dense") {
+            } else if (s == data_value("dense")) {
                 is_dense = true;
-            } else if (s == "compound") {
+            } else if (s == data_value("compound")) {
                 is_compound = true;
-            } else if (s == "counter") {
+            } else if (s == data_value("counter")) {
                 is_counter = true;
             }
         }
@@ -3804,8 +3804,8 @@ future<column_mapping> get_column_mapping(db::system_keyspace& sys_ks, ::table_i
     shared_ptr<cql3::untyped_result_set> results = co_await sys_ks._qp.execute_internal(
         GET_COLUMN_MAPPING_QUERY,
         db::consistency_level::LOCAL_ONE,
-        {table_id.uuid(), version.uuid()},
-        cql3::query_processor::cache_internal::no
+        cql3::query_processor::cache_internal::no,
+        table_id.uuid(), version.uuid()
     );
     if (results->empty()) {
         // If we don't have a stored column_mapping for an obsolete schema version
@@ -3845,8 +3845,8 @@ future<bool> column_mapping_exists(db::system_keyspace& sys_ks, table_id table_i
     shared_ptr<cql3::untyped_result_set> results = co_await sys_ks._qp.execute_internal(
         GET_COLUMN_MAPPING_QUERY,
         db::consistency_level::LOCAL_ONE,
-        {table_id.uuid(), version.uuid()},
-        cql3::query_processor::cache_internal::yes
+        cql3::query_processor::cache_internal::yes,
+        table_id.uuid(), version.uuid()
     );
     co_return !results->empty();
 }
@@ -3858,8 +3858,8 @@ future<> drop_column_mapping(db::system_keyspace& sys_ks, table_id table_id, tab
     co_await sys_ks._qp.execute_internal(
         DEL_COLUMN_MAPPING_QUERY,
         db::consistency_level::LOCAL_ONE,
-        {table_id.uuid(), version.uuid()},
-        cql3::query_processor::cache_internal::no);
+        cql3::query_processor::cache_internal::no,
+        table_id.uuid(), version.uuid());
 }
 
 } // namespace schema_tables

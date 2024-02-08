@@ -369,11 +369,11 @@ SEASTAR_TEST_CASE(test_inject_cql) {
             // Type of returned list of error injections cql3/functions/error_injcetion_fcts.cc
             const auto my_list_type = list_type_impl::get_instance(ascii_type, false);
 #ifdef SCYLLA_ENABLE_ERROR_INJECTION
-            auto row_empty = my_list_type->decompose(make_list_value(my_list_type, list_type_impl::native_type{{}}));
-            auto row_test1 = my_list_type->decompose(make_list_value(my_list_type, list_type_impl::native_type{{"test1"}}));
-            auto row_test2 = my_list_type->decompose(make_list_value(my_list_type, list_type_impl::native_type{{"test2"}}));
+            auto row_empty = my_list_type->decompose(make_list_value(my_list_type, {}));
+            auto row_test1 = my_list_type->decompose(make_list_value(my_list_type, {"test1"}));
+            auto row_test2 = my_list_type->decompose(make_list_value(my_list_type, {"test2"}));
 #else
-            auto row_empty = my_list_type->decompose(make_list_value(my_list_type, list_type_impl::native_type{{}}));
+            auto row_empty = my_list_type->decompose(make_list_value(my_list_type, {}));
             auto row_test1 = row_empty;
             auto row_test2 = row_empty;
 #endif

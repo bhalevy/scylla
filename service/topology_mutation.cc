@@ -142,15 +142,15 @@ const schema& topology_node_mutation_builder::schema() const {
 }
 
 topology_node_mutation_builder& topology_node_mutation_builder::set(const char* cell, const std::unordered_set<raft::server_id>& nodes_ids) {
-    return apply_set(cell, collection_apply_mode::overwrite, nodes_ids | boost::adaptors::transformed([] (const auto& node_id) { return node_id.id; }));
+    return apply_set(cell, collection_apply_mode::overwrite, nodes_ids | boost::adaptors::transformed([] (const auto& node_id) { return data_value(node_id.id); }));
 }
 
 topology_node_mutation_builder& topology_node_mutation_builder::set(const char* cell, const std::unordered_set<dht::token>& tokens) {
-    return apply_set(cell, collection_apply_mode::overwrite, tokens | boost::adaptors::transformed([] (const auto& t) { return t.to_sstring(); }));
+    return apply_set(cell, collection_apply_mode::overwrite, tokens | boost::adaptors::transformed([] (const auto& t) { return data_value(t.to_sstring()); }));
 }
 
 topology_node_mutation_builder& topology_node_mutation_builder::set(const char* cell, const std::set<sstring>& features) {
-    return apply_set(cell, collection_apply_mode::overwrite, features | boost::adaptors::transformed([] (const auto& f) { return sstring(f); }));
+    return apply_set(cell, collection_apply_mode::overwrite, features | boost::adaptors::transformed([] (const auto& f) { return data_value(f); }));
 }
 
 canonical_mutation topology_node_mutation_builder::build() {
@@ -215,7 +215,7 @@ topology_mutation_builder& topology_mutation_builder::set_new_cdc_generation_dat
 
 topology_mutation_builder& topology_mutation_builder::set_unpublished_cdc_generations(const std::vector<cdc::generation_id_v2>& values) {
     auto dv = values | boost::adaptors::transformed([&] (const auto& v) {
-        return make_tuple_value(db::cdc_generation_ts_id_type, tuple_type_impl::native_type({v.ts, timeuuid_native_type{v.id}}));
+        return make_tuple_value(db::cdc_generation_ts_id_type, tuple_type_impl::make_native_type(v.ts, timeuuid_native_type{v.id}));
     });
     return apply_set("unpublished_cdc_generations", collection_apply_mode::overwrite, std::move(dv));
 }
@@ -229,11 +229,11 @@ topology_mutation_builder& topology_mutation_builder::set_upgrade_state(topology
 }
 
 topology_mutation_builder& topology_mutation_builder::add_enabled_features(const std::set<sstring>& features) {
-    return apply_set("enabled_features", collection_apply_mode::update, features | boost::adaptors::transformed([] (const auto& f) { return sstring(f); }));
+    return apply_set("enabled_features", collection_apply_mode::update, features | boost::adaptors::transformed([] (const auto& f) { return data_value(f); }));
 }
 
 topology_mutation_builder& topology_mutation_builder::add_unpublished_cdc_generation(const cdc::generation_id_v2& value) {
-    auto dv = make_tuple_value(db::cdc_generation_ts_id_type, tuple_type_impl::native_type({value.ts, timeuuid_native_type{value.id}}));
+    auto dv = make_tuple_value(db::cdc_generation_ts_id_type, tuple_type_impl::make_native_type(value.ts, timeuuid_native_type{value.id}));
     return apply_set("unpublished_cdc_generations", collection_apply_mode::update, std::vector<data_value>{std::move(dv)});
 }
 

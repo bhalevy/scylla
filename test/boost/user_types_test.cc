@@ -11,6 +11,7 @@
 #include "test/lib/cql_test_env.hh"
 #include "test/lib/cql_assertions.hh"
 
+#include "types/types.hh"
 #include "types/user.hh"
 #include "types/list.hh"
 #include "test/lib/exception_utils.hh"
@@ -89,9 +90,9 @@ SEASTAR_TEST_CASE(test_user_type) {
                         {to_bytes("my_int"), to_bytes("my_bigint"), to_bytes("my_text")},
                         {int32_type, long_type, utf8_type}, false);
             auto ut_val = make_user_value(ut,
-                          user_type_impl::native_type({int32_t(2001),
+                          user_type_impl::make_native_type(int32_t(2001),
                                                        int64_t(3001),
-                                                       sstring("abc4")}));
+                                                       sstring("abc4")));
             assert_that(msg).is_rows()
                 .with_rows({
                      {ut->decompose(ut_val)},
@@ -229,6 +230,11 @@ SEASTAR_TEST_CASE(test_drop_user_type_used_in_udf) {
     }, db_cfg_ptr);
 }
 
+template <typename... Args>
+auto mk_ut(data_type ut, Args&&... args) {
+    return ut->decompose(make_user_value(ut, { data_value(std::forward<Args>(args))... }));
+};
+
 static future<> test_alter_user_type(bool frozen) {
     return do_with_cql_env_thread([frozen] (cql_test_env& e) {
         const sstring val1 = "1";
@@ -251,22 +257,18 @@ static future<> test_alter_user_type(bool frozen) {
         auto ut = user_type_impl::get_instance("ks", to_bytes("ut"),
                     {to_bytes("b"), to_bytes("a")}, {utf8_type, int32_type}, !frozen);
 
-        auto mk_ut = [&] (const std::vector<data_value>& vs) {
-            return ut->decompose(make_user_value(ut, user_type_impl::native_type(vs)));
-        };
-
         auto mk_int = [] (int x) { return int32_type->decompose(x); };
 
         auto int_null = data_value::make_null(int32_type);
         auto text_null = data_value::make_null(utf8_type);
 
         assert_that(e.execute_cql("select * from cf").get()).is_rows().with_rows_ignore_order({
-            {mk_int(1), (frozen ? mk_ut({val1}) : mk_ut({val1, int_null}))},
-            {mk_int(2), mk_ut({val2, 2})},
+            {mk_int(1), (frozen ? mk_ut(ut, val1) : mk_ut(ut, val1, int_null))},
+            {mk_int(2), mk_ut(ut, val2, 2)},
         });
 
         assert_that(e.execute_cql("select * from cf where b={b:'1'} allow filtering").get()).is_rows().with_rows_ignore_order({
-            {mk_int(1), (frozen ? mk_ut({val1}) : mk_ut({val1, int_null}))},
+            {mk_int(1), (frozen ? mk_ut(ut, val1) : mk_ut(ut, val1, int_null))},
         });
 
         assert_that(e.execute_cql("select b.a from cf").get()).is_rows().with_rows_ignore_order({
@@ -282,8 +284,8 @@ static future<> test_alter_user_type(bool frozen) {
                     {to_bytes("b"), to_bytes("a"), to_bytes("c")}, {utf8_type, int32_type, int32_type}, !frozen);
 
         assert_that(e.execute_cql("select * from cf").get()).is_rows().with_rows_ignore_order({
-            {mk_int(1), (frozen ? mk_ut({val1}) : mk_ut({val1, int_null, int_null}))},
-            {mk_int(2), (frozen ? mk_ut({val2, 2}) : mk_ut({val2, 2, int_null}))},
+            {mk_int(1), (frozen ? mk_ut(ut, val1) : mk_ut(ut, val1, int_null, int_null))},
+            {mk_int(2), (frozen ? mk_ut(ut, val2, 2) : mk_ut(ut, val2, 2, int_null))},
         });
 
         e.execute_cql("alter type ut rename b to foo").discard_result().get();
@@ -296,10 +298,10 @@ static future<> test_alter_user_type(bool frozen) {
 
         before_and_after_flush(e, [&] {
             assert_that(e.execute_cql("select * from cf").get()).is_rows().with_rows_ignore_order({
-                {mk_int(1), (frozen ? mk_ut({val1}) : mk_ut({val1, int_null, int_null}))},
-                {mk_int(2), (frozen ? mk_ut({val2, 2}) : mk_ut({val2, 2, int_null}))},
-                {mk_int(3), (frozen ? mk_ut({val3, 3, 3}) : mk_ut({val3, 3, 3}))},
-                {mk_int(4), mk_ut({val4, int_null, 4})},
+                {mk_int(1), (frozen ? mk_ut(ut, val1) : mk_ut(ut, val1, int_null, int_null))},
+                {mk_int(2), (frozen ? mk_ut(ut, val2, 2) : mk_ut(ut, val2, 2, int_null))},
+                {mk_int(3), (frozen ? mk_ut(ut, val3, 3, 3) : mk_ut(ut, val3, 3, 3))},
+                {mk_int(4), mk_ut(ut, val4, int_null, 4)},
             });
 
             assert_that(e.execute_cql("select b.foo from cf").get()).is_rows().with_rows_ignore_order({
@@ -356,15 +358,15 @@ future<> test_user_type_insert_delete(bool frozen) {
 
         before_and_after_flush(e, [&] {
             assert_that(msg).is_rows().with_rows_ignore_order({
-                mk_row(1, {1, "text1", int64_t(1)}),
-                mk_row(2, {2, text_null, int64_t(2)}),
-                mk_row(3, {int_null, "text3", int64_t(3)}),
-                mk_row(4, {4, "text4", long_null}),
+                mk_row(1, make_data_value_vector(1, "text1", int64_t(1))),
+                mk_row(2, make_data_value_vector(2, text_null, int64_t(2))),
+                mk_row(3, make_data_value_vector(int_null, "text3", int64_t(3))),
+                mk_row(4, make_data_value_vector(4, "text4", long_null)),
                 mk_null_row(5),
-                (frozen ? mk_row(6, {int_null, text_null, long_null}) : mk_null_row(6)),
-                (frozen ? mk_row(7, {7}) : mk_row(7, {7, text_null, long_null})),
-                mk_row(8, {8, text_null,  int64_t(8)}),
-                (frozen ? mk_row(9, {9, "text9"}) : mk_row(9, {9, "text9", long_null})),
+                (frozen ? mk_row(6, make_data_value_vector(int_null, text_null, long_null)) : mk_null_row(6)),
+                (frozen ? mk_row(7, make_data_value_vector(7)) : mk_row(7, make_data_value_vector(7, text_null, long_null))),
+                mk_row(8, make_data_value_vector(8, text_null,  int64_t(8))),
+                (frozen ? mk_row(9, make_data_value_vector(9, "text9")) : mk_row(9, make_data_value_vector(9, "text9", long_null))),
             });
         });
         }
@@ -372,8 +374,8 @@ future<> test_user_type_insert_delete(bool frozen) {
         msg = e.execute_cql("select b.b from cf").get();
 
         {
-        auto mk_row = [&] (const data_value& v) -> std::vector<bytes_opt> {
-            return {utf8_type->decompose(v)};
+        auto mk_row = [&] (const sstring& v) -> std::vector<bytes_opt> {
+            return {utf8_type->decompose(data_value(v))};
         };
 
         before_and_after_flush(e, [&] {
@@ -457,9 +459,9 @@ SEASTAR_TEST_CASE(test_nonfrozen_user_type_set_field) {
 
         before_and_after_flush(e, [&] {
             assert_that(e.execute_cql("select * from cf").get()).is_rows().with_rows_ignore_order({
-                mk_row(1, {1, "text", int64_t(1)}),
-                mk_row(2, {2, text_null, int64_t(2)}),
-                mk_row(3, {int_null, text_null, int64_t(3)}),
+                mk_row(1, make_data_value_vector(1, "text", int64_t(1))),
+                mk_row(2, make_data_value_vector(2, text_null, int64_t(2))),
+                mk_row(3, make_data_value_vector(int_null, text_null, int64_t(3))),
             });
         });
 
@@ -467,7 +469,7 @@ SEASTAR_TEST_CASE(test_nonfrozen_user_type_set_field) {
 
         before_and_after_flush(e, [&] {
             assert_that(e.execute_cql("select * from cf where a = 1").get()).is_rows().with_rows_ignore_order({
-                mk_row(1, {int_null, "text", int64_t(1)}),
+                mk_row(1, make_data_value_vector(int_null, "text", int64_t(1))),
             });
         });
 
@@ -475,8 +477,8 @@ SEASTAR_TEST_CASE(test_nonfrozen_user_type_set_field) {
 
         before_and_after_flush(e, [&] {
             assert_that(e.execute_cql("select * from cf").get()).is_rows().with_rows_ignore_order({
-                mk_row(1, {int_null, "text", long_null}),
-                mk_row(2, {2, text_null, long_null}),
+                mk_row(1, make_data_value_vector(int_null, "text", long_null)),
+                mk_row(2, make_data_value_vector(2, text_null, long_null)),
                 mk_null_row(3),
             });
         });
@@ -521,8 +523,8 @@ SEASTAR_TEST_CASE(test_nonfrozen_user_type_set_field) {
 
         before_and_after_flush(e, [&] {
             assert_that(e.execute_cql("select * from cf").get()).is_rows().with_rows_ignore_order({
-                mk_row(1, {1, text_null, long_null, ut_inner_null}),
-                mk_row(2, {int_null, text_null, long_null, mk_ut_inner_val({1, 2})}),
+                mk_row(1, make_data_value_vector(1, text_null, long_null, ut_inner_null)),
+                mk_row(2, make_data_value_vector(int_null, text_null, long_null, mk_ut_inner_val(make_data_value_vector(1, 2)))),
                 mk_null_row(3),
             });
         });
@@ -567,13 +569,13 @@ SEASTAR_TEST_CASE(test_nonfrozen_user_types_prepared) {
         e.execute_cql("create type ut (a int, b text, c bigint)").discard_result().get();
         e.execute_cql("create table cf (a int primary key, b ut)").discard_result().get();
 
-        execute_prepared("insert into cf (a, b) values (?, ?)", {mk_int(1), mk_ut({1, "text1", long_null})});
-        execute_prepared("insert into cf (a, b) values (?, ?)", {mk_int(2), mk_ut({2, text_null, int64_t(2)})});
+        execute_prepared("insert into cf (a, b) values (?, ?)", {mk_int(1), mk_ut(make_data_value_vector(1, "text1", long_null))});
+        execute_prepared("insert into cf (a, b) values (?, ?)", {mk_int(2), mk_ut(make_data_value_vector(2, text_null, int64_t(2)))});
         execute_prepared("insert into cf (a, b) values (?, ?)", {mk_int(3), mk_ut({})});
 
         assert_that(e.execute_cql("select * from cf").get()).is_rows().with_rows_ignore_order({
-            mk_row(1, {1, "text1", long_null}),
-            mk_row(2, {2, text_null, int64_t(2)}),
+            mk_row(1, make_data_value_vector(1, "text1", long_null)),
+            mk_row(2, make_data_value_vector(2, text_null, int64_t(2))),
             mk_null_row(3),
         });
 
@@ -593,14 +595,14 @@ SEASTAR_TEST_CASE(test_nonfrozen_user_types_prepared) {
                     ut_list_type->decompose(make_list_value(ut_list_type, list_type_impl::native_type(ut_vs))));
         };
 
-        assert_that(query_prepared("select * from cf where b in ? allow filtering", {mk_ut_list({{1, "text1", long_null}, {}})}))
+        assert_that(query_prepared("select * from cf where b in ? allow filtering", {mk_ut_list({make_data_value_vector(1, "text1", long_null), {}})}))
                 .is_rows().with_rows_ignore_order({
-            mk_row(1, {1, "text1", long_null}),
+            mk_row(1, make_data_value_vector(1, "text1", long_null)),
         });
 
-        execute_prepared("insert into cf (a, b) values (?, ?)", {mk_int(4), mk_tuple({4, "text4", int64_t(4)})});
+        execute_prepared("insert into cf (a, b) values (?, ?)", {mk_int(4), mk_tuple(make_data_value_vector(4, "text4", int64_t(4)))});
         assert_that(e.execute_cql("select * from cf where a = 4").get()).is_rows().with_rows_ignore_order({
-            mk_row(4, {4, "text4", int64_t(4)}),
+            mk_row(4, make_data_value_vector(4, "text4", int64_t(4))),
         });
 
         auto mk_longer_tuple = [&] (const std::vector<data_value>& vs) {
@@ -609,7 +611,7 @@ SEASTAR_TEST_CASE(test_nonfrozen_user_types_prepared) {
         };
 
         BOOST_REQUIRE_EXCEPTION(
-            execute_prepared("insert into cf (a, b) values (?, ?)", {mk_int(4), mk_longer_tuple({4, "text4", int64_t(4), 5})}),
+            execute_prepared("insert into cf (a, b) values (?, ?)", {mk_int(4), mk_longer_tuple(make_data_value_vector(4, "text4", int64_t(4), 5))}),
             exceptions::invalid_request_exception,
             exception_predicate::message_contains("contained too many fields (expected 3, got 4)"));
     });

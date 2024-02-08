@@ -91,7 +91,7 @@ shared_ptr<function> make_enabled_injections_function() {
             }, std::vector<data_value>(),
             [](std::vector<data_value> a, std::vector<sstring>&& b) -> std::vector<data_value> {
                 for (auto&& x : b) {
-                    if (a.end() == std::find(a.begin(), a.end(), x)) {
+                    if (a.end() == std::find(a.begin(), a.end(), data_value(x))) {
                         a.push_back(data_value(std::move(x)));
                     }
                 }

@@ -55,8 +55,8 @@ future<bool> default_role_row_satisfies(
     for (auto cl : { db::consistency_level::ONE, db::consistency_level::QUORUM }) {
         auto results = co_await qp.execute_internal(query, cl
             , internal_distributed_query_state()
-            , {rolename.value_or(std::string(meta::DEFAULT_SUPERUSER_NAME))}
             , cql3::query_processor::cache_internal::yes
+            , rolename.value_or(std::string(meta::DEFAULT_SUPERUSER_NAME))
             );
         if (!results->empty()) {
             co_return p(results->one());

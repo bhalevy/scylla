@@ -4383,10 +4383,10 @@ SEASTAR_TEST_CASE(test_populating_cache_with_expired_and_nonexpired_tombstones) 
 
         dht::decorated_key dk = tests::generate_partition_key(s);
 
-        auto ck1 = clustering_key::from_deeply_exploded(*s, {1});
-        auto ck1_prefix = clustering_key_prefix::from_deeply_exploded(*s, {1});
-        auto ck2 = clustering_key::from_deeply_exploded(*s, {2});
-        auto ck2_prefix = clustering_key_prefix::from_deeply_exploded(*s, {2});
+        auto ck1 = clustering_key::from_deeply_exploded(*s, make_data_value_vector(1));
+        auto ck1_prefix = clustering_key_prefix::from_deeply_exploded(*s, make_data_value_vector(1));
+        auto ck2 = clustering_key::from_deeply_exploded(*s, make_data_value_vector(2));
+        auto ck2_prefix = clustering_key_prefix::from_deeply_exploded(*s, make_data_value_vector(2));
 
         auto dt_noexp = gc_clock::now();
         auto dt_exp = gc_clock::now() - std::chrono::seconds(s->gc_grace_seconds().count() + 1);

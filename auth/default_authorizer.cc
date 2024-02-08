@@ -162,8 +162,8 @@ default_authorizer::authorize(const role_or_anonymous& maybe_role, const resourc
     return _qp.execute_internal(
             query,
             db::consistency_level::LOCAL_ONE,
-            {*maybe_role.name, r.name()},
-            cql3::query_processor::cache_internal::yes).then([](::shared_ptr<cql3::untyped_result_set> results) {
+            cql3::query_processor::cache_internal::yes,
+            *maybe_role.name, r.name()).then([](::shared_ptr<cql3::untyped_result_set> results) {
         if (results->empty()) {
             return permissions::NONE;
         }
@@ -192,8 +192,8 @@ default_authorizer::modify(
                 query,
                 db::consistency_level::ONE,
                 internal_distributed_query_state(),
-                {permissions::to_strings(set), sstring(role_name), resource.name()},
-                cql3::query_processor::cache_internal::no).discard_result();
+                cql3::query_processor::cache_internal::no,
+                permissions::to_strings(set), sstring(role_name), resource.name()).discard_result();
     });
 }
 
@@ -245,8 +245,8 @@ future<> default_authorizer::revoke_all(std::string_view role_name) const {
             query,
             db::consistency_level::ONE,
             internal_distributed_query_state(),
-            {sstring(role_name)},
-            cql3::query_processor::cache_internal::no).discard_result().handle_exception([role_name](auto ep) {
+            cql3::query_processor::cache_internal::no,
+            sstring(role_name)).discard_result().handle_exception([role_name](auto ep) {
         try {
             std::rethrow_exception(ep);
         } catch (exceptions::request_execution_exception& e) {
@@ -265,8 +265,8 @@ future<> default_authorizer::revoke_all(const resource& resource) const {
     return _qp.execute_internal(
             query,
             db::consistency_level::LOCAL_ONE,
-            {resource.name()},
-            cql3::query_processor::cache_internal::no).then_wrapped([this, resource](future<::shared_ptr<cql3::untyped_result_set>> f) {
+            cql3::query_processor::cache_internal::no,
+            resource.name()).then_wrapped([this, resource](future<::shared_ptr<cql3::untyped_result_set>> f) {
         try {
             auto res = f.get();
             return parallel_for_each(
@@ -282,8 +282,8 @@ future<> default_authorizer::revoke_all(const resource& resource) const {
                 return _qp.execute_internal(
                         query,
                         db::consistency_level::LOCAL_ONE,
-                        {r.get_as<sstring>(ROLE_NAME), resource.name()},
-                        cql3::query_processor::cache_internal::no).discard_result().handle_exception(
+                        cql3::query_processor::cache_internal::no,
+                        r.get_as<sstring>(ROLE_NAME), resource.name()).discard_result().handle_exception(
                                 [resource](auto ep) {
                     try {
                         std::rethrow_exception(ep);

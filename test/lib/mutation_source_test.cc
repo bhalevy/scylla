@@ -28,6 +28,7 @@
 #include "test/lib/log.hh"
 #include "test/lib/reader_concurrency_semaphore.hh"
 #include <boost/algorithm/string/join.hpp>
+#include "types/types.hh"
 #include "types/user.hh"
 #include "types/map.hh"
 #include "types/list.hh"
@@ -2482,16 +2483,16 @@ void for_each_schema_change(std::function<void(schema_ptr, const std::vector<mut
         };
     };
     auto random_frozen_map = [&] {
-        return map_of_int_to_int->decompose(make_map_value(map_of_int_to_int, map_type_impl::native_type({
-            { 1, tests::random::get_int<int32_t>() },
-            { 2, tests::random::get_int<int32_t>() },
-            { 3, tests::random::get_int<int32_t>() },
-        })));
+        return map_of_int_to_int->decompose(make_map_value(map_of_int_to_int, {
+            std::make_pair(1, tests::random::get_int<int32_t>()),
+            std::make_pair(2, tests::random::get_int<int32_t>()),
+            std::make_pair(3, tests::random::get_int<int32_t>()),
+        }));
     };
     auto random_tuple = [&] {
-        return tuple_of_int_long->decompose(make_tuple_value(tuple_of_int_long, tuple_type_impl::native_type{
-            tests::random::get_int<int32_t>(), tests::random::get_int<int64_t>(),
-        }));
+        return tuple_of_int_long->decompose(make_tuple_value(tuple_of_int_long, tuple_type_impl::make_native_type(
+            tests::random::get_int<int32_t>(), tests::random::get_int<int64_t>()
+        )));
     };
     auto random_set = [&] () -> tests::data_model::mutation_description::collection {
         return {
@@ -2507,10 +2508,10 @@ void for_each_schema_change(std::function<void(schema_ptr, const std::vector<mut
         };
     };
     auto random_frozen_udt = [&] {
-        return frozen_udt_int_text->decompose(make_user_value(udt_int_text, user_type_impl::native_type{
+        return frozen_udt_int_text->decompose(make_user_value(udt_int_text, user_type_impl::make_native_type(
             tests::random::get_int<int32_t>(),
-            tests::random::get_sstring(),
-        }));
+            tests::random::get_sstring()
+        )));
     };
 
     struct column_description {

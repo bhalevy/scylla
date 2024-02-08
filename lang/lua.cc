@@ -772,11 +772,11 @@ struct from_lua_visitor {
     }
 
     data_value operator()(const inet_addr_type_impl& t) {
-        return t.from_sstring(get_string(l, -1));
+        return data_value(t.from_sstring(get_string(l, -1)));
     }
 
     data_value operator()(const uuid_type_impl&) {
-        return uuid_type_impl::from_sstring(get_string(l, -1));
+        return data_value(uuid_type_impl::from_sstring(get_string(l, -1)));
     }
 
     data_value operator()(const timeuuid_type_impl&) {
@@ -794,7 +794,7 @@ struct from_lua_visitor {
         if (error_pos) {
             throw exceptions::invalid_request_exception(format("value is not valid utf8, invalid character at byte offset {}", *error_pos));
         }
-        return std::move(s);
+        return data_value(std::move(s));
     }
 
     data_value operator()(const ascii_type_impl& t) {
@@ -806,14 +806,14 @@ struct from_lua_visitor {
     }
 
     data_value operator()(const boolean_type_impl& t) {
-        return bool(lua_toboolean(l, -1));
+        return data_value(bool(lua_toboolean(l, -1)));
     }
 
     template <typename T> data_value operator()(const floating_type_impl<T>& t) {
-        return visit_lua_number(l, -1, make_visitor(
+        return data_value(visit_lua_number(l, -1, make_visitor(
                    [] (const big_decimal& v) -> T { return decimal_to_double(v); },
                    [] (const auto& v) { return T(v); }
-               ));
+               )));
     }
 
     int64_t get_integer() {
@@ -821,7 +821,7 @@ struct from_lua_visitor {
     }
 
     data_value operator()(const timestamp_date_base_class& t) {
-        return visit_lua_value(l, -1, timestamp_return_visitor{l});
+        return data_value(visit_lua_value(l, -1, timestamp_return_visitor{l}));
     }
 
     data_value operator()(const time_type_impl& t) {
@@ -845,11 +845,11 @@ struct from_lua_visitor {
     data_value operator()(const counter_type_impl&) {
         // No data_value ever has a counter type, it is represented
         // with long_type instead.
-        return get_integer();
+        return data_value(get_integer());
     }
 
     template <typename T> data_value operator()(const integer_type_impl<T>& t) {
-        return T(get_integer());
+        return data_value(T(get_integer()));
     }
 
     data_value operator()(const simple_date_type_impl& t) {
@@ -881,7 +881,7 @@ static data_value convert_from_lua(lua_State* l, const data_type& type) {
     if (lua_isnil(l, -1)) {
         return data_value::make_null(type);
     }
-    return ::visit(*type, from_lua_visitor{l});
+    return data_value(::visit(*type, from_lua_visitor{l}));
 }
 
 static bytes_opt convert_return(lua_slice_state &l, const data_type& return_type) {

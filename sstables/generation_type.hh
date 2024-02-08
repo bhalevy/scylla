@@ -101,7 +101,7 @@ public:
     // timeuuid from a timeuuid converted from a bigint -- we just use zero
     // for its timestamp of the latter.
     explicit operator data_value() const noexcept {
-        return _value;
+        return data_value(_value);
     }
     constexpr bool is_uuid_based() const noexcept {
         // if the value of generation_type should be an int64_t, its timestamp

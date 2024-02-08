@@ -397,7 +397,7 @@ inline void match_expiring_cell(const row& row, const schema& s, bytes col, cons
 }
 
 inline void match_dead_cell(const row& row, const schema& s, bytes col) {
-    match<status::dead>(row, s, col, 0); // value will be ignored
+    match<status::dead>(row, s, col, data_value(0)); // value will be ignored
 }
 
 inline void match_absent(const row& row, const schema& s, bytes col) {

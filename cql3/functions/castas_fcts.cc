@@ -68,13 +68,13 @@ using bytes_opt = std::optional<bytes>;
 template<typename ToType, typename FromType>
 static data_value castas_fctn_simple(data_value from) {
     auto val_from = value_cast<FromType>(from);
-    return static_cast<ToType>(val_from);
+    return data_value(static_cast<ToType>(val_from));
 }
 
 template<typename ToType>
 static data_value castas_fctn_from_decimal_to_float(data_value from) {
     auto val_from = value_cast<big_decimal>(from);
-    return static_cast<ToType>(val_from.as_rational());
+    return data_value(static_cast<ToType>(val_from.as_rational()));
 }
 
 static utils::multiprecision_int from_decimal_to_cppint(const data_value& from) {
@@ -86,13 +86,13 @@ static utils::multiprecision_int from_decimal_to_cppint(const data_value& from) 
 template<typename ToType>
 static data_value castas_fctn_from_varint_to_integer(data_value from) {
     const auto& varint = value_cast<utils::multiprecision_int>(from);
-    return static_cast<ToType>(from_varint_to_integer(varint));
+    return data_value(static_cast<ToType>(from_varint_to_integer(varint)));
 }
 
 template<typename ToType>
 static data_value castas_fctn_from_decimal_to_integer(data_value from) {
     auto varint = from_decimal_to_cppint(from);
-    return static_cast<ToType>(from_varint_to_integer(varint));
+    return data_value(static_cast<ToType>(from_varint_to_integer(varint)));
 }
 
 static data_value castas_fctn_from_decimal_to_varint(data_value from) {
@@ -113,15 +113,15 @@ static data_value castas_fctn_from_float_to_decimal(data_value from) {
 
 template<typename FromType>
 static data_value castas_fctn_to_string(data_value from) {
-    return to_sstring(value_cast<FromType>(from));
+    return data_value(to_sstring(value_cast<FromType>(from)));
 }
 
 static data_value castas_fctn_from_varint_to_string(data_value from) {
-    return to_sstring(value_cast<utils::multiprecision_int>(from).str());
+    return data_value(to_sstring(value_cast<utils::multiprecision_int>(from).str()));
 }
 
 static data_value castas_fctn_from_decimal_to_string(data_value from) {
-    return value_cast<big_decimal>(from).to_string();
+    return data_value(value_cast<big_decimal>(from).to_string());
 }
 
 simple_date_native_type time_point_to_date(const db_clock::time_point& tp) {
@@ -147,12 +147,12 @@ static data_value castas_fctn_from_timestamp_to_date(data_value from) {
 
 static data_value castas_fctn_from_date_to_timestamp(data_value from) {
     const auto val_from = value_cast<uint32_t>(from);
-    return date_to_time_point(val_from);
+    return data_value(date_to_time_point(val_from));
 }
 
 static data_value castas_fctn_from_timeuuid_to_timestamp(data_value from) {
     const auto val_from = value_cast<utils::UUID>(from);
-    return db_clock::time_point{db_clock::duration{utils::UUID_gen::unix_timestamp(val_from)}};
+    return data_value(db_clock::time_point{db_clock::duration{utils::UUID_gen::unix_timestamp(val_from)}});
 }
 
 static data_value castas_fctn_from_timeuuid_to_date(data_value from) {
@@ -161,7 +161,7 @@ static data_value castas_fctn_from_timeuuid_to_date(data_value from) {
 }
 
 static data_value castas_fctn_from_dv_to_string(data_value from) {
-    return from.type()->to_string_impl(from);
+    return data_value(from.type()->to_string_impl(from));
 }
 
 static constexpr unsigned next_power_of_2(unsigned val) {

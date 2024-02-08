@@ -22,6 +22,7 @@
 
 #include <seastar/core/future-util.hh>
 #include "transport/messages/result_message.hh"
+#include "types/types.hh"
 #include "utils/big_decimal.hh"
 #include "types/map.hh"
 #include "types/list.hh"
@@ -169,15 +170,17 @@ public:
         return *this;
     }
     aggregate_function_test& test_count() {
-        call_function_and_expect("count", long_type, int64_t(_sorted_values.size()));
+        call_function_and_expect("count", long_type, data_value(int64_t(_sorted_values.size())));
         return *this;
     }
-    aggregate_function_test& test_sum(data_value expected_result) {
-        call_function_and_expect("sum", _column_type, expected_result);
+    template <typename T>
+    aggregate_function_test& test_sum(const T& expected_result) {
+        call_function_and_expect("sum", _column_type, data_value(expected_result));
         return *this;
     }
-    aggregate_function_test& test_avg(data_value expected_result) {
-        call_function_and_expect("avg", _column_type, expected_result);
+    template <typename T>
+    aggregate_function_test& test_avg(const T& expected_result) {
+        call_function_and_expect("avg", _column_type, data_value(expected_result));
         return *this;
     }
     aggregate_function_test& test_min_max_count() {
@@ -390,9 +393,9 @@ SEASTAR_TEST_CASE(test_aggregate_functions_tuple_type) {
     return do_with_cql_env_thread([] (cql_test_env& e) {
         auto tuple_type_int_text = tuple_type_impl::get_instance({int32_type, utf8_type});
         aggregate_function_test(e, tuple_type_int_text,
-            make_tuple_value(tuple_type_int_text, {1, "aaa"}),
-            make_tuple_value(tuple_type_int_text, {1, "bbb"}),
-            make_tuple_value(tuple_type_int_text, {2, "aaa"})
+            make_tuple_value(tuple_type_int_text, tuple_type_impl::make_native_type(1, "aaa")),
+            make_tuple_value(tuple_type_int_text, tuple_type_impl::make_native_type(1, "bbb")),
+            make_tuple_value(tuple_type_int_text, tuple_type_impl::make_native_type(2, "aaa"))
         ).test_min_max_count();
     });
 }

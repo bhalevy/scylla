@@ -98,3 +98,18 @@ void require_rows(cql_test_env& e,
 /// Asserts that a cell at the given table.partition.row.column position contains expected data
 future<> require_column_has_value(cql_test_env&, const sstring& table_name,
         std::vector<data_value> pk, std::vector<data_value> ck, const sstring& column_name, data_value expected);
+
+/// Helper for simple pk and ck native types
+template <typename P, typename C, typename V>
+future<> require_column_has_value(cql_test_env& env, const sstring& table_name, std::initializer_list<P> pk, std::initializer_list<C> ck, const sstring& column_name, V expected) {
+    auto pk_data = boost::copy_range<std::vector<data_value>>(pk | boost::adaptors::transformed([] (const P& x) { return data_value(x); }));
+    auto ck_data = boost::copy_range<std::vector<data_value>>(ck | boost::adaptors::transformed([] (const C& x) { return data_value(x); }));
+    return require_column_has_value(env, table_name, std::move(pk_data), std::move(ck_data), column_name, data_value(expected));
+}
+
+// Helper for empty ck
+template <typename P, typename V>
+future<> require_column_has_value(cql_test_env& env, const sstring& table_name, std::initializer_list<P> pk, std::vector<data_value> ck, const sstring& column_name, V expected) {
+    auto pk_data = boost::copy_range<std::vector<data_value>>(pk | boost::adaptors::transformed([] (const P& x) { return data_value(x); }));
+    return require_column_has_value(env, table_name, std::move(pk_data), std::move(ck), column_name, data_value(expected));
+}

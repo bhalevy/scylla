@@ -350,26 +350,31 @@ public:
             service::query_state& query_state,
             const data_value_list& values,
             cache_internal cache);
+    template <typename... Args>
     future<::shared_ptr<untyped_result_set>> execute_internal(
             const sstring& query_string,
             db::consistency_level cl,
-            cache_internal cache) {
-        return execute_internal(query_string, cl, {}, cache);
+            cache_internal cache,
+            Args&&... args) {
+        return execute_internal(query_string, cl, { data_value(std::forward<Args>(args))... }, cache);
     }
+    template <typename... Args>
     future<::shared_ptr<untyped_result_set>> execute_internal(
             const sstring& query_string,
             db::consistency_level cl,
             service::query_state& query_state,
-            cache_internal cache) {
-        return execute_internal(query_string, cl, query_state, {}, cache);
+            cache_internal cache,
+            Args&&... args) {
+        return execute_internal(query_string, cl, query_state, { data_value(std::forward<Args>(args))... }, cache);
     }
     future<::shared_ptr<untyped_result_set>>
     execute_internal(const sstring& query_string, const data_value_list& values, cache_internal cache) {
         return execute_internal(query_string, db::consistency_level::ONE, values, cache);
     }
+    template <typename... Args>
     future<::shared_ptr<untyped_result_set>>
-    execute_internal(const sstring& query_string, cache_internal cache) {
-        return execute_internal(query_string, db::consistency_level::ONE, {}, cache);
+    execute_internal(const sstring& query_string, cache_internal cache, Args&&... args) {
+        return execute_internal(query_string, db::consistency_level::ONE, { data_value(std::forward<Args>(args))... }, cache);
     }
     future<::shared_ptr<untyped_result_set>> execute_with_params(
             statements::prepared_statement::checked_weak_ptr p,

@@ -3515,30 +3515,38 @@ data_value::data_value(seastar::net::ipv4_address v) : data_value(seastar::net::
 data_value::data_value(seastar::net::ipv6_address v) : data_value(seastar::net::inet_address(v)) {
 }
 
+template<>
 data_value::data_value(simple_date_native_type v) : data_value(make_new(simple_date_type, v.days)) {
 }
 
 data_value::data_value(db_clock::time_point v) : data_value(make_new(timestamp_type, v)) {
 }
 
+template<>
 data_value::data_value(time_native_type v) : data_value(make_new(time_type, v.nanoseconds)) {
 }
 
+template<>
 data_value::data_value(timeuuid_native_type v) : data_value(make_new(timeuuid_type, v.uuid)) {
 }
 
+template<>
 data_value::data_value(date_type_native_type v) : data_value(make_new(date_type, v.tp)) {
 }
 
+template<>
 data_value::data_value(utils::multiprecision_int v) : data_value(make_new(varint_type, v)) {
 }
 
+template<>
 data_value::data_value(big_decimal v) : data_value(make_new(decimal_type, v)) {
 }
 
+template<>
 data_value::data_value(cql_duration d) : data_value(make_new(duration_type, d)) {
 }
 
+template<>
 data_value::data_value(empty_type_representation e) : data_value(make_new(empty_type, e)) {
 }
 

@@ -50,14 +50,14 @@ future<> raft_sys_table_storage::store_term_and_vote(raft::term_t term, raft::se
         static const auto store_cql = format("INSERT INTO system.{} (group_id, vote_term, vote) VALUES (?, ?, ?)",
             db::system_keyspace::RAFT);
         return _qp.execute_internal(
-            store_cql,
-            {_group_id.id, int64_t(term), vote.id}, cql3::query_processor::cache_internal::yes).discard_result();
+            store_cql, cql3::query_processor::cache_internal::yes,
+            _group_id.id, int64_t(term), vote.id).discard_result();
     });
 }
 
 future<std::pair<raft::term_t, raft::server_id>> raft_sys_table_storage::load_term_and_vote() {
     static const auto load_cql = format("SELECT vote_term, vote FROM system.{} WHERE group_id = ? LIMIT 1", db::system_keyspace::RAFT);
-    ::shared_ptr<cql3::untyped_result_set> rs = co_await _qp.execute_internal(load_cql, {_group_id.id}, cql3::query_processor::cache_internal::yes);
+    ::shared_ptr<cql3::untyped_result_set> rs = co_await _qp.execute_internal(load_cql, cql3::query_processor::cache_internal::yes, _group_id.id);
     if (rs->empty()) {
         co_return std::pair(raft::term_t(), raft::server_id());
     }
@@ -73,14 +73,14 @@ future<> raft_sys_table_storage::store_commit_idx(raft::index_t idx) {
             db::system_keyspace::RAFT);
         return _qp.execute_internal(
             store_cql,
-            {_group_id.id, int64_t(idx)},
-            cql3::query_processor::cache_internal::yes).discard_result();
+            cql3::query_processor::cache_internal::yes,
+            _group_id.id, int64_t(idx)).discard_result();
     });
 }
 
 future<raft::index_t> raft_sys_table_storage::load_commit_idx() {
     static const auto load_cql = format("SELECT commit_idx FROM system.{} WHERE group_id = ? LIMIT 1", db::system_keyspace::RAFT);
-    ::shared_ptr<cql3::untyped_result_set> rs = co_await _qp.execute_internal(load_cql, {_group_id.id}, cql3::query_processor::cache_internal::yes);
+    ::shared_ptr<cql3::untyped_result_set> rs = co_await _qp.execute_internal(load_cql, cql3::query_processor::cache_internal::yes, _group_id.id);
     if (rs->empty()) {
         co_return raft::index_t(0);
     }
@@ -91,7 +91,7 @@ future<raft::index_t> raft_sys_table_storage::load_commit_idx() {
 
 future<raft::log_entries> raft_sys_table_storage::load_log() {
     static const auto load_cql = format("SELECT term, \"index\", data FROM system.{} WHERE group_id = ?", db::system_keyspace::RAFT);
-    ::shared_ptr<cql3::untyped_result_set> rs = co_await _qp.execute_internal(load_cql, {_group_id.id}, cql3::query_processor::cache_internal::yes);
+    ::shared_ptr<cql3::untyped_result_set> rs = co_await _qp.execute_internal(load_cql, cql3::query_processor::cache_internal::yes, _group_id.id);
 
     raft::log_entries log;
     for (const cql3::untyped_result_set_row& row : *rs) {
@@ -117,7 +117,7 @@ future<raft::log_entries> raft_sys_table_storage::load_log() {
 
 future<raft::snapshot_descriptor> raft_sys_table_storage::load_snapshot_descriptor() {
     static const auto load_id_cql = format("SELECT snapshot_id FROM system.{} WHERE group_id = ? LIMIT 1", db::system_keyspace::RAFT);
-    ::shared_ptr<cql3::untyped_result_set> id_rs = co_await _qp.execute_internal(load_id_cql, {_group_id.id}, cql3::query_processor::cache_internal::yes);
+    ::shared_ptr<cql3::untyped_result_set> id_rs = co_await _qp.execute_internal(load_id_cql, cql3::query_processor::cache_internal::yes, _group_id.id);
     if (id_rs->empty() || !id_rs->one().has("snapshot_id")) {
         co_return raft::snapshot_descriptor();
     }
@@ -127,13 +127,13 @@ future<raft::snapshot_descriptor> raft_sys_table_storage::load_snapshot_descript
     // Fetch raft log index and term for the latest snapshot descriptor
     static const auto load_snp_info_cql = format("SELECT idx, term FROM system.{} WHERE group_id = ?",
         db::system_keyspace::RAFT_SNAPSHOTS);
-    ::shared_ptr<cql3::untyped_result_set> snp_rs = co_await _qp.execute_internal(load_snp_info_cql, {_group_id.id}, cql3::query_processor::cache_internal::yes);
+    ::shared_ptr<cql3::untyped_result_set> snp_rs = co_await _qp.execute_internal(load_snp_info_cql, cql3::query_processor::cache_internal::yes, _group_id.id);
     // Should be only one matching row, since each individual server can only
     // have a single snapshot installed at a time
     const auto& snp_row = snp_rs->one();
     // Fetch current and previous raft configurations for the snapshot
     static const auto  load_cfg_cql = format("SELECT disposition, server_id, can_vote FROM system.{} WHERE group_id = ?", db::system_keyspace::RAFT_SNAPSHOT_CONFIG);
-    ::shared_ptr<cql3::untyped_result_set> cfg_rs = co_await _qp.execute_internal(load_cfg_cql, {_group_id.id}, cql3::query_processor::cache_internal::yes);
+    ::shared_ptr<cql3::untyped_result_set> cfg_rs = co_await _qp.execute_internal(load_cfg_cql, cql3::query_processor::cache_internal::yes, _group_id.id);
 
     raft::configuration cfg;
 
@@ -162,24 +162,24 @@ future<> raft_sys_table_storage::store_snapshot_descriptor(const raft::snapshot_
             db::system_keyspace::RAFT_SNAPSHOTS);
         co_await _qp.execute_internal(
             store_snp_cql,
-            {_group_id.id, snap.id.id, int64_t(snap.idx), int64_t(snap.term)},
-            cql3::query_processor::cache_internal::yes
+            cql3::query_processor::cache_internal::yes,
+            _group_id.id, snap.id.id, int64_t(snap.idx), int64_t(snap.term)
         );
         // remove old configs
         static const auto delete_raft_cfg_cql = format("DELETE FROM system.{} WHERE group_id = ?", db::system_keyspace::RAFT_SNAPSHOT_CONFIG);
-        co_await _qp.execute_internal(delete_raft_cfg_cql, {_group_id.id}, cql3::query_processor::cache_internal::yes);
+        co_await _qp.execute_internal(delete_raft_cfg_cql, cql3::query_processor::cache_internal::yes, _group_id.id);
         // store current and previous raft configurations
         static const auto store_raft_cfg_cql = format("INSERT INTO system.{} (group_id, disposition, server_id, can_vote) VALUES (?, ?, ?, ?)",
             db::system_keyspace::RAFT_SNAPSHOT_CONFIG);
         for (const raft::config_member& srv : snap.config.current) {
             co_await _qp.execute_internal(store_raft_cfg_cql,
-                {_group_id.id, "CURRENT", srv.addr.id.id, srv.can_vote},
-                    cql3::query_processor::cache_internal::yes);
+                    cql3::query_processor::cache_internal::yes,
+                    _group_id.id, "CURRENT", srv.addr.id.id, srv.can_vote);
         }
         for (const raft::config_member& srv : snap.config.previous) {
             co_await _qp.execute_internal(store_raft_cfg_cql,
-                {_group_id.id, "PREVIOUS", srv.addr.id.id, srv.can_vote},
-                    cql3::query_processor::cache_internal::yes);
+                    cql3::query_processor::cache_internal::yes,
+                    _group_id.id, "PREVIOUS", srv.addr.id.id, srv.can_vote);
         }
 
         if (preserve_log_entries > snap.idx) {
@@ -187,8 +187,8 @@ future<> raft_sys_table_storage::store_snapshot_descriptor(const raft::snapshot_
                 db::system_keyspace::RAFT);
             co_await _qp.execute_internal(
                 store_latest_id_cql,
-                {_group_id.id, snap.id.id},
-                cql3::query_processor::cache_internal::yes
+                cql3::query_processor::cache_internal::yes,
+                _group_id.id, snap.id.id
             );
         } else {
             co_await update_snapshot_and_truncate_log_tail(snap, preserve_log_entries);
@@ -296,7 +296,7 @@ future<> raft_sys_table_storage::truncate_log(raft::index_t idx) {
     return execute_with_linearization_point([this, idx] {
         static const auto truncate_cql = format("DELETE FROM system.{} WHERE group_id = ? AND \"index\" >= ?",
             db::system_keyspace::RAFT); 
-        return _qp.execute_internal(truncate_cql, {_group_id.id, int64_t(idx)}, cql3::query_processor::cache_internal::yes).discard_result();
+        return _qp.execute_internal(truncate_cql, cql3::query_processor::cache_internal::yes, _group_id.id, int64_t(idx)).discard_result();
     });
 }
 
@@ -317,8 +317,8 @@ future<> raft_sys_table_storage::update_snapshot_and_truncate_log_tail(const raf
         db::system_keyspace::RAFT, db::system_keyspace::RAFT);
     return _qp.execute_internal(
         store_latest_id_and_truncate_log_tail_cql,
-        {_group_id.id, snap.id.id, _group_id.id, int64_t(log_tail_idx)},
-        cql3::query_processor::cache_internal::yes
+        cql3::query_processor::cache_internal::yes,
+        _group_id.id, snap.id.id, _group_id.id, int64_t(log_tail_idx)
     ).discard_result();
 }
 

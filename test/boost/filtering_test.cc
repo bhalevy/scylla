@@ -460,46 +460,46 @@ SEASTAR_TEST_CASE(test_allow_filtering_multiple_regular) {
 
         auto msg = e.execute_cql("SELECT f FROM t WHERE f contains 1 ALLOW FILTERING").get();
         assert_that(msg).is_rows().with_rows({
-            {my_list_type->decompose(make_list_value(my_list_type, list_type_impl::native_type{{1}}))},
-            {my_list_type->decompose(make_list_value(my_list_type, list_type_impl::native_type{{1, 2}}))},
-            {my_list_type->decompose(make_list_value(my_list_type, list_type_impl::native_type{{1, 2, 3}}))},
+            {my_list_type->decompose(make_list_value(my_list_type, list_type_impl::make_native_type(1)))},
+            {my_list_type->decompose(make_list_value(my_list_type, list_type_impl::make_native_type(1, 2)))},
+            {my_list_type->decompose(make_list_value(my_list_type, list_type_impl::make_native_type(1, 2, 3)))},
         });
 
         msg = e.execute_cql("SELECT f FROM t WHERE f contains 2 ALLOW FILTERING").get();
         assert_that(msg).is_rows().with_rows({
-            {my_list_type->decompose(make_list_value(my_list_type, list_type_impl::native_type{{1, 2}}))},
-            {my_list_type->decompose(make_list_value(my_list_type, list_type_impl::native_type{{1, 2, 3}}))},
+            {my_list_type->decompose(make_list_value(my_list_type, list_type_impl::make_native_type(1, 2)))},
+            {my_list_type->decompose(make_list_value(my_list_type, list_type_impl::make_native_type(1, 2, 3)))},
         });
 
         msg = e.execute_cql("SELECT f FROM t WHERE f contains 2 AND f contains 3 ALLOW FILTERING").get();
         assert_that(msg).is_rows().with_rows({
-            {my_list_type->decompose(make_list_value(my_list_type, list_type_impl::native_type{{1, 2, 3}}))},
+            {my_list_type->decompose(make_list_value(my_list_type, list_type_impl::make_native_type(1, 2, 3)))},
         });
 
         msg = e.execute_cql("SELECT g FROM t WHERE g contains 7 ALLOW FILTERING").get();
         assert_that(msg).is_rows().with_rows({
-            {my_set_type->decompose(make_set_value(my_set_type, set_type_impl::native_type{{1, 2, 7}}))},
+            {my_set_type->decompose(make_set_value(my_set_type, set_type_impl::make_native_type(1, 2, 7)))},
         });
 
         msg = e.execute_cql("SELECT g FROM t WHERE g contains 1 and g contains 7 ALLOW FILTERING").get();
         assert_that(msg).is_rows().with_rows({
-            {my_set_type->decompose(make_set_value(my_set_type, set_type_impl::native_type{{1, 2, 7}}))},
+            {my_set_type->decompose(make_set_value(my_set_type, set_type_impl::make_native_type(1, 2, 7)))},
         });
 
         msg = e.execute_cql("SELECT h FROM t WHERE h contains key 3 ALLOW FILTERING").get();
         assert_that(msg).is_rows().with_rows({
-            {my_map_type->decompose(make_map_value(my_map_type, map_type_impl::native_type{{{3, "three"}}}))},
-            {my_map_type->decompose(make_map_value(my_map_type, map_type_impl::native_type{{{3, "three"}, {4, "four"}}}))},
+            {my_map_type->decompose(make_map_value(my_map_type, {std::make_pair(3, "three")}))},
+            {my_map_type->decompose(make_map_value(my_map_type, {std::make_pair(3, "three"), std::make_pair(4, "four")}))},
         });
 
         msg = e.execute_cql("SELECT h FROM t WHERE h contains 'four' ALLOW FILTERING").get();
         assert_that(msg).is_rows().with_rows({
-            {my_map_type->decompose(make_map_value(my_map_type, map_type_impl::native_type{{{3, "three"}, {4, "four"}}}))},
+            {my_map_type->decompose(make_map_value(my_map_type, {std::make_pair(3, "three"), std::make_pair(4, "four")}))},
         });
 
         msg = e.execute_cql("SELECT h FROM t WHERE h contains key 3 and h contains 'four' ALLOW FILTERING").get();
         assert_that(msg).is_rows().with_rows({
-            {my_map_type->decompose(make_map_value(my_map_type, map_type_impl::native_type{{{3, "three"}, {4, "four"}}}))},
+            {my_map_type->decompose(make_map_value(my_map_type, {std::make_pair(3, "three"), std::make_pair(4, "four")}))},
         });
 
         msg = e.execute_cql("SELECT a, b, c, d, e FROM t WHERE c = 3 ALLOW FILTERING").get();

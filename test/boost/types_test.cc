@@ -540,7 +540,7 @@ BOOST_AUTO_TEST_CASE(test_tuple) {
         return std::make_tuple(extract<int32_t>(v[0]), extract<int64_t>(v[1]), extract<sstring>(v[2]));
     };
     auto c_to_native = [] (c_type v) {
-        return native_type({std::get<0>(v), std::get<1>(v), std::get<2>(v)});
+        return native_type(tuple_type_impl::make_native_type(std::get<0>(v), std::get<1>(v), std::get<2>(v)));
     };
     auto native_to_bytes = [t] (native_type v) {
         return t->decompose(make_tuple_value(t, v));

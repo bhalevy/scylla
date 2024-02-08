@@ -138,7 +138,7 @@ make_currentdate_fct() {
     return make_native_scalar_function<false>("currentdate", simple_date_type, {},
             [] (std::span<const bytes_opt> values) -> bytes_opt {
         auto to_simple_date = get_castas_fctn(simple_date_type, timestamp_type);
-        return {simple_date_type->decompose(to_simple_date(db_clock::now()))};
+        return {simple_date_type->decompose(to_simple_date(data_value(db_clock::now())))};
     });
 }
 
@@ -163,7 +163,7 @@ make_timeuuidtodate_fct() {
         }
         auto ts = db_clock::time_point(db_clock::duration(UUID_gen::unix_timestamp(get_valid_timeuuid(*bb))));
         auto to_simple_date = get_castas_fctn(simple_date_type, timestamp_type);
-        return {simple_date_type->decompose(to_simple_date(ts))};
+        return {simple_date_type->decompose(to_simple_date(data_value(ts)))};
     });
 }
 

@@ -42,6 +42,11 @@ protected:
     using builder_base = topology_mutation_builder_base<Builder>;
 
     Builder& apply_atomic(const char* cell, const data_value& value);
+    template <typename T>
+    Builder& apply_atomic(const char* cell, const T& value) {
+        return apply_atomic(cell, data_value(value));
+    }
+
     template<std::ranges::range C>
     requires std::convertible_to<std::ranges::range_value_t<C>, data_value>
     Builder& apply_set(const char* cell, collection_apply_mode apply_mode, const C& c);

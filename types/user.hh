@@ -62,6 +62,13 @@ private:
 
 data_value make_user_value(data_type tuple_type, user_type_impl::native_type value);
 
+template <typename T>
+auto make_user_value(data_type type, const std::initializer_list<T>& values) {
+    return make_user_value(type, boost::copy_range<user_type_impl::native_type>(values | boost::adaptors::transformed([] (const T& v) {
+        return data_value(v);
+    })));
+}
+
 constexpr size_t max_udt_fields = std::numeric_limits<int16_t>::max();
 
 // The following two functions are used to translate field indices (used to identify fields inside non-frozen UDTs)

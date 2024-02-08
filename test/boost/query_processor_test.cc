@@ -30,17 +30,17 @@ SEASTAR_TEST_CASE(test_execute_internal_insert) {
         return e.execute_cql("create table ks.cf (p1 varchar, c1 int, r1 int, PRIMARY KEY (p1, c1));").then([](auto rs) {
             BOOST_REQUIRE(dynamic_pointer_cast<cql_transport::messages::result_message::schema_change>(rs));
         }).then([&qp] {
-            return qp.execute_internal("insert into ks.cf (p1, c1, r1) values (?, ?, ?);", { sstring("key1"), 1, 100 }, cql3::query_processor::cache_internal::yes).then([](auto rs) {
+            return qp.execute_internal("insert into ks.cf (p1, c1, r1) values (?, ?, ?);", cql3::query_processor::cache_internal::yes, sstring("key1"), 1, 100).then([](auto rs) {
                 BOOST_REQUIRE(rs->empty());
             });
         }).then([&qp] {
-            return qp.execute_internal("select * from ks.cf where p1 = ? and c1 = 1;", { sstring("key1") }, cql3::query_processor::cache_internal::yes).then([](auto rs) {
+            return qp.execute_internal("select * from ks.cf where p1 = ? and c1 = 1;", cql3::query_processor::cache_internal::yes, sstring("key1")).then([](auto rs) {
                 BOOST_REQUIRE(!rs->empty());
                 auto i = rs->one().template get_as<int32_t>("r1");
                 BOOST_CHECK_EQUAL(i, int32_t(100));
             });
         }).then([&qp] {
-            return qp.execute_internal("insert into ks.cf (p1, c1, r1) values (?, ?, ?);", { sstring("key2"), 2, 200 }, cql3::query_processor::cache_internal::yes).then([](auto rs) {
+            return qp.execute_internal("insert into ks.cf (p1, c1, r1) values (?, ?, ?);", cql3::query_processor::cache_internal::yes, sstring("key2"), 2, 200).then([](auto rs) {
                 BOOST_REQUIRE(rs->empty());
             });
         }).then([&qp] {
@@ -58,11 +58,11 @@ SEASTAR_TEST_CASE(test_execute_internal_delete) {
         return e.execute_cql("create table ks.cf (p1 varchar, c1 int, r1 int, PRIMARY KEY (p1, c1));").then([](auto rs) {
             BOOST_REQUIRE(dynamic_pointer_cast<cql_transport::messages::result_message::schema_change>(rs));
         }).then([&qp] {
-            return qp.execute_internal("insert into ks.cf (p1, c1, r1) values (?, ?, ?);", { sstring("key1"), 1, 100 }, cql3::query_processor::cache_internal::yes).then([](auto rs) {
+            return qp.execute_internal("insert into ks.cf (p1, c1, r1) values (?, ?, ?);", cql3::query_processor::cache_internal::yes, sstring("key1"), 1, 100).then([](auto rs) {
                 BOOST_REQUIRE(rs->empty());
             });
         }).then([&qp] {
-            return qp.execute_internal("delete from ks.cf where p1 = ? and c1 = ?;", { sstring("key1"), 1 }, cql3::query_processor::cache_internal::yes).then([](auto rs) {
+            return qp.execute_internal("delete from ks.cf where p1 = ? and c1 = ?;", cql3::query_processor::cache_internal::yes, sstring("key1"), 1).then([](auto rs) {
                 BOOST_REQUIRE(rs->empty());
             });
         }).then([&qp] {
@@ -79,21 +79,21 @@ SEASTAR_TEST_CASE(test_execute_internal_update) {
         return e.execute_cql("create table ks.cf (p1 varchar, c1 int, r1 int, PRIMARY KEY (p1, c1));").then([](auto rs) {
             BOOST_REQUIRE(dynamic_pointer_cast<cql_transport::messages::result_message::schema_change>(rs));
         }).then([&qp] {
-            return qp.execute_internal("insert into ks.cf (p1, c1, r1) values (?, ?, ?);", { sstring("key1"), 1, 100 }, cql3::query_processor::cache_internal::yes).then([](auto rs) {
+            return qp.execute_internal("insert into ks.cf (p1, c1, r1) values (?, ?, ?);", cql3::query_processor::cache_internal::yes, sstring("key1"), 1, 100).then([](auto rs) {
                 BOOST_REQUIRE(rs->empty());
             });
         }).then([&qp] {
-            return qp.execute_internal("select * from ks.cf where p1 = ? and c1 = 1;", { sstring("key1") }, cql3::query_processor::cache_internal::yes).then([](auto rs) {
+            return qp.execute_internal("select * from ks.cf where p1 = ? and c1 = 1;", cql3::query_processor::cache_internal::yes, sstring("key1")).then([](auto rs) {
                 BOOST_REQUIRE(!rs->empty());
                 auto i = rs->one().template get_as<int32_t>("r1");
                 BOOST_CHECK_EQUAL(i, int32_t(100));
             });
         }).then([&qp] {
-            return qp.execute_internal("update ks.cf set r1 = ? where p1 = ? and c1 = ?;", { 200, sstring("key1"), 1 }, cql3::query_processor::cache_internal::yes).then([](auto rs) {
+            return qp.execute_internal("update ks.cf set r1 = ? where p1 = ? and c1 = ?;", cql3::query_processor::cache_internal::yes, 200, sstring("key1"), 1).then([](auto rs) {
                 BOOST_REQUIRE(rs->empty());
             });
         }).then([&qp] {
-            return qp.execute_internal("select * from ks.cf where p1 = ? and c1 = 1;", { sstring("key1") }, cql3::query_processor::cache_internal::yes).then([](auto rs) {
+            return qp.execute_internal("select * from ks.cf where p1 = ? and c1 = 1;", cql3::query_processor::cache_internal::yes, sstring("key1")).then([](auto rs) {
                 BOOST_REQUIRE(!rs->empty());
                 auto i = rs->one().template get_as<int32_t>("r1");
                 BOOST_CHECK_EQUAL(i, int32_t(200));
@@ -129,7 +129,7 @@ SEASTAR_TEST_CASE(test_querying_with_consumer) {
 
         for (auto i = 0; i < 900; i++) {
             total += i;
-            e.local_qp().execute_internal("insert into ks.cf (k , v) values (?, ? );", { to_sstring(i), i}, cql3::query_processor::cache_internal::yes).get();
+            e.local_qp().execute_internal("insert into ks.cf (k , v) values (?, ? );", cql3::query_processor::cache_internal::yes, to_sstring(i), i).get();
         }
         e.local_qp().query_internal("SELECT * from ks.cf", [&counter, &sum] (const cql3::untyped_result_set::row& row) mutable {
             counter++;
@@ -142,7 +142,7 @@ SEASTAR_TEST_CASE(test_querying_with_consumer) {
         sum = 0;
         for (auto i = 900; i < 2200; i++) {
             total += i;
-            e.local_qp().execute_internal("insert into ks.cf (k , v) values (?, ? );", { to_sstring(i), i}, cql3::query_processor::cache_internal::yes).get();
+            e.local_qp().execute_internal("insert into ks.cf (k , v) values (?, ? );", cql3::query_processor::cache_internal::yes, to_sstring(i), i).get();
         }
         e.local_qp().query_internal("SELECT * from ks.cf", [&counter, &sum] (const cql3::untyped_result_set::row& row) mutable {
             counter++;
@@ -287,7 +287,7 @@ SEASTAR_TEST_CASE(test_select_full_scan_metrics) {
         auto& qp = e.local_qp();
         cquery_nofail(e, "create table ks.fsm (pk int, ck int, c1 int, c2 int, PRIMARY KEY(pk, ck));");
         cquery_nofail(e, "create index on ks.fsm (c1);");
-        qp.execute_internal("insert into ks.fsm (pk, ck, c1, c2) values (?,?,?,?);", { 1, 1, 1, 1 }, cql3::query_processor::cache_internal::yes).get();
+        qp.execute_internal("insert into ks.fsm (pk, ck, c1, c2) values (?,?,?,?);", cql3::query_processor::cache_internal::yes, 1, 1, 1, 1).get();
         auto stat_bc1 = qp.get_cql_stats().select_bypass_caches;
         qp.execute_internal("select * from ks.fsm bypass cache;", cql3::query_processor::cache_internal::yes).get();
         BOOST_CHECK_EQUAL(stat_bc1 + 1, qp.get_cql_stats().select_bypass_caches);

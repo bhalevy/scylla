@@ -52,9 +52,15 @@ private:
             cr.apply(cdef, atomic_cell::make_live(*cdef.type, ts, value.serialize_nonnull()));
         }
     }
+    static void set_cell(const ::schema& schema, row& cr, const column_definition& cdef, const sstring& value) {
+        set_cell(schema, cr, cdef, data_value(value));
+    }
     static void set_cell(const ::schema& schema, row& cr, const bytes& column_name, data_value value) {
         auto cdef = schema.get_column_definition(column_name);
         set_cell(schema, cr, *cdef, std::move(value));
+    }
+    static void set_cell(const ::schema& schema, row& cr, const bytes& column_name, const sstring& value) {
+        set_cell(schema, cr, column_name, data_value(value));
     }
 
     std::map<sstring, mutation_source> create_all_mutation_sources() {

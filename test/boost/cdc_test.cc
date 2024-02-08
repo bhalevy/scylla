@@ -899,68 +899,68 @@ SEASTAR_THREAD_TEST_CASE(test_map_logging) {
                 data_value::make_null(map_type), // no previous value
                 {
                     {
-                        ::make_map_value(map_type, { { "apa", "ko" } }), // one added cell
+                        ::make_map_value(map_type, { std::make_pair("apa", "ko") }), // one added cell
                         data_value::make_null(map_keys_type), // no deleted cells
                         true // setting entire column to null -> expect delete marker
                     }
                 },
-                ::make_map_value(map_type, { { "apa", "ko" } })
+                ::make_map_value(map_type, { std::make_pair("apa", "ko") })
             },
             {
                 "UPDATE ks.tbl set val = val + { 'ninja':'mission' } where pk=1 and pk2=11 and ck=111",
-                ::make_map_value(map_type, { { "apa", "ko" } }),
+                ::make_map_value(map_type, { std::make_pair("apa", "ko") }),
                 {
                     {
-                        ::make_map_value(map_type, { { "ninja", "mission" } }),
+                        ::make_map_value(map_type, { std::make_pair("ninja", "mission") }),
                         data_value::make_null(map_keys_type),
                     }
                 },
-                ::make_map_value(map_type, { { "apa", "ko" }, { "ninja", "mission" } })
+                ::make_map_value(map_type, { std::make_pair("apa", "ko"), std::make_pair("ninja", "mission") })
             },
             {
                 "UPDATE ks.tbl set val['ninja'] = 'shuriken' where pk=1 and pk2=11 and ck=111",
-                ::make_map_value(map_type, { { "apa", "ko" }, { "ninja", "mission" } }),
+                ::make_map_value(map_type, { std::make_pair("apa", "ko"), std::make_pair("ninja", "mission") }),
                 {
                     {
-                        ::make_map_value(map_type, { { "ninja", "shuriken" } }),
+                        ::make_map_value(map_type, { std::make_pair("ninja", "shuriken") }),
                         data_value::make_null(map_keys_type),
                     }
                 },
-                ::make_map_value(map_type, { { "apa", "ko" }, { "ninja", "shuriken" } })
+                ::make_map_value(map_type, { std::make_pair("apa", "ko"), std::make_pair("ninja", "shuriken") })
             },
             {
                 "UPDATE ks.tbl set val['apa'] = null where pk=1 and pk2=11 and ck=111",
-                ::make_map_value(map_type, { { "apa", "ko" }, { "ninja", "shuriken" } }),
+                ::make_map_value(map_type, { std::make_pair("apa", "ko"), std::make_pair("ninja", "shuriken") }),
                 {
                     {
                         data_value::make_null(map_type),
                         ::make_set_value(map_keys_type, { "apa" }),
                     }
                 },
-                ::make_map_value(map_type, { { "ninja", "shuriken" } })
+                ::make_map_value(map_type, { std::make_pair("ninja", "shuriken") })
             },
             {
                 "UPDATE ks.tbl set val['ninja'] = null, val['ola'] = 'kokos' where pk=1 and pk2=11 and ck=111",
-                ::make_map_value(map_type, { { "ninja", "shuriken" } }),
+                ::make_map_value(map_type, { std::make_pair("ninja", "shuriken") }),
                 {
                     {
-                        ::make_map_value(map_type, { { "ola", "kokos" } }),
+                        ::make_map_value(map_type, { std::make_pair("ola", "kokos") }),
                         ::make_set_value(map_keys_type, { "ninja" }),
                     }
                 },
-                ::make_map_value(map_type, { { "ola", "kokos" } })
+                ::make_map_value(map_type, { std::make_pair("ola", "kokos") })
             },
             {
                 "UPDATE ks.tbl set val = { 'bolla':'trolla', 'kork':'skruv' } where pk=1 and pk2=11 and ck=111",
-                ::make_map_value(map_type, { { "ola", "kokos" } }),
+                ::make_map_value(map_type, { std::make_pair("ola", "kokos") }),
                 {
                     {
-                        ::make_map_value(map_type, { { "bolla", "trolla" }, { "kork", "skruv" } }),
+                        ::make_map_value(map_type, { std::make_pair("bolla", "trolla"), std::make_pair("kork", "skruv") }),
                         data_value::make_null(map_keys_type),
                         true // setting entire column to null -> expect delete marker
                     }
                 },
-                ::make_map_value(map_type, { { "bolla", "trolla" }, { "kork", "skruv" } })
+                ::make_map_value(map_type, { std::make_pair("bolla", "trolla"), std::make_pair("kork", "skruv") })
             }
 
         });
@@ -1339,12 +1339,16 @@ SEASTAR_THREAD_TEST_CASE(test_change_splitting) {
         auto long_null = data_value::make_null(long_type);
         auto bool_null = data_value::make_null(boolean_type);
 
-        auto vmap = [&] (std::vector<std::pair<data_value, data_value>> m) {
-            return make_map_value(m_type, std::move(m));
+        auto vmap = [&] (std::vector<std::pair<int32_t, int32_t>> m) {
+            return make_map_value(m_type, boost::copy_range<map_type_impl::native_type>(m | boost::adaptors::transformed([] (const auto& x) {
+                return std::make_pair(data_value(x.first), data_value(x.second));
+            })));
         };
 
-        auto vkeys = [&] (std::vector<data_value> s) {
-            return make_set_value(keys_type, std::move(s));
+        auto vkeys = [&] (std::vector<int32_t> s) {
+            return make_set_value(keys_type, boost::copy_range<set_type_impl::native_type>(s | boost::adaptors::transformed([] (const auto& x) {
+                return data_value(x);
+            })));
         };
 
         auto get_result = [&] (const std::vector<data_type>& col_types, const sstring& s) -> std::vector<std::vector<data_value>> {
@@ -1370,9 +1374,9 @@ SEASTAR_THREAD_TEST_CASE(test_change_splitting) {
             BOOST_REQUIRE_EQUAL(result.size(), 3);
 
             std::vector<std::vector<data_value>> expected = {
-                { int32_t(0), int32_t(-1), int_null, int_null},
-                { int32_t(0), int_null, int32_t(1), int_null},
-                { int32_t(0), int_null, int_null, int32_t(2)}
+                make_data_value_vector(int32_t(0), int32_t(-1), int_null, int_null),
+                make_data_value_vector(int32_t(0), int_null, int32_t(1), int_null),
+                make_data_value_vector(int32_t(0), int_null, int_null, int32_t(2))
             };
 
             BOOST_REQUIRE_EQUAL(expected, result);
@@ -1387,9 +1391,9 @@ SEASTAR_THREAD_TEST_CASE(test_change_splitting) {
             BOOST_REQUIRE_EQUAL(result.size(), 1);
             BOOST_REQUIRE_EQUAL(result[0].size(), 4);
 
-            result[0][3] = utils::UUID_gen::micros_timestamp(value_cast<utils::UUID>(result[0][3]));
+            result[0][3] = data_value(utils::UUID_gen::micros_timestamp(value_cast<utils::UUID>(result[0][3])));
             std::vector<std::vector<data_value>> expected = {
-                {map_null, true, keys_null, now}
+                make_data_value_vector(map_null, true, keys_null, now)
             };
             BOOST_REQUIRE_EQUAL(expected, result);
         }
@@ -1403,9 +1407,9 @@ SEASTAR_THREAD_TEST_CASE(test_change_splitting) {
             BOOST_REQUIRE_EQUAL(result.size(), 1);
             BOOST_REQUIRE_EQUAL(result[0].size(), 4);
 
-            result[0][3] = utils::UUID_gen::micros_timestamp(value_cast<utils::UUID>(result[0][3]));
+            result[0][3] = data_value(utils::UUID_gen::micros_timestamp(value_cast<utils::UUID>(result[0][3])));
             std::vector<std::vector<data_value>> expected = {
-                {vmap({{1,1}}), true, keys_null, now}
+                make_data_value_vector(vmap({{1,1}}), true, keys_null, now)
             };
             BOOST_REQUIRE_EQUAL(expected, result);
         }
@@ -1428,13 +1432,13 @@ SEASTAR_THREAD_TEST_CASE(test_change_splitting) {
 
             std::vector<std::vector<data_value>> expected = {
                 // The following represents the "v1 = 5" change. The "v2 = null" change gets merged with a different change, see below
-                {int32_t(5), int_null, bool_null, map_null, keys_null, int64_t(5)},
-                {int_null, int_null, bool_null, vmap({{0,6},{1,6}}), keys_null, int64_t(6)},
+                make_data_value_vector(int32_t(5), int_null, bool_null, map_null, keys_null, int64_t(5)),
+                make_data_value_vector(int_null, int_null, bool_null, vmap({{0,6},{1,6}}), keys_null, int64_t(6)),
                 // The following represents the "m[2] = 7" change. The "m[3] = null" change gets merged with a different change, see below
-                {int_null, int_null, bool_null, vmap({{2,7}}), keys_null, int64_t(7)},
+                make_data_value_vector(int_null, int_null, bool_null, vmap({{2,7}}), keys_null, int64_t(7)),
                 // The "v2 = null" and "v[3] = null" changes get merged with the "m[4] = 0" change, because dead cells
                 // don't have a "ttl" concept; thus we put them together with alive cells which don't have a ttl (so ttl column = null).
-                {int_null, int_null, true, vmap({{4,0}}), vkeys({3}), long_null},
+                make_data_value_vector(int_null, int_null, true, vmap({{4,0}}), vkeys({3}), long_null),
             };
 
             // These changes have the same timestamp, so their relative order in CDC log is arbitrary
@@ -1448,7 +1452,12 @@ SEASTAR_THREAD_TEST_CASE(test_change_splitting) {
         {
             auto result = get_result({int32_type},
                 "select \"cdc$batch_seq_no\" from ks.t_scylla_cdc_log where pk = 0 and ck = 1 allow filtering");
-            std::vector<std::vector<data_value>> expected = {{int32_t(0)}, {int32_t(1)}, {int32_t(2)}, {int32_t(3)}};
+            std::vector<std::vector<data_value>> expected = {
+                make_data_value_vector(int32_t(0)),
+                make_data_value_vector(int32_t(1)),
+                make_data_value_vector(int32_t(2)),
+                make_data_value_vector(int32_t(3))
+            };
             BOOST_REQUIRE_EQUAL(expected, result);
         }
 
@@ -1475,15 +1484,15 @@ SEASTAR_THREAD_TEST_CASE(test_change_splitting) {
             // TODO: It would be nice to check how these things work together with pre/post-images, but maybe in a separate test.
 
             std::vector<std::vector<data_value>> expected = {
-                {int32_t(0), int_null, int_null, map_null, bool_null, oper_ut(cdc::operation::partition_delete)},
-                {int32_t(0), int_null, int_null, map_null, bool_null, oper_ut(cdc::operation::range_delete_start_inclusive)},
-                {int32_t(1), int_null, int_null, map_null, bool_null, oper_ut(cdc::operation::range_delete_end_exclusive)},
-                {int32_t(0), int_null, int_null, map_null, bool_null, oper_ut(cdc::operation::row_delete)},
-                {int32_t(0), int32_t(1), int32_t(2), map_null, bool_null, oper_ut(cdc::operation::update)},
-                {int32_t(0), int_null, int_null, vmap({{3,3}}), true, oper_ut(cdc::operation::insert)},
-                {int32_t(0), int_null, int_null, map_null, bool_null, oper_ut(cdc::operation::insert)}, // for ck == 1
-                {int32_t(1), int_null, int_null, map_null, true, oper_ut(cdc::operation::update)},
-                {int32_t(2), int_null, int_null, vmap({{4,4}}), bool_null, oper_ut(cdc::operation::update)},
+                make_data_value_vector(int32_t(0), int_null, int_null, map_null, bool_null, oper_ut(cdc::operation::partition_delete)),
+                make_data_value_vector(int32_t(0), int_null, int_null, map_null, bool_null, oper_ut(cdc::operation::range_delete_start_inclusive)),
+                make_data_value_vector(int32_t(1), int_null, int_null, map_null, bool_null, oper_ut(cdc::operation::range_delete_end_exclusive)),
+                make_data_value_vector(int32_t(0), int_null, int_null, map_null, bool_null, oper_ut(cdc::operation::row_delete)),
+                make_data_value_vector(int32_t(0), int32_t(1), int32_t(2), map_null, bool_null, oper_ut(cdc::operation::update)),
+                make_data_value_vector(int32_t(0), int_null, int_null, vmap({{3,3}}), true, oper_ut(cdc::operation::insert)),
+                make_data_value_vector(int32_t(0), int_null, int_null, map_null, bool_null, oper_ut(cdc::operation::insert)), // for ck == 1
+                make_data_value_vector(int32_t(1), int_null, int_null, map_null, true, oper_ut(cdc::operation::update)),
+                make_data_value_vector(int32_t(2), int_null, int_null, vmap({{4,4}}), bool_null, oper_ut(cdc::operation::update)),
             };
 
             BOOST_REQUIRE_EQUAL(expected, result);
@@ -1512,7 +1521,7 @@ SEASTAR_THREAD_TEST_CASE(test_change_splitting) {
 
             auto cm_type = map_type_impl::get_instance(int32_type, int32_type, false);
             auto cm_null = data_value::make_null(cm_type);
-            auto cm_value = make_map_value(cm_type, {{3, 3}});
+            auto cm_value = make_map_value(cm_type, {std::make_pair(3, 3)});
 
             auto result = get_result(
                 {int32_type, int32_type, cs_type, cm_type, boolean_type, boolean_type, oper_type},
@@ -1524,8 +1533,8 @@ SEASTAR_THREAD_TEST_CASE(test_change_splitting) {
             BOOST_REQUIRE_EQUAL(result.size(), 2);
 
             std::vector<std::vector<data_value>> expected = {
-                {int32_t(0), int_null, cs_null, cm_null, true, true, oper_ut(cdc::operation::insert)},
-                {int32_t(0), int32_t(3), cs_value, cm_value, bool_null, bool_null, oper_ut(cdc::operation::update)},
+                make_data_value_vector(int32_t(0), int_null, cs_null, cm_null, true, true, oper_ut(cdc::operation::insert)),
+                make_data_value_vector(int32_t(0), int32_t(3), cs_value, cm_value, bool_null, bool_null, oper_ut(cdc::operation::update)),
             };
         }
 
@@ -1541,9 +1550,9 @@ SEASTAR_THREAD_TEST_CASE(test_change_splitting) {
             BOOST_REQUIRE_EQUAL(result.size(), 3);
 
             std::vector<std::vector<data_value>> expected = {
-                { map_null, bool_null, map_null, bool_null, int64_t(5), oper_ut(cdc::operation::insert) }, // row marker
-                { map_null, true, map_null, true, long_null, oper_ut(cdc::operation::update) }, // deletion of maps
-                { vmap({{1,1}}), bool_null, vmap({{2,2}}), bool_null, int64_t(5), oper_ut(cdc::operation::update) } // addition of cells
+                make_data_value_vector(map_null, bool_null, map_null, bool_null, int64_t(5), oper_ut(cdc::operation::insert)), // row marker
+                make_data_value_vector(map_null, true, map_null, true, long_null, oper_ut(cdc::operation::update)), // deletion of maps
+                make_data_value_vector(vmap({{1,1}}), bool_null, vmap({{2,2}}), bool_null, int64_t(5), oper_ut(cdc::operation::update)) // addition of cells
             };
             BOOST_REQUIRE_EQUAL(expected, result);
         }
@@ -1585,14 +1594,14 @@ SEASTAR_THREAD_TEST_CASE(test_batch_with_row_delete) {
 
         const std::vector<std::vector<data_value>> expected = {
             // Update (0)
-            {int32_t(1), make_user_value(udt_type, {1,2}), make_map_value(m_type, {{1,2},{3,4}}), make_set_value(s_type, {1,2,3}), oper_ut(cdc::operation::insert)},
+            make_data_value_vector(int32_t(1), make_user_value(udt_type, {1,2}), make_map_value(m_type, {std::make_pair(1,2),std::make_pair(3,4)}), make_set_value(s_type, {1,2,3}), oper_ut(cdc::operation::insert)),
             // Preimage for (1)
-            {int32_t(1), make_user_value(udt_type, {1,2}), make_map_value(m_type, {{1,2},{3,4}}), make_set_value(s_type, {1,2,3}), oper_ut(cdc::operation::pre_image)},
+            make_data_value_vector(int32_t(1), make_user_value(udt_type, {1,2}), make_map_value(m_type, {std::make_pair(1,2),std::make_pair(3,4)}), make_set_value(s_type, {1,2,3}), oper_ut(cdc::operation::pre_image)),
             // Update (1)
-            {int32_t(666), udt_null, map_null, set_null, oper_ut(cdc::operation::update)},
+            make_data_value_vector(int32_t(666), udt_null, map_null, set_null, oper_ut(cdc::operation::update)),
             // No preimage for (1) + (2), because it is in the same group
             // Row delete (2)
-            {int_null, udt_null, map_null, set_null, oper_ut(cdc::operation::row_delete)},
+            make_data_value_vector(int_null, udt_null, map_null, set_null, oper_ut(cdc::operation::row_delete)),
         };
 
         auto deser = [] (const data_type& t, const bytes_opt& b) -> data_value {
@@ -1760,8 +1769,8 @@ void test_batch_images(bool preimage, bool postimage) {
                 {
                     {
                         .postimage = {
-                            {int32_t(1), int32_t(10)},
-                            {int32_t(2), int32_t(20)}
+                            make_data_value_vector(int32_t(1), int32_t(10)),
+                            make_data_value_vector(int32_t(2), int32_t(20))
                         }
                     }
                 }
@@ -1780,12 +1789,12 @@ void test_batch_images(bool preimage, bool postimage) {
                         .preimage = {
                             // Preimage only contains columns that are modified,
                             // therefore the second row does not have value for v1
-                            {int32_t(1), int32_t(10), int_null},
-                            {int32_t(2), int_null, int_null}
+                            make_data_value_vector(int32_t(1), int32_t(10), int_null),
+                            make_data_value_vector(int32_t(2), int_null, int_null)
                         },
                         .postimage = {
-                            {int32_t(1), int32_t(11), int_null},
-                            {int32_t(2), int32_t(20), int32_t(22)}
+                            make_data_value_vector(int32_t(1), int32_t(11), int_null),
+                            make_data_value_vector(int32_t(2), int32_t(20), int32_t(22))
                         }
                     }
                 }
@@ -1803,8 +1812,8 @@ void test_batch_images(bool preimage, bool postimage) {
                     {
                         .preimage = {
                             // Preimage for delete contains everything
-                            {int32_t(1), int32_t(11), int_null},
-                            {int32_t(2), int32_t(20), int32_t(22)}
+                            make_data_value_vector(int32_t(1), int32_t(11), int_null),
+                            make_data_value_vector(int32_t(2), int32_t(20), int32_t(22))
                         },
                     }
                 }
@@ -1821,8 +1830,8 @@ void test_batch_images(bool preimage, bool postimage) {
                 {
                     {
                         .postimage = {
-                            {int_null, int32_t(5), int_null},
-                            {int32_t(1), int_null, int32_t(10)}
+                            make_data_value_vector(int_null, int32_t(5), int_null),
+                            make_data_value_vector(int32_t(1), int_null, int32_t(10))
                         }
                     }
                 }
@@ -1839,7 +1848,7 @@ void test_batch_images(bool preimage, bool postimage) {
                 {
                     {
                         .postimage = {
-                            {int32_t(0), int32_t(10), int32_t(20)}
+                            make_data_value_vector(int32_t(0), int32_t(10), int32_t(20))
                         }
                     }
                 }
@@ -1856,7 +1865,7 @@ void test_batch_images(bool preimage, bool postimage) {
                 {
                     {
                         .postimage = {
-                            {int32_t(0), ::make_map_value(map_type, {{1,2},{3,4}})}
+                            make_data_value_vector(int32_t(0), ::make_map_value(map_type, {std::make_pair(1,2),std::make_pair(3,4)}))
                         }
                     }
                 }
@@ -1875,16 +1884,16 @@ void test_batch_images(bool preimage, bool postimage) {
                     // First timestamp
                     {
                         .postimage = {
-                            {int32_t(0), ::make_map_value(map_type, {{1,2}})}
+                            make_data_value_vector(int32_t(0), ::make_map_value(map_type, {std::make_pair(1,2)}))
                         }
                     },
                     // Second timestamp
                     {
                         .preimage = {
-                            {int32_t(0), ::make_map_value(map_type, {{1,2}})}
+                            make_data_value_vector(int32_t(0), ::make_map_value(map_type, {std::make_pair(1,2)}))
                         },
                         .postimage = {
-                            {int32_t(0), ::make_map_value(map_type, {{1,2},{3,4}})}
+                            make_data_value_vector(int32_t(0), ::make_map_value(map_type, {std::make_pair(1,2),std::make_pair(3,4)}))
                         }
                     }
                 }
@@ -1904,17 +1913,17 @@ void test_batch_images(bool preimage, bool postimage) {
                     // Non-batch UPDATE
                     {
                         .postimage = {
-                            {int32_t(1), ::make_map_value(map_type, {{1,2}})}
+                            make_data_value_vector(int32_t(1), ::make_map_value(map_type, {std::make_pair(1,2)}))
                         }
                     },
                     // Batch
                     {
                         .preimage = {
-                            {int32_t(1), ::make_map_value(map_type, {{1,2}})}
+                            make_data_value_vector(int32_t(1), ::make_map_value(map_type, {std::make_pair(1,2)}))
                         },
                         .postimage = {
-                            {int32_t(0), map_null},
-                            {int32_t(1), ::make_map_value(map_type, {{1,2},{3,4}})}
+                            make_data_value_vector(int32_t(0), map_null),
+                            make_data_value_vector(int32_t(1), ::make_map_value(map_type, {std::make_pair(1,2),std::make_pair(3,4)}))
                         }
                     },
                 }
@@ -1948,8 +1957,8 @@ SEASTAR_THREAD_TEST_CASE(test_postimage_with_no_regular_columns) {
             "select \"cdc$operation\", pk, ck from ks.t_scylla_cdc_log");
 
         std::vector<std::vector<data_value>> expected = {
-            { oper_ut(cdc::operation::insert), int32_t(1), int32_t(2) },
-            { oper_ut(cdc::operation::post_image), int32_t(1), int32_t(2) },
+            make_data_value_vector(oper_ut(cdc::operation::insert), int32_t(1), int32_t(2)),
+            make_data_value_vector(oper_ut(cdc::operation::post_image), int32_t(1), int32_t(2)),
         };
 
         BOOST_REQUIRE_EQUAL(expected, result);
@@ -1997,11 +2006,11 @@ SEASTAR_THREAD_TEST_CASE(test_image_deleted_column) {
             // Pre-image ('full' mode): v=NULL, cdc$deleted_v=true
             // Post-image should not set cdc$deleted_ columns
             cquery_nofail(e, "insert into tbl(pk, ck, v2) values (1, 1, 1)");
-            data_value deleted_v = full_preimage ? true : data_value::make_null(boolean_type);
+            data_value deleted_v = full_preimage ? data_value(true) : data_value::make_null(boolean_type);
             std::vector<data_value> preimage1 = 
-                { oper_ut(cdc::operation::pre_image), int32_t(1), int32_t(1), data_value::make_null(int32_type), deleted_v, data_value::make_null(boolean_type) };
+                make_data_value_vector(oper_ut(cdc::operation::pre_image), int32_t(1), int32_t(1), data_value::make_null(int32_type), deleted_v, data_value::make_null(boolean_type));
             std::vector<data_value> postimage1 = 
-                { oper_ut(cdc::operation::post_image), int32_t(1), int32_t(1), data_value::make_null(int32_type), data_value::make_null(boolean_type), data_value::make_null(boolean_type) };
+                make_data_value_vector(oper_ut(cdc::operation::post_image), int32_t(1), int32_t(1), data_value::make_null(int32_type), data_value::make_null(boolean_type), data_value::make_null(boolean_type));
 
             // Perform an insert that affects v column.
             // Pre-image: v=NULL, cdc$deleted_v=true
@@ -2009,9 +2018,9 @@ SEASTAR_THREAD_TEST_CASE(test_image_deleted_column) {
             // Post-image should not set cdc$deleted_ columns   
             cquery_nofail(e, "insert into tbl(pk, ck, v, v2) values (2, 2, 2, 2)");
             std::vector<data_value> preimage2 = 
-                { oper_ut(cdc::operation::pre_image), int32_t(2), int32_t(2), data_value::make_null(int32_type), true, data_value::make_null(boolean_type) };
+                make_data_value_vector(oper_ut(cdc::operation::pre_image), int32_t(2), int32_t(2), data_value::make_null(int32_type), true, data_value::make_null(boolean_type));
             std::vector<data_value> postimage2 = 
-                { oper_ut(cdc::operation::post_image), int32_t(2), int32_t(2), int32_t(2), data_value::make_null(boolean_type), data_value::make_null(boolean_type) };
+                make_data_value_vector(oper_ut(cdc::operation::post_image), int32_t(2), int32_t(2), int32_t(2), data_value::make_null(boolean_type), data_value::make_null(boolean_type));
 
             auto result = get_result(e, {oper_type, int32_type, int32_type, int32_type, boolean_type, boolean_type}, query_string);
             BOOST_REQUIRE_EQUAL(result.size(), 10);
@@ -2042,9 +2051,9 @@ SEASTAR_THREAD_TEST_CASE(test_image_deleted_column) {
                 // Post-image should not set cdc$deleted_ columns
                 cquery_nofail(e, "insert into tbl(pk, ck, v2) values (1, 1, {1})");
                 std::vector<data_value> preimage1 = 
-                    { oper_ut(cdc::operation::pre_image), int32_t(1), int32_t(1), data_value::make_null(int32_set_type), deleted_v, data_value::make_null(boolean_type) };
+                    make_data_value_vector(oper_ut(cdc::operation::pre_image), int32_t(1), int32_t(1), data_value::make_null(int32_set_type), deleted_v, data_value::make_null(boolean_type));
                 std::vector<data_value> postimage1 = 
-                    { oper_ut(cdc::operation::post_image), int32_t(1), int32_t(1), data_value::make_null(int32_set_type), data_value::make_null(boolean_type), data_value::make_null(boolean_type) };
+                    make_data_value_vector(oper_ut(cdc::operation::post_image), int32_t(1), int32_t(1), data_value::make_null(int32_set_type), data_value::make_null(boolean_type), data_value::make_null(boolean_type));
 
                 // Perform an insert that affects v column.
                 // Pre-image: v=NULL, cdc$deleted_v=true
@@ -2052,9 +2061,9 @@ SEASTAR_THREAD_TEST_CASE(test_image_deleted_column) {
                 // Post-image should not set cdc$deleted_ columns   
                 cquery_nofail(e, "insert into tbl(pk, ck, v, v2) values (2, 2, {2}, {2})");
                 std::vector<data_value> preimage2 = 
-                    { oper_ut(cdc::operation::pre_image), int32_t(2), int32_t(2), data_value::make_null(int32_set_type), true, data_value::make_null(boolean_type) };
+                    make_data_value_vector(oper_ut(cdc::operation::pre_image), int32_t(2), int32_t(2), data_value::make_null(int32_set_type), true, data_value::make_null(boolean_type));
                 std::vector<data_value> postimage2 = 
-                    { oper_ut(cdc::operation::post_image), int32_t(2), int32_t(2), make_int32_set(2), data_value::make_null(boolean_type), data_value::make_null(boolean_type) };
+                    make_data_value_vector(oper_ut(cdc::operation::post_image), int32_t(2), int32_t(2), make_int32_set(2), data_value::make_null(boolean_type), data_value::make_null(boolean_type));
 
                 auto result = get_result(e, {oper_type, int32_type, int32_type, int32_set_type, boolean_type, boolean_type}, query_string);
                 BOOST_REQUIRE_EQUAL(result.size(), 10);

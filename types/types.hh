@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include <concepts>
 #include <optional>
 #include <boost/functional/hash.hpp>
 #include <iosfwd>
@@ -185,6 +186,17 @@ T&& value_cast(data_value&& value);
 struct empty_type_representation {
 };
 
+template <typename T>
+concept ImplicitlyConvertibleToDataValue = std::same_as<T, ascii_native_type> ||
+        std::same_as<T, simple_date_native_type> ||
+        std::same_as<T, date_type_native_type> ||
+        std::same_as<T, time_native_type> ||
+        std::same_as<T, timeuuid_native_type> ||
+        std::same_as<T, utils::multiprecision_int> ||
+        std::same_as<T, big_decimal> ||
+        std::same_as<T, cql_duration> ||
+        std::same_as<T, empty_type_representation>;
+
 class data_value {
     void* _value;  // FIXME: use "small value optimization" for small types
     data_type _type;
@@ -202,14 +214,14 @@ public:
     // note: somewhat dangerous, consider a factory function instead
     explicit data_value(bytes);
 
-    data_value(sstring&&);
-    data_value(std::string_view);
+    explicit data_value(sstring&&);
+    explicit data_value(std::string_view);
     // We need the following overloads just to avoid ambiguity because
     // seastar::net::inet_address is implicitly constructible from a
     // const sstring&.
-    data_value(const char*);
-    data_value(const std::string&);
-    data_value(const sstring&);
+    explicit data_value(const char*);
+    explicit data_value(const std::string&);
+    explicit data_value(const sstring&);
 
     // Do not allow construction of a data_value from nullptr. The reason is
     // that this is error prone, for example: it conflicts with `const char*` overload
@@ -219,32 +231,40 @@ public:
     // to explicitly call `make_null()` instead.
     data_value(std::nullptr_t) = delete;
 
+    // Do not allow construction of a data_value from pointers. The reason is
+    // that this is error prone since pointers are implicitly converted to `bool`
+    // deriving the data_value(bool) constructor.
+    // In this case, comparisons between unrelated types, like `sstring` and `something*`
+    // implicitly select operator==(const data_value&, const data_value&), as
+    // `sstring` is implicitly convertible to `data_value`, and so is `something*`
+    // via `data_value(bool)`.
+    template <typename T>
+    data_value(const T*) = delete;
+
     data_value(ascii_native_type);
-    data_value(bool);
-    data_value(int8_t);
-    data_value(int16_t);
-    data_value(int32_t);
-    data_value(int64_t);
-    data_value(utils::UUID);
-    data_value(float);
-    data_value(double);
-    data_value(net::ipv4_address);
-    data_value(net::ipv6_address);
-    data_value(seastar::net::inet_address);
-    data_value(simple_date_native_type);
-    data_value(db_clock::time_point);
-    data_value(time_native_type);
-    data_value(timeuuid_native_type);
-    data_value(date_type_native_type);
-    data_value(utils::multiprecision_int);
-    data_value(big_decimal);
-    data_value(cql_duration);
-    data_value(empty_type_representation);
+    explicit data_value(bool);
+    explicit data_value(int8_t);
+    explicit data_value(int16_t);
+    explicit data_value(int32_t);
+    explicit data_value(int64_t);
+    explicit data_value(utils::UUID);
+    explicit data_value(float);
+    explicit data_value(double);
+    explicit data_value(net::ipv4_address);
+    explicit data_value(net::ipv6_address);
+    explicit data_value(seastar::net::inet_address);
+    explicit data_value(db_clock::time_point);
     explicit data_value(std::optional<bytes>);
-    template <typename NativeType>
-    data_value(std::optional<NativeType>);
-    template <typename NativeType>
-    data_value(const std::unordered_set<NativeType>&);
+    template <ImplicitlyConvertibleToDataValue T>
+    data_value(T);
+    template <ImplicitlyConvertibleToDataValue T>
+    data_value(std::optional<T>);
+    template <ImplicitlyConvertibleToDataValue T>
+    data_value(const std::unordered_set<T>&);
+    template <typename T>
+    explicit data_value(std::optional<T>);
+    template <typename T>
+    explicit data_value(const std::unordered_set<T>&);
 
     data_value& operator=(const data_value&);
     data_value& operator=(data_value&&);
@@ -407,6 +427,12 @@ public:
     }
 public:
     bytes decompose(const data_value& value) const;
+
+    template <typename T>
+    bytes decompose(T&& value) const {
+        return decompose(data_value(std::forward<T>(value)));
+    }
+
     // Safe to call across shards
     const sstring& name() const {
         return _name;
@@ -549,6 +575,11 @@ public:
     }
     const native_type& from_value(const data_value& v) const {
         return this->from_value(AbstractType::get_value_ptr(v));
+    }
+
+    template <typename... Args>
+    static native_type make_native_type(Args&&... args) {
+        return native_type({ data_value(std::forward<Args>(args))... });
     }
 
     friend class abstract_type;
@@ -1043,3 +1074,7 @@ std::ostream& operator<<(std::ostream& out, const data_value& v);
 
 using data_value_list = std::initializer_list<data_value_or_unset>;
 
+template <typename... Args>
+auto make_data_value_vector(Args&&... args) {
+    return std::vector<data_value>({ data_value(std::forward<Args>(args))... });
+}

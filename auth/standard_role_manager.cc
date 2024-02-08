@@ -95,8 +95,8 @@ static future<std::optional<record>> find_record(cql3::query_processor& qp, std:
             query,
             consistency_for_role(role_name),
             internal_distributed_query_state(),
-            {sstring(role_name)},
-            cql3::query_processor::cache_internal::yes).then([](::shared_ptr<cql3::untyped_result_set> results) {
+            cql3::query_processor::cache_internal::yes,
+            sstring(role_name)).then([](::shared_ptr<cql3::untyped_result_set> results) {
         if (results->empty()) {
             return std::optional<record>();
         }
@@ -186,8 +186,8 @@ future<> standard_role_manager::create_default_role_if_missing() const {
                     query,
                     db::consistency_level::QUORUM,
                     internal_distributed_query_state(),
-                    {_superuser},
-                    cql3::query_processor::cache_internal::no).then([this](auto&&) {
+                    cql3::query_processor::cache_internal::no,
+                    _superuser).then([this](auto&&) {
                 log.info("Created default superuser role '{}'.", _superuser);
                 return make_ready_future<>();
             });
@@ -276,8 +276,8 @@ future<> standard_role_manager::create_or_replace(std::string_view role_name, co
             query,
             consistency_for_role(role_name),
             internal_distributed_query_state(),
-            {sstring(role_name), c.is_superuser, c.can_login},
-            cql3::query_processor::cache_internal::yes).discard_result();
+            cql3::query_processor::cache_internal::yes,
+            sstring(role_name), c.is_superuser, c.can_login).discard_result();
 }
 
 future<>
@@ -319,8 +319,8 @@ standard_role_manager::alter(std::string_view role_name, const role_config_updat
                         meta::roles_table::role_col_name),
                 consistency_for_role(role_name),
                 internal_distributed_query_state(),
-                {sstring(role_name)},
-                cql3::query_processor::cache_internal::no).discard_result();
+                cql3::query_processor::cache_internal::no,
+                sstring(role_name)).discard_result();
     });
 }
 
@@ -339,8 +339,8 @@ future<> standard_role_manager::drop(std::string_view role_name) {
                     query,
                     consistency_for_role(role_name),
                     internal_distributed_query_state(),
-                    {sstring(role_name)},
-                    cql3::query_processor::cache_internal::no).then([this, role_name](::shared_ptr<cql3::untyped_result_set> members) {
+                    cql3::query_processor::cache_internal::no,
+                    sstring(role_name)).then([this, role_name](::shared_ptr<cql3::untyped_result_set> members) {
                 return parallel_for_each(
                         members->begin(),
                         members->end(),
@@ -372,7 +372,7 @@ future<> standard_role_manager::drop(std::string_view role_name) {
         // Delete all attributes for that role
         const auto remove_attributes_of = [this, role_name] {
             static const sstring query = format("DELETE FROM {} WHERE role = ?", meta::role_attributes_table::qualified_name());
-            return _qp.execute_internal(query, {sstring(role_name)}, cql3::query_processor::cache_internal::yes).discard_result();
+            return _qp.execute_internal(query, cql3::query_processor::cache_internal::yes, sstring(role_name)).discard_result();
         };
 
         // Finally, delete the role itself.
@@ -385,8 +385,8 @@ future<> standard_role_manager::drop(std::string_view role_name) {
                     query,
                     consistency_for_role(role_name),
                     internal_distributed_query_state(),
-                    {sstring(role_name)},
-                    cql3::query_processor::cache_internal::no).discard_result();
+                    cql3::query_processor::cache_internal::no,
+                    sstring(role_name)).discard_result();
         };
 
         return when_all_succeed(revoke_from_members(), revoke_members_of(),
@@ -414,8 +414,8 @@ standard_role_manager::modify_membership(
                 query,
                 consistency_for_role(grantee_name),
                 internal_distributed_query_state(),
-                {role_set{sstring(role_name)}, sstring(grantee_name)},
-                cql3::query_processor::cache_internal::no).discard_result();
+                cql3::query_processor::cache_internal::no,
+                role_set{sstring(role_name)}, sstring(grantee_name)).discard_result();
     };
 
     const auto modify_role_members = [this, role_name, grantee_name, ch] {
@@ -426,8 +426,8 @@ standard_role_manager::modify_membership(
                                 meta::role_members_table::qualified_name),
                         consistency_for_role(role_name),
                         internal_distributed_query_state(),
-                        {sstring(role_name), sstring(grantee_name)},
-                        cql3::query_processor::cache_internal::no).discard_result();
+                        cql3::query_processor::cache_internal::no,
+                        sstring(role_name), sstring(grantee_name)).discard_result();
 
             case membership_change::remove:
                 return _qp.execute_internal(
@@ -435,8 +435,8 @@ standard_role_manager::modify_membership(
                                 meta::role_members_table::qualified_name),
                         consistency_for_role(role_name),
                         internal_distributed_query_state(),
-                        {sstring(role_name), sstring(grantee_name)},
-                        cql3::query_processor::cache_internal::no).discard_result();
+                        cql3::query_processor::cache_internal::no,
+                        sstring(role_name), sstring(grantee_name)).discard_result();
         }
 
         return make_ready_future<>();
@@ -574,7 +574,7 @@ future<bool> standard_role_manager::can_login(std::string_view role_name) {
 
 future<std::optional<sstring>> standard_role_manager::get_attribute(std::string_view role_name, std::string_view attribute_name) {
     static const sstring query = format("SELECT name, value FROM {} WHERE role = ? AND name = ?", meta::role_attributes_table::qualified_name());
-    return _qp.execute_internal(query, {sstring(role_name), sstring(attribute_name)}, cql3::query_processor::cache_internal::yes).then([] (shared_ptr<cql3::untyped_result_set> result_set) {
+    return _qp.execute_internal(query, cql3::query_processor::cache_internal::yes, sstring(role_name), sstring(attribute_name)).then([] (shared_ptr<cql3::untyped_result_set> result_set) {
         if (!result_set->empty()) {
             const cql3::untyped_result_set_row &row = result_set->one();
             return std::optional<sstring>(row.get_as<sstring>("value"));
@@ -607,7 +607,7 @@ future<> standard_role_manager::set_attribute(std::string_view role_name, std::s
             if (!role_exists) {
                 throw auth::nonexistant_role(role_name);
             }
-            return _qp.execute_internal(query, {sstring(role_name), sstring(attribute_name), sstring(attribute_value)}, cql3::query_processor::cache_internal::yes).discard_result();
+            return _qp.execute_internal(query, cql3::query_processor::cache_internal::yes, sstring(role_name), sstring(attribute_name), sstring(attribute_value)).discard_result();
         });
     });
 
@@ -620,7 +620,7 @@ future<> standard_role_manager::remove_attribute(std::string_view role_name, std
             if (!role_exists) {
                 throw auth::nonexistant_role(role_name);
             }
-            return _qp.execute_internal(query, {sstring(role_name), sstring(attribute_name)}, cql3::query_processor::cache_internal::yes).discard_result();
+            return _qp.execute_internal(query, cql3::query_processor::cache_internal::yes, sstring(role_name), sstring(attribute_name)).discard_result();
         });
     });
 }

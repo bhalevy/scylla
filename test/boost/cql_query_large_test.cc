@@ -147,13 +147,13 @@ SEASTAR_TEST_CASE(test_insert_large_collection_values) {
             e.execute_cql(format("INSERT INTO tbl (pk, l) VALUES ('Zamyatin', ['{}']);", long_value)).get();
             assert_that(e.execute_cql("SELECT l FROM tbl WHERE pk ='Zamyatin';").get())
                     .is_rows().with_rows({
-                            { make_list_value(list_type, list_type_impl::native_type({{long_value}})).serialize() }
+                            { make_list_value(list_type, list_type_impl::make_native_type(long_value)).serialize() }
                     });
             BOOST_REQUIRE_THROW(e.execute_cql(format("INSERT INTO tbl (pk, s) VALUES ('Orwell', {{'{}'}});", long_value)).get(), std::exception);
             e.execute_cql(format("INSERT INTO tbl (pk, m) VALUES ('Haksli', {{'key': '{}'}});", long_value)).get();
             assert_that(e.execute_cql("SELECT m FROM tbl WHERE pk ='Haksli';").get())
                     .is_rows().with_rows({
-                            { make_map_value(map_type, map_type_impl::native_type({{sstring("key"), long_value}})).serialize() }
+                            { make_map_value(map_type, {std::make_pair(sstring("key"), long_value)}).serialize() }
                     });
             BOOST_REQUIRE_THROW(e.execute_cql(format("INSERT INTO tbl (pk, m) VALUES ('Golding', {{'{}': 'value'}});", long_value)).get(), std::exception);
         });
