@@ -963,20 +963,35 @@ template<typename Process>
 future<cql_server::result_with_foreign_response_ptr>
 cql_server::connection::process_on_shard(::shared_ptr<messages::result_message::bounce_to_shard> bounce_msg, uint16_t stream, fragmented_temporary_buffer::istream is,
         service::client_state& cs, service_permit permit, tracing::trace_state_ptr trace_state, Process process_fn) {
-    return _server.container().invoke_on(*bounce_msg->move_to_shard(), _server._config.bounce_request_smp_service_group,
-            coroutine::lambda([this, is = std::move(is), cs = cs.move_to_other_shard(), stream, permit = std::move(permit), process_fn,
-             gt = tracing::global_trace_state_ptr(std::move(trace_state)),
-             cached_vals = std::move(bounce_msg->take_cached_pk_function_calls())] (cql_server& server) -> future<cql_server::result_with_foreign_response_ptr> {
-        service::client_state client_state = cs.get();
-        bytes_ostream linearization_buffer;
-        auto trace_state = tracing::trace_state_ptr(gt);
-            // FIXME indentation
-            request_reader in(is, linearization_buffer);
-            auto msg = co_await process_fn(client_state, server._query_processor, in, stream, _version,
-                    /* FIXME */empty_service_permit(), std::move(trace_state), false, std::move(cached_vals));
-                // result here has to be foreign ptr
-                co_return std::get<cql_server::result_with_foreign_response_ptr>(std::move(msg));
-    }));
+    auto gt = tracing::global_trace_state_ptr(std::move(trace_state));
+    auto gcs = cs.move_to_other_shard();
+    co_return co_await _server.container().invoke_on(*bounce_msg->move_to_shard(), _server._config.bounce_request_smp_service_group, [&] (cql_server& server) {
+        return do_process_on_shard(server,
+                stream,
+                is,
+                gcs.get(),
+                std::move(permit),
+                gt.get(),
+                bounce_msg->take_cached_pk_function_calls(),
+                std::move(process_fn));
+    });
+}
+
+template<typename Process>
+future<cql_server::result_with_foreign_response_ptr>
+cql_server::connection::do_process_on_shard(cql_server& server, uint16_t stream, fragmented_temporary_buffer::istream is, service::client_state client_state,
+                service_permit permit, tracing::trace_state_ptr trace_state, cql3::computed_function_values cached_vals, Process process_fn) {
+    bytes_ostream linearization_buffer;
+    request_reader in(is, linearization_buffer);
+    auto msg = co_await process_fn(client_state, server._query_processor, in, stream, _version,
+            /* FIXME */empty_service_permit(), std::move(trace_state), false, std::move(cached_vals));
+    if (auto* res = std::get_if<cql_server::result_with_foreign_response_ptr>(&msg)) {
+        // result here has to be foreign ptr
+        co_return std::move(*res);
+    }
+    // with tablets, shard might have already moved away
+    auto bounce_msg = std::get<shared_ptr<messages::result_message::bounce_to_shard>>(msg);
+    co_return co_await process_on_shard(std::move(bounce_msg), stream, is, client_state, std::move(permit), std::move(trace_state), process_fn);
 }
 
 using process_fn_return_type = std::variant<

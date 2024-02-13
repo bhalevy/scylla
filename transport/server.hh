@@ -271,6 +271,10 @@ private:
         future<result_with_foreign_response_ptr>
         process_on_shard(::shared_ptr<messages::result_message::bounce_to_shard> bounce_msg, uint16_t stream, fragmented_temporary_buffer::istream is, service::client_state& cs,
                 service_permit permit, tracing::trace_state_ptr trace_state, Process process_fn);
+        template<typename Process>
+        future<result_with_foreign_response_ptr>
+        do_process_on_shard(cql_server& server, uint16_t stream, fragmented_temporary_buffer::istream is, service::client_state cs,
+                service_permit permit, tracing::trace_state_ptr trace_state, cql3::computed_function_values cached_vals, Process process_fn);
 
         void write_response(foreign_ptr<std::unique_ptr<cql_server::response>>&& response, service_permit permit = empty_service_permit(), cql_compression compression = cql_compression::none);
 
