@@ -11,6 +11,7 @@
 #include "locator/snitch_base.hh"
 #include "locator/abstract_replication_strategy.hh"
 #include "locator/tablets.hh"
+#include "locator/topology.hh"
 #include "log.hh"
 #include "partition_range_compat.hh"
 #include <unordered_map>
@@ -92,9 +93,9 @@ private:
     struct shallow_copy {};
 public:
     token_metadata_impl(shallow_copy, const token_metadata_impl& o) noexcept
-        : _topology(topology::config{})
+        : _topology(o.get_topology().get_topology_registry(), topology::config{})
     {}
-    token_metadata_impl(token_metadata::config cfg) noexcept : _topology(std::move(cfg.topo_cfg)) {};
+    token_metadata_impl(topology_registry& topology_registry, token_metadata::config cfg) noexcept : _topology(topology_registry, std::move(cfg.topo_cfg)) {};
     token_metadata_impl(const token_metadata_impl&) = delete; // it's too huge for direct copy, use clone_async()
     token_metadata_impl(token_metadata_impl&&) noexcept = default;
     const std::vector<token>& sorted_tokens() const;
@@ -835,8 +836,8 @@ token_metadata::token_metadata(std::unique_ptr<token_metadata_impl> impl)
 {
 }
 
-token_metadata::token_metadata(config cfg)
-        : _impl(std::make_unique<token_metadata_impl>(cfg))
+token_metadata::token_metadata(topology_registry& topology_registry, config cfg)
+        : _impl(std::make_unique<token_metadata_impl>(topology_registry, std::move(cfg)))
 {
 }
 
