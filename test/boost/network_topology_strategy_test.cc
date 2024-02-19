@@ -283,7 +283,8 @@ void simple_test() {
     locator::token_metadata::config tm_cfg;
     tm_cfg.topo_cfg.this_endpoint = my_address;
     tm_cfg.topo_cfg.local_dc_rack = { snitch.local()->get_datacenter(), snitch.local()->get_rack() };
-    locator::shared_token_metadata stm([] () noexcept { return db::schema_tables::hold_merge_lock(); }, tm_cfg);
+    locator::topology_registry topology_registry;
+    locator::shared_token_metadata stm(std::ref(topology_registry), [] () noexcept { return db::schema_tables::hold_merge_lock(); }, tm_cfg);
 
     std::vector<ring_point> ring_points = {
         { 1.0,  inet_address("192.100.10.1") },
@@ -365,7 +366,8 @@ void heavy_origin_test() {
     auto stop_snitch = defer([&snitch] { snitch.stop().get(); });
     snitch.invoke_on_all(&snitch_ptr::start).get();
 
-    locator::shared_token_metadata stm([] () noexcept { return db::schema_tables::hold_merge_lock(); }, locator::token_metadata::config{});
+    locator::topology_registry topology_registry;
+    locator::shared_token_metadata stm(std::ref(topology_registry), [] () noexcept { return db::schema_tables::hold_merge_lock(); }, locator::token_metadata::config{});
 
     std::vector<int> dc_racks = {2, 4, 8};
     std::vector<int> dc_endpoints = {128, 256, 512};
@@ -476,7 +478,8 @@ SEASTAR_THREAD_TEST_CASE(NetworkTopologyStrategy_tablets_test) {
         testlog.debug("node_count_per_rack={}", node_count_per_rack);
 
         // Initialize the token_metadata
-        locator::shared_token_metadata stm([] () noexcept { return db::schema_tables::hold_merge_lock(); }, tm_cfg);
+        locator::topology_registry topology_registry;
+        locator::shared_token_metadata stm(std::ref(topology_registry), [] () noexcept { return db::schema_tables::hold_merge_lock(); }, tm_cfg);
         stm.mutate_token_metadata([&] (token_metadata& tm) -> future<> {
             auto& topo = tm.get_topology();
             for (const auto& [ring_point, endpoint, id] : ring_points) {
@@ -567,7 +570,8 @@ static void test_random_balancing(sharded<snitch_ptr>& snitch, gms::inet_address
             }), ", "));
 
     // Initialize the token_metadata
-    locator::shared_token_metadata stm([] () noexcept { return db::schema_tables::hold_merge_lock(); }, tm_cfg);
+    locator::topology_registry topology_registry;
+    locator::shared_token_metadata stm(std::ref(topology_registry), [] () noexcept { return db::schema_tables::hold_merge_lock(); }, tm_cfg);
     stm.mutate_token_metadata([&] (token_metadata& tm) -> future<> {
         auto& topo = tm.get_topology();
         for (const auto& [ring_point, endpoint, id] : ring_points) {
@@ -897,9 +901,11 @@ SEASTAR_THREAD_TEST_CASE(testCalculateEndpoints) {
         return host_id{utils::UUID(0, ++i)};
     });
 
+    locator::topology_registry topology_registry;
+
     for (size_t run = 0; run < RUNS; ++run) {
         semaphore sem(1);
-        shared_token_metadata stm([&sem] () noexcept { return get_units(sem, 1); }, tm_cfg);
+        shared_token_metadata stm(std::ref(topology_registry), [&sem] () noexcept { return get_units(sem, 1); }, tm_cfg);
 
         std::unordered_set<dht::token> random_tokens;
         while (random_tokens.size() < nodes.size() * VNODES) {
@@ -1011,7 +1017,8 @@ SEASTAR_THREAD_TEST_CASE(test_topology_compare_endpoints) {
     auto bogus_address = inet_address((127u << 24) | static_cast<int>(NODES + 1));
 
     semaphore sem(1);
-    shared_token_metadata stm([&sem] () noexcept { return get_units(sem, 1); }, tm_cfg);
+    locator::topology_registry topology_registry;
+    shared_token_metadata stm(std::ref(topology_registry), [&sem] () noexcept { return get_units(sem, 1); }, tm_cfg);
     stm.mutate_token_metadata([&] (token_metadata& tm) {
         auto& topo = tm.get_topology();
         generate_topology(topo, datacenters, nodes);
@@ -1048,7 +1055,8 @@ SEASTAR_THREAD_TEST_CASE(test_topology_tracks_local_node) {
     auto ip1_dc_rack_v2 = endpoint_dc_rack{ "dc1", "rack_ip1_v2" };
 
     semaphore sem(1);
-    shared_token_metadata stm([&sem] () noexcept { return get_units(sem, 1); }, locator::token_metadata::config{
+    locator::topology_registry topology_registry;
+    shared_token_metadata stm(std::ref(topology_registry), [&sem] () noexcept { return get_units(sem, 1); }, locator::token_metadata::config{
         topology::config{
             .this_endpoint = ip1,
             .local_dc_rack = ip1_dc_rack,
