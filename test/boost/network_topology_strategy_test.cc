@@ -311,6 +311,8 @@ void simple_test() {
             co_await tm.update_normal_tokens(std::move(tokens), id);
         }
     }).get();
+    auto tmptr = stm.get();
+    const auto& topology = tmptr->get_topology();
 
     /////////////////////////////////////
     // Create the replication strategy
@@ -321,8 +323,6 @@ void simple_test() {
     };
     locator::replication_strategy_params params323(options323, std::nullopt);
 
-    locator::topology_registry registry;
-    locator::topology topology(registry, locator::topology::config{});
     auto ars_ptr = abstract_replication_strategy::create_replication_strategy(
         "NetworkTopologyStrategy", topology, params323);
 
@@ -421,10 +421,11 @@ void heavy_origin_test() {
             co_await tm.update_normal_tokens(tokens[endpoint], id);
         }
     }).get();
+    auto tmptr = stm.get();
+    const auto& topology = tmptr->get_topology();
 
     locator::replication_strategy_params params(config_options, std::nullopt);
-    locator::topology_registry registry;
-    locator::topology topology(registry, locator::topology::config{});
+
     auto ars_ptr = abstract_replication_strategy::create_replication_strategy(
         "NetworkTopologyStrategy", topology, params);
 
@@ -590,9 +591,28 @@ static void test_random_balancing(sharded<snitch_ptr>& snitch, gms::inet_address
             co_await tm.update_normal_tokens(std::move(tokens), id);
         }
     }).get();
+    auto tmptr = stm.get();
+    const auto& topology = tmptr->get_topology();
 
+<<<<<<< HEAD
     auto tmptr = stm.get();
     const auto& topo = tmptr->get_topology();
+=======
+    /////////////////////////////////////
+    // Create the replication strategy
+    std::map<sstring, sstring> options323 = {
+            {"100", "3"},
+            {"101", "2"},
+            {"102", "3"},
+    };
+    locator::replication_strategy_params params323(options323, 100);
+
+    auto ars_ptr = abstract_replication_strategy::create_replication_strategy(
+            "NetworkTopologyStrategy", topology, params323);
+
+    auto tab_awr_ptr = ars_ptr->maybe_as_tablet_aware();
+    BOOST_REQUIRE(tab_awr_ptr);
+>>>>>>> 17544325fe (network_topology_strategy: use native datacenter* for dc_rep_factor map)
 
     auto s = schema_builder("ks", "tb")
         .with_column("pk", utf8_type, column_kind::partition_key)

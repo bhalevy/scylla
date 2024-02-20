@@ -44,8 +44,10 @@ network_topology_strategy_traits::network_topology_strategy_traits(const replica
     )
 {}
 
-network_topology_strategy::network_topology_strategy(const topology& topology, replication_strategy_params params) :
-        abstract_replication_strategy(network_topology_strategy_traits(params), params) {
+network_topology_strategy::network_topology_strategy(const topology& topology, replication_strategy_params params)
+        : abstract_replication_strategy(network_topology_strategy_traits(params), params)
+        , _topology_registry(topology.get_topology_registry())
+{
     auto opts = _config_options;
     process_tablet_options(params);
 
@@ -68,15 +70,23 @@ network_topology_strategy::network_topology_strategy(const topology& topology, r
                 "NetworkTopologyStrategy");
         }
 
+        const auto* dc = _topology_registry.find_datacenter(key);
+        if (!dc) {
+            // Ignore the option.  It will be checked again later when validated.
+            rslogger.warn("Could not find datacenter {} with replication factor {}", key, val);
+            continue;
+        }
+
         auto rf = parse_replication_factor(val);
         rep_factor += rf;
-        _dc_rep_factor.emplace(key, rf);
-        _datacenteres.push_back(key);
+        _dc_rep_factor.emplace(dc, rf);
     }
 
     _rep_factor = rep_factor;
 
-    rslogger.debug("Configured datacenter replicas are: {}", _dc_rep_factor);
+    rslogger.debug("Configured datacenter replicas are: {}", boost::copy_range<std::unordered_map<sstring, size_t>>(_dc_rep_factor | boost::adaptors::transformed([] (const auto& x) {
+        return std::make_pair(x.first->name, x.second);
+    })));
 }
 
 using rack_set = std::unordered_set<const rack*>;
@@ -181,13 +191,13 @@ class natural_endpoints_tracker {
     size_t _dcs_to_fill;
 
 public:
-    natural_endpoints_tracker(const token_metadata& tm, const std::unordered_map<sstring, size_t>& dc_rep_factor)
+    natural_endpoints_tracker(const token_metadata& tm, const network_topology_strategy::dc_rep_factor& dc_rep_factor)
         : _tm(tm)
         , _tp(_tm.get_topology())
     {
-        std::unordered_set<sstring_view> processed_dcs; // Used for tracking found datacenters in log_level::debug
+        std::unordered_set<const datacenter*> processed_dcs; // Used for tracking found datacenters in log_level::debug
         for (const auto& [dc, dc_inventory] : _tp.get_inventory()) {
-            auto it = dc_rep_factor.find(dc->name);
+            auto it = dc_rep_factor.find(dc);
             if (it == dc_rep_factor.end()) {
                 continue;
             }
@@ -214,7 +224,7 @@ public:
         if (rslogger.is_enabled(log_level::debug)) {
             for (const auto& [dc, rf] : dc_rep_factor) {
                 if (!processed_dcs.contains(dc)) {
-                    rslogger.debug("datacenter {} with rf={} not found", dc, rf);
+                    rslogger.debug("datacenter {} with rf={} not found", dc->name, rf);
                 }
             }
         }
@@ -241,6 +251,7 @@ public:
         return _replicas;
     }
 
+<<<<<<< HEAD
     static void check_enough_endpoints(const token_metadata& tm, const std::unordered_map<sstring, size_t>& dc_rf) {
         const auto& dc_endpoints = tm.get_topology().get_datacenter_endpoints();
         auto endpoints_in = [&dc_endpoints](sstring dc) {
@@ -250,6 +261,13 @@ public:
         for (const auto& [dc, rf] : dc_rf) {
             if (rf > endpoints_in(dc)) {
                 throw exceptions::configuration_exception(fmt::format("Datacenter {} doesn't have enough nodes for replication_factor={}", dc, rf));
+=======
+    static void check_enough_endpoints(const token_metadata& tm, const network_topology_strategy::dc_rep_factor& dc_rf) {
+        const auto& topology = tm.get_topology();
+        for (const auto& p : dc_rf) {
+            if (p.second > topology.node_count(p.first)) {
+                throw exceptions::configuration_exception(fmt::format("Datacenter {} doesn't have enough nodes for replication_factor={}", p.first->name, p.second));
+>>>>>>> 17544325fe (network_topology_strategy: use native datacenter* for dc_rep_factor map)
             }
         }
     }
@@ -299,6 +317,11 @@ std::optional<std::unordered_set<sstring>> network_topology_strategy::recognized
     return opts;
 }
 
+size_t network_topology_strategy::get_replication_factor(const sstring& dc_name) const {
+    const auto* dc = _topology_registry.find_datacenter(dc_name);
+    return dc ? get_replication_factor(dc) : 0;
+}
+
 effective_replication_map_ptr network_topology_strategy::make_replication_map(table_id table, token_metadata_ptr tm) const {
     if (!uses_tablets()) {
         on_internal_error(rslogger, format("make_replication_map() called for table {} but replication strategy not configured to use tablets", table));
@@ -313,20 +336,17 @@ effective_replication_map_ptr network_topology_strategy::make_replication_map(ta
 //    initial_tablets = max(nr_shards_in(dc) / RF_in(dc) for dc in datacenters)
 //
 
-static unsigned calculate_initial_tablets_from_topology(const schema& s, const topology& topo, const std::unordered_map<sstring, size_t>& rf) {
+static unsigned calculate_initial_tablets_from_topology(const schema& s, const topology& topo, const network_topology_strategy::dc_rep_factor& rf) {
     unsigned initial_tablets = std::numeric_limits<unsigned>::min();
-    for (const auto& dc : topo.get_datacenter_endpoints()) {
+    for (const auto& [dc, dc_inventory] : topo.get_inventory()) {
         unsigned shards_in_dc = 0;
         unsigned rf_in_dc = 1;
 
-        for (const auto& ep : dc.second) {
-            const auto* node = topo.find_node(ep);
-            if (node != nullptr) {
-                shards_in_dc += node->get_shard_count();
-            }
+        for (const auto& node : dc_inventory.nodes) {
+            shards_in_dc += node.get_shard_count();
         }
 
-        if (auto it = rf.find(dc.first); it != rf.end()) {
+        if (auto it = rf.find(dc); it != rf.end()) {
             rf_in_dc = it->second;
         }
 
