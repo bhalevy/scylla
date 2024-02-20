@@ -4897,11 +4897,20 @@ storage_service::describe_ring_for_table(const sstring& keyspace_name, const sst
         }
         for (auto& r : replicas) {
             dht::endpoint_details details;
+<<<<<<< HEAD
             const auto& node = topology.get_node(r.host);
             details._datacenter = node.dc_rack().dc;
             details._rack = node.dc_rack().rack;
             details._host = node.endpoint();
             tr._rpc_endpoints.push_back(_gossiper.get_rpc_address(node.endpoint()));
+=======
+            auto& hostid = r.host;
+            auto endpoint = host2ip(hostid);
+            details._datacenter = topology.get_datacenter(hostid)->name;
+            details._rack = topology.get_rack(hostid)->name;
+            details._host = endpoint;
+            tr._rpc_endpoints.push_back(_gossiper.get_rpc_address(endpoint));
+>>>>>>> 4f0a71208d (locator: topology: return native location/datacenter*/rack*)
             tr._endpoints.push_back(fmt::to_string(details._host));
             tr._endpoint_details.push_back(std::move(details));
         }
@@ -5689,8 +5698,8 @@ future<> storage_service::cleanup_tablet(locator::global_tablet_id tablet) {
     });
 }
 
-static bool increases_replicas_per_rack(const locator::topology& topology, const locator::tablet_info& tinfo, sstring dst_rack) {
-    std::unordered_map<sstring, size_t> m;
+static bool increases_replicas_per_rack(const locator::topology& topology, const locator::tablet_info& tinfo, const locator::rack* dst_rack) {
+    std::unordered_map<const locator::rack*, size_t> m;
     for (auto& replica: tinfo.replicas) {
         m[topology.get_rack(replica.host)]++;
     }
@@ -5758,16 +5767,16 @@ future<> storage_service::move_tablet(table_id table, dht::token token, locator:
         auto dst_dc_rack = get_token_metadata().get_topology().get_location(dst.host);
         if (src_dc_rack.dc != dst_dc_rack.dc) {
             if (force) {
-                slogger.warn("Moving tablet {} between DCs ({} and {})", gid, src_dc_rack.dc, dst_dc_rack.dc);
+                slogger.warn("Moving tablet {} between DCs ({} and {})", gid, src_dc_rack.dc->name, dst_dc_rack.dc->name);
             } else {
-                throw std::runtime_error(fmt::format("Attempted to move tablet {} between DCs ({} and {})", gid, src_dc_rack.dc, dst_dc_rack.dc));
+                throw std::runtime_error(fmt::format("Attempted to move tablet {} between DCs ({} and {})", gid, src_dc_rack.dc->name, dst_dc_rack.dc->name));
             }
         }
         if (src_dc_rack.rack != dst_dc_rack.rack && increases_replicas_per_rack(get_token_metadata().get_topology(), tinfo, dst_dc_rack.rack)) {
             if (force) {
-                slogger.warn("Moving tablet {} between racks ({} and {}) which reduces availability", gid, src_dc_rack.rack, dst_dc_rack.rack);
+                slogger.warn("Moving tablet {} between racks ({} and {}) which reduces availability", gid, src_dc_rack.rack->name, dst_dc_rack.rack->name);
             } else {
-                throw std::runtime_error(fmt::format("Attempted to move tablet {} between racks ({} and {}) which would reduce availability", gid, src_dc_rack.rack, dst_dc_rack.rack));
+                throw std::runtime_error(fmt::format("Attempted to move tablet {} between racks ({} and {}) which would reduce availability", gid, src_dc_rack.rack->name, dst_dc_rack.rack->name));
             }
         }
 
