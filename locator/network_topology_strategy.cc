@@ -348,7 +348,6 @@ future<tablet_map> network_topology_strategy::reallocate_tablets(schema_ptr s, t
     tablet_logger.debug("Allocating tablets for {}.{} ({}): dc_rep_factor={} tablet_count={}", s->ks_name(), s->cf_name(), s->id(), _dc_rep_factor, tablets.tablet_count());
 
     const auto& topo = tm->get_topology();
-    const auto dc_rack_nodes = topo.get_datacenter_rack_nodes();
     for (tablet_id tb : tablets.tablet_ids()) {
         auto replicas = co_await reallocate_tablets(s, topo, load, tablets, tb);
         tablets.set_tablet(tb, tablet_info{std::move(replicas)});
@@ -395,7 +394,11 @@ future<tablet_replica_set> network_topology_strategy::add_tablets_in_dc(schema_p
 
     auto replicas = cur_replicas;
     // all_dc_racks is ordered lexicographically on purpose
-    auto all_dc_racks = boost::copy_range<std::map<sstring, std::unordered_set<const node*>>>(topo.get_datacenter_rack_nodes().at(dc));
+    std::map<sstring, std::unordered_set<const node*>> all_dc_racks;
+    auto dc_ptr = topo.get_topology_registry().find_datacenter(dc);
+    for (const auto& [rack, node_list] : topo.get_inventory().at(dc_ptr).racks) {
+        all_dc_racks.emplace(rack->name, boost::copy_range<std::unordered_set<const node*>>(node_list | boost::adaptors::transformed([] (const node& n) { return &n; })));
+    }
 
     // Track all nodes with no replicas on them for this tablet, per rack.
     struct node_load {
