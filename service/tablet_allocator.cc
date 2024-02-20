@@ -229,11 +229,11 @@ class load_balancer {
         std::optional<locator::load_sketch> target_load_sketch;
 
         const sstring& dc() const {
-            return node->dc_rack().dc;
+            return node->dc()->name;
         }
 
         const sstring& rack() const {
-            return node->dc_rack().rack;
+            return node->rack()->name;
         }
 
         locator::node::state state() const {
