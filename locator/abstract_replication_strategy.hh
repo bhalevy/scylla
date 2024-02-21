@@ -61,6 +61,7 @@ struct replication_strategy_params {
 class abstract_replication_strategy;
 using strategy_class_registry = class_registry<
     abstract_replication_strategy,
+    const topology&,
     replication_strategy_params>;
 
 class abstract_replication_strategy_traits;
@@ -152,7 +153,7 @@ public:
     future<endpoint_set> calculate_natural_ips(const token& search_token, const token_metadata& tm) const;
 
     virtual ~abstract_replication_strategy() {}
-    static ptr_type create_replication_strategy(const sstring& strategy_name, replication_strategy_params params);
+    static ptr_type create_replication_strategy(const sstring& strategy_name, const topology& topology, replication_strategy_params params);
     static void validate_replication_strategy(const sstring& ks_name,
                                               const sstring& strategy_name,
                                               replication_strategy_params params,

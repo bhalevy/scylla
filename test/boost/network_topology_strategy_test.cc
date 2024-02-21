@@ -9,6 +9,7 @@
 #include <boost/test/unit_test.hpp>
 #include <boost/range/adaptors.hpp>
 #include "gms/inet_address.hh"
+#include "locator/topology.hh"
 #include "locator/types.hh"
 #include "utils/UUID_gen.hh"
 #include "utils/sequenced_set.hh"
@@ -320,8 +321,10 @@ void simple_test() {
     };
     locator::replication_strategy_params params323(options323, std::nullopt);
 
+    locator::topology_registry registry;
+    locator::topology topology(registry, locator::topology::config{});
     auto ars_ptr = abstract_replication_strategy::create_replication_strategy(
-        "NetworkTopologyStrategy", params323);
+        "NetworkTopologyStrategy", topology, params323);
 
     full_ring_check(ring_points, options323, ars_ptr, stm.get());
 
@@ -335,7 +338,7 @@ void simple_test() {
     locator::replication_strategy_params params320(options320, std::nullopt);
 
     ars_ptr = abstract_replication_strategy::create_replication_strategy(
-        "NetworkTopologyStrategy", params320);
+        "NetworkTopologyStrategy", topology, params320);
 
     full_ring_check(ring_points, options320, ars_ptr, stm.get());
 
@@ -420,8 +423,10 @@ void heavy_origin_test() {
     }).get();
 
     locator::replication_strategy_params params(config_options, std::nullopt);
+    locator::topology_registry registry;
+    locator::topology topology(registry, locator::topology::config{});
     auto ars_ptr = abstract_replication_strategy::create_replication_strategy(
-        "NetworkTopologyStrategy", params);
+        "NetworkTopologyStrategy", topology, params);
 
     full_ring_check(ring_points, config_options, ars_ptr, stm.get());
 }
@@ -491,6 +496,9 @@ SEASTAR_THREAD_TEST_CASE(NetworkTopologyStrategy_tablets_test) {
             }
         }).get();
 
+        const auto& tmptr = stm.get();
+        const auto& topo = tmptr->get_topology();
+
         auto s = schema_builder("ks", "tb")
             .with_column("pk", utf8_type, column_kind::partition_key)
             .with_column("v", utf8_type)
@@ -515,7 +523,7 @@ SEASTAR_THREAD_TEST_CASE(NetworkTopologyStrategy_tablets_test) {
         testlog.debug("tablet_count={} rf_options={}", tablet_count, options);
         locator::replication_strategy_params params(options, tablet_count);
         auto ars_ptr = abstract_replication_strategy::create_replication_strategy(
-                "NetworkTopologyStrategy", params);
+                "NetworkTopologyStrategy", topo, params);
         auto tab_awr_ptr = ars_ptr->maybe_as_tablet_aware();
         BOOST_REQUIRE(tab_awr_ptr);
         auto tmap = tab_awr_ptr->allocate_tablets_for_new_table(s, stm.get(), 1).get();
@@ -525,7 +533,7 @@ SEASTAR_THREAD_TEST_CASE(NetworkTopologyStrategy_tablets_test) {
         auto realloc_options = make_random_options();
         locator::replication_strategy_params realloc_params(realloc_options, tablet_count);
         auto realloc_ars_ptr = abstract_replication_strategy::create_replication_strategy(
-                "NetworkTopologyStrategy", params);
+                "NetworkTopologyStrategy", topo, params);
         auto realloc_tab_awr_ptr = realloc_ars_ptr->maybe_as_tablet_aware();
         BOOST_REQUIRE(realloc_tab_awr_ptr);
         auto realloc_tmap = tab_awr_ptr->reallocate_tablets(s, stm.get(), tmap).get();
@@ -607,7 +615,7 @@ static void test_random_balancing(sharded<snitch_ptr>& snitch, gms::inet_address
     testlog.debug("tablet_count={} options={}", tablet_count, options);
     locator::replication_strategy_params params(options, tablet_count);
     auto ars_ptr = abstract_replication_strategy::create_replication_strategy(
-            "NetworkTopologyStrategy", params);
+            "NetworkTopologyStrategy", topo, params);
     auto nts_ptr = dynamic_cast<const network_topology_strategy*>(ars_ptr.get());
     auto tab_awr_ptr = ars_ptr->maybe_as_tablet_aware();
     BOOST_REQUIRE(tab_awr_ptr);
@@ -620,7 +628,7 @@ static void test_random_balancing(sharded<snitch_ptr>& snitch, gms::inet_address
         testlog.debug("Increasing rf_per_dc={}", rf_per_dc);
         locator::replication_strategy_params inc_params(inc_options, tablet_count);
         auto inc_ars_ptr = abstract_replication_strategy::create_replication_strategy(
-                "NetworkTopologyStrategy", params);
+                "NetworkTopologyStrategy", topo, params);
         auto inc_nts_ptr = dynamic_cast<const network_topology_strategy*>(inc_ars_ptr.get());
         auto inc_tab_awr_ptr = inc_ars_ptr->maybe_as_tablet_aware();
         BOOST_REQUIRE(inc_tab_awr_ptr);
@@ -634,7 +642,7 @@ static void test_random_balancing(sharded<snitch_ptr>& snitch, gms::inet_address
         testlog.debug("Increasing rf_per_dc={}", rf_per_dc);
         locator::replication_strategy_params dec_params(dec_options, tablet_count);
         auto dec_ars_ptr = abstract_replication_strategy::create_replication_strategy(
-                "NetworkTopologyStrategy", params);
+                "NetworkTopologyStrategy", topo, params);
         auto dec_nts_ptr = dynamic_cast<const network_topology_strategy*>(dec_ars_ptr.get());
         auto dec_tab_awr_ptr = dec_ars_ptr->maybe_as_tablet_aware();
         BOOST_REQUIRE(dec_tab_awr_ptr);
@@ -823,7 +831,7 @@ static void test_equivalence(const shared_token_metadata& stm, const locator::to
         using network_topology_strategy::calculate_natural_endpoints;
     };
 
-    my_network_topology_strategy nts(replication_strategy_params(
+    my_network_topology_strategy nts(topo, replication_strategy_params(
                     boost::copy_range<std::map<sstring, sstring>>(
                                     datacenters
                                                     | boost::adaptors::transformed(
