@@ -553,7 +553,7 @@ tablet_replica_set network_topology_strategy::drop_tablets_in_dc(schema_ptr s, c
     return filtered;
 }
 
-using registry = class_registrator<abstract_replication_strategy, network_topology_strategy, replication_strategy_params>;
+using registry = strategy_class_registry::registrator<network_topology_strategy>;
 static registry registrator("org.apache.cassandra.locator.NetworkTopologyStrategy");
 static registry registrator_short_name("NetworkTopologyStrategy");
 }
