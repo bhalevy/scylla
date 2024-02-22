@@ -391,6 +391,20 @@ public:
     // since future_state requires T to be no_throw_move_constructible.
     future<std::unique_ptr<cloned_data>> clone_data_gently() const;
 
+<<<<<<< HEAD
+=======
+    // get_ranges() returns the list of ranges held by the given endpoint.
+    // The list is sorted, and its elements are non overlapping and non wrap-around.
+    // It the analogue of Origin's getAddressRanges().get(endpoint).
+    // This function is not efficient, and not meant for the fast path.
+    //
+    // Note: must be called after token_metadata has been initialized.
+    dht::token_range_vector get_ranges(const node* of_node) const;
+    dht::token_range_vector get_ranges() const {
+        return get_ranges(_tmptr->get_topology().this_node());
+    }
+
+>>>>>>> bc74f09065 (locator: vnode_effective_replication_map: get_*_ranges: use native node*)
     // get_primary_ranges() returns the list of "primary ranges" for the given
     // endpoint. "Primary ranges" are the ranges that the node is responsible
     // for storing replica primarily, which means this is the first node
@@ -399,14 +413,20 @@ public:
     // StorageService.getPrimaryRangesForEndpoint().
     //
     // Note: must be called after token_metadata has been initialized.
-    dht::token_range_vector get_primary_ranges(inet_address ep) const;
+    dht::token_range_vector get_primary_ranges(const node* of_node) const;
+    dht::token_range_vector get_primary_ranges() const {
+        return get_primary_ranges(_tmptr->get_topology().this_node());
+    }
 
     // get_primary_ranges_within_dc() is similar to get_primary_ranges()
     // except it assigns a primary node for each range within each dc,
     // instead of one node globally.
     //
     // Note: must be called after token_metadata has been initialized.
-    dht::token_range_vector get_primary_ranges_within_dc(inet_address ep) const;
+    dht::token_range_vector get_primary_ranges_within_dc(const node* of_node) const;
+    dht::token_range_vector get_primary_ranges_within_dc() const {
+        return get_primary_ranges(_tmptr->get_topology().this_node());
+    }
 
     future<std::unordered_map<dht::token_range, inet_address_vector_replica_set>>
     get_range_addresses() const;

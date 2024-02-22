@@ -3220,6 +3220,7 @@ future<std::map<gms::inet_address, float>> storage_service::effective_ownership(
         //
         // The call for get_range_for_endpoint is done once per endpoint
         const auto& tm = *erm->get_token_metadata_ptr();
+<<<<<<< HEAD
         const auto tokens = co_await std::invoke([&]() -> future<std::vector<token>> {
             if (!erm->get_replication_strategy().uses_tablets()) {
                 return make_ready_future<std::vector<token>>(tm.sorted_tokens());
@@ -3232,15 +3233,18 @@ future<std::map<gms::inet_address, float>> storage_service::effective_ownership(
 
         const auto token_ownership = dht::token::describe_ownership(tokens);
         const auto datacenter_endpoints = tm.get_topology().get_datacenter_endpoints();
+=======
+        const auto token_ownership = dht::token::describe_ownership(tm.sorted_tokens());
+>>>>>>> bc74f09065 (locator: vnode_effective_replication_map: get_*_ranges: use native node*)
         std::map<gms::inet_address, float> final_ownership;
 
-        for (const auto& [dc, endpoints_map] : datacenter_endpoints) {
-            for (auto endpoint : endpoints_map) {
+        for (const auto& [dc, dc_inventory] : tm.get_topology().get_inventory()) {
+            for (const auto& node : dc_inventory.nodes) {
                 // calculate the ownership with replication and add the endpoint to the final ownership map
                 float ownership = 0.0f;
-                auto ranges = ss.get_ranges_for_endpoint(erm, endpoint);
+                auto ranges = erm->get_ranges(&node);
                 for (auto& r : ranges) {
-                    // get_ranges_for_endpoint will unwrap the first range.
+                    // get_ranges will unwrap the first range.
                     // With t0 t1 t2 t3, the first range (t3,t0] will be split
                     // as (min,t0] and (t3,max]. Skippping the range (t3,max]
                     // we will get the correct ownership number as if the first
@@ -3254,7 +3258,7 @@ future<std::map<gms::inet_address, float>> storage_service::effective_ownership(
                         ownership += loc->second;
                     }
                 }
-                final_ownership[endpoint] = ownership;
+                final_ownership[node.endpoint()] = ownership;
             }
         }
         co_return final_ownership;
@@ -4528,7 +4532,7 @@ future<> storage_service::rebuild(sstring source_dc) {
                 }
                 auto ks_erms = ss._db.local().get_non_local_strategy_keyspaces_erms();
                 for (const auto& [keyspace_name, erm] : ks_erms) {
-                    co_await streamer->add_ranges(keyspace_name, erm, ss.get_ranges_for_endpoint(erm, ss.get_broadcast_address()), ss._gossiper, false);
+                    co_await streamer->add_ranges(keyspace_name, erm, erm->get_ranges(), ss._gossiper, false);
                 }
                 try {
                     co_await streamer->stream_async();
@@ -4570,7 +4574,8 @@ int32_t storage_service::get_exception_count() {
 future<std::unordered_multimap<dht::token_range, inet_address>>
 storage_service::get_changed_ranges_for_leaving(locator::vnode_effective_replication_map_ptr erm, inet_address endpoint) {
     // First get all ranges the leaving endpoint is responsible for
-    auto ranges = get_ranges_for_endpoint(erm, endpoint);
+    const auto* node = erm->get_topology().find_node(endpoint);
+    auto ranges = erm->get_ranges(node);
 
     slogger.debug("Node {} ranges [{}]", endpoint, ranges);
 
@@ -5393,7 +5398,7 @@ future<raft_topology_cmd_result> storage_service::raft_topology_cmd_handler(raft
                                 }
                                 auto ks_erms = _db.local().get_non_local_strategy_keyspaces_erms();
                                 for (const auto& [keyspace_name, erm] : ks_erms) {
-                                    co_await streamer->add_ranges(keyspace_name, erm, get_ranges_for_endpoint(erm, get_broadcast_address()), _gossiper, false);
+                                    co_await streamer->add_ranges(keyspace_name, erm, erm->get_ranges(), _gossiper, false);
                                 }
                                 try {
                                     co_await streamer->stream_async();
@@ -6605,11 +6610,14 @@ storage_service::get_splits(const sstring& ks_name, const sstring& cf_name, wrap
     return calculate_splits(std::move(tokens), split_count, cf);
 };
 
+<<<<<<< HEAD
 dht::token_range_vector
 storage_service::get_ranges_for_endpoint(const locator::effective_replication_map_ptr& erm, const gms::inet_address& ep) const {
     return erm->get_ranges(ep);
 }
 
+=======
+>>>>>>> bc74f09065 (locator: vnode_effective_replication_map: get_*_ranges: use native node*)
 // Caller is responsible to hold token_metadata valid until the returned future is resolved
 future<dht::token_range_vector>
 storage_service::get_all_ranges(const std::vector<token>& sorted_tokens) const {

@@ -580,6 +580,7 @@ public:
 
     future<std::unordered_map<sstring, std::vector<sstring>>> describe_schema_versions();
 
+<<<<<<< HEAD
 
     /**
      * Get all ranges an endpoint is responsible for (by keyspace effective_replication_map)
@@ -589,6 +590,8 @@ public:
      */
     dht::token_range_vector get_ranges_for_endpoint(const locator::effective_replication_map_ptr& erm, const gms::inet_address& ep) const;
 
+=======
+>>>>>>> bc74f09065 (locator: vnode_effective_replication_map: get_*_ranges: use native node*)
     /**
      * Get all ranges that span the ring given a set
      * of tokens. All ranges are in sorted order of
