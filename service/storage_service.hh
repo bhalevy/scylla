@@ -83,6 +83,7 @@ class range_streamer;
 namespace gms {
 class feature_service;
 class gossiper;
+class loaded_endpoint_state;
 };
 
 namespace service {
@@ -284,6 +285,9 @@ private:
     inet_address get_broadcast_address() const noexcept {
         return get_token_metadata_ptr()->get_topology().my_address();
     }
+    locator::host_id my_host_id() const noexcept {
+        return get_token_metadata_ptr()->get_topology().my_host_id();
+    }
     bool is_me(inet_address addr) const noexcept {
         return get_token_metadata_ptr()->get_topology().is_me(addr);
     }
@@ -371,7 +375,7 @@ private:
             sharded<service::storage_proxy>& proxy,
             sharded<gms::gossiper>& gossiper,
             std::unordered_set<gms::inet_address> initial_contact_nodes,
-            std::unordered_set<gms::inet_address> loaded_endpoints,
+            std::unordered_map<locator::host_id, gms::loaded_endpoint_state> loaded_endpoints,
             std::unordered_map<gms::inet_address, sstring> loaded_peer_features,
             std::chrono::milliseconds,
             start_hint_manager start_hm,
