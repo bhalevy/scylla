@@ -3537,6 +3537,12 @@ future<> topology_coordinator::stop() {
         if (tablet_state.cleanup) {
             co_await stop_background_action(tablet_state.cleanup, gid, [] { return "when cleanup"; });
         }
+        if (tablet_state.rebuild_repair) {
+            co_await stop_background_action(tablet_state.rebuild_repair, gid, [] { return "when rebuild_repair"; });
+        }
+        if (tablet_state.repair) {
+            co_await stop_background_action(tablet_state.repair, gid, [] { return "when repair"; });
+        }
     });
 }
 
