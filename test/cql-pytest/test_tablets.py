@@ -127,3 +127,50 @@ def test_tablets_are_dropped_when_dropping_table(cql, test_keyspace, skip_withou
 
     cql.execute(f"DROP TABLE {test_keyspace}.{table_name}")
     verify_tablets_presence(expected=False)
+
+
+def _test_tablets_are_dropped_when_dropping_table_with_view(cql, keyspace_name, attempt_drop_table:bool=False):
+    table_name = unique_name()
+    schema = "pk int PRIMARY KEY, c int"
+    # new_test_table is not used since we want to test a failure to drop the table
+    cql.execute(f"CREATE TABLE {keyspace_name}.{table_name} ({schema})")
+    view_name = unique_name()
+    where = "c is not null and pk is not null"
+    view_pk = "c, pk"
+    cql.execute(f"CREATE MATERIALIZED VIEW {keyspace_name}.{view_name} AS SELECT * FROM {table_name} WHERE {where} PRIMARY KEY ({view_pk})")
+
+    def verify_tablets_presence(table_expected:bool=True, view_expected:bool=True):
+        for name in [table_name, view_name]:
+            desc = "table" if name == table_name else "view"
+            res = cql.execute(f"SELECT * FROM system.tablets WHERE keyspace_name='{keyspace_name}' AND table_name='{name}' ALLOW FILTERING")
+            if (name == table_name and table_expected) or (name == view_name and view_expected):
+                assert res, f"{desc} {keyspace_name}.{name} not found in system.tablets after view is created"
+                assert res.one().tablet_count > 0, f"{desc} {keyspace_name}.{name}: zero tablets allocated"
+            else:
+                assert not res, f"{desc} {keyspace_name}.{name} was not found in system.tablets after they were dropped"
+
+    verify_tablets_presence()
+
+    if attempt_drop_table:
+        # It is disallowed to drop a table with views (that are not indices) depending on it
+        with pytest.raises(InvalidRequest):
+            cql.execute(f"DROP TABLE {keyspace_name}.{table_name}")
+
+        # failure to drop the table should keep its tablets intact
+        verify_tablets_presence()
+
+    cql.execute(f"DROP MATERIALIZED VIEW {keyspace_name}.{view_name}")
+    verify_tablets_presence(table_expected=True, view_expected=False)
+
+    cql.execute(f"DROP TABLE {keyspace_name}.{table_name}")
+    verify_tablets_presence(table_expected=False, view_expected=False)
+
+
+# Test that when a view of a tablets-enabled table is dropped, all of its tablets are dropped with it.
+def test_tablets_are_dropped_when_dropping_view(cql, test_keyspace, skip_without_tablets):
+    _test_tablets_are_dropped_when_dropping_table_with_view(cql, test_keyspace)
+
+
+# Test that when a tablets-enabled table drop fails when it has a view depending on it, all of its tablets still exist after the error is returned.
+def test_tablets_are_not_dropped_when_dropping_table_with_view_fails(cql, test_keyspace, skip_without_tablets):
+    _test_tablets_are_dropped_when_dropping_table_with_view(cql, test_keyspace, attempt_drop_table=True)
