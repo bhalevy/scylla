@@ -107,3 +107,17 @@ def test_describe_initial_tablets(cql, skip_without_tablets):
     with new_test_keyspace(cql, ksdef) as keyspace:
         desc = cql.execute(f"DESCRIBE KEYSPACE {keyspace}")
         assert "and tablets = {'initial': 1}" in desc.one().create_statement.lower()
+
+
+def test_tablets_are_dropped_when_dropping_table(cql, skip_without_tablets):
+    ksdef = "WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'replication_factor' : '1'} AND TABLETS = {'initial': 1}"
+    with new_test_keyspace(cql, ksdef) as keyspace:
+        keyspace_name = keyspace
+        table_name = ""
+        with new_test_table(cql, keyspace, "pk int PRIMARY KEY, c int") as table:
+            table_name = table.split('.')[1]
+            res = cql.execute(f"SELECT * FROM system.tablets WHERE keyspace_name='{keyspace_name}' AND table_name='{table_name}' ALLOW FILTERING")
+            assert res is not None, f"table {keyspace_name}.{table_name} not found in system.tablets after the table was created"
+            assert res.one().tablet_count > 0, f"table {keyspace_name}.{table_name}: zero tablets allocated"
+        res = cql.execute(f"SELECT * FROM system.tablets WHERE keyspace_name='{keyspace_name}' AND table_name='{table_name}' ALLOW FILTERING")
+        assert not res, f"table {keyspace_name}.{table_name} was found in system.tablets after the table was dropped: tablet_count={res.one().tablet_count}"
