@@ -216,6 +216,9 @@ public:
     }
 
     void on_before_drop_column_family(const schema& schema, std::vector<mutation>& mutations, api::timestamp_type timestamp) override {
+        if (schema.is_view()) {
+            return;
+        }
         auto logname = log_name(schema.cf_name());
         auto& db = _ctxt._proxy.get_db().local();
         auto has_cdc_log = db.has_schema(schema.ks_name(), logname);

@@ -13,7 +13,7 @@
 #############################################################################
 
 import pytest
-from util import new_test_keyspace, new_test_table, unique_name
+from util import new_test_keyspace, new_test_table, unique_name, new_materialized_view
 from cassandra.protocol import ConfigurationException, InvalidRequest
 
 # A fixture similar to "test_keyspace", just creates a keyspace that enables
@@ -121,3 +121,49 @@ def test_tablets_are_dropped_when_dropping_table(cql, skip_without_tablets):
             assert res.one().tablet_count > 0, f"table {keyspace_name}.{table_name}: zero tablets allocated"
         res = cql.execute(f"SELECT * FROM system.tablets WHERE keyspace_name='{keyspace_name}' AND table_name='{table_name}' ALLOW FILTERING")
         assert not res, f"table {keyspace_name}.{table_name} was found in system.tablets after the table was dropped: tablet_count={res.one().tablet_count}"
+
+
+def test_tablets_are_dropped_when_dropping_view(cql, skip_without_tablets):
+    ksdef = "WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'replication_factor' : '1'} AND TABLETS = {'initial': 1}"
+    with new_test_keyspace(cql, ksdef) as keyspace:
+        keyspace_name = keyspace
+        table_name = ""
+        view_name = ""
+        with new_test_table(cql, keyspace, "pk int PRIMARY KEY, c int") as table:
+            table_name = table.split('.')[1]
+            with new_materialized_view(cql, table, '*', 'c, pk', 'c is not null and pk is not null') as mv:
+                view_name = mv.split('.')[1]
+                for name in [table_name, view_name]:
+                    desc = "table" if name == table_name else "view"
+                    res = cql.execute(f"SELECT * FROM system.tablets WHERE keyspace_name='{keyspace_name}' AND table_name='{name}' ALLOW FILTERING")
+                    assert res is not None, f"{desc} {keyspace_name}.{name} not found in system.tablets after view is created"
+                    assert res.one().tablet_count > 0, f"{desc} {keyspace_name}.{name}: zero tablets allocated"
+            res = cql.execute(f"SELECT * FROM system.tablets WHERE keyspace_name='{keyspace_name}' AND table_name='{view_name}' ALLOW FILTERING")
+            assert not res, f"view {keyspace_name}.{view_name} was found in system.tablets after the view was dropped: tablet_count={res.one().tablet_count}"
+        res = cql.execute(f"SELECT * FROM system.tablets WHERE keyspace_name='{keyspace_name}' AND table_name='{table_name}' ALLOW FILTERING")
+        assert not res, f"table {keyspace_name}.{table_name} was found in system.tablets after the view was dropped: tablet_count={res.one().tablet_count}"
+
+
+def test_tablets_are_not_dropped_when_dropping_table_with_view_fails(cql, skip_without_tablets):
+    ksdef = "WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'replication_factor' : '1'} AND TABLETS = {'initial': 1}"
+    with new_test_keyspace(cql, ksdef) as keyspace:
+        keyspace_name = keyspace
+        table_name = ""
+        view_name = ""
+        with pytest.raises(InvalidRequest):
+            with new_test_table(cql, keyspace, "pk int PRIMARY KEY, c int") as table:
+                table_name = table.split('.')[1]
+                view_name = unique_name()
+                where = "c is not null and pk is not null"
+                view_pk = "c, pk"
+                cql.execute(f"CREATE MATERIALIZED VIEW {keyspace_name}.{view_name} AS SELECT * FROM {table} WHERE {where} PRIMARY KEY ({view_pk})")
+                for name in [table_name, view_name]:
+                    desc = "table" if name == table_name else "view"
+                    res = cql.execute(f"SELECT * FROM system.tablets WHERE keyspace_name='{keyspace_name}' AND table_name='{name}' ALLOW FILTERING")
+                    assert res is not None, f"{desc} {keyspace_name}.{name} not found in system.tablets after view is created"
+                    assert res.one().tablet_count > 0, f"{desc} {keyspace_name}.{name}: zero tablets allocated"
+        for name in [table_name, view_name]:
+            desc = "table" if name == table_name else "view"
+            res = cql.execute(f"SELECT * FROM system.tablets WHERE keyspace_name='{keyspace_name}' AND table_name='{name}' ALLOW FILTERING")
+            assert res, f"{desc} {keyspace_name}.{name} not found in system.tablets after table drop failed"
+            assert res.one().tablet_count > 0, f"{desc} {keyspace_name}.{name}: zero tablets allocated after table drop failed"
