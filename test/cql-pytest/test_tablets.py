@@ -13,7 +13,7 @@
 #############################################################################
 
 import pytest
-from util import new_test_keyspace, new_test_table, unique_name
+from util import new_test_keyspace, new_test_table, unique_name, index_table_name
 from cassandra.protocol import ConfigurationException, InvalidRequest
 
 # A fixture similar to "test_keyspace", just creates a keyspace that enables
@@ -174,3 +174,38 @@ def test_tablets_are_dropped_when_dropping_view(cql, test_keyspace, skip_without
 # Test that when a tablets-enabled table drop fails when it has a view depending on it, all of its tablets still exist after the error is returned.
 def test_tablets_are_not_dropped_when_dropping_table_with_view_fails(cql, test_keyspace, skip_without_tablets):
     _test_tablets_are_dropped_when_dropping_table_with_view(cql, test_keyspace, attempt_drop_table=True)
+
+
+def _test_tablets_are_dropped_when_dropping_index(cql, keyspace_name:str, drop_index:bool):
+    table_name = unique_name()
+    schema = "pk int PRIMARY KEY, c int"
+    cql.execute(f"CREATE TABLE {keyspace_name}.{table_name} ({schema})")
+    index_name = unique_name()
+    cql.execute(f"CREATE INDEX {index_name} ON {keyspace_name}.{table_name} (c)")
+
+    def verify_tablets_presence(table_expected : bool = True, index_expected : bool = True):
+        for name, desc in [(table_name, "table"), (index_table_name(index_name), "index")]:
+            res = cql.execute(f"SELECT * FROM system.tablets WHERE keyspace_name='{keyspace_name}' AND table_name='{name}' ALLOW FILTERING")
+            if (desc == "table" and table_expected) or (desc == "index" and index_expected):
+                assert res, f"{desc} {keyspace_name}.{name} not found in system.tablets after index is created"
+                assert res.one().tablet_count > 0, f"{desc} {keyspace_name}.{name}: zero tablets allocated"
+            else:
+                assert not res, f"{desc} {keyspace_name}.{name} was not found in system.tablets after they were dropped"
+
+    verify_tablets_presence()
+
+    if drop_index:
+        cql.execute(f"DROP INDEX {keyspace_name}.{index_name}")
+        verify_tablets_presence(index_expected=False)
+
+    cql.execute(f"DROP TABLE {keyspace_name}.{table_name}")
+    verify_tablets_presence(table_expected=False, index_expected=False)
+
+# Test that when an index of a tablets-enabled table is dropped, all of its tablets are dropped with it.
+def test_tablets_are_dropped_when_dropping_index(cql, test_keyspace, skip_without_tablets):
+    _test_tablets_are_dropped_when_dropping_index(cql, test_keyspace, drop_index=True)
+
+
+# Test that when a tablets-enabled table that has an index is dropped, the tablets associated with the table and index are dropped with it.
+def test_tablets_are_dropped_when_dropping_table_with_index(cql, test_keyspace, skip_without_tablets):
+    _test_tablets_are_dropped_when_dropping_index(cql, test_keyspace, drop_index=False)

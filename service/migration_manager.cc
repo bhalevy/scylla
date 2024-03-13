@@ -34,6 +34,7 @@
 #include "cql3/functions/user_function.hh"
 #include "cql3/functions/function_name.hh"
 #include "unimplemented.hh"
+#include "map_difference.hh"
 
 namespace service {
 
@@ -726,7 +727,8 @@ future<std::vector<mutation>> prepare_column_family_update_announcement(storage_
 #endif
     try {
         auto& db = sp.local_db();
-        auto&& old_schema = db.find_column_family(cfm->ks_name(), cfm->cf_name()).schema(); // FIXME: Should we lookup by id?
+        const auto& cf = db.find_column_family(cfm->id());
+        auto&& old_schema = cf.schema();
 #if 0
         oldCfm.validateCompatility(cfm);
 #endif
@@ -746,7 +748,24 @@ future<std::vector<mutation>> prepare_column_family_update_announcement(storage_
         }
         co_await seastar::async([&] {
             db.get_notifier().before_update_column_family(*cfm, *old_schema, mutations, ts);
+
+            // Notify drop indices
+            auto diff = difference(old_schema->all_indices(), cfm->all_indices());
+
+            // indices that are no longer needed
+            for (auto&& name : diff.entries_only_on_left) {
+                const index_metadata& index = old_schema->all_indices().at(name);
+                schema_ptr view;
+                try {
+                    view = db.find_schema(old_schema->ks_name(), name + "_index");
+                } catch (...) {
+                    mlogger.error("Could not find schema for index {}.{} id={}", old_schema->ks_name(), name + "_index", index.id());
+                    continue;
+                }
+                db.get_notifier().before_drop_column_family(*view, mutations, ts);
+            }
         });
+
         co_return co_await include_keyspace(sp, *keyspace, std::move(mutations));
     } catch (const replica::no_such_column_family& e) {
         auto&& ex = std::make_exception_ptr(exceptions::configuration_exception(format("Cannot update non existing table '{}' in keyspace '{}'.",
