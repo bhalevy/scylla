@@ -13,7 +13,7 @@
 #############################################################################
 
 import pytest
-from util import new_test_keyspace, new_test_table, unique_name, new_materialized_view
+from util import new_test_keyspace, new_test_table, unique_name, new_materialized_view, new_secondary_index
 from cassandra.protocol import ConfigurationException, InvalidRequest
 
 # A fixture similar to "test_keyspace", just creates a keyspace that enables
@@ -167,3 +167,47 @@ def test_tablets_are_not_dropped_when_dropping_table_with_view_fails(cql, skip_w
             res = cql.execute(f"SELECT * FROM system.tablets WHERE keyspace_name='{keyspace_name}' AND table_name='{name}' ALLOW FILTERING")
             assert res, f"{desc} {keyspace_name}.{name} not found in system.tablets after table drop failed"
             assert res.one().tablet_count > 0, f"{desc} {keyspace_name}.{name}: zero tablets allocated after table drop failed"
+
+
+def test_tablets_are_dropped_when_dropping_index(cql, skip_without_tablets):
+    ksdef = "WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'replication_factor' : '1'} AND TABLETS = {'initial': 1}"
+    with new_test_keyspace(cql, ksdef) as keyspace:
+        keyspace_name = keyspace
+        table_name = ""
+        index_name = ""
+        system_tablets_query = ""
+        with new_test_table(cql, keyspace, "pk int PRIMARY KEY, c int") as table:
+            table_name = table.split('.')[1]
+            with new_secondary_index(cql, table, "c") as si:
+                index_name = si.split('.')[1] + "_index"
+                for name in [table_name, index_name]:
+                    desc = "table" if name == table_name else "index"
+                    res = cql.execute(f"SELECT * FROM system.tablets WHERE keyspace_name='{keyspace_name}' AND table_name='{name}' ALLOW FILTERING")
+                    assert res is not None, f"{desc} {keyspace_name}.{name} not found in system.tablets after index is created"
+                    assert res.one().tablet_count > 0, f"{desc} {keyspace_name}.{name}: zero tablets allocated"
+            res = cql.execute(f"SELECT * FROM system.tablets WHERE keyspace_name='{keyspace_name}' AND table_name='{index_name}' ALLOW FILTERING")
+            assert not res, f"index {keyspace_name}.{index_name} was found in system.tablets after index was dropped"
+        res = cql.execute(f"SELECT * FROM system.tablets WHERE keyspace_name='{keyspace_name}' AND table_name='{table_name}' ALLOW FILTERING")
+        assert not res, f"table {keyspace_name}.{table_name} was found in system.tablets after table was dropped"
+
+
+def test_tablets_are_dropped_when_dropping_table_with_index(cql, skip_without_tablets):
+    ksdef = "WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'replication_factor' : '1'} AND TABLETS = {'initial': 1}"
+    with new_test_keyspace(cql, ksdef) as keyspace:
+        keyspace_name = keyspace
+        table_name = ""
+        index_name = ""
+        with new_test_table(cql, keyspace, "pk int PRIMARY KEY, c int") as table:
+            table_name = table.split('.')[1]
+            index_create_name = unique_name()
+            index_name = index_create_name + "_index"
+            cql.execute(f"CREATE INDEX {index_create_name} ON {table} (c)")
+            for name in [table_name, index_name]:
+                desc = "table" if name == table_name else "index"
+                res = cql.execute(f"SELECT * FROM system.tablets WHERE keyspace_name='{keyspace_name}' AND table_name='{name}' ALLOW FILTERING")
+                assert res is not None, f"{desc} {keyspace_name}.{name} not found in system.tablets after index is created"
+                assert res.one().tablet_count > 0, f"{desc} {keyspace_name}.{name}: zero tablets allocated"
+        for name in [table_name, index_name]:
+            desc = "table" if name == table_name else "index"
+            res = cql.execute(f"SELECT * FROM system.tablets WHERE keyspace_name='{keyspace_name}' AND table_name='{name}' ALLOW FILTERING")
+            assert not res, f"{desc} {keyspace_name}.{name} was found in system.tablets after table was dropped"
