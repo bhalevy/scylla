@@ -468,6 +468,36 @@ SEASTAR_THREAD_TEST_CASE(NetworkTopologyStrategy_tablets_test) {
 
     tmap = tab_awr_ptr->allocate_tablets_for_new_table(s, stm.get(), 1).get();
     full_ring_check(tmap, ars_ptr, stm.get());
+
+    std::map<sstring, sstring> options321 = {
+            {"100", "3"},
+            {"101", "2"},
+            {"102", "1"},
+    };
+    locator::replication_strategy_params params321(options321, 100);
+    ars_ptr = abstract_replication_strategy::create_replication_strategy(
+            "NetworkTopologyStrategy", params321);
+    tab_awr_ptr = ars_ptr->maybe_as_tablet_aware();
+    BOOST_REQUIRE(tab_awr_ptr);
+
+    auto cur_tmap = std::move(tmap);
+    tmap = tab_awr_ptr->reallocate_tablets(s, stm.get(), 0, &cur_tmap).get();
+    full_ring_check(tmap, ars_ptr, stm.get());
+
+    std::map<sstring, sstring> options331 = {
+            {"100", "3"},
+            {"101", "3"},
+            {"102", "1"},
+    };
+    locator::replication_strategy_params params331(options331, 100);
+    ars_ptr = abstract_replication_strategy::create_replication_strategy(
+            "NetworkTopologyStrategy", params331);
+    tab_awr_ptr = ars_ptr->maybe_as_tablet_aware();
+    BOOST_REQUIRE(tab_awr_ptr);
+
+    cur_tmap = std::move(tmap);
+    tmap = tab_awr_ptr->reallocate_tablets(s, stm.get(), 0, &cur_tmap).get();
+    full_ring_check(tmap, ars_ptr, stm.get());
 }
 
 /**

@@ -16,6 +16,7 @@
 #include "locator/network_topology_strategy.hh"
 #include "locator/load_sketch.hh"
 #include <boost/algorithm/string.hpp>
+#include <boost/range/adaptors.hpp>
 #include "exceptions/exceptions.hh"
 #include "utils/class_registrator.hh"
 #include "utils/hash.hh"
@@ -324,8 +325,6 @@ static unsigned calculate_initial_tablets_from_topology(const schema& s, const t
 }
 
 future<tablet_map> network_topology_strategy::allocate_tablets_for_new_table(schema_ptr s, token_metadata_ptr tm, unsigned initial_scale) const {
-    natural_endpoints_tracker::check_enough_endpoints(*tm, _dc_rep_factor);
-
     auto tablet_count = get_initial_tablets();
     if (tablet_count == 0) {
         tablet_count = calculate_initial_tablets_from_topology(*s, tm->get_topology(), _dc_rep_factor) * initial_scale;
@@ -336,39 +335,128 @@ future<tablet_map> network_topology_strategy::allocate_tablets_for_new_table(sch
         tablet_count = aligned_tablet_count;
     }
 
-    tablet_map tablets(tablet_count);
+    return reallocate_tablets(std::move(s), std::move(tm), tablet_count, nullptr);
+}
+
+future<tablet_map> network_topology_strategy::reallocate_tablets(schema_ptr s, token_metadata_ptr tm, size_t tablet_count, const tablet_map* cur_tablets) const {
+    static thread_local std::default_random_engine rnd_engine{std::random_device{}()};
+
+    natural_endpoints_tracker::check_enough_endpoints(*tm, _dc_rep_factor);
+
+    auto tablets = cur_tablets ? *cur_tablets : tablet_map(tablet_count);
     load_sketch load(tm);
     co_await load.populate();
 
-    // FIXME: Don't use tokens to distribute nodes.
-    // The following reuses the existing token-based algorithm used by NetworkTopologyStrategy.
-    assert(!tm->sorted_tokens().empty());
-    auto token_range = tm->ring_range(dht::token::get_random_token());
-
+    const auto& topo = tm->get_topology();
+    const auto dc_rack_nodes = topo.get_datacenter_rack_nodes();
     for (tablet_id tb : tablets.tablet_ids()) {
-        natural_endpoints_tracker tracker(*tm, _dc_rep_factor);
-
-        while (true) {
-            co_await coroutine::maybe_yield();
-            if (token_range.begin() == token_range.end()) {
-                token_range = tm->ring_range(dht::minimum_token());
-            }
-            locator::host_id ep = *tm->get_endpoint(*token_range.begin());
-            token_range.drop_front();
-            if (tracker.add_endpoint_and_check_if_done(ep)) {
-                break;
-            }
-        }
-
         tablet_replica_set replicas;
-        for (auto&& ep : tracker.replicas()) {
-            replicas.emplace_back(tablet_replica{ep, load.next_shard(ep)});
+        struct rack_load {
+            sstring rack_name;
+            size_t load;
+        };
+        struct rack_load_cmp {
+            bool operator()(const rack_load& a, const rack_load& b) const {
+                return a.load > b.load;
+            }
+        };
+        struct dc_rack_load {
+            size_t node_count = 0;
+            std::vector<rack_load> racks;
+        };
+        // Current load per dc/rack
+        std::unordered_map<sstring, dc_rack_load> dc_rack_load_map;
+        // Current replicas per dc/rack
+        std::unordered_map<sstring, std::unordered_map<sstring, std::unordered_set<locator::host_id>>> replicas_per_dc;
+        if (cur_tablets) {
+            replicas = cur_tablets->get_tablet_info(tb).replicas;
+            for (const auto& tr : replicas) {
+                const auto& node = topo.get_node(tr.host);
+                replicas_per_dc[node.dc_rack().dc][node.dc_rack().rack].insert(tr.host);
+                ++dc_rack_load_map[node.dc_rack().dc].node_count;
+            }
+            for (const auto& [dc, racks] : replicas_per_dc) {
+                auto& dr_load = dc_rack_load_map[dc];
+                dr_load.racks = boost::copy_range<std::vector<rack_load>>(racks | boost::adaptors::transformed([] (const auto& x) {
+                    return rack_load(x.first, x.second.size());
+                }));
+            }
+        } else {
+            replicas.reserve(_rep_factor);
         }
+        for (const auto& [dc, dc_rf] : _dc_rep_factor) {
+            auto& dr_load = dc_rack_load_map[dc];
+            if (dc_rf == dr_load.node_count) {
+                continue;
+            }
 
+            if (dc_rf > dr_load.node_count) {
+                auto cmp = [] (const rack_load& a, const rack_load& b) {
+                    return a.load > b.load;
+                };
+
+                // Track new racks, with no replicas on them, in random order
+                const auto& all_dc_racks = dc_rack_nodes.at(dc);
+                auto rack_names = boost::copy_range<std::vector<sstring>>(all_dc_racks | boost::adaptors::map_keys);
+                std::shuffle(rack_names.begin(), rack_names.end(), rnd_engine);
+                std::make_heap(dr_load.racks.begin(), dr_load.racks.end(), cmp);
+                for (const auto& rack : rack_names) {
+                    if (!replicas_per_dc[dc].contains(rack)) {
+                        dr_load.racks.emplace_back(rack, 0);
+                        std::push_heap(dr_load.racks.begin(), dr_load.racks.end(), cmp);
+                    }
+                }
+                // Track all nodes with no replicas on them, per rack.
+                std::unordered_map<sstring, std::vector<locator::host_id>> candidate_nodes_per_rack;
+                for (const auto& rack_name : rack_names) {
+                    const auto& existing = replicas_per_dc[dc][rack_name];
+                    auto& rack = candidate_nodes_per_rack[rack_name];
+                    for (const auto& node : all_dc_racks.at(rack_name)) {
+                        const auto& host_id = node->host_id();
+                        if (!existing.contains(host_id)) {
+                            rack.emplace_back(host_id);
+                        }
+                    }
+                    std::shuffle(rack.begin(), rack.end(), rnd_engine);
+                }
+                size_t remaining = dc_rf - dr_load.node_count;
+                if (cur_tablets) {
+                    tablet_logger.debug("Allocating additional tablet replicas in dc={} allocated={} rf={}", dc, dr_load.node_count, dc_rf);
+                }
+                while (remaining) {
+                    co_await coroutine::maybe_yield();
+                    if (dr_load.racks.empty()) {
+                        on_internal_error(tablet_logger, format("Cannot allocate table replica in dc={}: no available racks", dc));
+                    }
+                    std::pop_heap(dr_load.racks.begin(), dr_load.racks.end(), cmp);
+                    auto& rl = dr_load.racks.back();
+                    auto& rack = candidate_nodes_per_rack[rl.rack_name];
+                    if (rack.empty()) {
+                        dr_load.racks.pop_back();
+                        continue;
+                    }
+                    const auto& host_id = rack.back();
+                    replicas.emplace_back(tablet_replica{host_id, load.next_shard(host_id)});
+                    ++rl.load;
+                    ++dr_load.node_count;
+                    --remaining;
+                    rack.pop_back();
+                    if (rack.empty()) {
+                        // This rack is now exhausted
+                        dr_load.racks.pop_back();
+                    } else {
+                        std::push_heap(dr_load.racks.begin(), dr_load.racks.end(), cmp);
+                    }
+                }
+            } else {
+                // FIXME: add support for deallocating tablet replicas
+                on_internal_error(tablet_logger, format("Deallocating tablet replicas is not supported yet: dc={} allocated={} rf={}", dc, dr_load.node_count, dc_rf));
+            }
+        }
         tablets.set_tablet(tb, tablet_info{std::move(replicas)});
     }
 
-    tablet_logger.debug("Allocated tablets for {}.{} ({}): {}", s->ks_name(), s->cf_name(), s->id(), tablets);
+    tablet_logger.debug("{} tablets for {}.{} ({}): {}", cur_tablets ? "Reallocated" : "Allocated", s->ks_name(), s->cf_name(), s->id(), tablets);
     co_return tablets;
 }
 
