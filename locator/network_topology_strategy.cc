@@ -449,8 +449,23 @@ future<tablet_map> network_topology_strategy::reallocate_tablets(schema_ptr s, t
                     }
                 }
             } else {
-                // FIXME: add support for deallocating tablet replicas
-                on_internal_error(tablet_logger, format("Deallocating tablet replicas is not supported yet: dc={} allocated={} rf={}", dc, dr_load.node_count, dc_rf));
+                tablet_logger.debug("Deallocating tablet replicas in dc={} allocated={} rf={}", dc, dr_load.node_count, dc_rf);
+
+                // Leave dc_rf replicas in dc, effectively deallocating in reverse order,
+                // to maintain replica pairing between the base table and its materialized views.
+                // This may leave racks unbalanced, but that's ok since the tablet load balancer
+                // can fix this later.
+                tablet_replica_set filtered;
+                filtered.reserve(replicas.size() - dr_load.node_count + dc_rf);
+                size_t nodes_in_dc = 0;
+                for (const auto& tr : replicas) {
+                    auto keep = topo.get_node(tr.host).dc_rack().dc != dc || ++nodes_in_dc <= dc_rf;
+                    tablet_logger.debug("{} tablet replica id={} {} in dc={}", keep ? "Keeping" : "Dropping", tb.id, tr.host, topo.get_node(tr.host).dc_rack().dc);
+                    if (keep) {
+                        filtered.emplace_back(tr);
+                    }
+                }
+                replicas = std::move(filtered);
             }
         }
         tablets.set_tablet(tb, tablet_info{std::move(replicas)});

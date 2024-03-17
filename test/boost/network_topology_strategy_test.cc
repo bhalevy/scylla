@@ -498,6 +498,30 @@ SEASTAR_THREAD_TEST_CASE(NetworkTopologyStrategy_tablets_test) {
     cur_tmap = std::move(tmap);
     tmap = tab_awr_ptr->reallocate_tablets(s, stm.get(), 0, &cur_tmap).get();
     full_ring_check(tmap, ars_ptr, stm.get());
+
+    ars_ptr = abstract_replication_strategy::create_replication_strategy(
+            "NetworkTopologyStrategy", params321);
+    tab_awr_ptr = ars_ptr->maybe_as_tablet_aware();
+    BOOST_REQUIRE(tab_awr_ptr);
+
+    cur_tmap = std::move(tmap);
+    tmap = tab_awr_ptr->reallocate_tablets(s, stm.get(), 0, &cur_tmap).get();
+    full_ring_check(tmap, ars_ptr, stm.get());
+
+    std::map<sstring, sstring> options021 = {
+            {"100", "0"},
+            {"101", "2"},
+            {"102", "1"},
+    };
+    locator::replication_strategy_params params021(options021, 100);
+    ars_ptr = abstract_replication_strategy::create_replication_strategy(
+            "NetworkTopologyStrategy", params021);
+    tab_awr_ptr = ars_ptr->maybe_as_tablet_aware();
+    BOOST_REQUIRE(tab_awr_ptr);
+
+    cur_tmap = std::move(tmap);
+    tmap = tab_awr_ptr->reallocate_tablets(s, stm.get(), 0, &cur_tmap).get();
+    full_ring_check(tmap, ars_ptr, stm.get());
 }
 
 /**
