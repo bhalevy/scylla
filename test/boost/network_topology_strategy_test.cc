@@ -112,12 +112,12 @@ void endpoints_check(
     }
 
     // Check the total RF
-    BOOST_CHECK(endpoints.size() == total_rf);
-    BOOST_CHECK(total_rf <= ars_ptr->get_replication_factor(*tm));
+    BOOST_CHECK_EQUAL(endpoints.size(), total_rf);
+    BOOST_CHECK_LE(total_rf, ars_ptr->get_replication_factor(*tm));
 
     // Check the uniqueness
     std::unordered_set<inet_address> ep_set(endpoints.begin(), endpoints.end());
-    BOOST_CHECK(endpoints.size() == ep_set.size());
+    BOOST_CHECK_EQUAL(endpoints.size(), ep_set.size());
 
     // Check the per-DC RF
     std::unordered_map<sstring, size_t> dc_rf;
@@ -135,7 +135,7 @@ void endpoints_check(
     for (auto&& [dc, rf] : dc_rf) {
         auto effective_rf = strict_dc_rf ? nts_ptr->get_replication_factor(dc) :
                 std::min<size_t>(nts_ptr->get_replication_factor(dc), nodes_per_dc.at(dc).size());
-        BOOST_CHECK(rf == effective_rf);
+        BOOST_CHECK_EQUAL(rf, effective_rf);
     }
 }
 
