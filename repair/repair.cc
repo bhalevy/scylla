@@ -30,6 +30,7 @@
 #include <boost/range/algorithm_ext.hpp>
 #include <boost/range/adaptor/map.hpp>
 
+#include <boost/range/iterator_range_core.hpp>
 #include <seastar/core/gate.hh>
 #include <seastar/util/defer.hh>
 #include <seastar/core/metrics_registration.hh>
@@ -2105,8 +2106,11 @@ future<> repair_service::repair_tablets(repair_uniq_id rid, sstring keyspace_nam
         };
         std::vector<repair_tablet_meta> metas;
         auto myhostid = erm->get_token_metadata_ptr()->get_my_id();
-        auto myip = erm->get_topology().my_address();
-        auto mydc = erm->get_topology().get_datacenter();
+        const auto& topo = erm->get_topology();
+        auto mynode = topo.this_node();
+        auto myip = mynode->endpoint();
+        auto mydc = mynode->dc_rack().dc;
+        auto myrack = mynode->dc_rack().rack;
         bool select_primary_ranges_within_dc = false;
         // If the user specified the ranges option, ignore the primary_replica_only option.
         if (!ranges_specified.empty()) {
@@ -2127,29 +2131,49 @@ future<> repair_service::repair_tablets(repair_uniq_id rid, sstring keyspace_nam
                 throw std::runtime_error("The current host must be part of the repair");
             }
         }
+        std::unordered_map<sstring, std::vector<sstring>> dc_racks;
+        // If users use both the primary_replica_only and the ranges
+        // option to select which ranges to repair, prefer the more
+        // sophisticated ranges option, since the ranges the requested
+        // explicitly.
+        if (primary_replica_only && ranges_specified.empty()) {
+            for (const auto& [dc, rack_nodes] : topo.get_datacenter_rack_nodes()) {
+                auto racks = boost::copy_range<std::vector<sstring>>(rack_nodes | boost::adaptors::map_keys);
+                std::sort(racks.begin(), racks.end());
+                dc_racks[dc] = std::move(racks);
+            }
+        }
         co_await tmap.for_each_tablet([&] (locator::tablet_id id, const locator::tablet_info& info) -> future<> {
             auto range = tmap.get_token_range(id);
             auto& replicas = info.replicas;
             bool found = false;
             shard_id master_shard_id;
+            std::unordered_map<sstring, sstring> primary_racks;
+            if (primary_replica_only && ranges_specified.empty()) {
+                for (const auto& [dc, racks] : dc_racks) {
+                    primary_racks[dc] = racks[id.value() % racks.size()];
+                }
+            }
             // Repair all tablets belong to this node
             for (auto& r : replicas) {
+                const auto& node = topo.get_node(r.host);
+                const auto& dc = node.dc_rack().dc;
+                const auto& rack = node.dc_rack().rack;
                 if (select_primary_ranges_within_dc) {
-                    auto dc = erm->get_topology().get_datacenter(r.host);
                     if (dc != mydc) {
                         continue;
                     }
+                }
+                // The primary node is considered to be the first node in the primary rack
+                if (!primary_racks.empty() && rack != primary_racks[dc]) {
+                    continue;
                 }
                 if (r.host == myhostid) {
                     master_shard_id = r.shard;
                     found = true;
                     break;
                 }
-                // If users use both the primary_replica_only and the ranges
-                // option to select which ranges to repair, prefer the more
-                // sophisticated ranges option, since the ranges the requested
-                // explicitly.
-                if (primary_replica_only && ranges_specified.empty()) {
+                if (!primary_racks.empty()) {
                     break;
                 }
             }
