@@ -241,3 +241,40 @@ BOOST_AUTO_TEST_CASE(test_amoritzed_reserve) {
     amortized_reserve(v, 1);
     BOOST_REQUIRE_EQUAL(v.capacity(), 8);
 }
+
+struct push_back_item {
+    std::unique_ptr<int> p;
+    push_back_item() = default;
+    push_back_item(int v) : p(std::make_unique<int>(v)) {}
+    push_back_item(const push_back_item& x) : push_back_item(x.value() + 1) {}
+    push_back_item(push_back_item&& x) noexcept : p(std::exchange(x.p, nullptr)) {}
+
+    int value() const noexcept { return *p; }
+};
+
+template <class VectorType>
+static void do_test_push_back_using_existing_element(std::function<void (VectorType&, const push_back_item&)> do_push_back, size_t count = 1000) {
+    VectorType v;
+    v.push_back(0);
+    for (size_t i = 0; i < count; i++) {
+        do_push_back(v, v.back());
+    }
+    for (size_t i = 0; i < count; i++) {
+        BOOST_REQUIRE_EQUAL(v[i].value(), i);
+    }
+}
+
+BOOST_AUTO_TEST_CASE(test_push_back_using_existing_element) {
+    do_test_push_back_using_existing_element<std::vector<push_back_item>>([] (std::vector<push_back_item>& v, const push_back_item& x) { v.push_back(x); });
+    do_test_push_back_using_existing_element<std::vector<push_back_item>>([] (std::vector<push_back_item>& v, const push_back_item& x) { v.emplace_back(x); });
+
+    // Choose `max_contiguous_allocation` to exercise all cases in `chunked_vector::get_chunk_before_emplace_back`
+    constexpr size_t first_allocation_size = 512;
+    constexpr size_t max_contiguous_allocation = 4 * first_allocation_size;
+
+    using chunked_vector_type = utils::chunked_vector<push_back_item, max_contiguous_allocation>;
+    do_test_push_back_using_existing_element<chunked_vector_type>([] (chunked_vector_type& v, const push_back_item& x) { v.push_back(x); },
+            chunked_vector_type::max_chunk_capacity() + 2);
+    do_test_push_back_using_existing_element<chunked_vector_type>([] (chunked_vector_type& v, const push_back_item& x) { v.emplace_back(x); },
+            chunked_vector_type::max_chunk_capacity() + 2);
+}
