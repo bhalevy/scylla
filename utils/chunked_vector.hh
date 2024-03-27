@@ -75,12 +75,8 @@ public:
         return std::max(max_contiguous_allocation / sizeof(T), size_t(1));
     }
 private:
-    void reserve_for_push_back() {
-        if (_size == _capacity) {
-            do_reserve_for_push_back();
-        }
-    }
-    void do_reserve_for_push_back();
+    template <typename... Args>
+    T& reserve_for_emplace_back(Args&&... args);
     size_t make_room(size_t n, bool stop_after_one);
     chunk_ptr new_chunk(size_t n);
     T* addr(size_t i) const {
@@ -143,10 +139,7 @@ public:
     }
     template <typename... Args>
     T& emplace_back(Args&&... args) {
-        reserve_for_push_back();
-        auto& ret = *new (addr(_size)) T(std::forward<Args>(args)...);
-        ++_size;
-        return ret;
+        return reserve_for_emplace_back(std::forward<Args>(args)...);
     }
     void pop_back() {
         --_size;
@@ -431,18 +424,38 @@ chunked_vector<T, max_contiguous_allocation>::make_room(size_t n, bool stop_afte
 }
 
 template <typename T, size_t max_contiguous_allocation>
-void
-chunked_vector<T, max_contiguous_allocation>::do_reserve_for_push_back() {
-    if (_capacity == 0) {
-        // allocate a bit of room in case utilization will be low
-        reserve(boost::algorithm::clamp(512 / sizeof(T), 1, max_chunk_capacity()));
-    } else if (_capacity < max_chunk_capacity() / 2) {
-        // exponential increase when only one chunk to reduce copying
-        reserve(_capacity * 2);
+template <typename... Args>
+T&
+chunked_vector<T, max_contiguous_allocation>::reserve_for_emplace_back(Args&&... args) {
+    if (_capacity > _size) {
+        new (addr(_size)) T(std::forward<Args>(args)...);
     } else {
-        // add a chunk at a time later, since no copying will take place
-        reserve((_capacity / max_chunk_capacity() + 1) * max_chunk_capacity());
+        size_t last_chunk_reserve_size;
+        if (_capacity == 0) {
+            // allocate a bit of room in case utilization will be low
+            last_chunk_reserve_size = boost::algorithm::clamp(512 / sizeof(T), 1, max_chunk_capacity());
+        } else if (_capacity < max_chunk_capacity() / 2) {
+            // exponential increase when only one chunk to reduce copying
+            last_chunk_reserve_size = _capacity * 2;
+        } else {
+            // add a chunk at a time later, since no copying will take place
+            last_chunk_reserve_size = max_chunk_capacity();
+        }
+        auto dest_chunk = new_chunk(last_chunk_reserve_size);
+        auto last_chunk_size = _size % max_chunk_capacity();
+        // emplace_back before migrating existing elements
+        // since `args` might refer to an element existing
+        // in the last chunk
+        new (dest_chunk.get() + last_chunk_size) T(std::forward<Args>(args)...);
+        if (_size) {
+            migrate(_chunks.back().get(), _chunks.back().get() + last_chunk_size, dest_chunk.get());
+            _chunks.back() = std::move(dest_chunk);
+        } else {
+            _chunks.push_back(std::move(dest_chunk));
+        }
+        _capacity = (_chunks.size() - 1) * max_chunk_capacity() + last_chunk_reserve_size;
     }
+    return *addr(_size++);
 }
 
 template <typename T, size_t max_contiguous_allocation>
