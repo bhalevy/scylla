@@ -381,7 +381,6 @@ void
 chunked_vector<T, max_contiguous_allocation>::migrate(T* begin, T* end, T* result) {
     while (begin != end) {
         new (result) T(std::move(*begin));
-        begin->~T();
         ++begin;
         ++result;
     }
