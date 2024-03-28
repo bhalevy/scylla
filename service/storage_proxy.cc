@@ -6138,6 +6138,11 @@ future<bool> storage_proxy::cas(schema_ptr schema, shared_ptr<cas_request> reque
         db::consistency_level cl_for_paxos, db::consistency_level cl_for_learn,
         clock_type::time_point write_timeout, clock_type::time_point cas_timeout, bool write) {
 
+    auto& table = local_db().find_column_family(schema->id());
+    if (table.uses_tablets()) {
+        co_await coroutine::return_exception(std::logic_error("LightWeight Transactions are not supported yet with tablets"));
+    }
+
     assert(partition_ranges.size() == 1);
     assert(query::is_single_partition(partition_ranges[0]));
 

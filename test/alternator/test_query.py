@@ -142,7 +142,7 @@ def test_query_filter_expression(filled_test_table):
 # needs to select them explicitly. When no key attributes are selected,
 # some items may have *none* of the selected attributes. Those items are
 # returned too, as empty items - they are not outright missing.
-def test_query_attributes_to_get(dynamodb, test_table):
+def test_query_attributes_to_get(dynamodb, test_table, xfail_tablets): # LWT is not supported with tablets yet. See #18066
     p = random_string()
     items = [{'p': p, 'c': str(i), 'a': str(i*10), 'b': str(i*100) } for i in range(10)]
     with test_table.batch_writer() as batch:

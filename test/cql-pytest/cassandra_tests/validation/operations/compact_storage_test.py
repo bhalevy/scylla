@@ -1233,7 +1233,7 @@ def testInsertWithCompactStorageAndTwoClusteringColumns(cql, test_keyspace, forc
 # InsertUpdateIfConditionTest
 # Test for CAS with compact storage table, and CASSANDRA-6813 in particular,
 # migrated from cql_tests.py:TestCQL.cas_and_compact_test()
-def testCompactStorage(cql, test_keyspace):
+def testCompactStorage(cql, test_keyspace, xfail_tablets): # LWT is not supported with tablets yet. See #18066
     with create_table(cql, test_keyspace, "(partition text, key text, owner text, PRIMARY KEY (partition, key)) WITH COMPACT STORAGE") as table:
         execute(cql, table, "INSERT INTO %s (partition, key, owner) VALUES ('a', 'b', null)")
         # As explained in docs/kb/lwt-differences.rst, Scylla deliberately

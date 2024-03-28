@@ -48,7 +48,7 @@ from uuid import UUID
 # @param indexName         the index name
 # @param addKeyspaceOnDrop add the keyspace name in the drop statement
 # @throws Throwable if an error occurs
-def dotestCreateAndDropIndex(cql, table, indexName, addKeyspaceOnDrop):
+def dotestCreateAndDropIndex(cql, table, indexName, addKeyspaceOnDrop, xfail_tablets): # LWT is not supported with tablets yet. See #18066
     KEYSPACE = table.split('.')[0]
     INDEX = indexName.replace('"', '').lower()
     # The failure message in Scylla and Cassandra differ: Cassandra has
@@ -98,17 +98,17 @@ def table1(cql, test_keyspace):
         yield table
 
 # Reproduces #8717 (CREATE INDEX IF NOT EXISTS was broken):
-def testCreateAndDropIndex(cql, table1):
+def testCreateAndDropIndex(cql, table1, xfail_tablets): # LWT is not supported with tablets yet. See #18066
     dotestCreateAndDropIndex(cql, table1, "test", False)
     dotestCreateAndDropIndex(cql, table1, "test2", True)
 
 # Reproduces #8717 (CREATE INDEX IF NOT EXISTS was broken):
-def testCreateAndDropIndexWithQuotedIdentifier(cql, table1):
+def testCreateAndDropIndexWithQuotedIdentifier(cql, table1, xfail_tablets): # LWT is not supported with tablets yet. See #18066
     dotestCreateAndDropIndex(cql, table1, "\"quoted_ident\"", False)
     dotestCreateAndDropIndex(cql, table1, "\"quoted_ident2\"", True)
 
 # Reproduces #8717 (CREATE INDEX IF NOT EXISTS was broken):
-def testCreateAndDropIndexWithCamelCaseIdentifier(cql, table1):
+def testCreateAndDropIndexWithCamelCaseIdentifier(cql, table1, xfail_tablets): # LWT is not supported with tablets yet. See #18066
     dotestCreateAndDropIndex(cql, table1, "CamelCase", False)
     dotestCreateAndDropIndex(cql, table1, "CamelCase2", True)
 
@@ -449,7 +449,7 @@ TOO_BIG = 1024 * 65
 # both singly and in batches (CASSANDRA-10536)
 # Reproduces #8627
 @pytest.mark.xfail(reason="issue #8627")
-def testIndexOnCompositeValueOver64k(cql, test_keyspace):
+def testIndexOnCompositeValueOver64k(cql, test_keyspace, xfail_tablets): # LWT is not supported with tablets yet. See #18066
     too_big = bytearray([1])*TOO_BIG
     with create_table(cql, test_keyspace, "(a int, b int, c blob, PRIMARY KEY (a))") as table:
         execute(cql, table, "CREATE INDEX ON %s(c)")
@@ -468,7 +468,7 @@ def testIndexOnCompositeValueOver64k(cql, test_keyspace):
                    "APPLY BATCH",
                    too_big)
 
-def testIndexOnPartitionKeyInsertValueOver64k(cql, test_keyspace):
+def testIndexOnPartitionKeyInsertValueOver64k(cql, test_keyspace, xfail_tablets): # LWT is not supported with tablets yet. See #18066
     too_big = bytearray([1])*TOO_BIG
     with create_table(cql, test_keyspace, "(a int, b int, c blob, PRIMARY KEY ((a, b)))") as table:
         execute(cql, table, "CREATE INDEX ON %s(a)")
@@ -522,7 +522,7 @@ def testIndexOnPartitionKeyWithStaticColumnAndNoRows(cql, test_keyspace):
         execute(cql, table, "UPDATE %s SET s=? WHERE pk1=? AND pk2=?", 9, 1, 20)
         assert_rows(execute(cql, table, "SELECT * FROM %s WHERE pk2 = ?", 20), [1, 20, None, 9, None])
 
-def testIndexOnClusteringColumnInsertValueOver64k(cql, test_keyspace):
+def testIndexOnClusteringColumnInsertValueOver64k(cql, test_keyspace, xfail_tablets): # LWT is not supported with tablets yet. See #18066
     too_big = bytearray([1])*TOO_BIG
     with create_table(cql, test_keyspace, "(a int, b int, c blob, PRIMARY KEY ((a, b)))") as table:
         execute(cql, table, "CREATE INDEX ON %s(b)")
@@ -554,7 +554,7 @@ def testIndexOnClusteringColumnInsertValueOver64k(cql, test_keyspace):
 
 # Reproduces #8627
 @pytest.mark.xfail(reason="issue #8627")
-def testIndexOnFullCollectionEntryInsertCollectionValueOver64k(cql, test_keyspace):
+def testIndexOnFullCollectionEntryInsertCollectionValueOver64k(cql, test_keyspace, xfail_tablets): # LWT is not supported with tablets yet. See #18066
     too_big = bytearray([1])*TOO_BIG
     map = {0: too_big}
     with create_table(cql, test_keyspace, "(a int, b frozen<map<int, blob>>, PRIMARY KEY (a))") as table:

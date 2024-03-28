@@ -262,3 +262,8 @@ def has_tablets(cql):
 def skip_without_tablets(scylla_only, has_tablets):
     if not has_tablets:
         pytest.skip("Test needs tablets experimental feature on")
+
+@pytest.fixture(scope="function")
+def xfail_tablets(request, has_tablets):
+    if has_tablets:
+        request.node.add_marker(pytest.mark.xfail(reason='Test expected to fail when tables use tablets'))

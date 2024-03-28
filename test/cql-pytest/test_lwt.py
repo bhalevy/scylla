@@ -27,7 +27,7 @@ def table1(cql, test_keyspace):
 # As discovered in issue #10081, if the row determined by WHERE does NOT
 # exist, Scylla still needs to read the static column, but forgets to do so.
 # this test reproduces this issue.
-def test_lwt_missing_row_with_static(cql, table1):
+def test_lwt_missing_row_with_static(cql, table1, xfail_tablets): # LWT is not supported with tablets yet. See #18066
     p = unique_key_int()
     # Insert into partition p just the static column - and no clustering rows.
     cql.execute(f'INSERT INTO {table1}(p, s) values ({p}, 1)')
@@ -45,7 +45,8 @@ def test_lwt_missing_row_with_static(cql, table1):
 # in that case, the WHERE doesn't even need to specify the clustering key -
 # the partition key should be enough. The following test confirms that this
 # is indeed the case.
-def test_lwt_static_condition(cql, table1):
+# The test is skipped with tablets due to #18066
+def test_lwt_static_condition(cql, table1, xfail_tablets): # LWT is not supported with tablets yet. See #18066
     p = unique_key_int()
     cql.execute(f'INSERT INTO {table1}(p, s) values ({p}, 1)')
     # When the condition only mentions static (partition-wide) columns,
@@ -66,14 +67,16 @@ def test_lwt_static_condition(cql, table1):
 # Generate an LWT update where there is no value for the partition key,
 # as the WHERE restricts it using `p = {p} AND p = {p+1}`.
 # Such queries are rejected.
-def test_lwt_empty_partition_range(cql, table1):
+# The test is skipped with tablets due to #18066
+def test_lwt_empty_partition_range(cql, table1, xfail_tablets): # LWT is not supported with tablets yet. See #18066
     with pytest.raises(InvalidRequest):
         cql.execute(f"UPDATE {table1} SET r = 9000 WHERE p = 1 AND p = 1000 AND c = 2 IF r = 3")
 
 # Generate an LWT update where there is no value for the clustering key,
 # as the WHERE restricts it using `c = 2 AND c = 3`.
 # Such queries are rejected.
-def test_lwt_empty_clustering_range(cql, table1):
+# The test is skipped with tablets due to #18066
+def test_lwt_empty_clustering_range(cql, table1, xfail_tablets): # LWT is not supported with tablets yet. See #18066
     with pytest.raises(InvalidRequest):
         cql.execute(f"UPDATE {table1} SET r = 9000 WHERE p = 1  AND c = 2 AND c = 2000 IF r = 3")
 
@@ -84,8 +87,9 @@ def test_lwt_empty_clustering_range(cql, table1):
 # regardless of the data. Cassandra detects this specific conflict, and
 # prints an error instead of silently failing the batch.
 # Reproduces #13011.
+# The test is skipped with tablets due to #18066
 @pytest.mark.xfail(reason="issue #13011")
-def test_lwt_with_batch_conflict_1(cql, table1):
+def test_lwt_with_batch_conflict_1(cql, table1, xfail_tablets): # LWT is not supported with tablets yet. See #18066
     p = unique_key_int()
     with pytest.raises(InvalidRequest, match='Cannot mix'):
         cql.execute(f'BEGIN BATCH DELETE FROM {table1} WHERE p={p} AND c=1 IF EXISTS; INSERT INTO {table1}(p,c,r) VALUES ({p},1,2) IF NOT EXISTS; APPLY BATCH;')
@@ -93,7 +97,8 @@ def test_lwt_with_batch_conflict_1(cql, table1):
 # However, Cassandra does not detect every case of a conflict between
 # different conditions in a batch. For example, trying both "IF r=1"
 # and "IF r=2" returns a not-applied - not an error message.
-def test_lwt_with_batch_conflict_2(cql, table1):
+# The test is skipped with tablets due to #18066
+def test_lwt_with_batch_conflict_2(cql, table1, xfail_tablets): # LWT is not supported with tablets yet. See #18066
     p = unique_key_int()
     rs = list(cql.execute(f'BEGIN BATCH UPDATE {table1} SET r=10 WHERE p={p} AND c=1 IF r=1; UPDATE {table1} SET r=20 WHERE p={p} AND c=1 IF r=2;  APPLY BATCH;'))
     # Note that as a documented difference between Scylla and Cassandra,

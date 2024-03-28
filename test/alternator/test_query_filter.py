@@ -62,7 +62,7 @@ def random_item(p, i):
         item['j'] = item['i']
     return item
 @pytest.fixture(scope="module")
-def test_table_sn_with_data(test_table_sn):
+def test_table_sn_with_data(test_table_sn, xfail_tablets): # LWT is not supported with tablets yet. See #18066
     p = random_string()
     # TODO: because we use random items here, it may be difficult to reproduce
     # a failing test. We should use the same seed to generate these items.

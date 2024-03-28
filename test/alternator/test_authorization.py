@@ -75,7 +75,7 @@ def test_signature_too_futuristic(dynamodb, test_table):
 
 # A test that commas can be uses instead of whitespace to separate components
 # of the Authorization headers - reproducing issue #9568.
-def test_authorization_no_whitespace(dynamodb, test_table):
+def test_authorization_no_whitespace(dynamodb, test_table, xfail_tablets): # LWT is not supported with tablets yet. See #18066
     # Unlike the above tests which checked error cases so didn't need to
     # calculate a real signature, in this test we really a correct signature,
     # so we use a function we already have in test_manual_requests.py.

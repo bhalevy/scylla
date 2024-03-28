@@ -58,7 +58,7 @@ def testTimestampTTL(cql, test_keyspace):
                    [1, None, None])
 
 # Migrated from cql_tests.py:TestCQL.invalid_custom_timestamp_test()
-def testInvalidCustomTimestamp(cql, test_keyspace):
+def testInvalidCustomTimestamp(cql, test_keyspace, xfail_tablets): # LWT is not supported with tablets yet. See #18066
     # Conditional updates
     with create_table(cql, test_keyspace, "(k int, v int, PRIMARY KEY (k, v))") as table:
         execute(cql, table, "BEGIN BATCH " +

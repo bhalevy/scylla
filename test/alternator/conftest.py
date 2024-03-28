@@ -177,7 +177,7 @@ def test_table(dynamodb):
 # The following fixtures test_table_* are similar to test_table but create
 # tables with different key schemas.
 @pytest.fixture(scope="session")
-def test_table_s(dynamodb):
+def test_table_s(dynamodb, xfail_tablets): # LWT is not supported with tablets yet. See #18066
     table = create_test_table(dynamodb,
         KeySchema=[ { 'AttributeName': 'p', 'KeyType': 'HASH' }, ],
         AttributeDefinitions=[ { 'AttributeName': 'p', 'AttributeType': 'S' } ])
@@ -186,35 +186,35 @@ def test_table_s(dynamodb):
 # test_table_s_2 has exactly the same schema as test_table_s, and is useful
 # for tests which need two different tables with the same schema.
 @pytest.fixture(scope="session")
-def test_table_s_2(dynamodb):
+def test_table_s_2(dynamodb, xfail_tablets): # LWT is not supported with tablets yet. See #18066
     table = create_test_table(dynamodb,
         KeySchema=[ { 'AttributeName': 'p', 'KeyType': 'HASH' }, ],
         AttributeDefinitions=[ { 'AttributeName': 'p', 'AttributeType': 'S' } ])
     yield table
     table.delete()
 @pytest.fixture(scope="session")
-def test_table_b(dynamodb):
+def test_table_b(dynamodb, xfail_tablets): # LWT is not supported with tablets yet. See #18066
     table = create_test_table(dynamodb,
         KeySchema=[ { 'AttributeName': 'p', 'KeyType': 'HASH' }, ],
         AttributeDefinitions=[ { 'AttributeName': 'p', 'AttributeType': 'B' } ])
     yield table
     table.delete()
 @pytest.fixture(scope="session")
-def test_table_sb(dynamodb):
+def test_table_sb(dynamodb, xfail_tablets): # LWT is not supported with tablets yet. See #18066
     table = create_test_table(dynamodb,
         KeySchema=[ { 'AttributeName': 'p', 'KeyType': 'HASH' }, { 'AttributeName': 'c', 'KeyType': 'RANGE' } ],
         AttributeDefinitions=[ { 'AttributeName': 'p', 'AttributeType': 'S' }, { 'AttributeName': 'c', 'AttributeType': 'B' } ])
     yield table
     table.delete()
 @pytest.fixture(scope="session")
-def test_table_sn(dynamodb):
+def test_table_sn(dynamodb, xfail_tablets): # LWT is not supported with tablets yet. See #18066
     table = create_test_table(dynamodb,
         KeySchema=[ { 'AttributeName': 'p', 'KeyType': 'HASH' }, { 'AttributeName': 'c', 'KeyType': 'RANGE' } ],
         AttributeDefinitions=[ { 'AttributeName': 'p', 'AttributeType': 'S' }, { 'AttributeName': 'c', 'AttributeType': 'N' } ])
     yield table
     table.delete()
 @pytest.fixture(scope="session")
-def test_table_ss(dynamodb):
+def test_table_ss(dynamodb, xfail_tablets): # LWT is not supported with tablets yet. See #18066
     table = create_test_table(dynamodb,
         KeySchema=[ { 'AttributeName': 'p', 'KeyType': 'HASH' }, { 'AttributeName': 'c', 'KeyType': 'RANGE' } ],
         AttributeDefinitions=[ { 'AttributeName': 'p', 'AttributeType': 'S' }, { 'AttributeName': 'c', 'AttributeType': 'S' } ])
@@ -231,7 +231,7 @@ def test_table_ss(dynamodb):
 # This fixture returns both a table object and the description of all items
 # inserted into it.
 @pytest.fixture(scope="session")
-def filled_test_table(dynamodb):
+def filled_test_table(dynamodb, xfail_tablets): # LWT is not supported with tablets yet. See #18066
     table = create_test_table(dynamodb,
         KeySchema=[ { 'AttributeName': 'p', 'KeyType': 'HASH' },
                     { 'AttributeName': 'c', 'KeyType': 'RANGE' }
@@ -337,12 +337,18 @@ def has_tablets(dynamodb, test_table):
         return True
     return False
 
-@pytest.fixture(scope="function")
+@pytest.fixture(scope="session")
 def xfail_tablets(request, has_tablets):
     if has_tablets:
         request.node.add_marker(pytest.mark.xfail(reason='Test expected to fail when Alternator tables use tablets'))
+        yield True
+    else:
+        yield False
 
-@pytest.fixture(scope="function")
+@pytest.fixture(scope="session")
 def skip_tablets(has_tablets):
     if has_tablets:
         pytest.skip("Test may crash when Alternator tables use tablets")
+        yield True
+    else:
+        yield False

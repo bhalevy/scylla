@@ -19,7 +19,7 @@ from util import random_string, random_bytes, full_query, multiset
 # read the same input data without needing to re-insert data for every test,
 # so overall the test suite is faster.
 @pytest.fixture(scope="module")
-def test_table_sn_with_sorted_partition(test_table_sn):
+def test_table_sn_with_sorted_partition(test_table_sn, xfail_tablets): # LWT is not supported with tablets yet. See #18066
     p = random_string()
     items = [{'p': p, 'c': i, 'a': random_string()} for i in range(12)]
     with test_table_sn.batch_writer() as batch:
@@ -31,7 +31,7 @@ def test_table_sn_with_sorted_partition(test_table_sn):
     yield test_table_sn, p, items
 
 @pytest.fixture(scope="module")
-def test_table_ss_with_sorted_partition(test_table):
+def test_table_ss_with_sorted_partition(test_table, xfail_tablets): # LWT is not supported with tablets yet. See #18066
     p = random_string()
     items = [{'p': p, 'c': str(i).zfill(3), 'a': random_string()} for i in range(12)]
     with test_table.batch_writer() as batch:
@@ -41,7 +41,7 @@ def test_table_ss_with_sorted_partition(test_table):
     yield test_table, p, items
 
 @pytest.fixture(scope="module")
-def test_table_sb_with_sorted_partition(test_table_sb):
+def test_table_sb_with_sorted_partition(test_table_sb, xfail_tablets): # LWT is not supported with tablets yet. See #18066
     p = random_string()
     items = [{'p': p, 'c': bytearray(str(i).zfill(3), 'ascii'), 'a': random_string()} for i in range(12)]
     with test_table_sb.batch_writer() as batch:

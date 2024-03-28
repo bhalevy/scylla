@@ -44,17 +44,17 @@ def lwt_nondeterm_fn_repeated_execute(cql, test_keyspace, pk_type, fn):
         rows = list(cql.execute(select_str))
         assert len(rows) == num_iterations * 2
 
-def test_lwt_uuid_fn_pk_insert(cql, test_keyspace):
+def test_lwt_uuid_fn_pk_insert(cql, test_keyspace, xfail_tablets): # LWT is not supported with tablets yet. See #18066
     lwt_nondeterm_fn_repeated_execute(cql, test_keyspace, "uuid", "uuid")
 
-def test_lwt_currenttimestamp_fn_pk_insert(cql, test_keyspace):
+def test_lwt_currenttimestamp_fn_pk_insert(cql, test_keyspace, xfail_tablets): # LWT is not supported with tablets yet. See #18066
     lwt_nondeterm_fn_repeated_execute(cql, test_keyspace, "timestamp", "currenttimestamp")
 
-def test_lwt_currenttime_fn_pk_insert(cql, test_keyspace):
+def test_lwt_currenttime_fn_pk_insert(cql, test_keyspace, xfail_tablets): # LWT is not supported with tablets yet. See #18066
     lwt_nondeterm_fn_repeated_execute(cql, test_keyspace, "time", "currenttime")
 
-def test_lwt_currenttimeuuid_fn_pk_insert(cql, test_keyspace):
+def test_lwt_currenttimeuuid_fn_pk_insert(cql, test_keyspace, xfail_tablets): # LWT is not supported with tablets yet. See #18066
     lwt_nondeterm_fn_repeated_execute(cql, test_keyspace, "timeuuid", "currenttimeuuid")
 
-def test_lwt_now_fn_pk_insert(cql, test_keyspace):
+def test_lwt_now_fn_pk_insert(cql, test_keyspace, xfail_tablets): # LWT is not supported with tablets yet. See #18066
     lwt_nondeterm_fn_repeated_execute(cql, test_keyspace, "timeuuid", "now")
