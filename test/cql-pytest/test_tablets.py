@@ -15,6 +15,7 @@
 import pytest
 from util import new_test_keyspace, new_test_table, unique_name, index_table_name
 from cassandra.protocol import ConfigurationException, InvalidRequest
+from cassandra.cluster import NoHostAvailable
 
 # A fixture similar to "test_keyspace", just creates a keyspace that enables
 # tablets with initial_tablets=128
@@ -201,3 +202,16 @@ def test_tablets_are_dropped_when_dropping_index(cql, test_keyspace, drop_index)
         except:
             pass
         raise e
+
+
+# Test that a LWT query fails with a tablets-enabled table.
+# See issue #18068
+def test_lwt_support_with_tablets(cql, test_keyspace, skip_without_tablets):
+    with new_test_table(cql, test_keyspace, "key int PRIMARY KEY, val int") as table:
+        cql.execute(f"INSERT INTO {table} (key, val) VALUES(1, 0)")
+        with pytest.raises(NoHostAvailable, match="LightWeight Transactions are not supported yet with tablets"):
+            cql.execute(f"INSERT INTO {table} (key, val) VALUES(1, 1) IF NOT EXISTS")
+        with pytest.raises(NoHostAvailable, match="LightWeight Transactions are not supported yet with tablets"):
+            cql.execute(f"DELETE FROM {table} WHERE key = 1 IF EXISTS")
+        res = cql.execute(f"SELECT val FROM {table} WHERE key = 1").one()
+        assert res.val == 0
