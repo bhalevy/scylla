@@ -779,7 +779,7 @@ future<> storage_service::merge_topology_snapshot(raft_topology_snapshot snp) {
     // to have a consistent state after restart
     {
         std::vector<mutation> muts;
-        muts.reserve(snp.topology_mutations.size());
+        muts.reserve(snp.topology_mutations.size() + snp.topology_requests_mutations.size());
         {
             auto s = _db.local().find_schema(db::system_keyspace::NAME, db::system_keyspace::TOPOLOGY);
             boost::transform(snp.topology_mutations, std::back_inserter(muts), [s] (const canonical_mutation& m) {
