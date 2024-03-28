@@ -25,7 +25,7 @@ def is_scylla(cql):
     names = [row.table_name for row in cql.execute("SELECT * FROM system_schema.tables WHERE keyspace_name = 'system'")]
     yield any('scylla' in name for name in names)
 
-def testInsertSetIfNotExists(cql, test_keyspace, is_scylla):
+def testInsertSetIfNotExists(cql, test_keyspace, is_scylla, xfail_tablets): # LWT is not supported with tablets yet. See #18066
     with create_table(cql, test_keyspace, "(k int PRIMARY KEY, s set<int>)") as table:
         assertRows(execute(cql, table, "INSERT INTO %s (k, s) VALUES (0, {1, 2, 3}) IF NOT EXISTS"),
                    row(True,None,None) if is_scylla else row(True))
@@ -472,7 +472,7 @@ def check_invalid_list(cql, table, condition, expected):
     assertRows(execute(cql, table, "SELECT * FROM %s"), row(0, ["foo", "bar", "foobar"]))
 
 # Migrated from cql_tests.py:TestCQL.list_item_conditional_test()
-def testListItem(cql, test_keyspace):
+def testListItem(cql, test_keyspace, xfail_tablets): # LWT is not supported with tablets yet. See #18066
     for frozen in [False, True]:   
         typename = "list<text>"
         f = f"frozen<{typename}>" if frozen else typename
@@ -496,7 +496,7 @@ def testListItem(cql, test_keyspace):
 
 # Test expanded functionality from CASSANDRA-6839,
 # migrated from cql_tests.py:TestCQL.expanded_list_item_conditional_test()
-def testExpandedListItem(cql, test_keyspace):
+def testExpandedListItem(cql, test_keyspace, xfail_tablets): # LWT is not supported with tablets yet. See #18066
     for frozen in [False, True]:   
         typename = "list<text>"
         f = f"frozen<{typename}>" if frozen else typename
@@ -670,7 +670,7 @@ def testWholeMap(cql, test_keyspace):
             check_invalid_map(cql, table, "m IN null", SyntaxException)
 
 # Migrated from cql_tests.py:TestCQL.map_item_conditional_test()
-def testMapItem(cql, test_keyspace):
+def testMapItem(cql, test_keyspace, xfail_tablets): # LWT is not supported with tablets yet. See #18066
     for frozen in [False, True]:   
         typename = "map<text,text>"
         f = f"frozen<{typename}>" if frozen else typename
@@ -696,7 +696,7 @@ def testMapItem(cql, test_keyspace):
             else:
                 assert list(execute(cql, table, "UPDATE %s set m['foo'] = 'bar', m['bar'] = 'foo' WHERE k = 1 IF m[?] IN (?, ?)", "foo", "blah", None))[0][0] == True
 
-def testFrozenWithNullValues(cql, test_keyspace):
+def testFrozenWithNullValues(cql, test_keyspace, xfail_tablets): # LWT is not supported with tablets yet. See #18066
     with create_table(cql, test_keyspace, f"(k int PRIMARY KEY, m frozen<list<text>>)") as table:
         execute(cql, table, "INSERT INTO %s (k, m) VALUES (0, null)")
 
@@ -714,7 +714,7 @@ def testFrozenWithNullValues(cql, test_keyspace):
 
 # Test expanded functionality from CASSANDRA-6839,
 # migrated from cql_tests.py:TestCQL.expanded_map_item_conditional_test()
-def testExpandedMapItem(cql, test_keyspace):
+def testExpandedMapItem(cql, test_keyspace, xfail_tablets): # LWT is not supported with tablets yet. See #18066
     for frozen in [False, True]:   
         typename = "map<text,text>"
         f = f"frozen<{typename}>" if frozen else typename

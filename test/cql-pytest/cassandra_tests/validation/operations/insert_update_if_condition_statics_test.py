@@ -28,7 +28,7 @@ def is_scylla(cql):
     yield any('scylla' in name for name in names)
 
 # Migrated from cql_tests.py:TestCQL.static_columns_cas_test()
-def testStaticColumnsCas(cql, test_keyspace, is_scylla):
+def testStaticColumnsCas(cql, test_keyspace, is_scylla, xfail_tablets): # LWT is not supported with tablets yet. See #18066
     with create_table(cql, test_keyspace, "(id int, k text, version int static, v text, PRIMARY KEY (id, k))") as table:
         # Test that INSERT IF NOT EXISTS concerns only the static column if no clustering nor regular columns
         # is provided, but concerns the CQL3 row targetted by the clustering columns otherwise
@@ -146,7 +146,7 @@ def testStaticColumnsCas(cql, test_keyspace, is_scylla):
                    [row(False,1,"k2","newVal"),row(False,1,"k2","newVal")] if is_scylla else [row(False, 1, "k2", "newVal")])
 
 # Test CASSANDRA-10532
-def testStaticColumnsCasDelete(cql, test_keyspace, is_scylla):
+def testStaticColumnsCasDelete(cql, test_keyspace, is_scylla, xfail_tablets): # LWT is not supported with tablets yet. See #18066
     with create_table(cql, test_keyspace, "(pk int, ck int, static_col int static, value int, PRIMARY KEY (pk, ck))") as table:
         execute(cql, table, "INSERT INTO %s (pk, ck, value) VALUES (?, ?, ?)", 1, 1, 2)
         execute(cql, table, "INSERT INTO %s (pk, ck, value) VALUES (?, ?, ?)", 1, 3, 4)
@@ -206,7 +206,7 @@ def testStaticColumnsCasDelete(cql, test_keyspace, is_scylla):
                    row(1, 5, null, 6),
                    row(1, 7, null, 8))
 
-def testStaticColumnsCasUpdate(cql, test_keyspace, is_scylla):
+def testStaticColumnsCasUpdate(cql, test_keyspace, is_scylla, xfail_tablets): # LWT is not supported with tablets yet. See #18066
     with create_table(cql, test_keyspace, "(pk int, ck int, static_col int static, value int, PRIMARY KEY (pk, ck))") as table:
         execute(cql, table, "INSERT INTO %s (pk, ck, value) VALUES (?, ?, ?)", 1, 1, 2)
         execute(cql, table, "INSERT INTO %s (pk, ck, value) VALUES (?, ?, ?)", 1, 3, 4)
@@ -258,7 +258,7 @@ def testStaticColumnsCasUpdate(cql, test_keyspace, is_scylla):
                    row(1, 5, 1, 6),
                    row(1, 7, 1, 8))
 
-def testConditionalUpdatesOnStaticColumns(cql, test_keyspace, is_scylla):
+def testConditionalUpdatesOnStaticColumns(cql, test_keyspace, is_scylla, xfail_tablets): # LWT is not supported with tablets yet. See #18066
     with create_table(cql, test_keyspace, "(a int, b int, s int static, d text, PRIMARY KEY (a, b))") as table:
         assertInvalidMessage(cql, table, "unset", "UPDATE %s SET s = 6 WHERE a = 6 IF s = ?", unset())
 
@@ -289,7 +289,7 @@ def testConditionalUpdatesOnStaticColumns(cql, test_keyspace, is_scylla):
         assertRows(execute(cql, table, "SELECT * FROM %s WHERE a = 8"),
                    row(8, null, 8, null))
 
-def testStaticsWithMultipleConditions(cql, test_keyspace, is_scylla):
+def testStaticsWithMultipleConditions(cql, test_keyspace, is_scylla, xfail_tablets): # LWT is not supported with tablets yet. See #18066
     with create_table(cql, test_keyspace, "(a int, b int, s1 int static, s2 int static, d int, PRIMARY KEY (a, b))") as table:
         for i in range(1,6):
             execute(cql, table, "INSERT INTO %s (a, b, d) VALUES (?, ?, ?)", i, 1, 5)
@@ -324,7 +324,7 @@ def testStaticsWithMultipleConditions(cql, test_keyspace, is_scylla):
                            + "APPLY BATCH"),
                    [row(false,None,None,None,None,None),row(false,None,None,None,None,None),row(false,None,None,None,None,None),row(false,None,None,None,None,None)] if is_scylla else [row(false)])
 
-def testStaticColumnsCasUpdateWithNullStaticColumn(cql, test_keyspace, is_scylla):
+def testStaticColumnsCasUpdateWithNullStaticColumn(cql, test_keyspace, is_scylla, xfail_tablets): # LWT is not supported with tablets yet. See #18066
     with create_table(cql, test_keyspace, "(pk int, ck int, s1 int static, s2 int static, value int, PRIMARY KEY (pk, ck))") as table:
         execute(cql, table, "INSERT INTO %s (pk, s1, s2) VALUES (1, 1, 1) USING TIMESTAMP 1000")
         execute(cql, table, "INSERT INTO %s (pk, s1, s2) VALUES (2, 1, 1) USING TIMESTAMP 1001")
@@ -341,7 +341,7 @@ def testStaticColumnsCasUpdateWithNullStaticColumn(cql, test_keyspace, is_scylla
         assertRows(execute(cql, table, "UPDATE %s SET s1 = ? WHERE pk = ? IF EXISTS", 2, 2), row(true,2,null,null,1,null) if is_scylla else row(true))
         assertRows(execute(cql, table, "SELECT * FROM %s WHERE pk = ?", 2), row(2, null, 2, 1, null))
 
-def testStaticColumnsCasDeleteWithNullStaticColumn(cql, test_keyspace, is_scylla):
+def testStaticColumnsCasDeleteWithNullStaticColumn(cql, test_keyspace, is_scylla, xfail_tablets): # LWT is not supported with tablets yet. See #18066
     with create_table(cql, test_keyspace, "(pk int, ck int, s1 int static, s2 int static, value int, PRIMARY KEY (pk, ck))") as table:
         execute(cql, table, "INSERT INTO %s (pk, s1, s2) VALUES (1, 1, 1) USING TIMESTAMP 1000")
         execute(cql, table, "INSERT INTO %s (pk, s1, s2) VALUES (2, 1, 1) USING TIMESTAMP 1001")
