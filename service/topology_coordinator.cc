@@ -966,12 +966,15 @@ class topology_coordinator : public endpoint_lifecycle_subscriber {
 
             auto s = _db.find_schema(table_id);
             auto new_tablet_map = co_await _tablet_allocator.split_tablets(get_token_metadata_ptr(), table_id);
-            out.emplace_back(co_await replica::tablet_map_to_mutation(
+            co_await replica::tablet_map_to_mutations(
                 new_tablet_map,
                 table_id,
                 s->ks_name(),
                 s->cf_name(),
-                guard.write_timestamp()));
+                guard.write_timestamp(),
+                [&] (mutation m) {
+                    out.emplace_back(m);
+                });
         }
     }
 
