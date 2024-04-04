@@ -755,19 +755,19 @@ future<> storage_service::merge_topology_snapshot(raft_snapshot snp) {
         // Split big mutations into smaller ones, prepare frozen_muts_to_apply
         std::vector<frozen_mutation> frozen_muts_to_apply;
         {
-            std::vector<mutation> muts_to_apply;
-            muts_to_apply.reserve(std::distance(it, snp.mutations.end()));
             const auto max_size = _db.local().schema_commitlog()->max_record_size() / 2;
             for (auto i = it; i != snp.mutations.end(); i++) {
                 const auto& m = *i;
                 auto mut = m.to_mutation(s);
                 if (m.representation().size() <= max_size) {
-                    muts_to_apply.push_back(std::move(mut));
+                    frozen_muts_to_apply.emplace_back(freeze(mut));
+                    co_await coroutine::maybe_yield();
                 } else {
-                    co_await split_mutation(std::move(mut), muts_to_apply, max_size);
+                    co_await for_each_split_mutation(std::move(mut), max_size, [&] (mutation m) {
+                        frozen_muts_to_apply.emplace_back(freeze(m));
+                    });
                 }
             }
-            frozen_muts_to_apply = freeze(muts_to_apply);
         }
 
         // Apply non-atomically so as not to hit the commitlog size limit.
