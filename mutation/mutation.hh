@@ -22,7 +22,6 @@
 
 #include <seastar/util/optimized_optional.hh>
 #include <seastar/core/coroutine.hh>
-#include <seastar/coroutine/maybe_yield.hh>
 
 struct mutation_consume_cookie {
     using crs_iterator_type = mutation_partition::rows_type::iterator;
@@ -479,3 +478,5 @@ std::ostream& operator<<(std::ostream& os, const mutation& m);
 // to pass half of the required value as max_size; such a margin should ensure
 // that the condition is met.
 future<> split_mutation(mutation source, std::vector<mutation>& target, size_t max_size);
+
+future<> for_each_split_mutation(mutation source, size_t max_size, std::function<void(mutation)> process_mutation);
