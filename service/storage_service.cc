@@ -752,35 +752,36 @@ future<> storage_service::merge_topology_snapshot(raft_snapshot snp) {
     if (it != snp.mutations.end()) {
         auto s = _db.local().find_schema(db::system_keyspace::NAME, db::system_keyspace::CDC_GENERATIONS_V3);
 
-        // Split big mutations into smaller ones, prepare frozen_muts_to_apply
-        std::vector<frozen_mutation> frozen_muts_to_apply;
-        {
-            const auto max_size = _db.local().schema_commitlog()->max_record_size() / 2;
-            for (auto i = it; i != snp.mutations.end(); i++) {
-                const auto& m = *i;
-                auto mut = m.to_mutation(s);
-                if (m.representation().size() <= max_size) {
-                    frozen_muts_to_apply.emplace_back(freeze(mut));
-                    co_await coroutine::maybe_yield();
-                } else {
-                    co_await for_each_split_mutation(std::move(mut), max_size, [&] (mutation m) {
-                        frozen_muts_to_apply.emplace_back(freeze(m));
-                    });
-                }
-            }
-        }
-
+        // Split big mutations into smaller ones
         // Apply non-atomically so as not to hit the commitlog size limit.
         // The cdc_generations_v3 data is not used in any way until
         // it's referenced from the topology table.
         // By applying the cdc_generations_v3 mutations before topology mutations
         // we ensure that the lack of atomicity isn't a problem here.
-        //
-        // FIXME: we can apply the frozen mutations one at a time also above
-        // saving the need to keep a vector of all frozen mutations.
-        co_await max_concurrent_for_each(frozen_muts_to_apply, 128, [&] (const frozen_mutation& m) -> future<> {
-            return _db.local().apply(s, m, {}, db::commitlog::force_sync::yes, db::no_timeout);
-        });
+        {
+            const auto max_size = _db.local().schema_commitlog()->max_record_size() / 2;
+            // Allow maxiumum of 128 concurrent applies
+            semaphore sem(128);
+            future<> done = make_ready_future();
+            auto apply_in_background = [&] (frozen_mutation m) -> future<> {
+                auto units = co_await get_units(sem, 1);
+                // release semaphore units after db apply resolves.
+                auto f = _db.local().apply(s, m, {}, db::commitlog::force_sync::yes, db::no_timeout).finally([units = std::move(units)] {});
+                done = done.then([f = std::move(f)] () mutable { return std::move(f); });
+            };
+            for (auto i = it; i != snp.mutations.end(); i++) {
+                const auto& m = *i;
+                auto mut = m.to_mutation(s);
+                if (m.representation().size() <= max_size) {
+                    co_await apply_in_background(freeze(mut));
+                } else {
+                    co_await for_each_split_mutation(std::move(mut), max_size, [&] (mutation m) {
+                        return apply_in_background(freeze(m));
+                    });
+                }
+            }
+            co_await std::move(done);
+        }
     }
 
     // Apply system.topology and system.topology_requests mutations atomically
