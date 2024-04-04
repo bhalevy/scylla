@@ -115,6 +115,18 @@ frozen_mutation::unfreeze_gently(schema_ptr schema) const {
     co_return m;
 }
 
+future<>
+frozen_mutation::unfreeze_and_split_gently(schema_ptr schema, size_t max_rows, std::function<void(mutation)> process_mutation) const {
+    check_schema_version(schema_version(), *schema);
+    partition_split_builder b(schema, key(), max_rows, std::move(process_mutation));
+    try {
+        co_await partition().accept_gently(*schema, b);
+    } catch (...) {
+        std::throw_with_nested(std::runtime_error(format(
+                "frozen_mutation::unfreeze_gently(): failed unfreezing mutation {} of {}.{}", key(), schema->ks_name(), schema->cf_name())));
+    }
+}
+
 mutation frozen_mutation::unfreeze_upgrading(schema_ptr schema, const column_mapping& cm) const {
     mutation m(schema, key());
     converting_mutation_partition_applier v(cm, *schema, m.partition());

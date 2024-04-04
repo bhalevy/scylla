@@ -183,6 +183,9 @@ public:
     // throws schema_mismatch_error otherwise.
     mutation unfreeze(schema_ptr s) const;
     future<mutation> unfreeze_gently(schema_ptr s) const;
+    // Unfreeze the frozen_mutation, possibly splitting it into a number of mutations
+    // based on `max_rows`.  The `process_mutation` function is called for each of the split mutations.
+    future<> unfreeze_and_split_gently(schema_ptr s, size_t max_rows, std::function<void(mutation)> process_mutation) const;
 
     // Automatically upgrades the stored mutation to the supplied schema with custom column mapping.
     mutation unfreeze_upgrading(schema_ptr schema, const column_mapping& cm) const;
