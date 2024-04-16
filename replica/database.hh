@@ -441,8 +441,7 @@ private:
 
     uint64_t _failed_counter_applies_to_memtable = 0;
 
-    template<typename... Args>
-    void do_apply(compaction_group& cg, db::rp_handle&&, Args&&... args);
+    void do_apply(compaction_group& cg, db::rp_handle&&, const mutation&);
 
     lw_shared_ptr<memtable_list> make_memory_only_memtable_list();
     lw_shared_ptr<memtable_list> make_memtable_list(compaction_group& cg);
@@ -854,9 +853,6 @@ public:
     }
     // Applies given mutation to this column family
     // The mutation is always upgraded to current schema.
-    void apply(const frozen_mutation& m, const schema_ptr& m_schema, db::rp_handle&& h = {}) {
-        do_apply(compaction_group_for_key(m.key(), m_schema), std::move(h), m, m_schema);
-    }
     void apply(const mutation& m, db::rp_handle&& h = {}) {
         do_apply(compaction_group_for_token(m.token()), std::move(h), m);
     }

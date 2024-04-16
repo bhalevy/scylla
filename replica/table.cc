@@ -2882,8 +2882,7 @@ db::replay_position table::set_low_replay_position_mark() {
     return _lowest_allowed_rp;
 }
 
-template<typename... Args>
-void table::do_apply(compaction_group& cg, db::rp_handle&& h, Args&&... args) {
+void table::do_apply(compaction_group& cg, db::rp_handle&& h, const mutation& m) {
     if (cg.async_gate().is_closed()) [[unlikely]] {
         on_internal_error(tlogger, "async_gate of table's compaction group is closed");
     }
@@ -2893,7 +2892,7 @@ void table::do_apply(compaction_group& cg, db::rp_handle&& h, Args&&... args) {
     db::replay_position rp = h;
     check_valid_rp(rp);
     try {
-        cg.memtables()->active_memtable().apply(std::forward<Args>(args)..., std::move(h));
+        cg.memtables()->active_memtable().apply(m, std::move(h));
         _highest_rp = std::max(_highest_rp, rp);
     } catch (...) {
         _failed_counter_applies_to_memtable++;
@@ -2910,22 +2909,16 @@ future<> table::apply(const mutation& m, db::rp_handle&& h, db::timeout_clock::t
     }, timeout);
 }
 
-template void table::do_apply(compaction_group& cg, db::rp_handle&&, const mutation&);
-
 future<> table::apply(const frozen_mutation& m, schema_ptr m_schema, db::rp_handle&& h, db::timeout_clock::time_point timeout) {
     if (_virtual_writer) [[unlikely]] {
-        return (*_virtual_writer)(m);
+        co_await (*_virtual_writer)(m);
+        co_return;
     }
 
-    auto& cg = compaction_group_for_key(m.key(), m_schema);
-    auto holder = cg.async_gate().hold();
-
-    return dirty_memory_region_group().run_when_memory_available([this, &m, m_schema = std::move(m_schema), h = std::move(h), &cg, holder = std::move(holder)]() mutable {
-        do_apply(cg, std::move(h), m, m_schema);
-    }, timeout);
+    auto rp_handle = std::move(h);
+    auto mut = co_await m.unfreeze_gently(m_schema);
+    co_await apply(mut, std::move(rp_handle), timeout);
 }
-
-template void table::do_apply(compaction_group& cg, db::rp_handle&&, const frozen_mutation&, const schema_ptr&);
 
 future<>
 write_memtable_to_sstable(flat_mutation_reader_v2 reader,
