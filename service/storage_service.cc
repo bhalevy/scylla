@@ -765,6 +765,7 @@ future<> storage_service::topology_transition() {
 }
 
 future<> storage_service::merge_topology_snapshot(raft_snapshot snp) {
+  return async([this, snp = std::move(snp)] () mutable {
     auto it = std::partition(snp.mutations.begin(), snp.mutations.end(), [] (const canonical_mutation& m) {
         return m.column_family_id() != db::system_keyspace::cdc_generations_v3()->id();
     });
@@ -774,20 +775,24 @@ future<> storage_service::merge_topology_snapshot(raft_snapshot snp) {
 
         // Split big mutations into smaller ones, prepare frozen_muts_to_apply
         std::vector<frozen_mutation> frozen_muts_to_apply;
+        frozen_muts_to_apply.reserve(std::distance(it, snp.mutations.end()));
         {
-            std::vector<mutation> muts_to_apply;
-            muts_to_apply.reserve(std::distance(it, snp.mutations.end()));
             const auto max_size = _db.local().schema_commitlog()->max_record_size() / 2;
             for (auto i = it; i != snp.mutations.end(); i++) {
                 const auto& m = *i;
-                auto mut = co_await m.to_mutation_gently(s);
+                auto mut = m.to_mutation_gently(s).get();
                 if (m.representation().size() <= max_size) {
-                    muts_to_apply.push_back(std::move(mut));
+                    frozen_muts_to_apply.emplace_back(freeze_in_thread(mut));
                 } else {
-                    co_await split_mutation(std::move(mut), muts_to_apply, max_size);
+                    std::vector<mutation> muts_to_apply;
+                    // FIXME: freeze mutation one at a time to reduce
+                    // memory footprint
+                    split_mutation(std::move(mut), muts_to_apply, max_size).get();
+                    for (auto& m : muts_to_apply) {
+                        frozen_muts_to_apply.emplace_back(freeze_in_thread(m));
+                    }
                 }
             }
-            frozen_muts_to_apply = freeze(muts_to_apply);
         }
 
         // Apply non-atomically so as not to hit the commitlog size limit.
@@ -795,9 +800,9 @@ future<> storage_service::merge_topology_snapshot(raft_snapshot snp) {
         // it's referenced from the topology table.
         // By applying the cdc_generations_v3 mutations before topology mutations
         // we ensure that the lack of atomicity isn't a problem here.
-        co_await max_concurrent_for_each(frozen_muts_to_apply, 128, [&] (const frozen_mutation& m) -> future<> {
+        max_concurrent_for_each(frozen_muts_to_apply, 128, [&] (const frozen_mutation& m) -> future<> {
             return _db.local().apply(s, m, {}, db::commitlog::force_sync::yes, db::no_timeout);
-        });
+        }).get();
     }
 
     // Apply system.topology and system.topology_requests mutations atomically
@@ -808,7 +813,8 @@ future<> storage_service::merge_topology_snapshot(raft_snapshot snp) {
         auto s = _db.local().find_schema(m.column_family_id());
         return m.to_mutation(s);
     });
-    co_await _db.local().apply(freeze(muts), db::no_timeout);
+    _db.local().apply(freeze(muts), db::no_timeout).get();
+  });
 }
 
 // Moves the coroutine lambda onto the heap and extends its
