@@ -780,7 +780,7 @@ future<> storage_service::merge_topology_snapshot(raft_snapshot snp) {
             const auto max_size = _db.local().schema_commitlog()->max_record_size() / 2;
             for (auto i = it; i != snp.mutations.end(); i++) {
                 const auto& m = *i;
-                auto mut = m.to_mutation(s);
+                auto mut = co_await m.to_mutation_gently(s);
                 if (m.representation().size() <= max_size) {
                     muts_to_apply.push_back(std::move(mut));
                 } else {
