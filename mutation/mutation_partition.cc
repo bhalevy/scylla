@@ -20,6 +20,7 @@
 #include "mutation_compactor.hh"
 #include "counters.hh"
 #include "row_cache.hh"
+#include "utils/preempt.hh"
 #include "view_info.hh"
 #include "mutation_cleaner.hh"
 #include <seastar/core/execution_stage.hh>
@@ -325,10 +326,12 @@ stop_iteration mutation_partition::apply_monotonically(const schema& s, mutation
                 i = next_i;
             }
 
+            /*
             if (need_preempt() && i != end) {
                 res = apply_resume(stage, i->position());
                 return stop_iteration::no;
             }
+            */
         }
         return stop_iteration::yes;
     };
@@ -364,22 +367,6 @@ stop_iteration mutation_partition::apply_monotonically(const schema& s, mutation
     if (_row_tombstones.apply_monotonically(s, std::move(p._row_tombstones), preemptible) == stop_iteration::no) {
         res = apply_resume::merging_range_tombstones();
         return stop_iteration::no;
-    }
-
-    if (p._tombstone) {
-        // p._tombstone is already applied to _tombstone
-        rows_type::iterator i;
-        if (res._stage == apply_resume::stage::partition_tombstone_compaction) {
-            i = _rows.lower_bound(res._pos, cmp);
-        } else {
-            i = _rows.begin();
-        }
-        if (apply_tombstone_to_rows(apply_resume::stage::partition_tombstone_compaction,
-                                               _tombstone, i, _rows.end()) == stop_iteration::no) {
-            return stop_iteration::no;
-        }
-        // TODO: Drop redundant range tombstones
-        p._tombstone = {};
     }
 
     res = apply_resume::merging_rows();
@@ -462,6 +449,25 @@ stop_iteration mutation_partition::apply_monotonically(const schema& s, mutation
           throw;
       }
     }
+
+    // Compaction is attempted only in preemptible contexts because it can be expensive to perform and is not
+    // necessary for correctness.
+    if (p._tombstone && preemptible) {
+        // p._tombstone is already applied to _tombstone
+        rows_type::iterator i;
+        if (res._stage == apply_resume::stage::partition_tombstone_compaction) {
+            i = _rows.lower_bound(res._pos, cmp);
+        } else {
+            i = _rows.begin();
+        }
+        if (apply_tombstone_to_rows(apply_resume::stage::partition_tombstone_compaction,
+                                               _tombstone, i, _rows.end()) == stop_iteration::no) {
+            return stop_iteration::no;
+        }
+        // TODO: Drop redundant range tombstones
+        p._tombstone = {};
+    }
+
     return stop_iteration::yes;
 }
 
@@ -478,6 +484,22 @@ mutation_partition::apply(const schema& s, mutation_partition_view p,
     apply_monotonically(s, std::move(p2), no_cache_tracker, app_stats, is_preemptible::no, res);
 }
 
+future<>
+mutation_partition::apply_gently(const schema& s, mutation_partition_view p,
+        const schema& p_schema, mutation_application_stats& app_stats) {
+    // FIXME: Optimize
+    mutation_partition p2(*this, copy_comparators_only{});
+    partition_builder b(p_schema, p2);
+    co_await p.accept_gently(p_schema, b);
+    if (s.version() != p_schema.version()) {
+        p2.upgrade(p_schema, s);
+    }
+    apply_resume res;
+    while (apply_monotonically(s, std::move(p2), no_cache_tracker, app_stats, is_preemptible::yes, res) == stop_iteration::no) {
+        co_await yield();
+    }
+}
+
 void mutation_partition::apply(const schema& s, const mutation_partition& p,
         const schema& p_schema, mutation_application_stats& app_stats) {
     mutation_partition p2(p_schema, p);
@@ -488,9 +510,28 @@ void mutation_partition::apply(const schema& s, const mutation_partition& p,
     apply_monotonically(s, std::move(p2), no_cache_tracker, app_stats, is_preemptible::no, res);
 }
 
+future<> mutation_partition::apply_gently(const schema& s, const mutation_partition& p,
+        const schema& p_schema, mutation_application_stats& app_stats) {
+    mutation_partition p2(p_schema, p);
+    if (s.version() != p_schema.version()) {
+        p2.upgrade(p_schema, s);
+    }
+    apply_resume res;
+    while (apply_monotonically(s, std::move(p2), no_cache_tracker, app_stats, is_preemptible::yes, res) == stop_iteration::no) {
+        co_await yield();
+    }
+}
+
 void mutation_partition::apply(const schema& s, mutation_partition&& p, mutation_application_stats& app_stats) {
     apply_resume res;
     apply_monotonically(s, std::move(p), no_cache_tracker, app_stats, is_preemptible::no, res);
+}
+
+future<> mutation_partition::apply_gently(const schema& s, mutation_partition&& p, mutation_application_stats& app_stats) {
+    apply_resume res;
+    while (apply_monotonically(s, std::move(p), no_cache_tracker, app_stats, is_preemptible::yes, res) == stop_iteration::no) {
+        co_await yield();
+    }
 }
 
 tombstone
