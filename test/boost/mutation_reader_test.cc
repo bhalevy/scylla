@@ -1243,11 +1243,11 @@ SEASTAR_THREAD_TEST_CASE(test_foreign_reader_as_mutation_source) {
             auto frozen_mutations = ranges::to<std::vector<frozen_mutation>>(
                 mutations
                 | boost::adaptors::transformed([] (const mutation& m) { return freeze(m); }));
-            auto remote_mt = smp::submit_to(remote_shard, [s = global_schema_ptr(s), &frozen_mutations] {
+            auto remote_mt = smp::submit_to(remote_shard, [s = global_schema_ptr(s), &frozen_mutations] () {
                 auto mt = make_lw_shared<replica::memtable>(s.get());
 
                 for (auto& mut : frozen_mutations) {
-                    mt->apply(mut, s.get());
+                    mt->apply(mut.unfreeze(s.get()));
                 }
 
                 return make_foreign(mt);
