@@ -1320,6 +1320,12 @@ public:
     // Same guarantees and constraints as for other variants of apply().
     void apply(const schema& s, mutation_partition&& p, mutation_application_stats& app_stats);
 
+    future<> apply_gently(const schema& this_schema, const mutation_partition& p, const schema& p_schema,
+            mutation_application_stats& app_stats);
+    future<> apply_gently(const schema& this_schema, mutation_partition_view p, const schema& p_schema,
+            mutation_application_stats& app_stats);
+    future<> apply_gently(const schema& s, mutation_partition&& p, mutation_application_stats& app_stats);
+
     // Applies p to this instance.
     //
     // Monotonic exception guarantees. In case of exception the sum of p and this remains the same as before the exception.

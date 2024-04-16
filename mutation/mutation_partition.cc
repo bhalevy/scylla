@@ -20,6 +20,7 @@
 #include "mutation_compactor.hh"
 #include "counters.hh"
 #include "row_cache.hh"
+#include "utils/preempt.hh"
 #include "view_info.hh"
 #include "mutation_cleaner.hh"
 #include <seastar/core/execution_stage.hh>
@@ -462,6 +463,7 @@ stop_iteration mutation_partition::apply_monotonically(const schema& s, mutation
           throw;
       }
     }
+
     return stop_iteration::yes;
 }
 
@@ -479,6 +481,21 @@ mutation_partition::apply(const schema& s, mutation_partition_view p,
     apply_monotonically(s, std::move(p2), no_cache_tracker, app_stats, is_preemptible::no, res);
 }
 
+future<>
+mutation_partition::apply_gently(const schema& s, mutation_partition_view p,
+        const schema& p_schema, mutation_application_stats& app_stats) {
+    mutation_partition p2(*this, copy_comparators_only{});
+    partition_builder b(p_schema, p2);
+    co_await p.accept_gently(p_schema, b);
+    if (s.version() != p_schema.version()) {
+        p2.upgrade(p_schema, s);
+    }
+    apply_resume res;
+    while (apply_monotonically(s, std::move(p2), no_cache_tracker, app_stats, is_preemptible::yes, res) == stop_iteration::no) {
+        co_await yield();
+    }
+}
+
 void mutation_partition::apply(const schema& s, const mutation_partition& p,
         const schema& p_schema, mutation_application_stats& app_stats) {
     // FIXME: Optimize
@@ -490,9 +507,28 @@ void mutation_partition::apply(const schema& s, const mutation_partition& p,
     apply_monotonically(s, std::move(p2), no_cache_tracker, app_stats, is_preemptible::no, res);
 }
 
+future<> mutation_partition::apply_gently(const schema& s, const mutation_partition& p,
+        const schema& p_schema, mutation_application_stats& app_stats) {
+    mutation_partition p2(p_schema, p);
+    if (s.version() != p_schema.version()) {
+        p2.upgrade(p_schema, s);
+    }
+    apply_resume res;
+    while (apply_monotonically(s, std::move(p2), no_cache_tracker, app_stats, is_preemptible::yes, res) == stop_iteration::no) {
+        co_await yield();
+    }
+}
+
 void mutation_partition::apply(const schema& s, mutation_partition&& p, mutation_application_stats& app_stats) {
     apply_resume res;
     apply_monotonically(s, std::move(p), no_cache_tracker, app_stats, is_preemptible::no, res);
+}
+
+future<> mutation_partition::apply_gently(const schema& s, mutation_partition&& p, mutation_application_stats& app_stats) {
+    apply_resume res;
+    while (apply_monotonically(s, std::move(p), no_cache_tracker, app_stats, is_preemptible::yes, res) == stop_iteration::no) {
+        co_await yield();
+    }
 }
 
 tombstone

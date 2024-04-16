@@ -170,6 +170,13 @@ public:
     void apply(const mutation&);
     void apply(const mutation_fragment&);
 
+    // the apply_gently entry points may yield while applying
+    // changes to a mutation partition, therefore they should not
+    // be used when atomic application is requried, such as when
+    // applying changes to memtable, which is done synchronously.
+    future<> apply_gently(mutation&&);
+    future<> apply_gently(const mutation&);
+
     mutation operator+(const mutation& other) const;
     mutation& operator+=(const mutation& other);
     mutation& operator+=(mutation&& other);
