@@ -1065,6 +1065,32 @@ SEASTAR_TEST_CASE(test_apply_monotonically_is_monotonic) {
     return make_ready_future<>();
 }
 
+SEASTAR_THREAD_TEST_CASE(test_apply_monotonically_with_preemption) {
+    auto do_test = [](auto&& gen) {
+        auto&& alloc = standard_allocator();
+        with_allocator(alloc, [&] {
+            mutation_application_stats app_stats;
+            mutation target = gen();
+            mutation second = gen();
+
+            auto expected = target + second;
+
+            mutation m = target;
+            auto m2 = mutation_partition(*m.schema(), second.partition());
+            apply_resume res;
+            memory::with_allocation_failures([&] {
+                while (m.partition().apply_monotonically(*m.schema(), std::move(m2), no_cache_tracker, app_stats, is_preemptible::yes, res) == stop_iteration::no) {
+                    yield().get();
+                }
+            });
+            assert_that(m).is_equal_to_compacted(expected);
+        });
+    };
+
+    do_test(random_mutation_generator(random_mutation_generator::generate_counters::no));
+    do_test(random_mutation_generator(random_mutation_generator::generate_counters::yes));
+}
+
 SEASTAR_TEST_CASE(test_v2_apply_monotonically_is_monotonic_on_alloc_failures) {
     auto do_test = [](auto&& gen) {
         auto&& alloc = standard_allocator();

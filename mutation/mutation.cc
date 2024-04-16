@@ -152,6 +152,17 @@ void mutation::apply(const mutation_fragment& mf) {
     partition().apply(*schema(), mf);
 }
 
+future<> mutation::apply_gently(mutation&& m) {
+    mutation_application_stats app_stats;
+    co_await partition().apply_gently(*schema(), std::move(m.partition()), *m.schema(), app_stats);
+}
+
+future<> mutation::apply_gently(const mutation& m) {
+    auto m2 = m;
+    mutation_application_stats app_stats;
+    co_await partition().apply_gently(*schema(), std::move(m2.partition()), *m.schema(), app_stats);
+}
+
 mutation& mutation::operator=(const mutation& m) {
     return *this = mutation(m);
 }

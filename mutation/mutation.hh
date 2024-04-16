@@ -170,6 +170,9 @@ public:
     void apply(const mutation&);
     void apply(const mutation_fragment&);
 
+    future<> apply_gently(mutation&&);
+    future<> apply_gently(const mutation&);
+
     mutation operator+(const mutation& other) const;
     mutation& operator+=(const mutation& other);
     mutation& operator+=(mutation&& other);

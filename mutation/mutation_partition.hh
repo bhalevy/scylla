@@ -1105,8 +1105,8 @@ struct apply_resume {
         start,
         range_tombstone_compaction,
         merging_range_tombstones,
-        partition_tombstone_compaction,
         merging_rows,
+        partition_tombstone_compaction,
         done
     };
 
@@ -1319,6 +1319,12 @@ public:
     // Use in case this instance and p share the same schema.
     // Same guarantees and constraints as for other variants of apply().
     void apply(const schema& s, mutation_partition&& p, mutation_application_stats& app_stats);
+
+    future<> apply_gently(const schema& this_schema, const mutation_partition& p, const schema& p_schema,
+            mutation_application_stats& app_stats);
+    future<> apply_gently(const schema& this_schema, mutation_partition_view p, const schema& p_schema,
+            mutation_application_stats& app_stats);
+    future<> apply_gently(const schema& s, mutation_partition&& p, mutation_application_stats& app_stats);
 
     // Applies p to this instance.
     //
