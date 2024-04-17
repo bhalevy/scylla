@@ -26,6 +26,13 @@ SEASTAR_TEST_CASE(test_conversion_back_and_forth) {
     });
 }
 
+SEASTAR_THREAD_TEST_CASE(test_conversion_back_and_forth_gently) {
+    for_each_mutation([] (const mutation& m) {
+        canonical_mutation cm(m);
+        assert_that(cm.to_mutation_gently(m.schema()).get()).is_equal_to_compacted(m);
+    });
+}
+
 SEASTAR_TEST_CASE(test_reading_with_different_schemas) {
     return seastar::async([] {
         for_each_mutation_pair([] (const mutation& m1, const mutation& m2, are_equal eq) {
