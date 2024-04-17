@@ -7,6 +7,8 @@
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
+#include <seastar/core/preempt.hh>
+
 #include "mutation_partition_serializer.hh"
 #include "mutation_partition.hh"
 
@@ -182,6 +184,95 @@ void mutation_partition_serializer::write_serialized(Writer&& writer, const sche
     std::move(clustering_rows).end_rows().end_mutation_partition();
 }
 
+template<typename Output>
+class mutation_partition_serializer::write_serialized_executor {
+    const schema& _schema;
+    const mutation_partition& _mp;
+    ser::mutation_partition__static_row<Output> _static_row_writer;
+    struct range_tombstones_state {
+        ser::mutation_partition__range_tombstones<Output> writer;
+        range_tombstone_list::range_tombstones_type::const_iterator begin;
+        range_tombstone_list::range_tombstones_type::const_iterator end;
+    };
+    std::optional<range_tombstones_state> _range_tombstones;
+    struct clustering_rows_state {
+        ser::mutation_partition__rows<Output> writer;
+        mutation_partition::rows_type::const_iterator begin;
+        mutation_partition::rows_type::const_iterator end;
+    };
+    std::optional<clustering_rows_state> _clustering_rows;
+
+    std::function<stop_iteration(write_serialized_executor*)> _stage;
+
+public:
+    write_serialized_executor() = delete;
+
+    template<typename Writer>
+    explicit write_serialized_executor(Writer&& writer, const schema& s, const mutation_partition& mp)
+        : _schema(s)
+        , _mp(mp)
+        , _static_row_writer(std::move(writer).write_tomb(_mp.partition_tombstone()).start_static_row())
+        , _stage(std::mem_fn(&write_serialized_executor::write_static_row))
+    {}
+
+    stop_iteration run() {
+        return _stage(this);
+    }
+
+private:
+    stop_iteration write_static_row() {
+        _range_tombstones.emplace(write_row_cells(std::move(_static_row_writer), _mp.static_row().get(), _schema, column_kind::static_column)
+                .end_static_row()
+                .start_range_tombstones(),
+            _mp.row_tombstones().begin(), _mp.row_tombstones().end()
+        );
+        if (need_preempt()) {
+            _stage = std::mem_fn(&write_serialized_executor::write_range_tombstones);
+            return stop_iteration::no;
+        }
+        return write_range_tombstones();
+    }
+
+    stop_iteration write_range_tombstones() {
+        while (_range_tombstones->begin != _range_tombstones->end) {
+            const auto& rte = *_range_tombstones->begin;
+            auto& rt = rte.tombstone();
+            _range_tombstones->writer.add().write_start(rt.start).write_tomb(rt.tomb).write_start_kind(rt.start_kind)
+                .write_end(rt.end).write_end_kind(rt.end_kind).end_range_tombstone();
+            ++_range_tombstones->begin;
+            if (need_preempt()) {
+                _stage = std::mem_fn(&write_serialized_executor::write_range_tombstones);
+                return stop_iteration::no;
+            }
+        }
+        _clustering_rows.emplace(
+                std::move(_range_tombstones->writer).end_range_tombstones().start_rows(),
+                _mp.clustered_rows().begin(), _mp.clustered_rows().end());
+        return write_clustering_rows();
+    }
+
+    stop_iteration write_clustering_rows() {
+        while (_clustering_rows->begin != _clustering_rows->end) {
+            const auto& cr = *_clustering_rows->begin;
+            if (!cr.dummy()) {
+                write_row(_clustering_rows->writer.add(), _schema, cr.key(), cr.row().cells(), cr.row().marker(), cr.row().deleted_at()).end_deletable_row();
+            }
+            ++_clustering_rows->begin;
+            if (need_preempt()) {
+                _stage = std::mem_fn(&write_serialized_executor::write_clustering_rows);
+                return stop_iteration::no;
+            }
+        }
+        std::move(_clustering_rows->writer).end_rows().end_mutation_partition();
+        return done();
+    }
+
+    stop_iteration done() {
+        _stage = std::mem_fn(&write_serialized_executor::done);
+        return stop_iteration::yes;
+    }
+};
+
 mutation_partition_serializer::mutation_partition_serializer(const schema& schema, const mutation_partition& p)
     : _schema(schema), _p(p)
 { }
@@ -194,6 +285,19 @@ mutation_partition_serializer::write(bytes_ostream& out) const {
 void mutation_partition_serializer::write(ser::writer_of_mutation_partition<bytes_ostream>&& wr) const
 {
     write_serialized(std::move(wr), _schema, _p);
+}
+
+void
+mutation_partition_serializer::write_in_thread(bytes_ostream& out) const {
+    write_in_thread(ser::writer_of_mutation_partition<bytes_ostream>(out));
+}
+
+void mutation_partition_serializer::write_in_thread(ser::writer_of_mutation_partition<bytes_ostream>&& wr) const
+{
+    write_serialized_executor<bytes_ostream> executor(std::move(wr), _schema, _p);
+    while (executor.run() == stop_iteration::no) {
+        yield().get();
+    }
 }
 
 void serialize_mutation_fragments(const schema& s, tombstone partition_tombstone,
