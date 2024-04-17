@@ -164,6 +164,8 @@ private:
 private:
     partition_key deserialize_key() const;
     ser::mutation_view mutation_view() const;
+
+    explicit frozen_mutation(const partition_key&);
 public:
     explicit frozen_mutation(const mutation& m);
     explicit frozen_mutation(bytes_ostream&& b);
@@ -178,6 +180,7 @@ public:
     partition_key_view key() const;
     dht::decorated_key decorated_key(const schema& s) const;
     mutation_partition_view partition() const;
+    static frozen_mutation freeze_in_thread(const mutation& m);
     // The supplied schema must be of the same version as the schema of
     // the mutation which was used to create this instance.
     // throws schema_mismatch_error otherwise.
@@ -231,6 +234,10 @@ public:
 };
 
 frozen_mutation freeze(const mutation& m);
+inline frozen_mutation freeze_in_thread(const mutation& m) {
+    return frozen_mutation::freeze_in_thread(m);
+}
+
 std::vector<frozen_mutation> freeze(const std::vector<mutation>&);
 std::vector<mutation> unfreeze(const std::vector<frozen_mutation>&);
 // Caller is responsible for keeping the argument stable in memory
