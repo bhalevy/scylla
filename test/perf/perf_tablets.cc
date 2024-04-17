@@ -126,7 +126,7 @@ static future<> test_basic_operations(app_template& app) {
 
         std::vector<canonical_mutation> muts;
         auto time_to_read_muts = duration_in_seconds([&] {
-            muts = replica::read_tablet_mutations(e.local_qp().proxy().get_db()).get();
+            muts = replica::read_tablet_mutations_in_thread(e.local_qp().proxy().get_db());
         });
 
         testlog.info("Read mutations in {:.6f} [ms]", time_to_read_muts.count() * 1000);
