@@ -6,6 +6,8 @@
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
+#include <seastar/coroutine/maybe_yield.hh>
+
 #include "mutation.hh"
 #include "query-result-writer.hh"
 #include "mutation_rebuilder.hh"
@@ -207,6 +209,12 @@ mutation reverse(mutation mut) {
     auto reverse_schema = mut.schema()->make_reversed();
     mutation_rebuilder_v2 reverse_rebuilder(reverse_schema);
     return *std::move(mut).consume(reverse_rebuilder, consume_in_reverse::yes).result;
+}
+
+future<> mutation::clear_gently() noexcept {
+    while (partition().clear_gently(nullptr) == stop_iteration::no) {
+        co_await coroutine::maybe_yield();
+    }
 }
 
 namespace {

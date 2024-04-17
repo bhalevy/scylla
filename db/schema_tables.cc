@@ -830,21 +830,21 @@ future<table_schema_version> calculate_schema_digest(distributed<service::storag
     return calculate_schema_digest(proxy, features, std::not_fn(&is_system_keyspace));
 }
 
-future<std::vector<canonical_mutation>> convert_schema_to_mutations(distributed<service::storage_proxy>& proxy, schema_features features)
+future<std::vector<mutation>> convert_schema_to_mutations(distributed<service::storage_proxy>& proxy, schema_features features)
 {
-    auto map = [&proxy, features] (sstring table) -> future<std::vector<canonical_mutation>> {
+    auto map = [&proxy, features] (sstring table) -> future<std::vector<mutation>> {
         auto& db = proxy.local().get_db();
-        auto rs = co_await db::system_keyspace::query_mutations(db, NAME, table);
+        auto rs = db::system_keyspace::query_mutations(db, NAME, table).get();
         auto s = db.local().find_schema(NAME, table);
-        std::vector<canonical_mutation> results;
+        std::vector<mutation> results;
+        results.reserve(rs->partitions().size());
         for (auto&& p : rs->partitions()) {
             auto mut = co_await p.mut().unfreeze_gently(s);
             auto partition_key = value_cast<sstring>(utf8_type->deserialize(mut.key().get_component(*s, 0)));
             if (is_system_keyspace(partition_key)) {
                 continue;
             }
-            mut = redact_columns_for_missing_features(std::move(mut), features);
-            results.emplace_back(mut);
+            results.emplace_back(redact_columns_for_missing_features(std::move(mut), features));
         }
         co_return results;
     };
@@ -852,7 +852,7 @@ future<std::vector<canonical_mutation>> convert_schema_to_mutations(distributed<
         std::move(mutations.begin(), mutations.end(), std::back_inserter(result));
         return std::move(result);
     };
-    co_return co_await map_reduce(all_table_names(features), map, std::vector<canonical_mutation>{}, reduce);
+    co_return co_await map_reduce(all_table_names(features), map, std::vector<mutation>{}, reduce);
 }
 
 std::vector<mutation>
