@@ -87,6 +87,26 @@ frozen_mutation::frozen_mutation(const mutation& m)
     _bytes.reduce_chunk_count();
 }
 
+frozen_mutation::frozen_mutation(const partition_key& key)
+    : _pk(key)
+{ }
+
+frozen_mutation
+frozen_mutation::freeze_in_thread(const mutation& m) {
+    auto fm = frozen_mutation(m.key());
+    mutation_partition_serializer part_ser(*m.schema(), m.partition());
+
+    ser::writer_of_mutation<bytes_ostream> wom(fm._bytes);
+    std::move(wom).write_table_id(m.schema()->id())
+                .write_schema_version(m.schema()->version())
+                .write_key(m.key())
+                .partition([&] (auto wr) {
+                    part_ser.write_in_thread(std::move(wr));
+                }).end_mutation();
+    fm._bytes.reduce_chunk_count();
+    return fm;
+}
+
 mutation
 frozen_mutation::unfreeze(schema_ptr schema) const {
     check_schema_version(schema_version(), *schema);
