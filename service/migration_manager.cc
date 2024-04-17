@@ -13,6 +13,7 @@
 #include <seastar/coroutine/maybe_yield.hh>
 #include <seastar/coroutine/parallel_for_each.hh>
 #include "auth/resource.hh"
+#include "mutation/canonical_mutation.hh"
 #include "schema/schema_registry.hh"
 #include "service/migration_manager.hh"
 #include "service/storage_proxy.hh"
@@ -145,6 +146,7 @@ void migration_manager::init_messaging_service()
         return container().invoke_on(0, std::bind_front(
             [] (netw::msg_addr src, rpc::optional<netw::schema_pull_options> options, migration_manager& self)
                 -> future<rpc::tuple<std::vector<frozen_mutation>, std::vector<canonical_mutation>>> {
+          return async([src, options, &self] () {
             const auto cm_retval_supported = options && options->remote_supports_canonical_mutation_retval;
             if (!cm_retval_supported) {
                 // Canonical mutations support was added way back in scylla-3.2 and we don't support
@@ -158,18 +160,19 @@ void migration_manager::init_messaging_service()
             auto& db = proxy.local().get_db();
             semaphore_units<> guard;
             if (options->group0_snapshot_transfer) {
-                guard = co_await self._group0_client.hold_read_apply_mutex(self._as);
+                guard = self._group0_client.hold_read_apply_mutex(self._as).get();
             }
-            auto muts = co_await db::schema_tables::convert_schema_to_mutations(proxy, features);
+            auto muts = db::schema_tables::convert_schema_to_mutations(proxy, features).get();
             std::vector<canonical_mutation> cm;
             cm.reserve(muts.size());
             for (auto& m : muts) {
-                cm.emplace_back(std::move(m));
+                cm.emplace_back(make_canonical_mutation_in_thread(m));
+                m.clear_gently().get();
             }
             if (options->group0_snapshot_transfer) {
-                cm.emplace_back(co_await db::system_keyspace::get_group0_history(db));
+                cm.emplace_back(db::system_keyspace::get_group0_history(db).get());
                 if (proxy.local().local_db().get_config().check_experimental(db::experimental_features_t::feature::TABLETS)) {
-                    for (auto&& m: co_await replica::read_tablet_mutations(db)) {
+                    for (auto&& m: replica::read_tablet_mutations(db).get()) {
                         cm.emplace_back(std::move(m));
                     }
                 }
@@ -181,12 +184,13 @@ void migration_manager::init_messaging_service()
             // If it was modified in RECOVERY mode, we still need to return the mutation as it may contain a tombstone
             // that will force the pulling node to revert to digest calculation instead of using a version that it
             // could've persisted earlier.
-            auto group0_schema_version = co_await self._sys_ks.local().get_group0_schema_version();
+            auto group0_schema_version = self._sys_ks.local().get_group0_schema_version().get();
             if (group0_schema_version) {
                 cm.emplace_back(std::move(*group0_schema_version));
             }
 
-            co_return rpc::tuple(std::vector<frozen_mutation>{}, std::move(cm));
+            return rpc::tuple(std::vector<frozen_mutation>{}, std::move(cm));
+          });
         }, netw::messaging_service::get_source(cinfo), std::move(options)));
     });
     _messaging.register_schema_check([this] {
