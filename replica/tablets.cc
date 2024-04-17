@@ -336,15 +336,15 @@ future<std::unordered_set<locator::host_id>> read_required_hosts(cql3::query_pro
     co_return std::move(hosts);
 }
 
-future<std::vector<canonical_mutation>> read_tablet_mutations(seastar::sharded<replica::database>& db) {
+std::vector<canonical_mutation> read_tablet_mutations_in_thread(seastar::sharded<replica::database>& db) {
     auto s = db::system_keyspace::tablets();
-    auto rs = co_await db::system_keyspace::query_mutations(db, db::system_keyspace::NAME, db::system_keyspace::TABLETS);
+    auto rs = db::system_keyspace::query_mutations(db, db::system_keyspace::NAME, db::system_keyspace::TABLETS).get();
     std::vector<canonical_mutation> result;
     result.reserve(rs->partitions().size());
     for (auto& p: rs->partitions()) {
-        result.emplace_back(canonical_mutation(co_await p.mut().unfreeze_gently(s)));
+        result.emplace_back(make_canonical_mutation_in_thread(p.mut().unfreeze_gently(s).get()));
     }
-    co_return std::move(result);
+    return result;
 }
 
 // This sstable set provides access to all the stables in the table, using a snapshot of all

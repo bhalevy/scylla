@@ -172,7 +172,7 @@ void migration_manager::init_messaging_service()
             if (options->group0_snapshot_transfer) {
                 cm.emplace_back(db::system_keyspace::get_group0_history(db).get());
                 if (proxy.local().local_db().get_config().check_experimental(db::experimental_features_t::feature::TABLETS)) {
-                    for (auto&& m: replica::read_tablet_mutations(db).get()) {
+                    for (auto&& m: replica::read_tablet_mutations_in_thread(db)) {
                         cm.emplace_back(std::move(m));
                     }
                 }
