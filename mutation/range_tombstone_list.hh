@@ -86,7 +86,9 @@ struct fmt::formatter<range_tombstone_entry> : fmt::formatter<string_view> {
 };
 
 class range_tombstone_list final {
+public:
     using range_tombstones_type = range_tombstone_entry::container_type;
+private:
     class insert_undo_op {
         const range_tombstone_entry& _new_rt;
     public:

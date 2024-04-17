@@ -7,6 +7,8 @@
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
+#include <seastar/core/preempt.hh>
+
 #include "mutation_partition_serializer.hh"
 #include "mutation_partition.hh"
 
@@ -145,13 +147,16 @@ auto write_row_marker(Writer&& writer, const row_marker& marker)
 
 }
 
-template <typename RowTombstones>
+template <bool Preemptible, typename RowTombstones>
 static void write_tombstones(const schema& s, RowTombstones& row_tombstones, const range_tombstone_list& rt_list)
 {
     for (auto&& rte : rt_list) {
         auto& rt = rte.tombstone();
         row_tombstones.add().write_start(rt.start).write_tomb(rt.tomb).write_start_kind(rt.start_kind)
             .write_end(rt.end).write_end_kind(rt.end_kind).end_range_tombstone();
+        if (Preemptible && need_preempt()) {
+            yield().get();
+        }
     }
 }
 
@@ -169,15 +174,21 @@ static auto write_row(Writer&& writer, const schema& s, const clustering_key_pre
     return write_tombstone(std::move(shadowable_deleted_at_writer), t.shadowable().tomb()).end_shadowable_deleted_at();
 }
 
-template<typename Writer>
+template<bool Preemptible, typename Writer>
 void mutation_partition_serializer::write_serialized(Writer&& writer, const schema& s, const mutation_partition& mp)
 {
     auto srow_writer = std::move(writer).write_tomb(mp.partition_tombstone()).start_static_row();
     auto row_tombstones = write_row_cells(std::move(srow_writer), mp.static_row().get(), s, column_kind::static_column).end_static_row().start_range_tombstones();
-    write_tombstones(s, row_tombstones, mp.row_tombstones());
+    if (Preemptible && need_preempt()) {
+        yield().get();
+    }
+    write_tombstones<Preemptible>(s, row_tombstones, mp.row_tombstones());
     auto clustering_rows = std::move(row_tombstones).end_range_tombstones().start_rows();
     for (auto&& cr : mp.non_dummy_rows()) {
         write_row(clustering_rows.add(), s, cr.key(), cr.row().cells(), cr.row().marker(), cr.row().deleted_at()).end_deletable_row();
+        if (Preemptible && need_preempt()) {
+            yield().get();
+        }
     }
     std::move(clustering_rows).end_rows().end_mutation_partition();
 }
@@ -193,7 +204,17 @@ mutation_partition_serializer::write(bytes_ostream& out) const {
 
 void mutation_partition_serializer::write(ser::writer_of_mutation_partition<bytes_ostream>&& wr) const
 {
-    write_serialized(std::move(wr), _schema, _p);
+    write_serialized<false>(std::move(wr), _schema, _p);
+}
+
+void
+mutation_partition_serializer::write_in_thread(bytes_ostream& out) const {
+    write_in_thread(ser::writer_of_mutation_partition<bytes_ostream>(out));
+}
+
+void mutation_partition_serializer::write_in_thread(ser::writer_of_mutation_partition<bytes_ostream>&& wr) const
+{
+    write_serialized<true>(std::move(wr), _schema, _p);
 }
 
 void serialize_mutation_fragments(const schema& s, tombstone partition_tombstone,
@@ -210,7 +231,7 @@ void serialize_mutation_fragments(const schema& s, tombstone partition_tombstone
     }();
     sr = { };
 
-    write_tombstones(s, row_tombstones, rts);
+    write_tombstones<false>(s, row_tombstones, rts);
     rts.clear();
 
     auto clustering_rows = std::move(row_tombstones).end_range_tombstones().start_rows();

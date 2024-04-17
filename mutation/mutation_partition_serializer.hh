@@ -25,7 +25,8 @@ private:
     const schema& _schema;
     const mutation_partition& _p;
 private:
-    template<typename Writer>
+    // Preemptible is true iff called in a seastar thread
+    template<bool Preemptible, typename Writer>
     static void write_serialized(Writer&& out, const schema&, const mutation_partition&);
 public:
     using count_type = uint32_t;
@@ -33,6 +34,8 @@ public:
 public:
     void write(bytes_ostream&) const;
     void write(ser::writer_of_mutation_partition<bytes_ostream>&&) const;
+    void write_in_thread(bytes_ostream&) const;
+    void write_in_thread(ser::writer_of_mutation_partition<bytes_ostream>&&) const;
 };
 
 void serialize_mutation_fragments(const schema& s, tombstone partition_tombstone,
