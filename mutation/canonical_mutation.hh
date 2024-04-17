@@ -33,6 +33,7 @@ public:
     // Data which is not representable in the target schema is dropped. If this
     // is not intended, user should sync the schema first.
     mutation to_mutation(schema_ptr) const;
+    future<mutation> to_mutation_gently(schema_ptr) const;
 
     table_id column_family_id() const;
 

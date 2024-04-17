@@ -67,6 +67,34 @@ mutation canonical_mutation::to_mutation(schema_ptr s) const {
     return m;
 }
 
+future<mutation> canonical_mutation::to_mutation_gently(schema_ptr s) const {
+    auto in = ser::as_input_stream(_data);
+    auto mv = ser::deserialize(in, boost::type<ser::canonical_mutation_view>());
+
+    auto cf_id = mv.table_id();
+    if (s->id() != cf_id) {
+        throw std::runtime_error(format("Attempted to deserialize canonical_mutation of table {} with schema of table {} ({}.{})",
+                                        cf_id, s->id(), s->ks_name(), s->cf_name()));
+    }
+
+    auto version = mv.schema_version();
+    auto pk = mv.key();
+
+    mutation m(std::move(s), std::move(pk));
+
+    if (version == m.schema()->version()) {
+        auto partition_view = mutation_partition_view::from_view(mv.partition());
+        mutation_application_stats app_stats;
+        co_await m.partition().apply_gently(*m.schema(), partition_view, *m.schema(), app_stats);
+    } else {
+        column_mapping cm = mv.mapping();
+        converting_mutation_partition_applier v(cm, *m.schema(), m.partition());
+        auto partition_view = mutation_partition_view::from_view(mv.partition());
+        co_await partition_view.accept_gently(cm, v);
+    }
+    co_return m;
+}
+
 static sstring bytes_to_text(bytes_view bv) {
     sstring ret = uninitialized_string(bv.size());
     std::copy_n(reinterpret_cast<const char*>(bv.data()), bv.size(), ret.data());
