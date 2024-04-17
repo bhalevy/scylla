@@ -28,7 +28,7 @@ SEASTAR_TEST_CASE(test_conversion_back_and_forth) {
 
 SEASTAR_THREAD_TEST_CASE(test_conversion_back_and_forth_gently) {
     for_each_mutation([] (const mutation& m) {
-        canonical_mutation cm(m);
+        auto cm = make_canonical_mutation_in_thread(m);
         assert_that(cm.to_mutation_gently(m.schema()).get()).is_equal_to_compacted(m);
     });
 }

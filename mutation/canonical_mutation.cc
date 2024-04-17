@@ -33,6 +33,22 @@ canonical_mutation::canonical_mutation(const mutation& m)
                  }).end_canonical_mutation();
 }
 
+canonical_mutation canonical_mutation::make_in_thread(const mutation& m)
+{
+    mutation_partition_serializer part_ser(*m.schema(), m.partition());
+
+    canonical_mutation res;
+    ser::writer_of_canonical_mutation<bytes_ostream> wr(res._data);
+    std::move(wr).write_table_id(m.schema()->id())
+                 .write_schema_version(m.schema()->version())
+                 .write_key(m.key())
+                 .write_mapping(m.schema()->get_column_mapping())
+                 .partition([&] (auto wr) {
+                     part_ser.write_in_thread(std::move(wr));
+                 }).end_canonical_mutation();
+    return res;
+}
+
 table_id canonical_mutation::column_family_id() const {
     auto in = ser::as_input_stream(_data);
     auto mv = ser::deserialize(in, boost::type<ser::canonical_mutation_view>());

@@ -18,6 +18,8 @@
 // Safe to pass serialized across nodes.
 class canonical_mutation {
     bytes_ostream _data;
+
+    canonical_mutation() = default;
 public:
     explicit canonical_mutation(bytes_ostream);
     explicit canonical_mutation(const mutation&);
@@ -26,6 +28,8 @@ public:
     canonical_mutation(const canonical_mutation&) = default;
     canonical_mutation& operator=(const canonical_mutation&) = default;
     canonical_mutation& operator=(canonical_mutation&&) = default;
+
+    static canonical_mutation make_in_thread(const mutation&);
 
     // Create a mutation object interpreting this canonical mutation using
     // given schema.
@@ -41,6 +45,10 @@ public:
 
     friend fmt::formatter<canonical_mutation>;
 };
+
+inline canonical_mutation make_canonical_mutation_in_thread(const mutation& m) {
+    return canonical_mutation::make_in_thread(m);
+}
 
 template <> struct fmt::formatter<canonical_mutation> : fmt::formatter<string_view> {
     auto format(const canonical_mutation&, fmt::format_context& ctx) const -> decltype(ctx.out());
