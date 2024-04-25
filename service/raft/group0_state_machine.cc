@@ -119,9 +119,10 @@ static future<> write_mutations_to_database(storage_proxy& proxy, gms::inet_addr
     mutations.reserve(cms.size());
     bool need_system_topology_flush = false;
     try {
-        for (const auto& cm : cms) {
+        for (auto& cm : cms) {
             auto& tbl = proxy.local_db().find_column_family(cm.column_family_id());
-            auto mut = cm.to_mutation(tbl.schema());
+            auto& s = tbl.schema();
+            auto mut = co_await cm.to_mutation_gently(s);
             need_system_topology_flush = need_system_topology_flush || should_flush_system_topology_after_applying(mut, proxy.data_dictionary());
             mutations.emplace_back(std::move(mut));
         }
