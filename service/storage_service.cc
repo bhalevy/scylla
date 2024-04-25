@@ -6401,20 +6401,14 @@ future<join_node_response_result> storage_service::join_node_response_handler(jo
     }
 }
 
-future<std::vector<canonical_mutation>> storage_service::get_system_mutations(schema_ptr schema) {
+std::vector<canonical_mutation> storage_service::get_system_mutations_in_thread(schema_ptr schema) {
     std::vector<canonical_mutation> result;
-    auto rs = co_await db::system_keyspace::query_mutations(_db, schema);
+    auto rs = db::system_keyspace::query_mutations(_db, schema).get();
     result.reserve(rs->partitions().size());
     for (const auto& p : rs->partitions()) {
-        result.emplace_back(canonical_mutation{p.mut().unfreeze(schema)});
-        co_await coroutine::maybe_yield();
+        result.emplace_back(make_canonical_mutation_in_thread(p.mut().unfreeze_gently(schema).get()));
     }
-    co_return result;
-}
-
-future<std::vector<canonical_mutation>> storage_service::get_system_mutations(const sstring& ks_name, const sstring& cf_name) {
-    auto s = _db.local().find_schema(ks_name, cf_name);
-    return get_system_mutations(s);
+    return result;
 }
 
 node_state storage_service::get_node_state(locator::host_id id) {
@@ -6461,13 +6455,14 @@ void storage_service::init_messaging_service() {
     });
     ser::storage_service_rpc_verbs::register_raft_pull_snapshot(&_messaging.local(), [handle_raft_rpc] (raft::server_id dst_id, raft_snapshot_pull_params params) {
         return handle_raft_rpc(dst_id, [params = std::move(params)] (storage_service& ss) -> future<raft_snapshot> {
+          return async([params = std::move(params), &ss] {
             utils::chunked_vector<canonical_mutation> mutations;
             // FIXME: make it an rwlock, here we only need to lock for reads,
             // might be useful if multiple nodes are trying to pull concurrently.
-            auto read_apply_mutex_holder = co_await ss._group0->client().hold_read_apply_mutex();
+            auto read_apply_mutex_holder = ss._group0->client().hold_read_apply_mutex().get();
             for (const auto& table : params.tables) {
                 auto schema = ss._db.local().find_schema(table);
-                auto muts = co_await ss.get_system_mutations(schema);
+                auto muts = ss.get_system_mutations_in_thread(schema);
 
                 if (table == db::system_keyspace::cdc_generations_v3()->id()) {
                     utils::get_local_injector().inject("cdc_generation_mutations_topology_snapshot_replication",
@@ -6494,19 +6489,20 @@ void storage_service::init_messaging_service() {
                 std::move(muts.begin(), muts.end(), std::back_inserter(mutations));
             }
 
-            auto sl_version_mut = co_await ss._sys_ks.local().get_service_levels_version_mutation();
+            auto sl_version_mut = ss._sys_ks.local().get_service_levels_version_mutation().get();
             if (sl_version_mut) {
                 mutations.push_back(canonical_mutation(*sl_version_mut));
             }
 
-            auto auth_version_mut = co_await ss._sys_ks.local().get_auth_version_mutation();
+            auto auth_version_mut = ss._sys_ks.local().get_auth_version_mutation().get();
             if (auth_version_mut) {
                 mutations.emplace_back(*auth_version_mut);
             }
 
-            co_return raft_snapshot{
+            return raft_snapshot{
                 .mutations = std::move(mutations),
             };
+          });
         });
     });
     ser::storage_service_rpc_verbs::register_tablet_stream_data(&_messaging.local(), [handle_raft_rpc] (raft::server_id dst_id, locator::global_tablet_id tablet) {
