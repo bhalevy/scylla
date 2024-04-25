@@ -1514,6 +1514,7 @@ public:
     const gms::feature_service& features() const { return _feat; }
     future<> apply_in_memory(const frozen_mutation& m, schema_ptr m_schema, db::rp_handle&&, db::timeout_clock::time_point timeout);
     future<> apply_in_memory(const mutation& m, column_family& cf, db::rp_handle&&, db::timeout_clock::time_point timeout);
+    future<> unfreeze_and_apply_in_memory(const frozen_mutation& m, schema_ptr m_schema, column_family& cf, db::rp_handle h, db::timeout_clock::time_point timeout);
 
     drain_progress get_drain_progress() const noexcept {
         return _drain_progress;
