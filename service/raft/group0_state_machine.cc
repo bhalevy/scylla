@@ -116,7 +116,7 @@ static bool should_flush_system_topology_after_applying(const mutation& mut, con
 
 // Called in a seastar thread
 static void write_mutations_to_database(storage_proxy& proxy, gms::inet_address from, std::vector<canonical_mutation> cms) {
-    std::vector<mutation> mutations;
+    std::vector<std::pair<schema_ptr, frozen_mutation>> mutations;
     mutations.reserve(cms.size());
     bool need_system_topology_flush = false;
     try {
@@ -125,14 +125,16 @@ static void write_mutations_to_database(storage_proxy& proxy, gms::inet_address 
             auto& s = tbl.schema();
             auto mut = cm.to_mutation_gently(s).get();
             need_system_topology_flush = need_system_topology_flush || should_flush_system_topology_after_applying(mut, proxy.data_dictionary());
-            mutations.emplace_back(std::move(mut));
+            mutations.emplace_back(s, freeze_in_thread(mut));
         }
     } catch (replica::no_such_column_family& e) {
         slogger.error("Error while applying mutations from {}: {}", from, e);
         throw std::runtime_error(::format("Error while applying mutations: {}", e));
     }
 
-    proxy.mutate_locally(std::move(mutations), tracing::trace_state_ptr()).get();
+    parallel_for_each(mutations, [&] (auto& x) {
+        return proxy.mutate_locally(x.first, x.second, tracing::trace_state_ptr(), db::commitlog::force_sync::no);
+    }).get();
     if (need_system_topology_flush) {
         slogger.trace("write_mutations_to_database: flushing {}.{}", db::system_keyspace::NAME, db::system_keyspace::TOPOLOGY);
         proxy.get_db().local().flush(db::system_keyspace::NAME, db::system_keyspace::TOPOLOGY).get();
