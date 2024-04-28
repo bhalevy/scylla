@@ -114,7 +114,8 @@ static bool should_flush_system_topology_after_applying(const mutation& mut, con
     return false;
 }
 
-static future<> write_mutations_to_database(storage_proxy& proxy, gms::inet_address from, std::vector<canonical_mutation> cms) {
+// Called in a seastar thread
+static void write_mutations_to_database(storage_proxy& proxy, gms::inet_address from, std::vector<canonical_mutation> cms) {
     std::vector<mutation> mutations;
     mutations.reserve(cms.size());
     bool need_system_topology_flush = false;
@@ -122,7 +123,7 @@ static future<> write_mutations_to_database(storage_proxy& proxy, gms::inet_addr
         for (auto& cm : cms) {
             auto& tbl = proxy.local_db().find_column_family(cm.column_family_id());
             auto& s = tbl.schema();
-            auto mut = co_await cm.to_mutation_gently(s);
+            auto mut = cm.to_mutation_gently(s).get();
             need_system_topology_flush = need_system_topology_flush || should_flush_system_topology_after_applying(mut, proxy.data_dictionary());
             mutations.emplace_back(std::move(mut));
         }
@@ -131,10 +132,10 @@ static future<> write_mutations_to_database(storage_proxy& proxy, gms::inet_addr
         throw std::runtime_error(::format("Error while applying mutations: {}", e));
     }
 
-    co_await proxy.mutate_locally(std::move(mutations), tracing::trace_state_ptr());
+    proxy.mutate_locally(std::move(mutations), tracing::trace_state_ptr()).get();
     if (need_system_topology_flush) {
         slogger.trace("write_mutations_to_database: flushing {}.{}", db::system_keyspace::NAME, db::system_keyspace::TOPOLOGY);
-        co_await proxy.get_db().local().flush(db::system_keyspace::NAME, db::system_keyspace::TOPOLOGY);
+        proxy.get_db().local().flush(db::system_keyspace::NAME, db::system_keyspace::TOPOLOGY).get();
     }
 }
 
@@ -164,11 +165,11 @@ future<> group0_state_machine::merge_and_apply(group0_state_machine_merger& merg
         _client.set_query_result(cmd.new_state_id, std::move(result));
     },
     [&] (topology_change& chng) {
-        write_mutations_to_database(_sp, cmd.creator_addr, std::move(chng.mutations)).get();
+        write_mutations_to_database(_sp, cmd.creator_addr, std::move(chng.mutations));
         _ss.topology_transition().get();
     },
     [&] (write_mutations& muts) {
-        write_mutations_to_database(_sp, cmd.creator_addr, std::move(muts.mutations)).get();
+        write_mutations_to_database(_sp, cmd.creator_addr, std::move(muts.mutations));
     }
     ), cmd.change);
 
