@@ -160,7 +160,12 @@ void migration_manager::init_messaging_service()
             if (options->group0_snapshot_transfer) {
                 guard = co_await self._group0_client.hold_read_apply_mutex(self._as);
             }
-            auto cm = co_await db::schema_tables::convert_schema_to_mutations(proxy, features);
+            auto muts = co_await db::schema_tables::convert_schema_to_mutations(proxy, features);
+            std::vector<canonical_mutation> cm;
+            cm.reserve(muts.size());
+            for (auto& m : muts) {
+                cm.emplace_back(std::move(m));
+            }
             if (options->group0_snapshot_transfer) {
                 cm.emplace_back(co_await db::system_keyspace::get_group0_history(db));
                 if (proxy.local().local_db().get_config().check_experimental(db::experimental_features_t::feature::TABLETS)) {
