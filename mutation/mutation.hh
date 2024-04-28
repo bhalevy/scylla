@@ -192,6 +192,8 @@ public:
     mutation compacted() const;
 
     size_t memory_usage(const ::schema& s) const;
+
+    future<> clear_gently() noexcept;
 };
 
 inline std::vector<mutation> make_mutation_vector(mutation&& m) {
