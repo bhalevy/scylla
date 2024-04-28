@@ -139,6 +139,7 @@ static future<> write_mutations_to_database(storage_proxy& proxy, gms::inet_addr
 }
 
 future<> group0_state_machine::merge_and_apply(group0_state_machine_merger& merger) {
+  return async([this, &merger] {
     auto [_cmd, history] = merger.merge();
     auto cmd = std::move(_cmd);
 
@@ -154,24 +155,25 @@ future<> group0_state_machine::merge_and_apply(group0_state_machine_merger& merg
     // change is applied and the state ID is updated or none of this happens.
     // E.g. use a write-ahead-entry which contains all this information and make sure it's replayed during restarts.
 
-    co_await std::visit(make_visitor(
-    [&] (schema_change& chng) -> future<> {
-        return _mm.merge_schema_from(netw::messaging_service::msg_addr(std::move(cmd.creator_addr)), std::move(chng.mutations));
+    std::visit(make_visitor(
+    [&] (schema_change& chng) {
+        _mm.merge_schema_from(netw::messaging_service::msg_addr(std::move(cmd.creator_addr)), std::move(chng.mutations)).get();
     },
-    [&] (broadcast_table_query& query) -> future<> {
-        auto result = co_await service::broadcast_tables::execute_broadcast_table_query(_sp, query.query, cmd.new_state_id);
+    [&] (broadcast_table_query& query) {
+        auto result = service::broadcast_tables::execute_broadcast_table_query(_sp, query.query, cmd.new_state_id).get();
         _client.set_query_result(cmd.new_state_id, std::move(result));
     },
-    [&] (topology_change& chng) -> future<> {
-        co_await write_mutations_to_database(_sp, cmd.creator_addr, std::move(chng.mutations));
-        co_await _ss.topology_transition();
+    [&] (topology_change& chng) {
+        write_mutations_to_database(_sp, cmd.creator_addr, std::move(chng.mutations)).get();
+        _ss.topology_transition().get();
     },
-    [&] (write_mutations& muts) -> future<> {
-        return write_mutations_to_database(_sp, cmd.creator_addr, std::move(muts.mutations));
+    [&] (write_mutations& muts) {
+        write_mutations_to_database(_sp, cmd.creator_addr, std::move(muts.mutations)).get();
     }
     ), cmd.change);
 
-    co_await _sp.mutate_locally({std::move(history)}, nullptr);
+    _sp.mutate_locally({std::move(history)}, nullptr).get();
+  });
 }
 
 future<> group0_state_machine::apply(std::vector<raft::command_cref> command) {
