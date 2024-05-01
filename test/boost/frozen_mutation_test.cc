@@ -71,7 +71,7 @@ SEASTAR_TEST_CASE(test_writing_and_reading_gently) {
         return freeze_gently(m).get();
       },
       [] (const frozen_mutation& fm, schema_ptr s) {
-        return fm.unfreeze_gently(std::move(s)).handle_exception([] (std::exception_ptr ex) {
+        return unfreeze_gently(fm, std::move(s)).handle_exception([] (std::exception_ptr ex) {
             testlog.error("test_writing_and_reading_gently: {}", ex);
             return make_exception_future<mutation>(std::move(ex));
         }).get();
