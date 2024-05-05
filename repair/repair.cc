@@ -39,7 +39,10 @@
 #include <seastar/core/coroutine.hh>
 #include <seastar/coroutine/parallel_for_each.hh>
 #include <seastar/core/sleep.hh>
+#include <seastar/coroutine/exception.hh>
+#include <seastar/coroutine/as_future.hh>
 
+#include <exception>
 #include <cfloat>
 #include <atomic>
 
@@ -2234,6 +2237,8 @@ future<> repair_service::repair_tablets(repair_uniq_id rid, sstring keyspace_nam
                 }
             }
             for (auto& r : intersection_ranges) {
+                rlogger.debug("repair[{}] Repair tablet task table={}.{} master_shard_id={} range={} neighbors={} replicas={}",
+                        rid.uuid(), keyspace_name, table_name, master_shard_id, r, repair_neighbors(nodes, shards).shard_map, m.replicas);
                 task_metas.push_back(tablet_repair_task_meta{keyspace_name, table_name, tid, master_shard_id, r, repair_neighbors(nodes, shards), m.replicas});
                 co_await coroutine::maybe_yield();
             }
@@ -2304,6 +2309,7 @@ future<> repair::tablet_repair_task_impl::run() {
 
 
         rs.container().invoke_on_all([&idx, id, metas = _metas, parent_data, reason = _reason, tables = _tables] (repair_service& rs) -> future<> {
+            std::exception_ptr error;
             for (auto& m : metas) {
                 if (m.master_shard_id != this_shard_id()) {
                     continue;
@@ -2344,7 +2350,18 @@ future<> repair::tablet_repair_task_impl::run() {
                 task_impl_ptr->neighbors = std::move(neighbors);
                 auto task = co_await rs._repair_module->make_task(std::move(task_impl_ptr), parent_data);
                 task->start();
-                co_await task->done();
+                auto res = co_await coroutine::as_future(task->done());
+                if (res.failed()) {
+                    auto ep = res.get_exception();
+                    rlogger.warn("repair[{}]: Repair tablet for table={}.{} range={} status=failed: {}", id.uuid(), m.keyspace_name, m.table_name, m.range, ep);
+                    // keyspace / table still exist?
+                    if (rs.get_db().local().get_tables_metadata().contains(m.tid)) {
+                        error = std::move(ep);
+                    }
+                }
+            }
+            if (error) {
+                co_await coroutine::return_exception_ptr(std::move(error));
             }
         }).get();
         auto duration = std::chrono::duration<float>(std::chrono::steady_clock::now() - start_time);
