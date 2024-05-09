@@ -325,8 +325,16 @@ size_t chunked_vector<T, max_contiguous_allocation>::external_memory_usage() con
 template <typename T, size_t max_contiguous_allocation>
 chunked_vector<T, max_contiguous_allocation>::chunked_vector(const chunked_vector& x)
         : chunked_vector() {
-    reserve(x.size());
-    std::copy(x.begin(), x.end(), std::back_inserter(*this));
+    auto size = x.size();
+    reserve(size);
+    _size = size;
+    for (size_t i = 0; size; ++i) {
+        const T* src = x._chunks[i].get();
+        T* dst = _chunks[i].get();
+        auto n = std::min(size, max_chunk_capacity());
+        std::uninitialized_copy_n(src, n, dst);
+        size -= n;
+    }
 }
 
 template <typename T, size_t max_contiguous_allocation>
@@ -378,8 +386,13 @@ chunked_vector<T, max_contiguous_allocation>::operator=(chunked_vector&& x) noex
 template <typename T, size_t max_contiguous_allocation>
 chunked_vector<T, max_contiguous_allocation>::~chunked_vector() {
     if constexpr (!std::is_trivially_destructible_v<T>) {
-        for (auto i = size_t(0); i != _size; ++i) {
-            addr(i)->~T();
+        size_t i;
+        size_t full_chunks = _size / max_chunk_capacity();
+        for (i = 0; i < full_chunks; ++i) {
+            std::destroy_n(_chunks[i].get(), max_chunk_capacity());
+        }
+        if (auto remainder = _size % max_chunk_capacity()) {
+            std::destroy_n(_chunks[i].get(), remainder);
         }
     }
 }
@@ -397,12 +410,8 @@ chunked_vector<T, max_contiguous_allocation>::new_chunk(size_t n) {
 template <typename T, size_t max_contiguous_allocation>
 void
 chunked_vector<T, max_contiguous_allocation>::migrate(T* begin, T* end, T* result) {
-    while (begin != end) {
-        new (result) T(std::move(*begin));
-        begin->~T();
-        ++begin;
-        ++result;
-    }
+    std::uninitialized_move(begin, end, result);
+    std::destroy(begin, end);
 }
 
 template <typename T, size_t max_contiguous_allocation>
