@@ -191,8 +191,9 @@ static can_use can_be_used_for_page(querier_cache::is_user_semaphore_func& is_us
 // The time-to-live of a cache-entry.
 const std::chrono::seconds querier_cache::default_entry_ttl{10};
 
+template <typename ranges_type>
 static std::unique_ptr<querier_base> find_querier(querier_cache::index& index, query_id key,
-        const dht::partition_ranges_view& ranges, tracing::trace_state_ptr trace_state) {
+        const ranges_type& ranges, tracing::trace_state_ptr trace_state, std::function<bool(const querier_cache::index::value_type&)> match_func) {
     const auto queriers = index.equal_range(key);
 
     if (queriers.first == index.end()) {
@@ -200,9 +201,7 @@ static std::unique_ptr<querier_base> find_querier(querier_cache::index& index, q
         return nullptr;
     }
 
-    const auto it = std::find_if(queriers.first, queriers.second, [&] (const querier_cache::index::value_type& e) {
-        return ranges_match(e.second->schema(), e.second->ranges(), ranges);
-    });
+    const auto it = std::find_if(queriers.first, queriers.second, match_func);
 
     if (it == queriers.second) {
         tracing::trace(trace_state, "Found cached querier(s) for key {} but none matches the query range(s) {}", key, ranges);
@@ -212,6 +211,20 @@ static std::unique_ptr<querier_base> find_querier(querier_cache::index& index, q
     auto ptr = std::move(it->second);
     index.erase(it);
     return ptr;
+}
+
+static std::unique_ptr<querier_base> find_querier(querier_cache::index& index, query_id key,
+        const dht::partition_range& range, tracing::trace_state_ptr trace_state) {
+    return find_querier(index, key, range, trace_state, [&] (const querier_cache::index::value_type& e) {
+        return ranges_match(e.second->schema(), e.second->range(), range);
+    });
+}
+
+static std::unique_ptr<querier_base> find_querier(querier_cache::index& index, query_id key,
+        const dht::partition_ranges_view& ranges, tracing::trace_state_ptr trace_state) {
+    return find_querier(index, key, ranges, trace_state, [&] (const querier_cache::index::value_type& e) {
+        return ranges_match(e.second->schema(), e.second->ranges(), ranges);
+    });
 }
 
 querier_cache::querier_cache(is_user_semaphore_func is_user_semaphore_func, std::chrono::seconds entry_ttl)
@@ -319,6 +332,83 @@ void querier_cache::insert_mutation_querier(query_id key, querier&& q, tracing::
 
 void querier_cache::insert_shard_querier(query_id key, shard_mutation_querier&& q, tracing::trace_state_ptr trace_state) {
     insert_querier(key, _shard_mutation_querier_index, _stats, std::move(q), _entry_ttl, std::move(trace_state));
+}
+
+template <typename Querier>
+std::optional<Querier> querier_cache::lookup_querier(
+        querier_cache::index& index,
+        query_id key,
+        const schema& s,
+        const dht::partition_range& range,
+        const query::partition_slice& slice,
+        reader_concurrency_semaphore& current_sem,
+        tracing::trace_state_ptr trace_state,
+        db::timeout_clock::time_point timeout) {
+    auto base_ptr = find_querier(index, key, range, trace_state);
+    auto& stats = _stats;
+    ++stats.lookups;
+    if (!base_ptr) {
+        ++stats.misses;
+        return std::nullopt;
+    }
+
+    auto* q_ptr = dynamic_cast<Querier*>(base_ptr.get());
+    if (!q_ptr) {
+        throw std::runtime_error("lookup_querier(): found querier is not of the expected type");
+    }
+    auto& q = *q_ptr;
+    auto reader_opt = q.permit().semaphore().unregister_inactive_read(querier_utils::get_inactive_read_handle(q));
+    if (!reader_opt) {
+        throw std::runtime_error("lookup_querier(): found querier that is evicted");
+    }
+    reader_opt->set_timeout(timeout);
+    querier_utils::set_reader(q, std::move(*reader_opt));
+    --stats.population;
+
+    const auto can_be_used = can_be_used_for_page(_is_user_semaphore_func, q, s, range, slice, current_sem);
+    if (can_be_used == can_use::yes) {
+        tracing::trace(trace_state, "Reusing querier");
+        return std::optional<Querier>(std::move(q));
+    }
+
+    tracing::trace(trace_state, "Dropping querier because {}", cannot_use_reason(can_be_used));
+    ++stats.drops;
+
+    auto permit = q.permit();
+
+    // Save semaphore name and address for later to use it in
+    // error/warning message
+    auto q_semaphore_name = permit.semaphore().name();
+    auto q_semaphore_address = reinterpret_cast<uintptr_t>(&permit.semaphore());
+
+    // Close and drop the querier in the background.
+    // It is safe to do so, since _closing_gate is closed and
+    // waited on in querier_cache::stop()
+    (void)with_gate(_closing_gate, [q = std::move(q)] () mutable {
+        return q.close().finally([q = std::move(q)] {});
+    });
+
+    if (can_be_used == can_use::no_scheduling_group_mismatch) {
+        ++stats.scheduling_group_mismatches;
+        qlogger.warn("user semaphore mismatch detected, dropping reader {}: "
+                "reader belongs to {} (0x{:x}) but the query class appropriate is {} (0x{:x})",
+                    permit.description(),
+                    q_semaphore_name,
+                    q_semaphore_address,
+                    current_sem.name(),
+                    reinterpret_cast<uintptr_t>(&current_sem));
+    }
+    else if (can_be_used == can_use::no_fatal_semaphore_mismatch) {
+        on_internal_error(qlogger, format("semaphore mismatch detected, dropping reader {}: "
+                "reader belongs to {} (0x{:x}) but the query class appropriate is {} (0x{:x})",
+                permit.description(),
+                q_semaphore_name,
+                q_semaphore_address,
+                current_sem.name(),
+                reinterpret_cast<uintptr_t>(&current_sem)));
+    }
+
+    return std::nullopt;
 }
 
 template <typename Querier>

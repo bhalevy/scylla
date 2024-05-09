@@ -10,6 +10,7 @@
 
 #include <seastar/util/closeable.hh>
 
+#include "dht/i_partitioner_fwd.hh"
 #include "mutation/mutation_compactor.hh"
 #include "reader_concurrency_semaphore.hh"
 #include "readers/mutation_source.hh"
@@ -67,18 +68,16 @@ protected:
     lw_shared_ptr<const dht::partition_range> _range;
     std::unique_ptr<const query::partition_slice> _slice;
     std::variant<flat_mutation_reader_v2, reader_concurrency_semaphore::inactive_read_handle> _reader;
-    dht::partition_ranges_view _query_ranges;
     querier_config _qr_config;
 
 public:
     querier_base(reader_permit permit, lw_shared_ptr<const dht::partition_range> range,
-            std::unique_ptr<const query::partition_slice> slice, flat_mutation_reader_v2 reader, const dht::partition_ranges_view& query_ranges)
+            std::unique_ptr<const query::partition_slice> slice, flat_mutation_reader_v2 reader)
         : _schema(reader.schema())
         , _permit(std::move(permit))
         , _range(std::move(range))
         , _slice(std::move(slice))
         , _reader(std::move(reader))
-        , _query_ranges(query_ranges)
     { }
 
     querier_base(schema_ptr schema, reader_permit permit, dht::partition_range range,
@@ -89,7 +88,6 @@ public:
         , _range(make_lw_shared<const dht::partition_range>(std::move(range)))
         , _slice(std::make_unique<const query::partition_slice>(std::move(slice)))
         , _reader(ms.make_reader_v2(_schema, _permit, *_range, *_slice, std::move(trace_ptr), streamed_mutation::forwarding::no, mutation_reader::forwarding::no))
-        , _query_ranges(*_range)
         , _qr_config(std::move(config))
     { }
 
@@ -110,10 +108,14 @@ public:
         return _slice->is_reversed();
     }
 
+    const dht::partition_range& range() const {
+        return *_range;
+    }
+
     virtual std::optional<full_position_view> current_position() const = 0;
 
-    dht::partition_ranges_view ranges() const {
-        return _query_ranges;
+    virtual dht::partition_ranges_view ranges() const {
+        return dht::partition_ranges_view(*_range);
     }
 
     size_t memory_usage() const {
@@ -216,33 +218,24 @@ public:
 /// For position validation purposes (at lookup) the reader's position is
 /// considered to be the same as that of the query.
 class shard_mutation_querier : public querier_base {
-    std::unique_ptr<const dht::partition_range_vector> _query_ranges;
+    dht::partition_range_vector _query_ranges;
     full_position _nominal_pos;
 
-private:
+public:
     shard_mutation_querier(
-            std::unique_ptr<const dht::partition_range_vector> query_ranges,
+            dht::partition_range_vector query_ranges,
             lw_shared_ptr<const dht::partition_range> reader_range,
             std::unique_ptr<const query::partition_slice> reader_slice,
             flat_mutation_reader_v2 reader,
             reader_permit permit,
             full_position nominal_pos)
-        : querier_base(permit, std::move(reader_range), std::move(reader_slice), std::move(reader), *query_ranges)
+        : querier_base(permit, std::move(reader_range), std::move(reader_slice), std::move(reader))
         , _query_ranges(std::move(query_ranges))
         , _nominal_pos(std::move(nominal_pos)) {
     }
 
-
-public:
-    shard_mutation_querier(
-            const dht::partition_range_vector query_ranges,
-            lw_shared_ptr<const dht::partition_range> reader_range,
-            std::unique_ptr<const query::partition_slice> reader_slice,
-            flat_mutation_reader_v2 reader,
-            reader_permit permit,
-            full_position nominal_pos)
-        : shard_mutation_querier(std::make_unique<const dht::partition_range_vector>(std::move(query_ranges)), std::move(reader_range),
-                std::move(reader_slice), std::move(reader), std::move(permit), std::move(nominal_pos)) {
+    virtual dht::partition_ranges_view ranges() const override {
+        return dht::partition_ranges_view(_query_ranges);
     }
 
     virtual std::optional<full_position_view> current_position() const override {
@@ -335,6 +328,19 @@ private:
             std::chrono::seconds ttl,
             tracing::trace_state_ptr trace_state);
 
+    // Lookup querier by a single range
+    template <typename Querier>
+    std::optional<Querier> lookup_querier(
+        querier_cache::index& index,
+        query_id key,
+        const schema& s,
+        const dht::partition_range& range,
+        const query::partition_slice& slice,
+        reader_concurrency_semaphore& current_sem,
+        tracing::trace_state_ptr trace_state,
+        db::timeout_clock::time_point timeout);
+
+    // Lookup querier by multiple ranges
     template <typename Querier>
     std::optional<Querier> lookup_querier(
         querier_cache::index& index,
