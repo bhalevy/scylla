@@ -8,6 +8,8 @@
 
 #pragma once
 
+#include <cstring>
+
 // chunked_vector is a vector-like container that uses discontiguous storage.
 // It provides fast random access, the ability to append at the end, and aims
 // to avoid large contiguous allocations - unlike std::vector which allocates
@@ -325,8 +327,32 @@ size_t chunked_vector<T, max_contiguous_allocation>::external_memory_usage() con
 template <typename T, size_t max_contiguous_allocation>
 chunked_vector<T, max_contiguous_allocation>::chunked_vector(const chunked_vector& x)
         : chunked_vector() {
-    reserve(x.size());
-    std::copy(x.begin(), x.end(), std::back_inserter(*this));
+    auto size = x.size();
+    if (!size) {
+        return;
+    }
+    reserve(size);
+    auto copy_chunk = [this, &x] (size_t i, size_t n) {
+        const T* src = x._chunks[i].get();
+        T* dst = _chunks[i].get();
+        if constexpr (std::is_trivially_copyable_v<T>) {
+            std::memcpy(dst, src, n * sizeof(T));
+        } else {
+            // dst isn't initialized so can't do array copy
+            for (auto end = src + n; src != end; ++dst, ++src) {
+                new (dst) T(*src);
+            }
+        }
+    };
+    size_t i;
+    size_t full_chunks = size / max_chunk_capacity();
+    for (i = 0; i < full_chunks; ++i) {
+        copy_chunk(i, max_chunk_capacity());
+    }
+    if (auto remainder = size % max_chunk_capacity()) {
+        copy_chunk(i, remainder);
+    }
+    _size = size;
 }
 
 template <typename T, size_t max_contiguous_allocation>
@@ -397,6 +423,10 @@ chunked_vector<T, max_contiguous_allocation>::new_chunk(size_t n) {
 template <typename T, size_t max_contiguous_allocation>
 void
 chunked_vector<T, max_contiguous_allocation>::migrate(T* begin, T* end, T* result) {
+    if constexpr (std::is_trivially_move_constructible_v<T> && std::is_trivially_destructible_v<T>) {
+        std::memcpy(result, begin, reinterpret_cast<std::uintptr_t>(end) - reinterpret_cast<std::uintptr_t>(begin));
+        return;
+    }
     while (begin != end) {
         new (result) T(std::move(*begin));
         begin->~T();
