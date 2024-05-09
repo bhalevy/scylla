@@ -72,7 +72,7 @@ protected:
 
 public:
     querier_base(reader_permit permit, lw_shared_ptr<const dht::partition_range> range,
-            std::unique_ptr<const query::partition_slice> slice, flat_mutation_reader_v2 reader, dht::partition_ranges_view query_ranges)
+            std::unique_ptr<const query::partition_slice> slice, flat_mutation_reader_v2 reader, const dht::partition_ranges_view& query_ranges)
         : _schema(reader.schema())
         , _permit(std::move(permit))
         , _range(std::move(range))
@@ -340,7 +340,7 @@ private:
         querier_cache::index& index,
         query_id key,
         const schema& s,
-        dht::partition_ranges_view ranges,
+        const dht::partition_ranges_view& ranges,
         const query::partition_slice& slice,
         reader_concurrency_semaphore& current_sem,
         tracing::trace_state_ptr trace_state,

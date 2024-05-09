@@ -121,7 +121,7 @@ static bool ranges_match(const schema& s, const dht::partition_range& original_r
     return bound_eq(original_range.end(), new_range.end());
 }
 
-static bool ranges_match(const schema& s, dht::partition_ranges_view original_ranges, dht::partition_ranges_view new_ranges) {
+static bool ranges_match(const schema& s, const dht::partition_ranges_view& original_ranges, const dht::partition_ranges_view& new_ranges) {
     if (new_ranges.empty()) {
         return false;
     }
@@ -192,7 +192,7 @@ static can_use can_be_used_for_page(querier_cache::is_user_semaphore_func& is_us
 const std::chrono::seconds querier_cache::default_entry_ttl{10};
 
 static std::unique_ptr<querier_base> find_querier(querier_cache::index& index, query_id key,
-        dht::partition_ranges_view ranges, tracing::trace_state_ptr trace_state) {
+        const dht::partition_ranges_view& ranges, tracing::trace_state_ptr trace_state) {
     const auto queriers = index.equal_range(key);
 
     if (queriers.first == index.end()) {
@@ -326,7 +326,7 @@ std::optional<Querier> querier_cache::lookup_querier(
         querier_cache::index& index,
         query_id key,
         const schema& s,
-        dht::partition_ranges_view ranges,
+        const dht::partition_ranges_view& ranges,
         const query::partition_slice& slice,
         reader_concurrency_semaphore& current_sem,
         tracing::trace_state_ptr trace_state,
