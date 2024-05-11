@@ -2878,8 +2878,9 @@ table::query(schema_ptr s,
     query_state qs(s, cmd, opts, partition_ranges, std::move(accounter));
 
     std::optional<query::querier> querier_opt;
-    if (saved_querier) {
-        querier_opt = std::move(*saved_querier);
+    if (saved_querier && *saved_querier) {
+        querier_opt.emplace(std::move(saved_querier->value()));
+        saved_querier->reset();
     }
 
     while (!qs.done()) {
@@ -2887,7 +2888,7 @@ table::query(schema_ptr s,
 
         if (!querier_opt) {
             query::querier_base::querier_config conf(_config.tombstone_warn_threshold);
-            querier_opt = query::querier(as_mutation_source(), s, permit, range, qs.cmd.slice, trace_state, conf);
+            querier_opt.emplace(as_mutation_source(), s, permit, range, qs.cmd.slice, trace_state, conf);
         }
         auto& q = *querier_opt;
 
@@ -2899,7 +2900,7 @@ table::query(schema_ptr s,
       }
         if (ex || !qs.done()) {
             co_await q.close();
-            querier_opt = {};
+            querier_opt.reset();
         }
         if (ex) {
             co_return coroutine::exception(std::move(ex));
@@ -2913,10 +2914,10 @@ table::query(schema_ptr s,
 
     if (!saved_querier || (querier_opt && !querier_opt->are_limits_reached() && !qs.builder.is_short_read())) {
         co_await querier_opt->close();
-        querier_opt = {};
+        querier_opt.reset();
     }
-    if (saved_querier) {
-        *saved_querier = std::move(querier_opt);
+    if (saved_querier && querier_opt) {
+        saved_querier->emplace(std::move(*querier_opt));
     }
 
     co_return make_lw_shared<query::result>(qs.builder.build(std::move(last_pos)));
@@ -2936,12 +2937,13 @@ table::mutation_query(schema_ptr s,
     }
 
     std::optional<query::querier> querier_opt;
-    if (saved_querier) {
-        querier_opt = std::move(*saved_querier);
+    if (saved_querier && *saved_querier) {
+        querier_opt.emplace(std::move(saved_querier->value()));
+        saved_querier->reset();
     }
     if (!querier_opt) {
         query::querier_base::querier_config conf(_config.tombstone_warn_threshold);
-        querier_opt = query::querier(as_mutation_source(), s, permit, range, cmd.slice, trace_state, conf);
+        querier_opt.emplace(as_mutation_source(), s, permit, range, cmd.slice, trace_state, conf);
     }
     auto& q = *querier_opt;
 
@@ -2955,10 +2957,10 @@ table::mutation_query(schema_ptr s,
 
     if (!saved_querier || (!q.are_limits_reached() && !r.is_short_read())) {
         co_await q.close();
-        querier_opt = {};
+        querier_opt.reset();
     }
-    if (saved_querier) {
-        *saved_querier = std::move(querier_opt);
+    if (saved_querier && querier_opt) {
+        saved_querier->emplace(std::move(*querier_opt));
     }
 
     co_return r;
