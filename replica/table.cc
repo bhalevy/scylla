@@ -2884,7 +2884,7 @@ table::query(schema_ptr s,
     }
 
     while (!qs.done()) {
-        auto&& range = *qs.current_partition_range++;
+        auto range = *qs.current_partition_range++;
 
         if (!querier_opt) {
             query::querier_base::querier_config conf(_config.tombstone_warn_threshold);
