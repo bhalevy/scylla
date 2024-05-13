@@ -8,6 +8,9 @@
 
 #define BOOST_TEST_MODULE core
 
+#include <stdexcept>
+#include <fmt/format.h>
+
 #include <boost/test/included/unit_test.hpp>
 #include <deque>
 #include <random>
@@ -289,4 +292,148 @@ BOOST_AUTO_TEST_CASE(test_push_back_using_existing_element) {
             chunked_vector_type::max_chunk_capacity() + 2);
     do_test_push_back_using_existing_element<chunked_vector_type>([] (chunked_vector_type& v, const push_back_item& x) { v.emplace_back(x); },
             chunked_vector_type::max_chunk_capacity() + 2);
+}
+
+class inject_exceptions {
+    static constexpr bool debug = false;
+
+    ssize_t* objects = nullptr;
+    ssize_t* inject = nullptr;
+
+    void maybe_inject() {
+        if (objects) {
+            if (inject && *objects + 1 >= *inject) {
+                throw std::runtime_error("injected");
+            }
+            ++(*objects);
+        }
+    }
+public:
+    inject_exceptions() = default;
+    explicit inject_exceptions(ssize_t* objects, ssize_t* inject)
+            : objects(objects)
+            , inject(inject)
+    {
+        if (debug) {
+            fmt::print("ctor inject[{}] objects={} inject={}\n", fmt::ptr(this), objects ? *objects : -1, inject ? *inject : -1);
+        }
+        maybe_inject();
+    }
+    inject_exceptions(const inject_exceptions& x)
+            : objects(x.objects)
+            , inject(x.inject)
+    {
+        if (debug) {
+            fmt::print("copy inject[{} <- {}] objects={} inject={}\n", fmt::ptr(this), fmt::ptr(&x), objects ? *objects : -1, inject ? *inject : -1);
+        }
+        maybe_inject();
+    }
+    inject_exceptions(inject_exceptions&& x) noexcept
+            : objects(std::exchange(x.objects, nullptr))
+            , inject(std::exchange(x.inject, nullptr))
+    {
+        if (debug) {
+            fmt::print("move inject[{} <- {}] objects={} inject={}\n", fmt::ptr(this), fmt::ptr(&x), objects ? *objects : -1, inject ? *inject : -1);
+        }
+    }
+    ~inject_exceptions() {
+        if (debug) {
+            fmt::print("dtor inject[{}] objects={} inject={}\n", fmt::ptr(this), objects ? *objects : -1, inject ? *inject : -1);
+        }
+        if (objects) {
+            --(*objects);
+        }
+    }
+};
+
+BOOST_AUTO_TEST_CASE(test_chunked_vector_ctor_exception_safety) {
+    constexpr size_t chunk_size = 512;
+    using chunked_vector = utils::chunked_vector<inject_exceptions, chunk_size>;
+    constexpr size_t max_chunk_capacity = chunked_vector::max_chunk_capacity();
+
+    auto rand = std::default_random_engine();
+
+    auto size_dist = std::uniform_int_distribution<unsigned>(1, 4 * max_chunk_capacity);
+
+    ssize_t objects = 0;
+    ssize_t inject = 0;
+
+    // Test exception free case
+    for (auto iter = 0; iter < 10; ++iter) {
+        auto size = size_dist(rand);
+        auto cv = std::make_unique<chunked_vector>();
+        if (size_dist(rand) & 1) {
+            cv->reserve(size_dist(rand));
+        }
+        for (size_t i = 0; i < size; ++i) {
+            cv->emplace_back(&objects, nullptr);
+        }
+        cv.reset();
+        BOOST_REQUIRE_EQUAL(objects, 0);
+    }
+
+    // Test throw during insertion
+    for (auto iter = 0; iter < 10; ++iter) {
+        auto size = size_dist(rand);
+        auto cv = std::make_unique<chunked_vector>();
+        if (size_dist(rand) & 1) {
+            cv->reserve(size_dist(rand));
+        }
+        inject = size;
+        try {
+            for (ssize_t i = 0; i < size; ++i) {
+                cv->emplace_back(&objects, &inject);
+            }
+            BOOST_FAIL("Unexpected done with no exception");
+        } catch (const std::runtime_error&) {
+            // ignore
+        }
+        cv.reset();
+        BOOST_REQUIRE_EQUAL(objects, 0);
+    }
+
+    // Test throw during vector fill ctor
+    // Reproduces https://github.com/scylladb/scylladb/issues/18635
+    for (auto iter = 0; iter < 10; ++iter) {
+        auto size = size_dist(rand);
+        inject = size + 1;
+        try {
+            auto o = inject_exceptions(&objects, &inject);
+            auto cv = chunked_vector(size, o);
+            BOOST_FAIL("Unexpected done with no exception");
+        } catch (const std::runtime_error&) {
+            // ignore
+        }
+        BOOST_REQUIRE_EQUAL(objects, 0);
+    }
+
+    // Test throw during vector copy ctor
+    for (auto iter = 0; iter < 10; ++iter) {
+        auto size = size_dist(rand);
+        inject = size + 1 + (size_dist(rand) % (size - 1));
+        auto src = std::make_unique<chunked_vector>(size, inject_exceptions(&objects, &inject));
+        try {
+            auto cv = chunked_vector(*src);
+            BOOST_FAIL("Unexpected done with no exception");
+        } catch (const std::runtime_error&) {
+            // ignore
+        }
+        src.reset();
+        BOOST_REQUIRE_EQUAL(objects, 0);
+    }
+
+    // Test throw during vector range copy ctor
+    for (auto iter = 0; iter < 10; ++iter) {
+        auto size = size_dist(rand);
+        inject = size + 1 + (size_dist(rand) % (size - 1));
+        auto src = std::make_unique<chunked_vector>(size, inject_exceptions(&objects, &inject));
+        try {
+            auto cv = chunked_vector(src->begin(), src->end());
+            BOOST_FAIL("Unexpected done with no exception");
+        } catch (const std::runtime_error&) {
+            // ignore
+        }
+        src.reset();
+        BOOST_REQUIRE_EQUAL(objects, 0);
+    }
 }
