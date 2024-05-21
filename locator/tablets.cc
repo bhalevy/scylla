@@ -247,7 +247,11 @@ dht::token_range tablet_map::get_token_range(tablet_id id) const {
 
 tablet_replica tablet_map::get_primary_replica(tablet_id id) const {
     const auto info = get_tablet_info(id);
-    return info.replicas.at(size_t(id) % info.replicas.size());
+    auto replicas = boost::copy_range<std::vector<tablet_replica>>(info.replicas);
+    std::sort(replicas.begin(), replicas.end(), [] (const tablet_replica& l, const tablet_replica& r) {
+        return l.host < r.host;
+    });
+    return replicas.at(size_t(id) % replicas.size());
 }
 
 future<std::vector<token>> tablet_map::get_sorted_tokens() const {
