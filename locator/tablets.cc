@@ -245,9 +245,32 @@ dht::token_range tablet_map::get_token_range(tablet_id id) const {
     }
 }
 
+const tablet_replica tablet_map::sort_and_get_primary_replica(const tablet_replica_set& candidates, tablet_id id, std::function<bool(const tablet_replica&)> filter_func) {
+    // clone the replica set since we mustn't sort it in-place.
+    auto replicas = filter_func ? boost::copy_range<tablet_replica_set>(candidates | boost::adaptors::filtered(filter_func)) : candidates;
+    size_t size = replicas.size();
+    size_t idx = id.value() % size;
+    // partially sort as few items as possible
+    // although partial_sort doesn't guarantee stable sort of equal items
+    // we compare here host_id:s that must be unique, so there is no problem
+    // using std:;partial_sort
+    if (idx < size / 2) {
+        // sort the first idx replicas in ascending order
+        std::partial_sort(replicas.begin(), replicas.begin() + idx + 1, replicas.end(), [] (const tablet_replica& l, const tablet_replica& r) {
+            return l.host < r.host;
+        });
+    } else {
+        // sort the last (size - idx) replicas in descending order
+        std::partial_sort(replicas.rbegin(), replicas.rbegin() + size - idx, replicas.rend(), [] (const tablet_replica& l, const tablet_replica& r) {
+            return l.host > r.host;
+        });
+    }
+    return replicas.at(idx);
+}
+
 tablet_replica tablet_map::get_primary_replica(tablet_id id) const {
-    const auto info = get_tablet_info(id);
-    return info.replicas.at(size_t(id) % info.replicas.size());
+    const auto& info = get_tablet_info(id);
+    return sort_and_get_primary_replica(info.replicas, id);
 }
 
 future<std::vector<token>> tablet_map::get_sorted_tokens() const {
