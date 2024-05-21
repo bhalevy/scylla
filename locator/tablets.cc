@@ -23,6 +23,7 @@
 
 #include <seastar/core/coroutine.hh>
 #include <seastar/coroutine/maybe_yield.hh>
+#include <stdexcept>
 
 namespace locator {
 
@@ -248,6 +249,19 @@ dht::token_range tablet_map::get_token_range(tablet_id id) const {
 tablet_replica tablet_map::get_primary_replica(tablet_id id) const {
     const auto info = get_tablet_info(id);
     auto replicas = boost::copy_range<std::vector<tablet_replica>>(info.replicas);
+    std::sort(replicas.begin(), replicas.end(), [] (const tablet_replica& l, const tablet_replica& r) {
+        return l.host < r.host;
+    });
+    return replicas.at(size_t(id) % replicas.size());
+}
+
+tablet_replica tablet_map::get_primary_replica_within_dc(tablet_id id, const topology& topo, const sstring& dc) const {
+    tablet_replica_set replicas = boost::copy_range<tablet_replica_set>(get_tablet_info(id).replicas | boost::adaptors::filtered([&] (const tablet_replica& r) {
+        return topo.get_datacenter(r.host) == dc;
+    }));
+    if (replicas.empty()) {
+        throw std::runtime_error(format("Cannot get primary replica for tablet_id={} in dc={}: no replicas found in this datacenter", id, dc));
+    }
     std::sort(replicas.begin(), replicas.end(), [] (const tablet_replica& l, const tablet_replica& r) {
         return l.host < r.host;
     });
