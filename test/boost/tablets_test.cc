@@ -8,6 +8,7 @@
 
 
 
+#include "service/topology_state_machine.hh"
 #include "test/lib/scylla_test_case.hh"
 #include "test/lib/random_utils.hh"
 #include <fmt/ranges.h>
@@ -2331,4 +2332,30 @@ SEASTAR_THREAD_TEST_CASE(test_tablet_range_splitter) {
             {bound{dks[0], true}, bound{dks[1], false}},
             {bound{dks[1], true}, bound{dks[2], false}},
             {bound{dks[2], true}, bound{dks[3], false}}});
+}
+
+namespace locator {
+
+void do_test_sort_and_get_primary_replica() {
+    tablet_replica_set replicas;
+    auto size = tests::random::get_int<size_t>(1, 9);
+    while (replicas.size() < size) {
+        replicas.emplace_back(locator::host_id(utils::make_random_uuid()), 0);
+    }
+    tablet_replica_set sorted_replicas(replicas.begin(), replicas.end());
+    std::sort(sorted_replicas.begin(), sorted_replicas.end(), [] (const tablet_replica& a, const tablet_replica& b) {
+        return a.host < b.host;
+    });
+    for (size_t i = 0; i < size; i++) {
+        auto tmp = replicas;
+        const auto& pr = tablet_map::sort_and_get_primary_replica(tmp, tablet_id(i));
+        BOOST_REQUIRE_EQUAL(pr, sorted_replicas[i]);
+    }
+}
+
+}
+
+SEASTAR_TEST_CASE(test_sort_and_get_primary_replica) {
+    locator::do_test_sort_and_get_primary_replica();
+    return make_ready_future();
 }

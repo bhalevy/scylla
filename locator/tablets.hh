@@ -299,6 +299,9 @@ struct load_stats {
 
 using load_stats_ptr = lw_shared_ptr<const load_stats>;
 
+// unit test function for tablet_map::sort_and_get_primary_replica
+void do_test_sort_and_get_primary_replica();
+
 /// Stores information about tablets of a single table.
 ///
 /// The map contains a constant number of tablets, tablet_count().
@@ -434,6 +437,9 @@ public:
     friend fmt::formatter<tablet_map>;
 private:
     void check_tablet_id(tablet_id) const;
+    static const tablet_replica& sort_and_get_primary_replica(tablet_replica_set& replicas, tablet_id id);
+
+    friend void do_test_sort_and_get_primary_replica();
 };
 
 /// Holds information about all tablets in the cluster.
