@@ -2121,6 +2121,7 @@ future<> repair_service::repair_tablets(repair_uniq_id rid, sstring keyspace_nam
         auto myip = erm->get_topology().my_address();
         auto mydc = erm->get_topology().get_datacenter();
         bool select_primary_ranges_within_dc = false;
+        locator::tablet_map::primary_replica_map primary_replicas;
         // If the user specified the ranges option, ignore the primary_replica_only option.
         // Since the ranges are requested explicitly.
         if (!ranges_specified.empty()) {
@@ -2135,6 +2136,8 @@ future<> repair_service::repair_tablets(repair_uniq_id rid, sstring keyspace_nam
             } else if (data_centers.size() > 0 || hosts.size() > 0) {
                 throw std::runtime_error("You need to run primary range repair on all nodes in the cluster.");
             }
+            primary_replicas = co_await tmap.calc_primary_replica_map(tid, erm->get_topology(),
+                    select_primary_ranges_within_dc ? mydc : "");
         }
         if (!hosts.empty()) {
             if (!hosts.contains(myip)) {
@@ -2144,22 +2147,22 @@ future<> repair_service::repair_tablets(repair_uniq_id rid, sstring keyspace_nam
         co_await tmap.for_each_tablet([&] (locator::tablet_id id, const locator::tablet_info& info) -> future<> {
             auto range = tmap.get_token_range(id);
             auto& replicas = info.replicas;
+
+            if (primary_replica_only) {
+                const auto& pr = primary_replicas.at(id);
+                if (pr.host == myhostid) {
+                    metas.push_back(repair_tablet_meta{id, range, myhostid, pr.shard, replicas});
+                }
+                return make_ready_future<>();
+            }
+
             bool found = false;
             shard_id master_shard_id;
             // Repair all tablets belong to this node
             for (auto& r : replicas) {
-                if (select_primary_ranges_within_dc) {
-                    auto dc = erm->get_topology().get_datacenter(r.host);
-                    if (dc != mydc) {
-                        continue;
-                    }
-                }
                 if (r.host == myhostid) {
                     master_shard_id = r.shard;
                     found = true;
-                    break;
-                }
-                if (primary_replica_only) {
                     break;
                 }
             }
