@@ -248,6 +248,9 @@ dht::token_range tablet_map::get_token_range(tablet_id id) const {
 const tablet_replica tablet_map::sort_and_get_primary_replica(const tablet_replica_set& candidates, tablet_id id, std::function<bool(const tablet_replica&)> filter_func) {
     // clone the replica set since we mustn't sort it in-place.
     auto replicas = filter_func ? boost::copy_range<tablet_replica_set>(candidates | boost::adaptors::filtered(filter_func)) : candidates;
+    if (replicas.empty()) {
+        throw std::runtime_error(format("Cannot get primary replica for tablet_id={}{}: no replicas found", id, candidates.empty() ? "" : " after filtering"));
+    }
     size_t size = replicas.size();
     size_t idx = id.value() % size;
     // partially sort as few items as possible
@@ -271,6 +274,13 @@ const tablet_replica tablet_map::sort_and_get_primary_replica(const tablet_repli
 tablet_replica tablet_map::get_primary_replica(tablet_id id) const {
     const auto& info = get_tablet_info(id);
     return sort_and_get_primary_replica(info.replicas, id);
+}
+
+tablet_replica tablet_map::get_primary_replica_within_dc(tablet_id id, const topology& topo, const sstring& dc) const {
+    const auto& info = get_tablet_info(id);
+    return sort_and_get_primary_replica(info.replicas, id, [&] (const tablet_replica& r) {
+        return topo.get_datacenter(r.host) == dc;
+    });
 }
 
 future<std::vector<token>> tablet_map::get_sorted_tokens() const {
