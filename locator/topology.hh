@@ -349,6 +349,7 @@ public:
      * address.
      */
     void sort_by_proximity(inet_address address, inet_address_vector_replica_set& addresses) const;
+    void sort_by_proximity(const host_id& hid, host_id_vector_replica_set& hosts) const;
 
     void for_each_node(std::function<void(const node*)> func) const;
 
