@@ -245,9 +245,31 @@ dht::token_range tablet_map::get_token_range(tablet_id id) const {
     }
 }
 
-host_id tablet_map::get_primary_replica(tablet_id id) const {
-    const auto info = get_tablet_info(id);
-    return info.replicas.at(size_t(id) % info.replicas.size()).host;
+future<tablet_map::primary_replica_map> tablet_map::calc_primary_replica_map(table_id table, const topology& topo, sstring dc) const {
+    std::unordered_map<host_id, uint64_t> load_map;
+    primary_replica_map res;
+    res.reserve(tablet_count());
+    co_await for_each_tablet([&] (tablet_id tid, const tablet_info& ti) {
+        tablet_replica_set replicas = dc.empty() ? ti.replicas :
+                boost::copy_range<tablet_replica_set>(ti.replicas | boost::adaptors::filtered([&] (const auto& tr) {
+                    const auto* node = topo.find_node(tr.host);
+                    return node && node->dc_rack().dc == dc;
+                }));
+        if (replicas.empty()) {
+            throw std::runtime_error(format("Could not find any replicas for table={} tablet={} dc={}", table, tid, dc));
+        }
+        std::ranges::sort(replicas, std::less{}, [&] (const tablet_replica& tr) -> uint64_t {
+            if (auto it = load_map.find(tr.host); it != load_map.end()) {
+                return it->second;
+            }
+            return 0;
+        });
+        const auto& pr = replicas.front();
+        load_map[pr.host]++;
+        res.emplace(tid, pr);
+        return make_ready_future<>();
+    });
+    co_return res;
 }
 
 future<std::vector<token>> tablet_map::get_sorted_tokens() const {
