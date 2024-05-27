@@ -245,9 +245,48 @@ dht::token_range tablet_map::get_token_range(tablet_id id) const {
     }
 }
 
-host_id tablet_map::get_primary_replica(tablet_id id) const {
-    const auto info = get_tablet_info(id);
-    return info.replicas.at(size_t(id) % info.replicas.size()).host;
+future<tablet_map::primary_replica_map> tablet_map::calc_primary_replica_map(table_id table, const topology& topo, sstring dc) const {
+    struct node_load {
+        uint64_t value = 0;
+    };
+    std::unordered_map<host_id, node_load> load_map;
+    primary_replica_map res;
+    res.reserve(tablet_count());
+    size_t empty_dcs = 0;
+    std::function<tablet_replica_set(const tablet_replica_set&)> filter_replicas;
+    if (dc.empty()) {
+        filter_replicas = [] (const tablet_replica_set& replicas) { return replicas; };
+    } else {
+        filter_replicas = [&] (const tablet_replica_set& replicas) {
+            return boost::copy_range<tablet_replica_set>(replicas | boost::adaptors::filtered([&] (const auto& tr) {
+                const auto* node = topo.find_node(tr.host);
+                return node && node->dc_rack().dc == dc;
+            }));
+        };
+    }
+    co_await for_each_tablet([&] (tablet_id tid, const tablet_info& ti) {
+        auto replicas = filter_replicas(ti.replicas);
+        if (replicas.empty()) {
+            if (dc.empty()) {
+                throw std::runtime_error(format("Could not find any replicas for table={} tablet={}", table, tid));
+            } else {
+                // can happen if rf=0 in the dc
+                ++empty_dcs;
+                return make_ready_future<>();
+            }
+        }
+        std::ranges::sort(replicas, std::less{}, [&] (const tablet_replica& tr) {
+            return load_map[tr.host].value;
+        });
+        const auto& pr = replicas.front();
+        ++load_map[pr.host].value;
+        res.emplace(tid, pr);
+        return make_ready_future<>();
+    });
+    if (empty_dcs && !res.empty()) {
+        tablet_logger.warn("Could not find any replicas for {} out of {} tablets in table={}", empty_dcs, tablet_count(), table);
+    }
+    co_return res;
 }
 
 future<std::vector<token>> tablet_map::get_sorted_tokens() const {
