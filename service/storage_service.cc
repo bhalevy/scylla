@@ -5030,11 +5030,12 @@ std::map<token, inet_address> storage_service::get_token_to_endpoint_map() {
 }
 
 future<std::map<token, inet_address>> storage_service::get_tablet_to_endpoint_map(table_id table) {
-    const auto& tm = get_token_metadata();
-    const auto& tmap = tm.tablets().get_tablet_map(table);
+    auto tmptr = get_token_metadata_ptr();
+    const auto& tmap = tmptr->tablets().get_tablet_map(table);
     std::map<token, inet_address> result;
-    for (std::optional<locator::tablet_id> tid = tmap.first_tablet(); tid; tid = tmap.next_tablet(*tid)) {
-        result.emplace(tmap.get_last_token(*tid), tm.get_endpoint_for_host_id(tmap.get_primary_replica(*tid)));
+    auto primary_replicas = co_await tmap.calc_primary_replica_map(table, tmptr->get_topology());
+    for (const auto& [tid, pr] : primary_replicas) {
+        result.emplace(tmap.get_last_token(tid), tmptr->get_endpoint_for_host_id(pr.host));
         co_await coroutine::maybe_yield();
     }
     co_return result;
