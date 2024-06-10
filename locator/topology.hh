@@ -195,6 +195,9 @@ public:
 
     void set_host_id_cfg(host_id this_host_id) {
         _cfg.this_host_id = this_host_id;
+        if (_this_node) {
+            update_node(make_mutable(_this_node), this_host_id, std::nullopt, std::nullopt, std::nullopt);
+        }
     }
 
     const node* this_node() const noexcept {
@@ -295,9 +298,7 @@ public:
     }
     // Get dc/rack location of a node identified by host_id
     // The specified node must exist.
-    const endpoint_dc_rack& get_location(host_id id) const {
-        return find_node(id)->dc_rack();
-    }
+    const endpoint_dc_rack& get_location(host_id id) const;
     // Get dc/rack location of a node identified by endpoint
     // The specified node must exist.
     const endpoint_dc_rack& get_location(const inet_address& ep) const;

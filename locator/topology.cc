@@ -188,7 +188,7 @@ const node* topology::add_node(node_holder nptr) {
     _nodes.emplace_back(std::move(nptr));
 
     try {
-        if (is_configured_this_node(*node) || node->is_this_node()) {
+        if (is_configured_this_node(*node)) {
             if (_this_node) {
                 on_internal_error(tlogger, format("topology[{}]: {}: local node already mapped to {}", fmt::ptr(this), node_printer(node), node_printer(this_node())));
             }
@@ -338,10 +338,22 @@ void topology::index_node(const node* node) {
             } else if (eit->second->is_leaving() || eit->second->left()) {
                 _nodes_by_endpoint.erase(node->endpoint());
             } else if (!node->is_leaving() && !node->left()) {
-                if (node->host_id()) {
-                    _nodes_by_host_id.erase(node->host_id());
+                if (eit->second->is_this_node()) {
+                    if (node->is_this_node()) {
+                        if (node->host_id()) {
+                            _nodes_by_host_id.erase(node->host_id());
+                        }
+                        on_internal_error(tlogger, format("topology[{}]: {}: this node endpoint already mapped to {}", fmt::ptr(this), node_printer(node), node_printer(eit->second)));
+                    }
+                    // Silently allow indexing of the node we're replacing using the same ip address by its host_id
+                    // But otherwise this_node keeps owning the endpoint inet_address, as well as being present on the dc/rack lists
+                    return;
+                } else {
+                    if (node->host_id()) {
+                        _nodes_by_host_id.erase(node->host_id());
+                    }
+                    on_internal_error(tlogger, format("topology[{}]: {}: node endpoint already mapped to {}", fmt::ptr(this), node_printer(node), node_printer(eit->second)));
                 }
-                on_internal_error(tlogger, format("topology[{}]: {}: node endpoint already mapped to {}", fmt::ptr(this), node_printer(node), node_printer(eit->second)));
             }
         }
         if (node->get_state() != node::state::left) {
@@ -510,6 +522,20 @@ bool topology::has_node(inet_address ep) const noexcept {
 bool topology::has_endpoint(inet_address ep) const
 {
     return has_node(ep);
+}
+
+const endpoint_dc_rack& topology::get_location(host_id ep) const {
+    if (auto node = find_node(ep)) {
+        return node->dc_rack();
+    }
+    // We should do the following check after lookup in nodes.
+    // In tests, there may be no config for local node, so fall back to get_location()
+    // only if no mapping is found. Otherwise, get_location() will return empty location
+    // from config or random node, neither of which is correct.
+    if (ep == _cfg.this_host_id) {
+        return get_location();
+    }
+    on_internal_error(tlogger, format("Requested location for node {} not in topology", ep));
 }
 
 const endpoint_dc_rack& topology::get_location(const inet_address& ep) const {
