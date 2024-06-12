@@ -12,10 +12,6 @@
 #include "locator/host_id.hh"
 #include "utils/small_vector.hh"
 
-namespace locator {
-class node;
-}
-
 using inet_address_vector_replica_set = utils::small_vector<gms::inet_address, 3>;
 
 using inet_address_vector_topology_change = utils::small_vector<gms::inet_address, 1>;
@@ -23,7 +19,3 @@ using inet_address_vector_topology_change = utils::small_vector<gms::inet_addres
 using host_id_vector_replica_set = utils::small_vector<locator::host_id, 3>;
 
 using host_id_vector_topology_change = utils::small_vector<locator::host_id, 1>;
-
-using node_vector_replica_set = utils::small_vector<const locator::node*, 3>;
-
-using node_vector_topology_change = utils::small_vector<const locator::node*, 1>;

@@ -24,7 +24,6 @@
 #include "utils/sequenced_set.hh"
 #include "utils/simple_hashers.hh"
 #include "tablets.hh"
-#include "inet_address_vectors.hh"
 
 // forward declaration since replica/database.hh includes this file
 namespace replica {
@@ -188,8 +187,6 @@ protected:
     size_t _replication_factor;
     std::unique_ptr<abort_source> _validity_abort_source;
 
-    friend class abstract_replication_strategy;
-public:
     template <std::ranges::range ResultSet, std::ranges::range SourceSet>
     requires (std::same_as<std::ranges::range_value_t<ResultSet>, gms::inet_address> && std::same_as<std::ranges::range_value_t<SourceSet>, host_id>)
     static ResultSet resolve_endpoints(const SourceSet& host_ids, const token_metadata& tm) {
@@ -207,35 +204,7 @@ public:
         return resolve_endpoints<ResultSet>(host_ids, *_tmptr);
     }
 
-    template <std::ranges::range ResultSet, std::ranges::range SourceSet>
-    requires (std::same_as<std::ranges::range_value_t<ResultSet>, const locator::node*> && std::same_as<std::ranges::range_value_t<SourceSet>, host_id>)
-    static ResultSet resolve_nodes(const SourceSet& host_ids, const topology& topo) {
-        ResultSet result{};
-        result.reserve(host_ids.size());
-        for (const auto& host_id : host_ids) {
-            result.push_back(&topo.get_node(host_id));
-        }
-        return result;
-    }
-
-    template <std::ranges::range ResultSet, std::ranges::range SourceSet>
-    requires (std::same_as<std::ranges::range_value_t<ResultSet>, const locator::node*> && std::same_as<std::ranges::range_value_t<SourceSet>, host_id>)
-    ResultSet resolve_nodes(const SourceSet& host_ids) const {
-        return resolve_nodes<ResultSet>(host_ids, _tmptr->get_topology());
-    }
-
-    template <std::ranges::range ResultSet, std::ranges::range SourceSet>
-    requires (std::same_as<std::ranges::range_value_t<ResultSet>, gms::inet_address> && std::same_as<std::ranges::range_value_t<SourceSet>, const node*>)
-    static ResultSet resolve_endpoints(const SourceSet& nodes) {
-        return boost::copy_range<ResultSet>(nodes | boost::adaptors::transformed(std::mem_fn(&node::endpoint)));
-    }
-
-    template <std::ranges::range ResultSet, std::ranges::range SourceSet>
-    requires (std::same_as<std::ranges::range_value_t<ResultSet>, host_id> && std::same_as<std::ranges::range_value_t<SourceSet>, const node*>)
-    static ResultSet resolve_hosts(const SourceSet& nodes) {
-        return boost::copy_range<ResultSet>(nodes | boost::adaptors::transformed(std::mem_fn(&node::host_id)));
-    }
-
+    friend class abstract_replication_strategy;
 public:
     effective_replication_map(replication_strategy_ptr, token_metadata_ptr, size_t replication_factor) noexcept;
     effective_replication_map(effective_replication_map&&) noexcept = default;
@@ -275,9 +244,6 @@ public:
 
     /// Returns a subset of replicas returned by get_natural_endpoints() without the pending replica.
     virtual host_id_vector_replica_set get_natural_hosts_without_node_being_replaced(const token& search_token) const = 0;
-    node_vector_replica_set get_natural_nodes_without_node_being_replaced(const token& search_token) const {
-        return resolve_nodes<node_vector_replica_set>(get_natural_hosts_without_node_being_replaced(search_token));
-    }
     inet_address_vector_replica_set get_natural_endpoints_without_node_being_replaced(const token& search_token) const {
         return resolve_endpoints<inet_address_vector_replica_set>(get_natural_hosts_without_node_being_replaced(search_token));
     }
@@ -286,16 +252,10 @@ public:
     /// Pending replica is a replica which gains ownership of data.
     /// Non-empty only during topology change.
     virtual host_id_vector_topology_change get_pending_hosts(const token& search_token) const  = 0;
-    node_vector_topology_change get_pending_nodes(const token& search_token) const {
-        return resolve_nodes<node_vector_topology_change>(get_pending_hosts(search_token));
-    }
     inet_address_vector_topology_change get_pending_endpoints(const token& search_token) const;
 
     /// Returns a list of nodes to which a read request should be directed.
     virtual host_id_vector_replica_set get_hosts_for_reading(const token& search_token) const = 0;
-    node_vector_replica_set get_nodes_for_reading(const token& search_token) const {
-        return resolve_nodes<node_vector_replica_set>(get_hosts_for_reading(search_token));
-    }
     inet_address_vector_replica_set get_endpoints_for_reading(const token& search_token) const;
 
     /// Returns replicas for a given token.
@@ -303,9 +263,6 @@ public:
     /// Unlike get_natural_endpoints(), the replica set may include nodes in the left state which were
     /// replaced but not yet rebuilt.
     virtual host_id_vector_replica_set get_replicas(const token& search_token) const = 0;
-    node_vector_replica_set get_replica_nodes(const token& search_token) const {
-        return resolve_nodes<node_vector_replica_set>(get_replicas(search_token));
-    }
 
     virtual std::optional<tablet_routing_info> check_locality(const token& token) const = 0;
 

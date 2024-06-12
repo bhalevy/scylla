@@ -616,15 +616,6 @@ void topology::sort_by_proximity(const host_id& hid, host_id_vector_replica_set&
     }));
 }
 
-void topology::sort_by_proximity(const locator::node* n, node_vector_replica_set& nodes) const {
-    if (!_sort_by_proximity) {
-        return;
-    }
-    std::sort(nodes.begin(), nodes.end(), [this, n] (const node* n1, const node* n2) {
-        return compare_nodes_proximity(n, n1, n2) < 0;
-    });
-}
-
 std::weak_ordering topology::compare_nodes_proximity(const node* address, const node* a1, const node* a2) const {
     const auto& loc = address->dc_rack();
     const auto& loc1 = a1->dc_rack();

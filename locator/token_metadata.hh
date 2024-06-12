@@ -53,8 +53,6 @@ struct host_id_or_endpoint {
         auto_detect
     };
 
-    host_id_or_endpoint(const locator::host_id& id) : _value(id) {}
-    host_id_or_endpoint(const gms::inet_address ep) : _value(ep) {}
     host_id_or_endpoint(const sstring& s, param_type restrict = param_type::auto_detect);
 
     bool has_host_id() const noexcept {
@@ -155,7 +153,7 @@ private:
 
 public:
     struct config {
-        locator::topology::config topo_cfg;
+        topology::config topo_cfg;
     };
     using inet_address = gms::inet_address;
     using version_t = service::topology::version_t;
