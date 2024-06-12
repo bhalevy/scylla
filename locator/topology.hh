@@ -20,6 +20,7 @@
 #include <seastar/core/smp.hh>
 #include <seastar/util/bool_class.hh>
 
+#include "locator/abstract_replication_strategy.hh"
 #include "locator/types.hh"
 #include "inet_address_vectors.hh"
 
@@ -296,6 +297,10 @@ public:
     const endpoint_dc_rack& get_location() const noexcept {
         return _this_node ? _this_node->dc_rack() : _cfg.local_dc_rack;
     }
+    // Get dc/rack location of a node
+    const endpoint_dc_rack& get_location(const node* node) const {
+        return node->dc_rack();
+    }
     // Get dc/rack location of a node identified by host_id
     // The specified node must exist.
     const endpoint_dc_rack& get_location(host_id id) const;
@@ -306,6 +311,10 @@ public:
     // Get datacenter of this node
     const sstring& get_datacenter() const noexcept {
         return get_location().dc;
+    }
+    // Get datacenter of a node
+    const sstring& get_datacenter(const node* node) const {
+        return get_location(node).dc;
     }
     // Get datacenter of a node identified by host_id
     // The specified node must exist.
@@ -321,6 +330,10 @@ public:
     // Get rack of this node
     const sstring& get_rack() const noexcept {
         return get_location().rack;
+    }
+    // Get rack of a node
+    const sstring& get_rack(const node* node) const {
+        return get_location(node).rack;
     }
     // Get rack of a node identified by host_id
     // The specified node must exist.
@@ -350,6 +363,7 @@ public:
      */
     void sort_by_proximity(inet_address address, inet_address_vector_replica_set& addresses) const;
     void sort_by_proximity(const host_id& hid, host_id_vector_replica_set& hosts) const;
+    void sort_by_proximity(const node*, node_vector_replica_set& hosts) const;
 
     void for_each_node(std::function<void(const node*)> func) const;
 
@@ -363,6 +377,10 @@ public:
 
     inet_address my_cql_address() const noexcept {
         return _cfg.this_cql_address;
+    }
+
+    bool is_me(const locator::node* node) const noexcept {
+        return bool(node->is_this_node());
     }
 
     bool is_me(const locator::host_id& id) const noexcept {

@@ -13,6 +13,7 @@
 #include <seastar/core/sleep.hh>
 #include <seastar/util/defer.hh>
 #include "gms/inet_address.hh"
+#include "inet_address_vectors.hh"
 #include "partition_range_compat.hh"
 #include "db/consistency_level.hh"
 #include "db/commitlog/commitlog.hh"
@@ -159,19 +160,7 @@ locator::host_id storage_proxy::my_host_id() const noexcept {
     return _shared_token_metadata.get()->get_topology().my_host_id();
 }
 
-bool storage_proxy::is_me(gms::inet_address addr) const noexcept {
-    return local_db().get_token_metadata().get_topology().is_me(addr);
-}
-
-bool storage_proxy::is_me(locator::host_id hid) const noexcept {
-    return !hid || local_db().get_token_metadata().get_topology().is_me(hid);
-}
-
-bool storage_proxy::only_me(const inet_address_vector_replica_set& replicas) const noexcept {
-    return replicas.size() == 1 && is_me(replicas[0]);
-}
-
-bool storage_proxy::only_me(const host_id_vector_replica_set& replicas) const noexcept {
+bool storage_proxy::only_me(const node_vector_replica_set& replicas) const noexcept {
     return replicas.size() == 1 && is_me(replicas[0]);
 }
 
@@ -667,14 +656,20 @@ private:
               });
     }
 
+    locator::host_id_or_endpoint get_response_from(const rpc::client_info& cinfo) {
+        if (auto opt_id = cinfo.retrieve_auxiliary_opt<locator::host_id>("host_id")) {
+            return locator::host_id_or_endpoint(*opt_id);
+        }
+        return locator::host_id_or_endpoint(cinfo.retrieve_auxiliary<gms::inet_address>("baddr"));
+    }
+
     future<rpc::no_wait_type> handle_mutation_done(
             const rpc::client_info& cinfo,
             unsigned shard, storage_proxy::response_id_type response_id, rpc::optional<db::view::update_backlog> backlog) {
-        auto& from = cinfo.retrieve_auxiliary<gms::inet_address>("baddr");
         _sp.get_stats().replica_cross_shard_ops += shard != this_shard_id();
         return _sp.container().invoke_on(shard, _sp._write_ack_smp_service_group,
-                [from, response_id, backlog = std::move(backlog)] (storage_proxy& sp) mutable {
-            sp.got_response(response_id, from, std::move(backlog));
+                [from = get_response_from(cinfo), response_id, backlog = std::move(backlog)] (storage_proxy& sp) mutable {
+            sp.got_response(response_id, std::move(from), std::move(backlog));
             return netw::messaging_service::no_wait();
         });
     }
@@ -683,10 +678,9 @@ private:
             const rpc::client_info& cinfo,
             unsigned shard, storage_proxy::response_id_type response_id, size_t num_failed,
             rpc::optional<db::view::update_backlog> backlog, rpc::optional<replica::exception_variant> exception) {
-        auto& from = cinfo.retrieve_auxiliary<gms::inet_address>("baddr");
         _sp.get_stats().replica_cross_shard_ops += shard != this_shard_id();
         return _sp.container().invoke_on(shard, _sp._write_ack_smp_service_group,
-                [from, response_id, num_failed, backlog = std::move(backlog), exception = std::move(exception)] (storage_proxy& sp) mutable {
+                [from = get_response_from(cinfo), response_id, num_failed, backlog = std::move(backlog), exception = std::move(exception)] (storage_proxy& sp) mutable {
             error err = error::FAILURE;
             std::optional<sstring> msg;
             if (exception) {
@@ -704,7 +698,7 @@ private:
                     }
                 }, exception->reason);
             }
-            sp.got_failure_response(response_id, from, num_failed, std::move(backlog), err, std::move(msg));
+            sp.got_failure_response(response_id, std::move(from), num_failed, std::move(backlog), err, std::move(msg));
             return netw::messaging_service::no_wait();
         });
     }
@@ -1029,16 +1023,21 @@ static inline db::per_partition_rate_limit::info adjust_rate_limit_for_local_ope
 
 class mutation_holder {
 protected:
+    locator::effective_replication_map_ptr _ermp;
     size_t _size = 0;
     schema_ptr _schema;
 public:
+    mutation_holder(locator::effective_replication_map_ptr ermp) noexcept : _ermp(std::move(ermp)) {}
     virtual ~mutation_holder() {}
-    virtual bool store_hint(db::hints::manager& hm, const locator::host_id& hid, std::optional<gms::inet_address> ep, locator::effective_replication_map_ptr ermptr,
+    const locator::effective_replication_map_ptr& get_effective_replication_map_ptr() const noexcept {
+        return _ermp;
+    }
+    virtual bool store_hint(db::hints::manager& hm, const locator::node*,
             tracing::trace_state_ptr tr_state) = 0;
     virtual future<> apply_locally(storage_proxy& sp, storage_proxy::clock_type::time_point timeout,
             tracing::trace_state_ptr tr_state, db::per_partition_rate_limit::info rate_limit_info,
             fencing_token fence) = 0;
-    virtual future<> apply_remotely(storage_proxy& sp, gms::inet_address ep, const inet_address_vector_replica_set& forward,
+    virtual future<> apply_remotely(storage_proxy& sp, const locator::node* ep, const node_vector_replica_set& forward,
             storage_proxy::response_id_type response_id, storage_proxy::clock_type::time_point timeout,
             tracing::trace_state_ptr tr_state, db::per_partition_rate_limit::info rate_limit_info,
             fencing_token fence) = 0;
@@ -1053,15 +1052,17 @@ public:
     virtual void release_mutation() = 0;
     // called when reply is received
     // allows mutation holder to have its own accounting
-    virtual void reply(gms::inet_address ep) {};
+    virtual void reply(const locator::node* ep) {};
 };
 
 // different mutation for each destination (for read repairs)
 class per_destination_mutation : public mutation_holder {
-    std::unordered_map<gms::inet_address, lw_shared_ptr<const frozen_mutation>> _mutations;
+    std::unordered_map<const locator::node*, lw_shared_ptr<const frozen_mutation>> _mutations;
     dht::token _token;
 public:
-    per_destination_mutation(const std::unordered_map<gms::inet_address, std::optional<mutation>>& mutations) {
+    per_destination_mutation(locator::effective_replication_map_ptr ermp, const std::unordered_map<const locator::node*, std::optional<mutation>>& mutations)
+        : mutation_holder(std::move(ermp))
+    {
         for (auto&& m : mutations) {
             lw_shared_ptr<const frozen_mutation> fm;
             if (m.second) {
@@ -1073,18 +1074,11 @@ public:
             _mutations.emplace(m.first, std::move(fm));
         }
     }
-    virtual bool store_hint(db::hints::manager& hm, const locator::host_id& hid, std::optional<gms::inet_address> ep, locator::effective_replication_map_ptr ermptr,
+    virtual bool store_hint(db::hints::manager& hm, const locator::node* node,
             tracing::trace_state_ptr tr_state) override {
-        if (!ep) {
-            ep = ermptr->get_token_metadata().get_endpoint_for_host_id_if_known(hid);
-        }
-        if (!ep) {
-            slogger.warn("per_destination_mutation: cannot store hint for {}: endpoint unknown", hid);
-            return false;
-        }
-        auto m = _mutations[*ep];
+        auto m = _mutations[node];
         if (m) {
-            return hm.store_hint(hid, ep, _schema, std::move(m), tr_state);
+            return hm.store_hint(node->host_id(), node->endpoint(), _schema, std::move(m), tr_state);
         } else {
             return false;
         }
@@ -1092,25 +1086,26 @@ public:
     virtual future<> apply_locally(storage_proxy& sp, storage_proxy::clock_type::time_point timeout,
             tracing::trace_state_ptr tr_state, db::per_partition_rate_limit::info rate_limit_info,
             fencing_token fence) override {
-        const auto my_ip = sp.my_address();
-        auto m = _mutations[my_ip];
+        const auto me = _ermp->get_topology().this_node();
+        auto m = _mutations[me];
         if (m) {
             tracing::trace(tr_state, "Executing a mutation locally");
-            return sp.apply_fence(sp.mutate_locally(_schema, *m, std::move(tr_state), db::commitlog::force_sync::no, timeout, rate_limit_info), fence, my_ip);
+            return sp.apply_fence(sp.mutate_locally(_schema, *m, std::move(tr_state), db::commitlog::force_sync::no, timeout, rate_limit_info), fence, me->endpoint());
         }
         return make_ready_future<>();
     }
-    virtual future<> apply_remotely(storage_proxy& sp, gms::inet_address ep, const inet_address_vector_replica_set& forward,
+    virtual future<> apply_remotely(storage_proxy& sp, const locator::node* ep, const node_vector_replica_set& forward,
             storage_proxy::response_id_type response_id, storage_proxy::clock_type::time_point timeout,
             tracing::trace_state_ptr tr_state, db::per_partition_rate_limit::info rate_limit_info, fencing_token fence) override {
         auto m = _mutations[ep];
         if (m) {
-            tracing::trace(tr_state, "Sending a mutation to /{}", ep);
-            return sp.remote().send_mutation(netw::messaging_service::msg_addr{ep, 0}, timeout, tracing::make_trace_info(tr_state),
-                    *m, forward, sp.my_address(), this_shard_id(),
+            tracing::trace(tr_state, "Sending a mutation to {}", *ep);
+            auto forward_endpoints = locator::effective_replication_map::resolve_endpoints<inet_address_vector_replica_set>(forward);
+            return sp.remote().send_mutation(netw::messaging_service::msg_addr{ep->endpoint(), 0}, timeout, tracing::make_trace_info(tr_state),
+                    *m, std::move(forward_endpoints), sp.my_address(), this_shard_id(),
                     response_id, rate_limit_info, fence);
         }
-        sp.got_response(response_id, ep, std::nullopt);
+        sp.got_response(response_id, ep->host_id(), std::nullopt);
         return make_ready_future<>();
     }
     virtual bool is_shared() override {
@@ -1133,19 +1128,17 @@ class shared_mutation : public mutation_holder {
 protected:
     lw_shared_ptr<const frozen_mutation> _mutation;
 public:
-    explicit shared_mutation(frozen_mutation_and_schema&& fm_a_s)
-            : _mutation(make_lw_shared<const frozen_mutation>(std::move(fm_a_s.fm))) {
+    explicit shared_mutation(locator::effective_replication_map_ptr ermp, frozen_mutation_and_schema&& fm_a_s)
+            : mutation_holder(std::move(ermp))
+            , _mutation(make_lw_shared<const frozen_mutation>(std::move(fm_a_s.fm))) {
         _size = _mutation->representation().size();
         _schema = std::move(fm_a_s.s);
     }
-    explicit shared_mutation(const mutation& m) : shared_mutation(frozen_mutation_and_schema{freeze(m), m.schema()}) {
+    explicit shared_mutation(locator::effective_replication_map_ptr ermp, const mutation& m) : shared_mutation(std::move(ermp), frozen_mutation_and_schema{freeze(m), m.schema()}) {
     }
-    virtual bool store_hint(db::hints::manager& hm, const locator::host_id& hid, std::optional<gms::inet_address> ep, locator::effective_replication_map_ptr ermptr,
+    virtual bool store_hint(db::hints::manager& hm, const locator::node* ep,
             tracing::trace_state_ptr tr_state) override {
-        if (!ep) {
-            ep = ermptr->get_token_metadata().get_endpoint_for_host_id_if_known(hid);
-        }
-        return hm.store_hint(hid, ep, _schema, _mutation, tr_state);
+        return hm.store_hint(ep->host_id(), ep->endpoint(), _schema, _mutation, tr_state);
     }
     virtual future<> apply_locally(storage_proxy& sp, storage_proxy::clock_type::time_point timeout,
             tracing::trace_state_ptr tr_state, db::per_partition_rate_limit::info rate_limit_info,
@@ -1153,13 +1146,14 @@ public:
         tracing::trace(tr_state, "Executing a mutation locally");
         return sp.apply_fence(sp.mutate_locally(_schema, *_mutation, std::move(tr_state), db::commitlog::force_sync::no, timeout, rate_limit_info), fence, sp.my_address());
     }
-    virtual future<> apply_remotely(storage_proxy& sp, gms::inet_address ep, const inet_address_vector_replica_set& forward,
+    virtual future<> apply_remotely(storage_proxy& sp, const locator::node* ep, const node_vector_replica_set& forward,
             storage_proxy::response_id_type response_id, storage_proxy::clock_type::time_point timeout,
             tracing::trace_state_ptr tr_state, db::per_partition_rate_limit::info rate_limit_info,
             fencing_token fence) override {
-        tracing::trace(tr_state, "Sending a mutation to /{}", ep);
-        return sp.remote().send_mutation(netw::messaging_service::msg_addr{ep, 0}, timeout, tracing::make_trace_info(tr_state),
-                *_mutation, forward, sp.my_address(), this_shard_id(),
+        tracing::trace(tr_state, "Sending a mutation to {}/{}", ep->host_id(), ep->endpoint());
+        auto forward_addresses = locator::effective_replication_map::resolve_endpoints<inet_address_vector_replica_set>(forward);
+        return sp.remote().send_mutation(netw::messaging_service::msg_addr{ep->endpoint(), 0}, timeout, tracing::make_trace_info(tr_state),
+                *_mutation, std::move(forward_addresses), sp.my_address(), this_shard_id(),
                 response_id, rate_limit_info, fence);
     }
     virtual bool is_shared() override {
@@ -1174,7 +1168,7 @@ public:
 class hint_mutation : public shared_mutation {
 public:
     using shared_mutation::shared_mutation;
-    virtual bool store_hint(db::hints::manager& hm, const locator::host_id&, std::optional<gms::inet_address>, locator::effective_replication_map_ptr,
+    virtual bool store_hint(db::hints::manager& hm, const locator::node*,
             tracing::trace_state_ptr tr_state) override {
         throw std::runtime_error("Attempted to store a hint for a hint");
     }
@@ -1185,12 +1179,13 @@ public:
         // becomes unavailable - this might include the current node
         return sp.apply_fence(sp.mutate_hint(_schema, *_mutation, std::move(tr_state), timeout), fence, sp.my_address());
     }
-    virtual future<> apply_remotely(storage_proxy& sp, gms::inet_address ep, const inet_address_vector_replica_set& forward,
+    virtual future<> apply_remotely(storage_proxy& sp, const locator::node* ep, const node_vector_replica_set& forward,
             storage_proxy::response_id_type response_id, storage_proxy::clock_type::time_point timeout,
             tracing::trace_state_ptr tr_state, db::per_partition_rate_limit::info rate_limit_info, fencing_token fence) override {
+        auto forward_addresses = locator::effective_replication_map::resolve_endpoints<inet_address_vector_replica_set>(forward);
         return sp.remote().send_hint_mutation(
-                netw::messaging_service::msg_addr{ep, 0}, timeout, tr_state,
-                *_mutation, forward, sp.my_address(), this_shard_id(), response_id, rate_limit_info, fence);
+                netw::messaging_service::msg_addr{ep->endpoint(), 0}, timeout, tr_state,
+                *_mutation, std::move(forward_addresses), sp.my_address(), this_shard_id(), response_id, rate_limit_info, fence);
     }
 };
 
@@ -1216,7 +1211,7 @@ private:
     // Is either set explicitly or derived from the consistency level set in keyspace options.
     db::consistency_level _cl_for_learn;
     // Live endpoints, as per get_paxos_participants()
-    inet_address_vector_replica_set _live_endpoints;
+    node_vector_replica_set _live_endpoints;
     // How many endpoints need to respond favourably for the protocol to progress to the next step.
     size_t _required_participants;
     // A deadline when the entire CAS operation timeout expires, derived from write_request_timeout_in_ms
@@ -1227,8 +1222,8 @@ private:
     dht::decorated_key _key;
     // service permit from admission control
     service_permit _permit;
-    // how many replicas replied to learn
-    uint64_t _learned = 0;
+    // replicas replied to learn
+    std::unordered_set<const locator::node*> _learned;
 
     // Unique request id generator.
     static thread_local uint64_t next_id;
@@ -1282,7 +1277,7 @@ public:
     }
     // this is called with an id of a replica that replied to learn request
     // and returns true when quorum of such requests are accumulated
-    bool learned(gms::inet_address ep);
+    bool learned(const locator::node* ep);
 
     const locator::effective_replication_map_ptr& get_effective_replication_map() const noexcept {
         return _effective_replication_map_ptr;
@@ -1295,12 +1290,13 @@ class cas_mutation : public mutation_holder {
     lw_shared_ptr<paxos::proposal> _proposal;
     shared_ptr<paxos_response_handler> _handler;
 public:
-    explicit cas_mutation(lw_shared_ptr<paxos::proposal> proposal, schema_ptr s, shared_ptr<paxos_response_handler> handler)
-            : _proposal(std::move(proposal)), _handler(std::move(handler)) {
+    explicit cas_mutation(locator::effective_replication_map_ptr ermp, lw_shared_ptr<paxos::proposal> proposal, schema_ptr s, shared_ptr<paxos_response_handler> handler)
+            : mutation_holder(std::move(ermp))
+            , _proposal(std::move(proposal)), _handler(std::move(handler)) {
         _size = _proposal->update.representation().size();
         _schema = std::move(s);
     }
-    virtual bool store_hint(db::hints::manager& hm, const locator::host_id&, std::optional<gms::inet_address>, locator::effective_replication_map_ptr,
+    virtual bool store_hint(db::hints::manager& hm, const locator::node*,
             tracing::trace_state_ptr tr_state) override {
         return false; // CAS does not save hints yet
     }
@@ -1311,14 +1307,15 @@ public:
         // TODO: Enforce per partition rate limiting in paxos
         return paxos::paxos_state::learn(sp, sp.remote().system_keyspace(), _schema, *_proposal, timeout, tr_state);
     }
-    virtual future<> apply_remotely(storage_proxy& sp, gms::inet_address ep, const inet_address_vector_replica_set& forward,
+    virtual future<> apply_remotely(storage_proxy& sp, const locator::node* ep, const node_vector_replica_set& forward,
             storage_proxy::response_id_type response_id, storage_proxy::clock_type::time_point timeout,
             tracing::trace_state_ptr tr_state, db::per_partition_rate_limit::info rate_limit_info, fencing_token) override {
-        tracing::trace(tr_state, "Sending a learn to /{}", ep);
+        tracing::trace(tr_state, "Sending a learn to {}/{}", ep->host_id(), ep->endpoint());
+        auto forward_addresses = locator::effective_replication_map::resolve_endpoints<inet_address_vector_replica_set>(forward);
         // TODO: Enforce per partition rate limiting in paxos
         return sp.remote().send_paxos_learn(
-                netw::messaging_service::msg_addr{ep, 0}, timeout, tracing::make_trace_info(tr_state),
-                *_proposal, forward, sp.my_address(), this_shard_id(), response_id);
+                netw::messaging_service::msg_addr{ep->endpoint(), 0}, timeout, tracing::make_trace_info(tr_state),
+                *_proposal, std::move(forward_addresses), sp.my_address(), this_shard_id(), response_id);
     }
     virtual bool is_shared() override {
         return true;
@@ -1326,7 +1323,7 @@ public:
     virtual void release_mutation() override {
         _proposal.release();
     }
-    virtual void reply(gms::inet_address ep) override {
+    virtual void reply(const locator::node* ep) override {
         // The handler will be set for "learn", but not for PAXOS repair
         // since repair may not include all replicas
         if (_handler) {
@@ -1352,11 +1349,11 @@ protected:
     size_t _total_block_for = 0;
     db::write_type _type;
     std::unique_ptr<mutation_holder> _mutation_holder;
-    inet_address_vector_replica_set _targets; // who we sent this mutation to
+    node_vector_replica_set _targets; // who we sent this mutation to
     // added dead_endpoints as a member here as well. This to be able to carry the info across
     // calls in helper methods in a convenient way. Since we hope this will be empty most of the time
     // it should not be a huge burden. (flw)
-    inet_address_vector_topology_change _dead_endpoints;
+    node_vector_topology_change _dead_endpoints;
     size_t _cl_acks = 0;
     bool _cl_achieved = false;
     bool _throttled = false;
@@ -1372,8 +1369,8 @@ protected:
     db::per_partition_rate_limit::info _rate_limit_info;
 
 protected:
-    virtual bool waited_for(gms::inet_address from) = 0;
-    void signal(gms::inet_address from) {
+    virtual bool waited_for(const locator::node* from) = 0;
+    void signal(const locator::node* from) {
         _mutation_holder->reply(from);
         if (waited_for(from)) {
             signal();
@@ -1384,9 +1381,9 @@ public:
     abstract_write_response_handler(shared_ptr<storage_proxy> p,
             locator::effective_replication_map_ptr erm,
             db::consistency_level cl, db::write_type type,
-            std::unique_ptr<mutation_holder> mh, inet_address_vector_replica_set targets, tracing::trace_state_ptr trace_state,
+            std::unique_ptr<mutation_holder> mh, node_vector_replica_set targets, tracing::trace_state_ptr trace_state,
             storage_proxy::write_stats& stats, service_permit permit, db::per_partition_rate_limit::info rate_limit_info, size_t pending_endpoints = 0,
-            inet_address_vector_topology_change dead_endpoints = {}, is_cancellable cancellable = is_cancellable::no)
+            node_vector_topology_change dead_endpoints = {}, is_cancellable cancellable = is_cancellable::no)
             : _id(p->get_next_response_id()), _proxy(std::move(p))
             , _effective_replication_map_ptr(std::move(erm))
             , _trace_state(trace_state), _cl(cl), _type(type), _mutation_holder(std::move(mh)), _targets(std::move(targets)),
@@ -1466,7 +1463,24 @@ public:
         }
     }
 
-    bool failure(gms::inet_address from, size_t count, error err, std::optional<sstring> msg) {
+    const locator::node* resolve(const locator::host_id_or_endpoint& from) {
+        const auto& topo = _effective_replication_map_ptr->get_topology();
+        const locator::node* node;
+        if (from.has_host_id()) {
+            node = topo.find_node(from.id());
+            if (!node) {
+                throw std::runtime_error(format("Node {} not found in topology", from.id()));
+            }
+        } else {
+            node = topo.find_node(from.endpoint());
+            if (!node) {
+                throw std::runtime_error(format("Node {} not found in topology", from.endpoint()));
+            }
+        }
+        return node;
+    }
+
+    bool failure(const locator::node* from, size_t count, error err, std::optional<sstring> msg) {
         if (waited_for(from)) {
             _failed += count;
             if (_total_block_for + _failed > _total_endpoints) {
@@ -1479,7 +1493,7 @@ public:
         return false;
     }
 
-    virtual bool failure(gms::inet_address from, size_t count, error err) {
+    virtual bool failure(const locator::node* from, size_t count, error err) {
         return failure(std::move(from), count, std::move(err), {});
     }
 
@@ -1491,27 +1505,25 @@ public:
         // We don't delay request completion after a timeout, but its possible we are currently delaying.
     }
     // return true on last ack
-    bool response(gms::inet_address from) {
+    bool response(const locator::node* from) {
         auto it = boost::find(_targets, from);
         if (it != _targets.end()) {
             signal(from);
-            using std::swap;
-            swap(*it, _targets.back());
-            _targets.pop_back();
         } else {
-            slogger.warn("Receive outdated write ack from {}", from);
+            slogger.warn("Receive outdated write ack from {}", *from);
         }
         return _targets.size() == 0;
     }
     // return true if handler is no longer needed because
     // CL cannot be reached
-    bool failure_response(gms::inet_address from, size_t count, error err, std::optional<sstring> msg) {
-        if (boost::find(_targets, from) == _targets.end()) {
+    bool failure_response(const locator::node* from, size_t count, error err, std::optional<sstring> msg) {
+        auto it = boost::find(_targets, from);
+        if (it == _targets.end()) {
             // There is a little change we can get outdated reply
             // if the coordinator was restarted after sending a request and
             // getting reply back. The chance is low though since initial
             // request id is initialized to server starting time
-            slogger.warn("Receive outdated write failure from {}", from);
+            slogger.warn("Receive outdated write failure from {}", *from);
             return false;
         }
         _all_failures += count;
@@ -1558,8 +1570,8 @@ public:
     }
     db::view::update_backlog max_backlog() {
         return boost::accumulate(
-                get_targets() | boost::adaptors::transformed([this] (gms::inet_address ep) {
-                    return _proxy->get_backlog_of(ep);
+                get_targets() | boost::adaptors::transformed([this] (const auto& target) {
+                    return _proxy->get_backlog_of(target->endpoint());
                 }),
                 db::view::update_backlog::no_backlog(),
                 [] (const db::view::update_backlog& lhs, const db::view::update_backlog& rhs) {
@@ -1591,15 +1603,18 @@ public:
     future<result<>> wait() {
         return _ready.get_future();
     }
-    const inet_address_vector_replica_set& get_targets() const {
+    const locator::effective_replication_map_ptr& get_effective_replication_map_ptr() const noexcept {
+        return _effective_replication_map_ptr;
+    }
+    const node_vector_replica_set& get_targets() const {
         return _targets;
     }
-    const inet_address_vector_topology_change& get_dead_endpoints() const {
+    const node_vector_topology_change& get_dead_endpoints() const {
         return _dead_endpoints;
     }
-    bool store_hint(db::hints::manager& hm, const locator::host_id& hid, std::optional<gms::inet_address> ep, locator::effective_replication_map_ptr ermptr,
+    bool store_hint(db::hints::manager& hm, const locator::node* ep,
             tracing::trace_state_ptr tr_state) {
-        return _mutation_holder->store_hint(hm, hid, std::move(ep), std::move(ermptr), tr_state);
+        return _mutation_holder->store_hint(hm, ep, tr_state);
     }
     future<> apply_locally(storage_proxy::clock_type::time_point timeout, tracing::trace_state_ptr tr_state) {
         auto op = _proxy->start_write();
@@ -1607,7 +1622,7 @@ public:
             _rate_limit_info,
             storage_proxy::get_fence(*_effective_replication_map_ptr));
     }
-    future<> apply_remotely(gms::inet_address ep, const inet_address_vector_replica_set& forward,
+    future<> apply_remotely(const locator::node* ep, const node_vector_replica_set& forward,
             storage_proxy::response_id_type response_id, storage_proxy::clock_type::time_point timeout,
             tracing::trace_state_ptr tr_state) {
         return _mutation_holder->apply_remotely(*_proxy, ep, forward,
@@ -1641,17 +1656,17 @@ private:
 };
 
 class datacenter_write_response_handler : public abstract_write_response_handler {
-    bool waited_for(gms::inet_address from) override {
+    bool waited_for(const locator::node* from) override {
         const auto& topo = _effective_replication_map_ptr->get_topology();
-        return topo.is_me(from) || (topo.get_datacenter(from) == topo.get_datacenter());
+        return from->is_this_node() || (topo.get_datacenter(from) == topo.get_datacenter());
     }
 
 public:
     datacenter_write_response_handler(shared_ptr<storage_proxy> p,
             locator::effective_replication_map_ptr ermp,
             db::consistency_level cl, db::write_type type,
-            std::unique_ptr<mutation_holder> mh, inet_address_vector_replica_set targets,
-            const inet_address_vector_topology_change& pending_endpoints, inet_address_vector_topology_change dead_endpoints, tracing::trace_state_ptr tr_state,
+            std::unique_ptr<mutation_holder> mh, node_vector_replica_set targets,
+            const node_vector_topology_change& pending_endpoints, node_vector_topology_change dead_endpoints, tracing::trace_state_ptr tr_state,
             storage_proxy::write_stats& stats, service_permit permit, db::per_partition_rate_limit::info rate_limit_info) :
                 abstract_write_response_handler(p, ermp, cl, type, std::move(mh), // can't move ermp, it's used below
                         std::move(targets), std::move(tr_state), stats, std::move(permit), rate_limit_info,
@@ -1661,15 +1676,15 @@ public:
 };
 
 class write_response_handler : public abstract_write_response_handler {
-    bool waited_for(gms::inet_address from) override {
+    bool waited_for(const locator::node* from) override {
         return true;
     }
 public:
     write_response_handler(shared_ptr<storage_proxy> p,
             locator::effective_replication_map_ptr ermp,
             db::consistency_level cl, db::write_type type,
-            std::unique_ptr<mutation_holder> mh, inet_address_vector_replica_set targets,
-            const inet_address_vector_topology_change& pending_endpoints, inet_address_vector_topology_change dead_endpoints, tracing::trace_state_ptr tr_state,
+            std::unique_ptr<mutation_holder> mh, node_vector_replica_set targets,
+            const node_vector_topology_change& pending_endpoints, node_vector_topology_change dead_endpoints, tracing::trace_state_ptr tr_state,
             storage_proxy::write_stats& stats, service_permit permit, db::per_partition_rate_limit::info rate_limit_info, is_cancellable cancellable) :
                 abstract_write_response_handler(std::move(p), std::move(ermp), cl, type, std::move(mh),
                         std::move(targets), std::move(tr_state), stats, std::move(permit), rate_limit_info, pending_endpoints.size(), std::move(dead_endpoints), cancellable) {
@@ -1739,7 +1754,7 @@ class datacenter_sync_write_response_handler : public abstract_write_response_ha
         size_t failures;
     };
     std::unordered_map<sstring, dc_info> _dc_responses;
-    bool waited_for(gms::inet_address from) override {
+    bool waited_for(const locator::node* from) override {
         auto& topology = _effective_replication_map_ptr->get_topology();
         sstring data_center = topology.get_datacenter(from);
         auto dc_resp = _dc_responses.find(data_center);
@@ -1752,29 +1767,28 @@ class datacenter_sync_write_response_handler : public abstract_write_response_ha
     }
 public:
     datacenter_sync_write_response_handler(shared_ptr<storage_proxy> p, locator::effective_replication_map_ptr ermp, db::consistency_level cl, db::write_type type,
-            std::unique_ptr<mutation_holder> mh, inet_address_vector_replica_set targets, const inet_address_vector_topology_change& pending_endpoints,
-            inet_address_vector_topology_change dead_endpoints, tracing::trace_state_ptr tr_state, storage_proxy::write_stats& stats, service_permit permit,
+            std::unique_ptr<mutation_holder> mh, node_vector_replica_set targets, const node_vector_topology_change& pending_endpoints,
+            node_vector_topology_change dead_endpoints, tracing::trace_state_ptr tr_state, storage_proxy::write_stats& stats, service_permit permit,
             db::per_partition_rate_limit::info rate_limit_info) :
         abstract_write_response_handler(std::move(p), std::move(ermp), cl, type, std::move(mh), targets, std::move(tr_state), stats, std::move(permit), rate_limit_info, 0, dead_endpoints) {
         auto* erm = _effective_replication_map_ptr.get();
-        auto& topology = erm->get_topology();
 
         for (auto& target : targets) {
-            auto dc = topology.get_datacenter(target);
+            const auto& dc = target->dc_rack().dc;
 
             if (!_dc_responses.contains(dc)) {
-                auto pending_for_dc = boost::range::count_if(pending_endpoints, [&topology, &dc] (const gms::inet_address& ep){
-                    return topology.get_datacenter(ep) == dc;
+                auto pending_for_dc = boost::range::count_if(pending_endpoints, [&dc] (const auto& ep){
+                    return ep->dc_rack().dc == dc;
                 });
-                size_t total_endpoints_for_dc = boost::range::count_if(targets, [&topology, &dc] (const gms::inet_address& ep){
-                    return topology.get_datacenter(ep) == dc;
+                size_t total_endpoints_for_dc = boost::range::count_if(targets, [&dc] (const auto& ep){
+                    return ep->dc_rack().dc == dc;
                 });
                 _dc_responses.emplace(dc, dc_info{0, db::local_quorum_for(*erm, dc) + pending_for_dc, total_endpoints_for_dc, 0});
                 _total_block_for += pending_for_dc;
             }
         }
     }
-    bool failure(gms::inet_address from, size_t count, error err) override {
+    bool failure(const locator::node* from, size_t count, error err) override {
         auto& topology = _effective_replication_map_ptr->get_topology();
         const sstring& dc = topology.get_datacenter(from);
         auto dc_resp = _dc_responses.find(dc);
@@ -1927,7 +1941,7 @@ paxos_response_handler::begin_and_repair_paxos(client_state& cs, unsigned& conte
             // create_write_response_handler is overloaded for paxos::proposal and will
             // create cas_mutation holder, which consequently will ensure paxos::learn is
             // used.
-            auto f = _proxy->mutate_internal(std::move(m), db::consistency_level::ANY, false, tr_state, _permit, _timeout)
+            auto f = _proxy->mutate_internal(_effective_replication_map_ptr, std::move(m), db::consistency_level::ANY, false, tr_state, _permit, _timeout)
                     .then(utils::result_into_future<result<>>);
 
             // TODO: provided commits did not invalidate the prepare we just did above (which they
@@ -1974,15 +1988,16 @@ future<paxos::prepare_summary> paxos_response_handler::prepare_ballot(utils::UUI
     (void)do_with(paxos::prepare_summary(_live_endpoints.size()), std::move(request_tracker), shared_from_this(),
             [this, ballot] (paxos::prepare_summary& summary, auto& request_tracker, shared_ptr<paxos_response_handler>& prh) mutable -> future<> {
         paxos::paxos_state::logger.trace("CAS[{}] prepare_ballot: sending ballot {} to {}", _id, ballot, _live_endpoints);
-        auto handle_one_msg = [this, &summary, ballot, &request_tracker] (gms::inet_address peer) mutable -> future<> {
+        auto handle_one_msg = [this, &summary, ballot, &request_tracker] (const locator::node* node) mutable -> future<> {
             paxos::prepare_response response;
+            const auto& peer = node->endpoint();
             try {
                 // To generate less network traffic, only the closest replica (first one in the list of participants)
                 // sends query result content while other replicas send digests needed to check consistency.
-                bool only_digest = peer != _live_endpoints[0];
+                bool only_digest = node != _live_endpoints[0];
                 auto da = digest_algorithm(*_proxy);
                 const auto& topo = _effective_replication_map_ptr->get_topology();
-                if (topo.is_me(peer)) {
+                if (topo.is_me(node)) {
                     tracing::trace(tr_state, "prepare_ballot: prepare {} locally", ballot);
                     response = co_await paxos::paxos_state::prepare(*_proxy, _proxy->remote().system_keyspace(), tr_state, _schema, *_cmd, _key.key(), ballot, only_digest, da, _timeout);
                 } else {
@@ -2136,13 +2151,14 @@ future<bool> paxos_response_handler::accept_proposal(lw_shared_ptr<paxos::propos
     (void)do_with(std::move(request_tracker), shared_from_this(), [this, timeout_if_partially_accepted, proposal = std::move(proposal)]
                            (auto& request_tracker, shared_ptr<paxos_response_handler>& prh) -> future<> {
         paxos::paxos_state::logger.trace("CAS[{}] accept_proposal: sending commit {} to {}", _id, *proposal, _live_endpoints);
-        auto handle_one_msg = [this, &request_tracker, timeout_if_partially_accepted, proposal = std::move(proposal)] (gms::inet_address peer) mutable -> future<> {
+        auto handle_one_msg = [this, &request_tracker, timeout_if_partially_accepted, proposal = std::move(proposal)] (const locator::node* node) mutable -> future<> {
             bool is_timeout = false;
             std::optional<bool> accepted;
             const auto& topo = _effective_replication_map_ptr->get_topology();
+            const auto& peer = node->endpoint();
 
             try {
-                if (topo.is_me(peer)) {
+                if (topo.is_me(node)) {
                     tracing::trace(tr_state, "accept_proposal: accept {} locally", *proposal);
                     accepted = co_await paxos::paxos_state::accept(*_proxy, _proxy->remote().system_keyspace(), tr_state, _schema, proposal->update.decorated_key(*_schema).token(), *proposal, _timeout);
                 } else {
@@ -2279,7 +2295,7 @@ future<> paxos_response_handler::learn_decision(lw_shared_ptr<paxos::proposal> d
                 return v.schema()->id() == base_tbl_id;
             });
             if (!mutations.empty()) {
-                f_cdc = _proxy->mutate_internal(std::move(mutations), _cl_for_learn, false, tr_state, _permit, _timeout, std::move(tracker))
+                f_cdc = _proxy->mutate_internal(_effective_replication_map_ptr, std::move(mutations), _cl_for_learn, false, tr_state, _permit, _timeout, std::move(tracker))
                         .then(utils::result_into_future<result<>>);
             }
         }
@@ -2287,7 +2303,7 @@ future<> paxos_response_handler::learn_decision(lw_shared_ptr<paxos::proposal> d
 
     // Path for the "base" mutations
     std::array<std::tuple<lw_shared_ptr<paxos::proposal>, schema_ptr, shared_ptr<paxos_response_handler>, dht::token>, 1> m{std::make_tuple(std::move(decision), _schema, shared_from_this(), _key.token())};
-    future<> f_lwt = _proxy->mutate_internal(std::move(m), _cl_for_learn, false, tr_state, _permit, _timeout)
+    future<> f_lwt = _proxy->mutate_internal(_effective_replication_map_ptr, std::move(m), _cl_for_learn, false, tr_state, _permit, _timeout)
             .then(utils::result_into_future<result<>>);
 
     co_await when_all_succeed(std::move(f_cdc), std::move(f_lwt)).discard_result();
@@ -2301,12 +2317,14 @@ void paxos_response_handler::prune(utils::UUID ballot) {
      _proxy->get_stats().cas_now_pruning++;
     _proxy->get_stats().cas_prune++;
     auto erm = _effective_replication_map_ptr;
-    auto my_address = _proxy->my_address();
+    const auto& topo = erm->get_topology();
+
     // running in the background, but the amount of the bg job is limited by pruning_limit
     // it is waited by holding shared pointer to storage_proxy which guaranties
     // that storage_proxy::stop() will wait for this to complete
-    (void)parallel_for_each(_live_endpoints, [this, ballot, erm, my_address] (gms::inet_address peer) mutable {
-        if (peer == my_address) {
+    (void)parallel_for_each(_live_endpoints, [this, ballot, erm, &topo] (const locator::node* node) mutable {
+        const auto& peer = node->endpoint();
+        if (topo.is_me(node)) {
             tracing::trace(tr_state, "prune: prune {} locally", ballot);
             return paxos::paxos_state::prune(_proxy->remote().system_keyspace(), _schema, _key.key(), ballot, _timeout, tr_state);
         } else {
@@ -2330,12 +2348,15 @@ void paxos_response_handler::prune(utils::UUID ballot) {
     });
 }
 
-bool paxos_response_handler::learned(gms::inet_address ep) {
-    if (_learned < _required_participants) {
+bool paxos_response_handler::learned(const locator::node* ep) {
+    if (_learned.size() < _required_participants) {
         if (boost::range::find(_live_endpoints, ep) != _live_endpoints.end()) {
-            _learned++;
-            return _learned == _required_participants;
+            _learned.insert(ep);
+            return _learned.size() == _required_participants;
         }
+    } else {
+        on_internal_error_noexcept(slogger, format("paxos_response_handler learned too many replies, learned={} required_participants={}", _learned.size(), _required_participants));
+        return true;
     }
     return false;
 }
@@ -2410,30 +2431,70 @@ void storage_proxy::remove_response_handler_entry(response_handlers_map::iterato
     _response_handlers.erase(std::move(entry));
 }
 
-void storage_proxy::got_response(storage_proxy::response_id_type id, gms::inet_address from, std::optional<db::view::update_backlog> backlog) {
+void storage_proxy::got_response(storage_proxy::response_id_type id, const locator::node* node, std::optional<db::view::update_backlog> backlog) {
+    const auto& addr = node->endpoint();
     auto it = _response_handlers.find(id);
     if (it != _response_handlers.end()) {
-        tracing::trace(it->second->get_trace_state(), "Got a response from /{}", from);
-        if (it->second->response(from)) {
+        tracing::trace(it->second->get_trace_state(), "Got a response from {}/{}", node->host_id(), addr);
+        if (it->second->response(node)) {
             remove_response_handler_entry(std::move(it)); // last one, remove entry. Will cancel expiration timer too.
         } else {
             it->second->check_for_early_completion();
         }
     }
-    maybe_update_view_backlog_of(std::move(from), std::move(backlog));
+    maybe_update_view_backlog_of(addr, std::move(backlog));
 }
 
-void storage_proxy::got_failure_response(storage_proxy::response_id_type id, gms::inet_address from, size_t count, std::optional<db::view::update_backlog> backlog, error err, std::optional<sstring> msg) {
+void storage_proxy::got_response(storage_proxy::response_id_type id, locator::host_id_or_endpoint from, std::optional<db::view::update_backlog> backlog) {
+    gms::inet_address addr;
     auto it = _response_handlers.find(id);
     if (it != _response_handlers.end()) {
-        tracing::trace(it->second->get_trace_state(), "Got {} failures from /{}", count, from);
-        if (it->second->failure_response(from, count, err, std::move(msg))) {
+        const auto* node = it->second->resolve(from);
+        addr = node->endpoint();
+        tracing::trace(it->second->get_trace_state(), "Got a response from {}/{}", node->host_id(), addr);
+        if (it->second->response(node)) {
+            remove_response_handler_entry(std::move(it)); // last one, remove entry. Will cancel expiration timer too.
+        } else {
+            it->second->check_for_early_completion();
+        }
+    } else {
+        const auto tmptr = get_token_metadata_ptr();
+        addr = from.resolve_endpoint(*tmptr);
+    }
+    maybe_update_view_backlog_of(addr, std::move(backlog));
+}
+
+void storage_proxy::got_failure_response(storage_proxy::response_id_type id, const locator::node* node, size_t count, std::optional<db::view::update_backlog> backlog, error err, std::optional<sstring> msg) {
+    const auto& addr = node->endpoint();
+    auto it = _response_handlers.find(id);
+    if (it != _response_handlers.end()) {
+        tracing::trace(it->second->get_trace_state(), "Got {} failures from {}/{}", count, node->host_id(), addr);
+        if (it->second->failure_response(node, count, err, std::move(msg))) {
             remove_response_handler_entry(std::move(it));
         } else {
             it->second->check_for_early_completion();
         }
     }
-    maybe_update_view_backlog_of(std::move(from), std::move(backlog));
+    maybe_update_view_backlog_of(addr, std::move(backlog));
+}
+
+void storage_proxy::got_failure_response(storage_proxy::response_id_type id, locator::host_id_or_endpoint from, size_t count, std::optional<db::view::update_backlog> backlog, error err, std::optional<sstring> msg) {
+    gms::inet_address addr;
+    auto it = _response_handlers.find(id);
+    if (it != _response_handlers.end()) {
+        const auto* node = it->second->resolve(from);
+        addr = node->endpoint();
+        tracing::trace(it->second->get_trace_state(), "Got {} failures from {}/{}", count, node->host_id(), addr);
+        if (it->second->failure_response(node, count, err, std::move(msg))) {
+            remove_response_handler_entry(std::move(it));
+        } else {
+            it->second->check_for_early_completion();
+        }
+    } else {
+        const auto tmptr = get_token_metadata_ptr();
+        addr = from.resolve_endpoint(*tmptr);
+    }
+    maybe_update_view_backlog_of(addr, std::move(backlog));
 }
 
 void storage_proxy::maybe_update_view_backlog_of(gms::inet_address replica, std::optional<db::view::update_backlog> backlog) {
@@ -2478,7 +2539,7 @@ future<result<>> storage_proxy::response_wait(storage_proxy::response_id_type id
 
 result<storage_proxy::response_id_type> storage_proxy::create_write_response_handler(locator::effective_replication_map_ptr ermp,
                              db::consistency_level cl, db::write_type type, std::unique_ptr<mutation_holder> m,
-                             inet_address_vector_replica_set targets, const inet_address_vector_topology_change& pending_endpoints, inet_address_vector_topology_change dead_endpoints, tracing::trace_state_ptr tr_state,
+                             node_vector_replica_set targets, const node_vector_topology_change& pending_endpoints, node_vector_topology_change dead_endpoints, tracing::trace_state_ptr tr_state,
                              storage_proxy::write_stats& stats, service_permit permit, db::per_partition_rate_limit::info rate_limit_info, is_cancellable cancellable)
 {
     shared_ptr<abstract_write_response_handler> h;
@@ -2804,15 +2865,15 @@ void storage_proxy_stats::stats::register_stats() {
     _metrics = std::exchange(new_metrics, {});
 }
 
-inline uint64_t& storage_proxy_stats::split_stats::get_ep_stat(const locator::topology& topo, gms::inet_address ep) noexcept {
+inline uint64_t& storage_proxy_stats::split_stats::get_ep_stat(const locator::topology& topo, const locator::node* ep) noexcept {
     if (topo.is_me(ep)) {
         return _local.val;
     }
 
     try {
-        sstring dc = topo.get_datacenter(ep);
+        const auto& dc = topo.get_datacenter(ep);
         if (_auto_register_metrics) {
-            register_metrics_for(dc, ep);
+            register_metrics_for(dc);
         }
         return _dc_stats[dc].val;
     } catch (...) {
@@ -2832,7 +2893,7 @@ void storage_proxy_stats::split_stats::register_metrics_local() {
     _metrics = std::exchange(new_metrics, {});
 }
 
-void storage_proxy_stats::split_stats::register_metrics_for(sstring dc, gms::inet_address ep) {
+void storage_proxy_stats::split_stats::register_metrics_for(const sstring& dc) {
     namespace sm = seastar::metrics;
 
     // if this is the first time we see an endpoint from this DC - add a
@@ -2871,7 +2932,7 @@ struct hint_wrapper {
 };
 
 struct read_repair_mutation {
-    std::unordered_map<gms::inet_address, std::optional<mutation>> value;
+    std::unordered_map<const locator::node*, std::optional<mutation>> value;
     locator::effective_replication_map_ptr ermp;
 };
 
@@ -2886,7 +2947,9 @@ template <> struct fmt::formatter<service::hint_wrapper> : fmt::formatter<string
 template <>
 struct fmt::formatter<service::read_repair_mutation> : fmt::formatter<string_view> {
     auto format(const service::read_repair_mutation& m, fmt::format_context& ctx) const {
-        return fmt::format_to(ctx.out(), "{}", m.value);
+        return fmt::format_to(ctx.out(), "{{{}}}", fmt::join(m.value | boost::adaptors::transformed([] (const auto& i) {
+            return fmt::format("{}/{}: {}", i.first->host_id(), i.first->endpoint(), i.second);
+        }), ", "));
     }
 };
 
@@ -3144,12 +3207,11 @@ storage_proxy::mutate_counter_on_leader_and_replicate(const schema_ptr& s, froze
 }
 
 result<storage_proxy::response_id_type>
-storage_proxy::create_write_response_handler_helper(schema_ptr s, const dht::token& token, std::unique_ptr<mutation_holder> mh,
+storage_proxy::create_write_response_handler_helper(locator::effective_replication_map_ptr erm, schema_ptr s, const dht::token& token, std::unique_ptr<mutation_holder> mh,
         db::consistency_level cl, db::write_type type, tracing::trace_state_ptr tr_state, service_permit permit, db::allow_per_partition_rate_limit allow_limit, is_cancellable cancellable) {
-    replica::table& table = _db.local().find_column_family(s->id());
-    auto erm = table.get_effective_replication_map();
-    host_id_vector_replica_set natural_hosts = erm->get_natural_hosts_without_node_being_replaced(token);
-    host_id_vector_topology_change pending_hosts = erm->get_pending_hosts(token);
+    const auto& topo = erm->get_topology();
+    auto natural_hosts = erm->get_natural_hosts_without_node_being_replaced(token);
+    auto pending_hosts = erm->get_pending_hosts(token);
 
     slogger.trace("creating write handler for token: {} natural: {} pending: {}", token, natural_hosts, pending_hosts);
     tracing::trace(tr_state, "Creating write handler for token: {} natural: {} pending: {}", token, natural_hosts ,pending_hosts);
@@ -3185,29 +3247,30 @@ storage_proxy::create_write_response_handler_helper(schema_ptr s, const dht::tok
     }
 
     // filter live endpoints from dead ones
-    inet_address_vector_replica_set live_endpoints;
-    inet_address_vector_topology_change dead_endpoints;
-    inet_address_vector_topology_change pending_endpoints;
+    node_vector_replica_set live_endpoints;
+    node_vector_topology_change dead_endpoints;
+    node_vector_topology_change pending_endpoints;
     live_endpoints.reserve(all.size());
     dead_endpoints.reserve(all.size());
     pending_endpoints.reserve(pending_hosts.size());
 
-    auto live_or_dead = [&] (const gms::inet_address& ep) {
+    auto live_or_dead = [&] (const locator::node* node) {
+        const auto& ep = node->endpoint();
         if (is_alive(ep)) {
-            live_endpoints.emplace_back(ep);
+            live_endpoints.emplace_back(node);
         } else {
-            dead_endpoints.emplace_back(ep);
+            dead_endpoints.emplace_back(node);
         }
     };
 
     for (auto& hid : natural_hosts) {
-        auto ep = erm->resolve_endpoint(hid);
-        live_or_dead(ep);
+        const auto* node = &topo.get_node(hid);
+        live_or_dead(node);
     }
     for (auto& hid : pending_hosts) {
-        auto ep = erm->resolve_endpoint(hid);
-        live_or_dead(ep);
-        pending_endpoints.emplace_back(ep);
+        const auto* node = &topo.get_node(hid);
+        live_or_dead(node);
+        pending_endpoints.emplace_back(node);
     }
 
     db::per_partition_rate_limit::info rate_limit_info;
@@ -3238,30 +3301,30 @@ storage_proxy::create_write_response_handler_helper(schema_ptr s, const dht::tok
  * to the hint method below (dead nodes).
  */
 result<storage_proxy::response_id_type>
-storage_proxy::create_write_response_handler(const mutation& m, db::consistency_level cl, db::write_type type, tracing::trace_state_ptr tr_state, service_permit permit, db::allow_per_partition_rate_limit allow_limit) {
-    return create_write_response_handler_helper(m.schema(), m.token(), std::make_unique<shared_mutation>(m), cl, type, tr_state,
+storage_proxy::create_write_response_handler(locator::effective_replication_map_ptr ermp, const mutation& m, db::consistency_level cl, db::write_type type, tracing::trace_state_ptr tr_state, service_permit permit, db::allow_per_partition_rate_limit allow_limit) {
+    return create_write_response_handler_helper(ermp, m.schema(), m.token(), std::make_unique<shared_mutation>(ermp, m), cl, type, tr_state,
             std::move(permit), allow_limit, is_cancellable::no);
 }
 
 result<storage_proxy::response_id_type>
-storage_proxy::create_write_response_handler(const hint_wrapper& h, db::consistency_level cl, db::write_type type, tracing::trace_state_ptr tr_state, service_permit permit, db::allow_per_partition_rate_limit allow_limit) {
-    return create_write_response_handler_helper(h.mut.schema(), h.mut.token(), std::make_unique<hint_mutation>(h.mut), cl, type, tr_state,
+storage_proxy::create_write_response_handler(locator::effective_replication_map_ptr ermp, const hint_wrapper& h, db::consistency_level cl, db::write_type type, tracing::trace_state_ptr tr_state, service_permit permit, db::allow_per_partition_rate_limit allow_limit) {
+    return create_write_response_handler_helper(ermp, h.mut.schema(), h.mut.token(), std::make_unique<hint_mutation>(ermp, h.mut), cl, type, tr_state,
             std::move(permit), allow_limit, is_cancellable::yes);
 }
 
 result<storage_proxy::response_id_type>
 storage_proxy::create_write_response_handler(const read_repair_mutation& mut, db::consistency_level cl, db::write_type type, tracing::trace_state_ptr tr_state, service_permit permit, db::allow_per_partition_rate_limit allow_limit) {
-    inet_address_vector_replica_set endpoints;
+    node_vector_replica_set endpoints;
     const auto& m = mut.value;
     endpoints.reserve(m.size());
     boost::copy(m | boost::adaptors::map_keys, std::inserter(endpoints, endpoints.begin()));
-    auto mh = std::make_unique<per_destination_mutation>(m);
+    auto mh = std::make_unique<per_destination_mutation>(mut.ermp, m);
 
     slogger.trace("creating write handler for read repair token: {} endpoint: {}", mh->token(), endpoints);
     tracing::trace(tr_state, "Creating write handler for read repair token: {} endpoint: {}", mh->token(), endpoints);
 
     // No rate limiting for read repair
-    return create_write_response_handler(std::move(mut.ermp), cl, type, std::move(mh), std::move(endpoints), inet_address_vector_topology_change(), inet_address_vector_topology_change(), std::move(tr_state), get_stats(), std::move(permit), std::monostate(), is_cancellable::no);
+    return create_write_response_handler(std::move(mut.ermp), cl, type, std::move(mh), std::move(endpoints), node_vector_topology_change(), node_vector_topology_change(), std::move(tr_state), get_stats(), std::move(permit), std::monostate(), is_cancellable::no);
 }
 
 result<storage_proxy::response_id_type>
@@ -3269,12 +3332,14 @@ storage_proxy::create_write_response_handler(const std::tuple<lw_shared_ptr<paxo
         db::consistency_level cl, db::write_type type, tracing::trace_state_ptr tr_state, service_permit permit, db::allow_per_partition_rate_limit allow_limit) {
     auto& [commit, s, h, t] = meta;
 
-    return create_write_response_handler_helper(s, t, std::make_unique<cas_mutation>(std::move(commit), s, std::move(h)), cl,
+    auto ermp = h->get_effective_replication_map();
+
+    return create_write_response_handler_helper(ermp, s, t, std::make_unique<cas_mutation>(ermp, std::move(commit), s, std::move(h)), cl,
             db::write_type::CAS, tr_state, std::move(permit), allow_limit, is_cancellable::no);
 }
 
 result<storage_proxy::response_id_type>
-storage_proxy::create_write_response_handler(const std::tuple<lw_shared_ptr<paxos::proposal>, schema_ptr, shared_ptr<paxos_response_handler>, dht::token, inet_address_vector_replica_set>& meta,
+storage_proxy::create_write_response_handler(const std::tuple<lw_shared_ptr<paxos::proposal>, schema_ptr, shared_ptr<paxos_response_handler>, dht::token, node_vector_replica_set>& meta,
         db::consistency_level cl, db::write_type type, tracing::trace_state_ptr tr_state, service_permit permit, db::allow_per_partition_rate_limit allow_limit) {
     auto& [commit, s, paxos_handler, token, endpoints] = meta;
 
@@ -3284,8 +3349,8 @@ storage_proxy::create_write_response_handler(const std::tuple<lw_shared_ptr<paxo
     auto ermp = paxos_handler->get_effective_replication_map();
 
     // No rate limiting for paxos (yet)
-    return create_write_response_handler(std::move(ermp), cl, db::write_type::CAS, std::make_unique<cas_mutation>(std::move(commit), s, nullptr), std::move(endpoints),
-                    inet_address_vector_topology_change(), inet_address_vector_topology_change(), std::move(tr_state), get_stats(), std::move(permit), std::monostate(), is_cancellable::no);
+    return create_write_response_handler(std::move(ermp), cl, db::write_type::CAS, std::make_unique<cas_mutation>(ermp, std::move(commit), s, nullptr), std::move(endpoints),
+                    node_vector_topology_change(), node_vector_topology_change(), std::move(tr_state), get_stats(), std::move(permit), std::monostate(), is_cancellable::no);
 }
 
 void storage_proxy::register_cdc_operation_result_tracker(const storage_proxy::unique_response_handler_vector& ids, lw_shared_ptr<cdc::operation_result_tracker> tracker) {
@@ -3313,14 +3378,14 @@ storage_proxy::hint_to_dead_endpoints(response_id_type id, db::consistency_level
     }
 }
 
-template<typename Range, typename CreateWriteHandler>
-future<result<storage_proxy::unique_response_handler_vector>> storage_proxy::mutate_prepare(Range&& mutations, db::consistency_level cl, db::write_type type, service_permit permit, CreateWriteHandler create_handler) {
+template<typename Range>
+future<result<storage_proxy::unique_response_handler_vector>> storage_proxy::mutate_prepare(locator::effective_replication_map_ptr ermp, Range&& mutations, db::consistency_level cl, db::write_type type, service_permit permit, create_handler_fn create_handler) {
     // apply is used to convert exceptions to exceptional future
-    return futurize_invoke([this] (Range&& mutations, db::consistency_level cl, db::write_type type, service_permit permit, CreateWriteHandler create_handler) {
+    return futurize_invoke([this, ermp] (Range&& mutations, db::consistency_level cl, db::write_type type, service_permit permit, create_handler_fn create_handler) {
         unique_response_handler_vector ids;
         ids.reserve(std::distance(std::begin(mutations), std::end(mutations)));
         for (auto&& m : mutations) {
-            auto r_handler = create_handler(m, cl, type, permit);
+            auto r_handler = create_handler(ermp, m, cl, type, permit);
             if (!r_handler) {
                 return make_ready_future<result<unique_response_handler_vector>>(std::move(r_handler).as_failure());
             }
@@ -3331,9 +3396,9 @@ future<result<storage_proxy::unique_response_handler_vector>> storage_proxy::mut
 }
 
 template<typename Range>
-future<result<storage_proxy::unique_response_handler_vector>> storage_proxy::mutate_prepare(Range&& mutations, db::consistency_level cl, db::write_type type, tracing::trace_state_ptr tr_state, service_permit permit, db::allow_per_partition_rate_limit allow_limit) {
-    return mutate_prepare<>(std::forward<Range>(mutations), cl, type, std::move(permit), [this, tr_state = std::move(tr_state), allow_limit] (const typename std::decay_t<Range>::value_type& m, db::consistency_level cl, db::write_type type, service_permit permit) mutable {
-        return create_write_response_handler(m, cl, type, tr_state, std::move(permit), allow_limit);
+future<result<storage_proxy::unique_response_handler_vector>> storage_proxy::mutate_prepare(locator::effective_replication_map_ptr ermp, Range&& mutations, db::consistency_level cl, db::write_type type, tracing::trace_state_ptr tr_state, service_permit permit, db::allow_per_partition_rate_limit allow_limit) {
+    return mutate_prepare<>(std::move(ermp), std::forward<Range>(mutations), cl, type, std::move(permit), [this, tr_state = std::move(tr_state), allow_limit] (locator::effective_replication_map_ptr ermp, const typename std::decay_t<Range>::value_type& m, db::consistency_level cl, db::write_type type, service_permit permit) mutable {
+        return create_write_response_handler(std::move(ermp), m, cl, type, tr_state, std::move(permit), allow_limit);
     });
 }
 
@@ -3418,26 +3483,27 @@ future<result<>> storage_proxy::mutate_end(future<result<>> mutate_result, utils
     }));
 }
 
-gms::inet_address storage_proxy::find_leader_for_counter_update(const mutation& m, const locator::effective_replication_map& erm, db::consistency_level cl) {
+const locator::node* storage_proxy::find_leader_for_counter_update(const mutation& m, const locator::effective_replication_map& erm, db::consistency_level cl) {
+    const auto& topo = erm.get_topology();
+    const auto* me = topo.this_node();
     auto live_endpoints = get_live_endpoints(erm, m.token());
 
     if (live_endpoints.empty()) {
         throw exceptions::unavailable_exception(cl, block_for(erm, cl), 0);
     }
 
-    const auto my_address = this->my_address();
     // Early return if coordinator can become the leader (so one extra internode message can be
     // avoided). With token-aware drivers this is the expected case, so we are doing it ASAP.
-    if (boost::algorithm::any_of_equal(live_endpoints, my_address)) {
-        return my_address;
+    if (boost::find(live_endpoints, me) != live_endpoints.end()) {
+        return topo.this_node();
     }
 
-    const auto local_endpoints = boost::copy_range<inet_address_vector_replica_set>(live_endpoints
+    const auto local_endpoints = boost::copy_range<node_vector_replica_set>(live_endpoints
         | boost::adaptors::filtered(erm.get_topology().get_local_dc_filter()));
 
     if (local_endpoints.empty()) {
         // FIXME: O(n log n) to get maximum
-        erm.get_topology().sort_by_proximity(my_address, live_endpoints);
+        topo.sort_by_proximity(me, live_endpoints);
         return live_endpoints[0];
     } else {
         static thread_local std::default_random_engine re{std::random_device{}()};
@@ -3535,8 +3601,8 @@ future<> storage_proxy::mutate_counters(Range&& mutations, db::consistency_level
 
 storage_proxy::paxos_participants
 storage_proxy::get_paxos_participants(const sstring& ks_name, const locator::effective_replication_map& erm, const dht::token &token, db::consistency_level cl_for_paxos) {
-    inet_address_vector_replica_set natural_endpoints = erm.get_natural_endpoints_without_node_being_replaced(token);
-    inet_address_vector_topology_change pending_endpoints = erm.get_pending_endpoints(token);
+    node_vector_replica_set natural_endpoints = erm.get_natural_nodes_without_node_being_replaced(token);
+    node_vector_topology_change pending_endpoints = erm.get_pending_nodes(token);
 
     if (cl_for_paxos == db::consistency_level::LOCAL_SERIAL) {
         auto local_dc_filter = erm.get_topology().get_local_dc_filter();
@@ -3557,7 +3623,7 @@ storage_proxy::get_paxos_participants(const sstring& ks_name, const locator::eff
     const size_t quorum_size = natural_endpoints.size() / 2 + 1;
     const size_t required_participants = quorum_size + pending_endpoints.size();
 
-    inet_address_vector_replica_set live_endpoints;
+    node_vector_replica_set live_endpoints;
     live_endpoints.reserve(participants);
 
     boost::copy(boost::range::join(natural_endpoints, pending_endpoints) |
@@ -3640,7 +3706,7 @@ future<> storage_proxy::replicate_counter_from_leader(mutation m, db::consistenc
  */
 template<typename Range>
 future<result<>>
-storage_proxy::mutate_internal(Range mutations, db::consistency_level cl, bool counters, tracing::trace_state_ptr tr_state, service_permit permit,
+storage_proxy::mutate_internal(locator::effective_replication_map_ptr ermp, Range mutations, db::consistency_level cl, bool counters, tracing::trace_state_ptr tr_state, service_permit permit,
                                std::optional<clock_type::time_point> timeout_opt, lw_shared_ptr<cdc::operation_result_tracker> cdc_tracker,
                                db::allow_per_partition_rate_limit allow_limit) {
     if (boost::empty(mutations)) {
@@ -3659,7 +3725,7 @@ storage_proxy::mutate_internal(Range mutations, db::consistency_level cl, bool c
     utils::latency_counter lc;
     lc.start();
 
-    return mutate_prepare(mutations, cl, type, tr_state, std::move(permit), allow_limit).then(utils::result_wrap([this, cl, timeout_opt, tracker = std::move(cdc_tracker),
+    return mutate_prepare(std::move(ermp), mutations, cl, type, tr_state, std::move(permit), allow_limit).then(utils::result_wrap([this, cl, timeout_opt, tracker = std::move(cdc_tracker),
             tr_state] (storage_proxy::unique_response_handler_vector ids) mutable {
         register_cdc_operation_result_tracker(ids, tracker);
         return mutate_begin(std::move(ids), cl, tr_state, timeout_opt);
@@ -3695,19 +3761,19 @@ storage_proxy::mutate_atomically(std::vector<mutation> mutations, db::consistenc
             .then(utils::result_into_future<result<>>);
 }
 
-static inet_address_vector_replica_set endpoint_filter(
-        const noncopyable_function<bool(const gms::inet_address&)>& is_alive, gms::inet_address my_address,
-        const sstring& local_rack, const std::unordered_map<sstring, std::unordered_set<gms::inet_address>>& endpoints) {
+static node_vector_replica_set endpoint_filter(
+        const noncopyable_function<bool(const gms::inet_address&)>& is_alive, const locator::topology& topo,
+        const sstring& local_rack, const std::unordered_map<sstring, std::unordered_set<const locator::node*>>& endpoints) {
     // special case for single-node data centers
     if (endpoints.size() == 1 && endpoints.begin()->second.size() == 1) {
-        return boost::copy_range<inet_address_vector_replica_set>(endpoints.begin()->second);
+        return boost::copy_range<node_vector_replica_set>(endpoints.begin()->second);
     }
 
     // strip out dead endpoints and localhost
-    std::unordered_multimap<sstring, gms::inet_address> validated;
+    std::unordered_multimap<sstring, const locator::node*> validated;
 
-    auto is_valid = [&is_alive, my_address] (gms::inet_address input) {
-        return input != my_address && is_alive(input);
+    auto is_valid = [&is_alive] (const locator::node* input) {
+        return !input->is_this_node() && is_alive(input->endpoint());
     };
 
     for (auto& e : endpoints) {
@@ -3718,7 +3784,7 @@ static inet_address_vector_replica_set endpoint_filter(
         }
     }
 
-    typedef inet_address_vector_replica_set return_type;
+    typedef node_vector_replica_set return_type;
 
     if (validated.size() <= 2) {
         return boost::copy_range<return_type>(validated | boost::adaptors::map_values);
@@ -3734,7 +3800,7 @@ static inet_address_vector_replica_set endpoint_filter(
         auto res = validated | boost::adaptors::map_values;
         if (validated.size() > 2) {
             return boost::copy_range<return_type>(
-                    boost::copy_range<std::vector<gms::inet_address>>(res)
+                    boost::copy_range<std::vector<const locator::node*>>(res)
                             | boost::adaptors::sliced(0, 2));
         }
         return boost::copy_range<return_type>(res);
@@ -3751,7 +3817,7 @@ static inet_address_vector_replica_set endpoint_filter(
         racks.resize(2);
     }
 
-    inet_address_vector_replica_set result;
+    return_type result;
 
     // grab a random member of up to two racks
     for (auto& rack : racks) {
@@ -3781,7 +3847,7 @@ storage_proxy::mutate_atomically_result(std::vector<mutation> mutations, db::con
         service_permit _permit;
 
         const utils::UUID _batch_uuid;
-        const inet_address_vector_replica_set _batchlog_endpoints;
+        const node_vector_replica_set _batchlog_endpoints;
 
     public:
         context(storage_proxy & p, std::vector<mutation>&& mutations, lw_shared_ptr<cdc::operation_result_tracker>&& cdc_tracker, db::consistency_level cl, clock_type::time_point timeout, tracing::trace_state_ptr tr_state, service_permit permit)
@@ -3797,30 +3863,30 @@ storage_proxy::mutate_atomically_result(std::vector<mutation> mutations, db::con
                 , _permit(std::move(permit))
                 , _batch_uuid(utils::UUID_gen::get_time_UUID())
                 , _batchlog_endpoints(
-                        [this]() -> inet_address_vector_replica_set {
-                            auto local_addr = _p.my_address();
+                        [this]() -> node_vector_replica_set {
                             auto& topology = _ermp->get_topology();
                             auto local_dc = topology.get_datacenter();
-                            auto& local_endpoints = topology.get_datacenter_racks().at(local_dc);
+                            auto& local_endpoints = topology.get_datacenter_rack_nodes().at(local_dc);
                             auto local_rack = topology.get_rack();
-                            auto chosen_endpoints = endpoint_filter(std::bind_front(&storage_proxy::is_alive, &_p), local_addr,
+                            auto chosen_endpoints = endpoint_filter(std::bind_front(&storage_proxy::is_alive, &_p), topology,
                                                                     local_rack, local_endpoints);
 
                             if (chosen_endpoints.empty()) {
                                 if (_cl == db::consistency_level::ANY) {
-                                    return {local_addr};
+                                    return {topology.this_node()};
                                 }
                                 throw exceptions::unavailable_exception(db::consistency_level::ONE, 1, 0);
                             }
                             return chosen_endpoints;
                         }()) {
                 tracing::trace(_trace_state, "Created a batch context");
-                tracing::set_batchlog_endpoints(_trace_state, _batchlog_endpoints);
+                auto addresses = locator::effective_replication_map::resolve_endpoints<inet_address_vector_replica_set>(_batchlog_endpoints);
+                tracing::set_batchlog_endpoints(_trace_state, addresses);
         }
 
         future<result<>> send_batchlog_mutation(mutation m, db::consistency_level cl = db::consistency_level::ONE) {
-            return _p.mutate_prepare<>(std::array<mutation, 1>{std::move(m)}, cl, db::write_type::BATCH_LOG, _permit, [this] (const mutation& m, db::consistency_level cl, db::write_type type, service_permit permit) {
-                return _p.create_write_response_handler(_ermp, cl, type, std::make_unique<shared_mutation>(m), _batchlog_endpoints, {}, {}, _trace_state, _stats, std::move(permit), std::monostate(), is_cancellable::no);
+            return _p.mutate_prepare<>(_ermp, std::array<mutation, 1>{std::move(m)}, cl, db::write_type::BATCH_LOG, _permit, [this] (locator::effective_replication_map_ptr ermp, const mutation& m, db::consistency_level cl, db::write_type type, service_permit permit) {
+                return _p.create_write_response_handler(std::move(ermp), cl, type, std::make_unique<shared_mutation>(m), _batchlog_endpoints, {}, {}, _trace_state, _stats, std::move(permit), std::monostate(), is_cancellable::no);
             }).then(utils::result_wrap([this, cl] (unique_response_handler_vector ids) {
                 _p.register_cdc_operation_result_tracker(ids, _cdc_tracker);
                 return _p.mutate_begin(std::move(ids), cl, _trace_state, _timeout);
@@ -3852,7 +3918,7 @@ storage_proxy::mutate_atomically_result(std::vector<mutation> mutations, db::con
         };
 
         future<result<>> run() {
-            return _p.mutate_prepare(_mutations, _cl, db::write_type::BATCH, _trace_state, _permit, db::allow_per_partition_rate_limit::no).then(utils::result_wrap([this] (unique_response_handler_vector ids) {
+            return _p.mutate_prepare(_ermp, _mutations, _cl, db::write_type::BATCH, _trace_state, _permit, db::allow_per_partition_rate_limit::no).then(utils::result_wrap([this] (unique_response_handler_vector ids) {
                 return sync_write_to_batchlog().then(utils::result_wrap([this, ids = std::move(ids)] () mutable {
                     tracing::trace(_trace_state, "Sending batch mutations");
                     _p.register_cdc_operation_result_tracker(ids, _cdc_tracker);
@@ -3915,7 +3981,8 @@ mutation storage_proxy::do_get_batchlog_mutation_for(schema_ptr schema, const st
     return m;
 }
 
-template<typename Range>
+template<std::ranges::range Range>
+requires std::same_as<std::ranges::range_value_t<Range>, locator::host_id>
 bool storage_proxy::cannot_hint(const Range& targets, db::write_type type) const {
     // if hints are disabled we "can always hint" since there's going to be no hint generated in this case
     return hints_enabled(type) &&
@@ -3927,8 +3994,8 @@ bool storage_proxy::cannot_hint(const Range& targets, db::write_type type) const
 future<> storage_proxy::send_to_endpoint(
         std::unique_ptr<mutation_holder> m,
         locator::effective_replication_map_ptr ermp,
-        gms::inet_address target,
-        inet_address_vector_topology_change pending_endpoints,
+        const locator::node* target,
+        node_vector_topology_change pending_endpoints,
         db::write_type type,
         tracing::trace_state_ptr tr_state,
         write_stats& stats,
@@ -3944,26 +4011,36 @@ future<> storage_proxy::send_to_endpoint(
         // and to apply backpressure.
         timeout = clock_type::now() + 5min;
     }
-    return mutate_prepare(std::array{std::move(m)}, cl, type, /* does view building should hold a real permit */ empty_service_permit(),
-            [this, tr_state, erm = std::move(ermp), target = std::array{target}, pending_endpoints = std::move(pending_endpoints), &stats, cancellable] (
-                std::unique_ptr<mutation_holder>& m,
+    return mutate_prepare(std::move(ermp), std::array{std::move(m)}, cl, type, /* does view building should hold a real permit */ empty_service_permit(),
+            [this, tr_state, target, pending_endpoints = std::move(pending_endpoints), &stats, cancellable] (
+                locator::effective_replication_map_ptr erm,
+                const mutation& m,
                 db::consistency_level cl,
                 db::write_type type, service_permit permit) mutable {
-        inet_address_vector_replica_set targets;
+        auto mh = std::make_unique<mutation_holder>(erm);
+        node_vector_replica_set targets;
         targets.reserve(pending_endpoints.size() + 1);
-        inet_address_vector_topology_change dead_endpoints;
-        boost::algorithm::partition_copy(
-                boost::range::join(pending_endpoints, target),
-                std::inserter(targets, targets.begin()),
-                std::back_inserter(dead_endpoints),
-                std::bind_front(&storage_proxy::is_alive, this));
+        node_vector_topology_change dead_endpoints;
+
+        auto dead_or_alive = [&] (const locator::node* node) {
+            const auto& ep = node->endpoint();
+            if (is_alive(ep)) {
+                targets.emplace_back(node);
+            } else {
+                dead_endpoints.emplace_back(node);
+            }
+        };
+        dead_or_alive(target);
+        for (auto node : pending_endpoints) {
+            dead_or_alive(node);
+        }
         slogger.trace("Creating write handler with live: {}; dead: {}", targets, dead_endpoints);
         db::assure_sufficient_live_nodes(cl, *erm, targets, pending_endpoints);
         return create_write_response_handler(
             std::move(erm),
             cl,
             type,
-            std::move(m),
+            std::move(mh),
             std::move(targets),
             pending_endpoints,
             std::move(dead_endpoints),
@@ -3982,8 +4059,8 @@ future<> storage_proxy::send_to_endpoint(
 future<> storage_proxy::send_to_endpoint(
         frozen_mutation_and_schema fm_a_s,
         locator::effective_replication_map_ptr ermp,
-        gms::inet_address target,
-        inet_address_vector_topology_change pending_endpoints,
+        const locator::node* target,
+        node_vector_topology_change pending_endpoints,
         db::write_type type,
         tracing::trace_state_ptr tr_state,
         allow_hints allow_hints,
@@ -4003,8 +4080,8 @@ future<> storage_proxy::send_to_endpoint(
 future<> storage_proxy::send_to_endpoint(
         frozen_mutation_and_schema fm_a_s,
         locator::effective_replication_map_ptr ermp,
-        gms::inet_address target,
-        inet_address_vector_topology_change pending_endpoints,
+        const locator::node* target,
+        node_vector_topology_change pending_endpoints,
         db::write_type type,
         tracing::trace_state_ptr tr_state,
         write_stats& stats,
@@ -4022,7 +4099,7 @@ future<> storage_proxy::send_to_endpoint(
             cancellable);
 }
 
-future<> storage_proxy::send_hint_to_endpoint(frozen_mutation_and_schema fm_a_s, locator::effective_replication_map_ptr ermp, gms::inet_address target) {
+future<> storage_proxy::send_hint_to_endpoint(frozen_mutation_and_schema fm_a_s, locator::effective_replication_map_ptr ermp, const locator::node* target) {
     return send_to_endpoint(
             std::make_unique<hint_mutation>(std::move(fm_a_s)),
             std::move(ermp),
@@ -4059,35 +4136,25 @@ future<> storage_proxy::send_hint_to_all_replicas(frozen_mutation_and_schema fm_
 void storage_proxy::send_to_live_endpoints(storage_proxy::response_id_type response_id, clock_type::time_point timeout)
 {
     // extra-datacenter replicas, grouped by dc
-    std::unordered_map<sstring, inet_address_vector_replica_set> dc_groups;
-    std::vector<std::pair<const sstring, inet_address_vector_replica_set>> local;
+    std::unordered_map<sstring, node_vector_replica_set> dc_groups;
+    std::vector<std::pair<const sstring, node_vector_replica_set>> local;
     local.reserve(3);
 
     auto handler_ptr = get_write_response_handler(response_id);
+    auto& topology = handler_ptr->_effective_replication_map_ptr->get_topology();
     auto& stats = handler_ptr->stats();
     auto& handler = *handler_ptr;
     auto& global_stats = handler._proxy->_global_stats;
-    if (handler.get_targets().size() != 1 || !is_me(handler.get_targets()[0])) {
-        auto& topology = handler_ptr->_effective_replication_map_ptr->get_topology();
+    if (handler.get_targets().size() != 1 || !topology.is_me(handler.get_targets()[0])) {
         auto local_dc = topology.get_datacenter();
 
-        for(auto dest: handler.get_targets()) {
-            auto node = topology.find_node(dest);
-            if (!node) {
-                // The caller is supposed to pick target nodes from the topology
-                // contained in the effective_replication_map that is kept in the handler.
-                // If the e_r_m is not in sync with the topology used to pick the targets
-                // endpoints may be missing here and we better off returning an error
-                // (or aborting in testing) rather than segfaulting here
-                // (See https://github.com/scylladb/scylladb/issues/15138)
-                on_internal_error(slogger, fmt::format("Node {} was not found in topology", dest));
-            }
+        for(auto node: handler.get_targets()) {
             const auto& dc = node->dc_rack().dc;
             // read repair writes do not go through coordinator since mutations are per destination
             if (handler.read_repair_write() || dc == local_dc) {
-                local.emplace_back("", inet_address_vector_replica_set({dest}));
+                local.emplace_back("", node_vector_replica_set({node}));
             } else {
-                dc_groups[dc].push_back(dest);
+                dc_groups[dc].push_back(node);
             }
         }
     } else {
@@ -4096,21 +4163,21 @@ void storage_proxy::send_to_live_endpoints(storage_proxy::response_id_type respo
     }
 
     auto all = boost::range::join(local, dc_groups);
-    auto my_address = this->my_address();
+    auto me = topology.this_node();
 
     // lambda for applying mutation locally
-    auto lmutate = [handler_ptr, response_id, this, my_address, timeout] () mutable {
+    auto lmutate = [handler_ptr, response_id, this, me, timeout] () mutable {
         return handler_ptr->apply_locally(timeout, handler_ptr->get_trace_state())
-                .then([response_id, this, my_address, h = std::move(handler_ptr), p = shared_from_this()] {
+                .then([response_id, this, me, h = std::move(handler_ptr), p = shared_from_this()] {
             // make mutation alive until it is processed locally, otherwise it
             // may disappear if write timeouts before this future is ready
             update_view_update_backlog();
-            got_response(response_id, my_address, get_view_update_backlog());
+            got_response(response_id, me, get_view_update_backlog());
         });
     };
 
     // lambda for applying mutation remotely
-    auto rmutate = [this, handler_ptr, timeout, response_id, &global_stats] (gms::inet_address coordinator, const inet_address_vector_replica_set& forward) {
+    auto rmutate = [this, handler_ptr, timeout, response_id, &global_stats] (const locator::node* coordinator, const node_vector_replica_set& forward) {
         auto msize = handler_ptr->get_mutation_size(); // can overestimate for repair writes
         global_stats.queued_write_bytes += msize;
 
@@ -4132,7 +4199,7 @@ void storage_proxy::send_to_live_endpoints(storage_proxy::response_id_type respo
         future<> f = make_ready_future<>();
 
 
-        if (handler.is_counter() && coordinator == my_address) {
+        if (handler.is_counter() && is_me(coordinator)) {
             got_response(response_id, coordinator, std::nullopt);
         } else {
             if (!handler.read_repair_write()) {
@@ -4141,7 +4208,7 @@ void storage_proxy::send_to_live_endpoints(storage_proxy::response_id_type respo
                 ++stats.read_repair_write_attempts.get_ep_stat(handler_ptr->_effective_replication_map_ptr->get_topology(), coordinator);
             }
 
-            if (coordinator == my_address) {
+            if (coordinator->is_this_node()) {
                 f = futurize_invoke(lmutate);
             } else {
                 f = futurize_invoke(rmutate, coordinator, forward);
@@ -4170,7 +4237,7 @@ void storage_proxy::send_to_live_endpoints(storage_proxy::response_id_type respo
             } else if (auto* e = try_catch<db::virtual_table_update_exception>(eptr)) {
                 msg = e->grab_cause();
             } else {
-                slogger.error("exception during mutation write to {}: {}", coordinator, eptr);
+                slogger.error("exception during mutation write to {}: {}", *coordinator, eptr);
             }
             p->got_failure_response(response_id, coordinator, forward_size + 1, std::nullopt, err, std::move(msg));
         });
@@ -4178,25 +4245,22 @@ void storage_proxy::send_to_live_endpoints(storage_proxy::response_id_type respo
 }
 
 // returns number of hints stored
-template<typename Range>
+template <std::ranges::range Range>
+requires std::same_as<std::ranges::range_value_t<Range>, const locator::node*>
 size_t storage_proxy::hint_to_dead_endpoints(std::unique_ptr<mutation_holder>& mh, const Range& targets,
         locator::effective_replication_map_ptr ermptr, db::write_type type, tracing::trace_state_ptr tr_state) noexcept
 {
     if (hints_enabled(type)) {
         db::hints::manager& hints_manager = hints_manager_for(type);
-        return boost::count_if(targets, [&mh, ermptr, tr_state = std::move(tr_state), &hints_manager] (gms::inet_address target) mutable -> bool {
-            auto hid = ermptr->get_token_metadata().get_host_id_if_known(target);
-            if (!hid) {
-                return false;
-            }
-            return mh->store_hint(hints_manager, *hid, target, ermptr, tr_state);
+        return boost::count_if(targets, [&mh, ermptr, tr_state = std::move(tr_state), &hints_manager] (const auto& target) mutable -> bool {
+            return mh->store_hint(hints_manager, target.second, target.first, ermptr, tr_state);
         });
     } else {
         return 0;
     }
 }
 
-future<result<>> storage_proxy::schedule_repair(locator::effective_replication_map_ptr ermp, std::unordered_map<dht::token, std::unordered_map<gms::inet_address, std::optional<mutation>>> diffs, db::consistency_level cl, tracing::trace_state_ptr trace_state,
+future<result<>> storage_proxy::schedule_repair(locator::effective_replication_map_ptr ermp, std::unordered_map<dht::token, std::unordered_map<const locator::node*, std::optional<mutation>>> diffs, db::consistency_level cl, tracing::trace_state_ptr trace_state,
                                         service_permit permit) {
     if (diffs.empty()) {
         return make_ready_future<result<>>(bo::success());
@@ -4211,6 +4275,8 @@ protected:
         DISCONNECT,
         RATE_LIMIT,
     };
+
+    locator::effective_replication_map_ptr _effective_replication_map_ptr;
     db::consistency_level _cl;
     size_t _targets_count;
     promise<result<>> _done_promise; // all target responded
@@ -4231,8 +4297,9 @@ protected:
         on_failure(std::move(ex));
     }
 public:
-    abstract_read_resolver(schema_ptr schema, db::consistency_level cl, size_t target_count, storage_proxy::clock_type::time_point timeout)
-        : _cl(cl)
+    abstract_read_resolver(locator::effective_replication_map_ptr ermp, schema_ptr schema, db::consistency_level cl, size_t target_count, storage_proxy::clock_type::time_point timeout)
+        : _effective_replication_map_ptr(std::move(ermp))
+        , _cl(cl)
         , _targets_count(target_count)
         , _schema(std::move(schema))
     {
@@ -4242,11 +4309,14 @@ public:
         _timeout.arm(timeout);
     }
     virtual ~abstract_read_resolver() {};
-    virtual void on_error(gms::inet_address ep, error_kind kind) = 0;
+    const locator::effective_replication_map_ptr& get_effective_replication_map_ptr() const noexcept {
+        return _effective_replication_map_ptr;
+    }
+    virtual void on_error(const locator::node* ep, error_kind kind) = 0;
     future<result<>> done() {
         return _done_promise.get_future();
     }
-    void error(gms::inet_address ep, std::exception_ptr eptr) {
+    void error(const locator::node* ep, std::exception_ptr eptr) {
         sstring why;
         error_kind kind = error_kind::FAILURE;
         if (try_catch<replica::rate_limit_exception>(eptr)) {
@@ -4272,9 +4342,9 @@ public:
             // Log remote read error with lower severity.
             // If it is really severe it we be handled on the host that sent
             // it.
-            slogger.warn("Exception when communicating with {}, to read from {}.{}: {}", ep, _schema->ks_name(), _schema->cf_name(), ex->what());
+            slogger.warn("Exception when communicating with {}, to read from {}.{}: {}", *ep, _schema->ks_name(), _schema->cf_name(), ex->what());
         } else {
-            slogger.error("Exception when communicating with {}, to read from {}.{}: {}", ep, _schema->ks_name(), _schema->cf_name(), eptr);
+            slogger.error("Exception when communicating with {}, to read from {}.{}: {}", *ep, _schema->ks_name(), _schema->cf_name(), eptr);
         }
 
         if (!_request_failed) { // request may fail only once.
@@ -4299,7 +4369,6 @@ class digest_read_resolver : public abstract_read_resolver {
     };
 private:
     shared_ptr<storage_proxy> _proxy;
-    locator::effective_replication_map_ptr _effective_replication_map_ptr;
     size_t _block_for;
     size_t _cl_responses = 0;
     promise<result<digest_read_result>> _cl_promise; // cl is reached
@@ -4324,16 +4393,15 @@ public:
     digest_read_resolver(shared_ptr<storage_proxy> proxy,
             locator::effective_replication_map_ptr ermp,
             schema_ptr schema, db::consistency_level cl, size_t block_for, size_t target_count_for_cl, storage_proxy::clock_type::time_point timeout)
-        : abstract_read_resolver(std::move(schema), cl, 0, timeout)
+        : abstract_read_resolver(std::move(ermp), std::move(schema), cl, 0, timeout)
         , _proxy(std::move(proxy))
-        , _effective_replication_map_ptr(std::move(ermp))
         , _block_for(block_for)
         , _target_count_for_cl(target_count_for_cl)
     {}
     virtual size_t response_count() const override {
         return _digest_results.size();
     }
-    void add_data(gms::inet_address from, foreign_ptr<lw_shared_ptr<query::result>> result) {
+    void add_data(const locator::node* from, foreign_ptr<lw_shared_ptr<query::result>> result) {
         if (!_request_failed) {
             // if only one target was queried digest_check() will be skipped so we can also skip digest calculation
             _digest_results.emplace_back(_targets_count == 1 ? query::result_digest() : *result->digest(), result->last_position());
@@ -4344,7 +4412,7 @@ public:
             got_response(from);
         }
     }
-    void add_digest(gms::inet_address from, query::result_digest digest, api::timestamp_type last_modified, std::optional<full_position> last_pos) {
+    void add_digest(const locator::node* from, query::result_digest digest, api::timestamp_type last_modified, std::optional<full_position> last_pos) {
         if (!_request_failed) {
             _digest_results.emplace_back(std::move(digest), std::move(last_pos));
             _last_modified = std::max(_last_modified, last_modified);
@@ -4369,11 +4437,11 @@ public:
         })->last_pos;
     }
 private:
-    bool waiting_for(gms::inet_address ep) {
+    bool waiting_for(const locator::node* ep) {
         const auto& topo = _effective_replication_map_ptr->get_topology();
-        return db::is_datacenter_local(_cl) ? topo.is_me(ep) || (topo.get_datacenter(ep) == topo.get_datacenter()) : true;
+        return db::is_datacenter_local(_cl) ? topo.is_me(ep) || (ep->dc_rack().dc == topo.get_datacenter()) : true;
     }
-    void got_response(gms::inet_address ep) {
+    void got_response(const locator::node* ep) {
         if (!_cl_reported) {
             if (waiting_for(ep)) {
                 _cl_responses++;
@@ -4388,7 +4456,7 @@ private:
             _done_promise.set_value(bo::success());
         }
     }
-    void on_error(gms::inet_address ep, error_kind kind) override {
+    void on_error(const locator::node* ep, error_kind kind) override {
         if (waiting_for(ep)) {
             _failed++;
         }
@@ -4431,17 +4499,17 @@ public:
 
 class data_read_resolver : public abstract_read_resolver {
     struct reply {
-        gms::inet_address from;
+        const locator::node* from;
         foreign_ptr<lw_shared_ptr<reconcilable_result>> result;
         bool reached_end = false;
-        reply(gms::inet_address from_, foreign_ptr<lw_shared_ptr<reconcilable_result>> result_) : from(std::move(from_)), result(std::move(result_)) {}
+        reply(const locator::node* from_, foreign_ptr<lw_shared_ptr<reconcilable_result>> result_) : from(std::move(from_)), result(std::move(result_)) {}
     };
     struct version {
-        gms::inet_address from;
+        const locator::node* from;
         std::optional<partition> par;
         bool reached_end;
         bool reached_partition_end;
-        version(gms::inet_address from_, std::optional<partition> par_, bool reached_end, bool reached_partition_end)
+        version(const locator::node* from_, std::optional<partition> par_, bool reached_end, bool reached_partition_end)
                 : from(std::move(from_)), par(std::move(par_)), reached_end(reached_end), reached_partition_end(reached_partition_end) {}
     };
     struct mutation_and_live_row_count {
@@ -4502,7 +4570,7 @@ class data_read_resolver : public abstract_read_resolver {
     bool _all_reached_end = true;
     query::short_read _is_short_read;
     std::vector<reply> _data_results;
-    std::unordered_map<dht::token, std::unordered_map<gms::inet_address, std::optional<mutation>>> _diffs;
+    std::unordered_map<dht::token, std::unordered_map<const locator::node*, std::optional<mutation>>> _diffs;
 private:
     void on_timeout() override {
         fail_request(read_timeout_exception(_schema->ks_name(), _schema->cf_name(), _cl, response_count(), _targets_count, response_count() != 0));
@@ -4709,10 +4777,11 @@ private:
         return got_incomplete_information_across_partitions(s, cmd, last_row, rp, versions, is_reversed);
     }
 public:
-    data_read_resolver(schema_ptr schema, db::consistency_level cl, size_t targets_count, storage_proxy::clock_type::time_point timeout) : abstract_read_resolver(std::move(schema), cl, targets_count, timeout) {
+    data_read_resolver(locator::effective_replication_map_ptr ermp, schema_ptr schema, db::consistency_level cl, size_t targets_count, storage_proxy::clock_type::time_point timeout)
+            : abstract_read_resolver(std::move(ermp), std::move(schema), cl, targets_count, timeout) {
         _data_results.reserve(targets_count);
     }
-    void add_mutate_data(gms::inet_address from, foreign_ptr<lw_shared_ptr<reconcilable_result>> result) {
+    void add_mutate_data(const locator::node* from, foreign_ptr<lw_shared_ptr<reconcilable_result>> result) {
         if (!_request_failed) {
             _max_live_count = std::max(result->row_count(), _max_live_count);
             _data_results.emplace_back(std::move(from), std::move(result));
@@ -4722,7 +4791,7 @@ public:
             }
         }
     }
-    void on_error(gms::inet_address ep, error_kind kind) override {
+    void on_error(const locator::node* ep, error_kind kind) override {
         switch (kind) {
         case error_kind::RATE_LIMIT:
             fail_request(exceptions::rate_limit_exception(_schema->ks_name(), _schema->cf_name(), db::operation_type::read, false));
@@ -4922,7 +4991,7 @@ public:
 
 class abstract_read_executor : public enable_shared_from_this<abstract_read_executor> {
 protected:
-    using targets_iterator = host_id_vector_replica_set::iterator;
+    using targets_iterator = node_vector_replica_set::iterator;
     using digest_resolver_ptr = ::shared_ptr<digest_read_resolver>;
     using data_resolver_ptr = ::shared_ptr<data_read_resolver>;
     // Clock type for measuring timeouts.
@@ -4938,9 +5007,9 @@ protected:
     dht::partition_range _partition_range;
     db::consistency_level _cl;
     size_t _block_for;
-    host_id_vector_replica_set _targets;
+    node_vector_replica_set _targets;
     // Targets that were successfully used for a data or digest request
-    host_id_vector_replica_set _used_targets;
+    node_vector_replica_set _used_targets;
     promise<result<foreign_ptr<lw_shared_ptr<query::result>>>> _result_promise;
     tracing::trace_state_ptr _trace_state;
     lw_shared_ptr<replica::column_family> _cf;
@@ -4963,7 +5032,7 @@ public:
     abstract_read_executor(schema_ptr s, lw_shared_ptr<replica::column_family> cf, shared_ptr<storage_proxy> proxy,
             locator::effective_replication_map_ptr ermp,
             lw_shared_ptr<query::read_command> cmd, dht::partition_range pr, db::consistency_level cl, size_t block_for,
-            host_id_vector_replica_set targets, tracing::trace_state_ptr trace_state, service_permit permit, db::per_partition_rate_limit::info rate_limit_info) :
+            node_vector_replica_set targets, tracing::trace_state_ptr trace_state, service_permit permit, db::per_partition_rate_limit::info rate_limit_info) :
                            _schema(std::move(s)), _proxy(std::move(proxy))
                          , _effective_replication_map_ptr(std::move(ermp))
                          , _cmd(std::move(cmd)), _partition_range(std::move(pr)), _cl(cl), _block_for(block_for), _targets(std::move(targets)), _trace_state(std::move(trace_state)),
@@ -4980,24 +5049,24 @@ public:
     ///
     /// Only filled after the request is finished, call only after
     /// execute()'s future is ready.
-    const host_id_vector_replica_set& used_targets() const {
+    const node_vector_replica_set& used_targets() const {
         return _used_targets;
     }
 
 protected:
-    future<rpc::tuple<foreign_ptr<lw_shared_ptr<reconcilable_result>>, cache_temperature>> make_mutation_data_request(lw_shared_ptr<query::read_command> cmd, gms::inet_address ep, clock_type::time_point timeout) {
+    future<rpc::tuple<foreign_ptr<lw_shared_ptr<reconcilable_result>>, cache_temperature>> make_mutation_data_request(lw_shared_ptr<query::read_command> cmd, const locator::node* ep, clock_type::time_point timeout) {
         ++_proxy->get_stats().mutation_data_read_attempts.get_ep_stat(get_topology(), ep);
         auto fence = storage_proxy::get_fence(*_effective_replication_map_ptr);
         if (_proxy->is_me(ep)) {
             tracing::trace(_trace_state, "read_mutation_data: querying locally");
             return _proxy->apply_fence(_proxy->query_mutations_locally(_schema, cmd, _partition_range, timeout, _trace_state), fence, _proxy->my_address());
         } else {
-            return _proxy->remote().send_read_mutation_data(netw::messaging_service::msg_addr{ep, 0}, timeout,
+            return _proxy->remote().send_read_mutation_data(netw::messaging_service::msg_addr{ep->endpoint(), 0}, timeout,
                 _trace_state, *cmd, _partition_range,
                 fence);
         }
     }
-    future<rpc::tuple<foreign_ptr<lw_shared_ptr<query::result>>, cache_temperature>> make_data_request(gms::inet_address ep, clock_type::time_point timeout, bool want_digest) {
+    future<rpc::tuple<foreign_ptr<lw_shared_ptr<query::result>>, cache_temperature>> make_data_request(const locator::node* ep, clock_type::time_point timeout, bool want_digest) {
         ++_proxy->get_stats().data_read_attempts.get_ep_stat(get_topology(), ep);
         auto opts = want_digest
                   ? query::result_options{query::result_request::result_and_digest, digest_algorithm(*_proxy)}
@@ -5007,12 +5076,12 @@ protected:
             tracing::trace(_trace_state, "read_data: querying locally");
             return _proxy->apply_fence(_proxy->query_result_local(_effective_replication_map_ptr, _schema, _cmd, _partition_range, opts, _trace_state, timeout, adjust_rate_limit_for_local_operation(_rate_limit_info)), fence, _proxy->my_address());
         } else {
-            return _proxy->remote().send_read_data(netw::messaging_service::msg_addr{ep, 0}, timeout,
+            return _proxy->remote().send_read_data(netw::messaging_service::msg_addr{ep->endpoint(), 0}, timeout,
                 _trace_state, *_cmd, _partition_range, opts.digest_algo, _rate_limit_info,
                 fence);
         }
     }
-    future<rpc::tuple<query::result_digest, api::timestamp_type, cache_temperature, std::optional<full_position>>> make_digest_request(gms::inet_address ep, clock_type::time_point timeout) {
+    future<rpc::tuple<query::result_digest, api::timestamp_type, cache_temperature, std::optional<full_position>>> make_digest_request(const locator::node* ep, clock_type::time_point timeout) {
         ++_proxy->get_stats().digest_read_attempts.get_ep_stat(get_topology(), ep);
         auto fence = storage_proxy::get_fence(*_effective_replication_map_ptr);
         if (_proxy->is_me(ep)) {
@@ -5020,23 +5089,22 @@ protected:
             return _proxy->apply_fence(_proxy->query_result_local_digest(_effective_replication_map_ptr, _schema, _cmd, _partition_range, _trace_state,
                         timeout, digest_algorithm(*_proxy), adjust_rate_limit_for_local_operation(_rate_limit_info)), fence, _proxy->my_address());
         } else {
-            tracing::trace(_trace_state, "read_digest: sending a message to /{}", ep);
-            return _proxy->remote().send_read_digest(netw::messaging_service::msg_addr{ep, 0}, timeout,
+            tracing::trace(_trace_state, "read_digest: sending a message to {}/{}", ep->host_id(), ep->endpoint());
+            return _proxy->remote().send_read_digest(netw::messaging_service::msg_addr{ep->endpoint(), 0}, timeout,
                 _trace_state, *_cmd, _partition_range, digest_algorithm(*_proxy), _rate_limit_info,
                 fence);
         }
     }
     void make_mutation_data_requests(lw_shared_ptr<query::read_command> cmd, data_resolver_ptr resolver, targets_iterator begin, targets_iterator end, clock_type::time_point timeout) {
         auto start = latency_clock::now();
-        for (const auto& hid : boost::make_iterator_range(begin, end)) {
+        for (const auto& ep : boost::make_iterator_range(begin, end)) {
             // Waited on indirectly, shared_from_this keeps `this` alive
-            auto ep = hid ? get_topology().get_node(hid).endpoint() : get_topology().my_address();
             (void)make_mutation_data_request(cmd, ep, timeout).then_wrapped([this, resolver, ep, start, exec = shared_from_this()] (future<rpc::tuple<foreign_ptr<lw_shared_ptr<reconcilable_result>>, cache_temperature>> f) {
                 std::exception_ptr ex;
                 try {
                   if (!f.failed()) {
                     auto v = f.get();
-                    _cf->set_hit_rate(ep, std::get<1>(v));
+                    _cf->set_hit_rate(ep->endpoint(), std::get<1>(v));
                     resolver->add_mutate_data(ep, std::get<0>(std::move(v)));
                     ++_proxy->get_stats().mutation_data_read_completed.get_ep_stat(get_topology(), ep);
                     register_request_latency(latency_clock::now() - start);
@@ -5055,18 +5123,16 @@ protected:
     }
     void make_data_requests(digest_resolver_ptr resolver, targets_iterator begin, targets_iterator end, clock_type::time_point timeout, bool want_digest) {
         auto start = latency_clock::now();
-        for (const auto& hid : boost::make_iterator_range(begin, end)) {
-            // Waited on indirectly, shared_from_this keeps `this` alive
-            auto ep = hid ? get_topology().get_node(hid).endpoint() : get_topology().my_address();
-            (void)make_data_request(ep, timeout, want_digest).then_wrapped([this, resolver, hid, ep, start, exec = shared_from_this()] (future<rpc::tuple<foreign_ptr<lw_shared_ptr<query::result>>, cache_temperature>> f) {
+        for (const auto& ep : boost::make_iterator_range(begin, end)) {
+            (void)make_data_request(ep, timeout, want_digest).then_wrapped([this, resolver, ep, start, exec = shared_from_this()] (future<rpc::tuple<foreign_ptr<lw_shared_ptr<query::result>>, cache_temperature>> f) {
                 std::exception_ptr ex;
                 try {
                   if (!f.failed()) {
                     auto v = f.get();
-                    _cf->set_hit_rate(ep, std::get<1>(v));
+                    _cf->set_hit_rate(ep->endpoint(), std::get<1>(v));
                     resolver->add_data(ep, std::get<0>(std::move(v)));
                     ++_proxy->get_stats().data_read_completed.get_ep_stat(get_topology(), ep);
-                    _used_targets.push_back(hid);
+                    _used_targets.push_back(ep);
                     register_request_latency(latency_clock::now() - start);
                     return;
                   } else {
@@ -5083,18 +5149,16 @@ protected:
     }
     void make_digest_requests(digest_resolver_ptr resolver, targets_iterator begin, targets_iterator end, clock_type::time_point timeout) {
         auto start = latency_clock::now();
-        for (const auto& hid : boost::make_iterator_range(begin, end)) {
-            // Waited on indirectly, shared_from_this keeps `this` alive
-            auto ep = hid ? get_topology().get_node(hid).endpoint() : get_topology().my_address();
-            (void)make_digest_request(ep, timeout).then_wrapped([this, resolver, hid, ep, start, exec = shared_from_this()] (future<rpc::tuple<query::result_digest, api::timestamp_type, cache_temperature, std::optional<full_position>>> f) {
+        for (const auto& ep : boost::make_iterator_range(begin, end)) {
+            (void)make_digest_request(ep, timeout).then_wrapped([this, resolver, ep, start, exec = shared_from_this()] (future<rpc::tuple<query::result_digest, api::timestamp_type, cache_temperature, std::optional<full_position>>> f) {
                 std::exception_ptr ex;
                 try {
                   if (!f.failed()) {
                     auto v = f.get();
-                    _cf->set_hit_rate(ep, std::get<2>(v));
+                    _cf->set_hit_rate(ep->endpoint(), std::get<2>(v));
                     resolver->add_digest(ep, std::get<0>(v), std::get<1>(v), std::get<3>(std::move(v)));
                     ++_proxy->get_stats().digest_read_completed.get_ep_stat(get_topology(), ep);
-                    _used_targets.push_back(hid);
+                    _used_targets.push_back(ep);
                     register_request_latency(latency_clock::now() - start);
                     return;
                   } else {
@@ -5128,7 +5192,7 @@ protected:
     virtual void adjust_targets_for_reconciliation() {}
     void reconcile(db::consistency_level cl, storage_proxy::clock_type::time_point timeout, lw_shared_ptr<query::read_command> cmd) {
         adjust_targets_for_reconciliation();
-        data_resolver_ptr data_resolver = ::make_shared<data_read_resolver>(_schema, cl, _targets.size(), timeout);
+        data_resolver_ptr data_resolver = ::make_shared<data_read_resolver>(_effective_replication_map_ptr, _schema, cl, _targets.size(), timeout);
         auto exec = shared_from_this();
 
         if (_proxy->features().empty_replica_mutation_pages) {
@@ -5355,7 +5419,7 @@ class never_speculating_read_executor : public abstract_read_executor {
 public:
     never_speculating_read_executor(schema_ptr s, lw_shared_ptr<replica::column_family> cf, shared_ptr<storage_proxy> proxy,
             locator::effective_replication_map_ptr ermp,
-            lw_shared_ptr<query::read_command> cmd, dht::partition_range pr, db::consistency_level cl, host_id_vector_replica_set targets, tracing::trace_state_ptr trace_state, service_permit permit,
+            lw_shared_ptr<query::read_command> cmd, dht::partition_range pr, db::consistency_level cl, node_vector_replica_set targets, tracing::trace_state_ptr trace_state, service_permit permit,
             db::per_partition_rate_limit::info rate_limit_info) :
                                         abstract_read_executor(std::move(s), std::move(cf), std::move(proxy), std::move(ermp), std::move(cmd), std::move(pr), cl, 0, std::move(targets), std::move(trace_state), std::move(permit), rate_limit_info) {
         _block_for = _targets.size();
@@ -5436,7 +5500,7 @@ result<::shared_ptr<abstract_read_executor>> storage_proxy::get_read_executor(lw
         db::consistency_level cl,
         db::read_repair_decision repair_decision,
         tracing::trace_state_ptr trace_state,
-        const host_id_vector_replica_set& preferred_endpoints,
+        const node_vector_replica_set& preferred_endpoints,
         bool& is_read_non_local,
         service_permit permit) {
     const dht::token& token = pr.start()->value().token();
@@ -5618,7 +5682,7 @@ storage_proxy::query_singular(lw_shared_ptr<query::read_command> cmd,
 
         auto token_range = dht::token_range::make_singular(pr.start()->value().token());
         auto it = query_options.preferred_replicas.find(token_range);
-        host_id_vector_replica_set empty_replica_set;
+        node_vector_replica_set empty_replica_set;
         const auto& replicas = it == query_options.preferred_replicas.end()
             ? empty_replica_set : it->second;
 
@@ -5694,9 +5758,9 @@ storage_proxy::query_singular(lw_shared_ptr<query::read_command> cmd,
 
 bool storage_proxy::is_worth_merging_for_range_query(
         const locator::topology& topo,
-        host_id_vector_replica_set& merged,
-        host_id_vector_replica_set& l1,
-        host_id_vector_replica_set& l2) const {
+        node_vector_replica_set& merged,
+        node_vector_replica_set& l1,
+        node_vector_replica_set& l2) const {
     auto has_remote_node = [&topo, my_dc = topo.get_datacenter()] (const auto& l) {
         for (auto&& ep : l) {
             if (my_dc != topo.get_datacenter(ep)) {
@@ -5742,7 +5806,7 @@ storage_proxy::query_partition_key_range_concurrent(storage_proxy::clock_type::t
 
     const auto preferred_replicas_for_range = [&preferred_replicas] (const dht::partition_range& r) {
         auto it = preferred_replicas.find(r.transform(std::mem_fn(&dht::ring_position::token)));
-        return it == preferred_replicas.end() ? host_id_vector_replica_set{} :  it->second;
+        return it == preferred_replicas.end() ? node_vector_replica_set{} :  it->second;
     };
     const auto to_token_range = [] (const dht::partition_range& r) { return r.transform(std::mem_fn(&dht::ring_position::token)); };
 
@@ -6357,23 +6421,21 @@ future<bool> storage_proxy::cas(schema_ptr schema, shared_ptr<cas_request> reque
     co_return condition_met;
 }
 
-inet_address_vector_replica_set storage_proxy::get_live_endpoints(const locator::effective_replication_map& erm, const dht::token& token) const {
-    inet_address_vector_replica_set eps = erm.get_natural_endpoints_without_node_being_replaced(token);
-    auto itend = boost::range::remove_if(eps, std::not_fn(std::bind_front(&storage_proxy::is_alive, this)));
-    eps.erase(itend, eps.end());
-    return eps;
-}
-
-void storage_proxy::sort_endpoints_by_proximity(const locator::topology& topo, inet_address_vector_replica_set& eps) const {
-    topo.sort_by_proximity(my_address(), eps);
-    // FIXME: before dynamic snitch is implement put local address (if present) at the beginning
-    auto it = boost::range::find(eps, my_address());
-    if (it != eps.end() && it != eps.begin()) {
-        std::iter_swap(it, eps.begin());
+node_vector_replica_set storage_proxy::get_live_endpoints(const locator::effective_replication_map& erm, const dht::token& token) const {
+    const auto& topo = erm.get_topology();
+    auto hosts = erm.get_natural_hosts_without_node_being_replaced(token);
+    node_vector_replica_set ret;
+    ret.reserve(hosts.size());
+    for (const auto& hid : hosts) {
+        auto node = &topo.get_node(hid);
+        if (is_alive(node->endpoint())) {
+            ret.emplace_back(node);
+        }
     }
+    return ret;
 }
 
-void storage_proxy::sort_endpoints_by_proximity(const locator::topology& topo, host_id_vector_replica_set& eps) const {
+void storage_proxy::sort_endpoints_by_proximity(const locator::topology& topo, node_vector_replica_set& eps) const {
     topo.sort_by_proximity(my_host_id(), eps);
     // FIXME: before dynamic snitch is implement put local address (if present) at the beginning
     auto it = boost::range::find(eps, my_host_id());
@@ -6382,7 +6444,7 @@ void storage_proxy::sort_endpoints_by_proximity(const locator::topology& topo, h
     }
 }
 
-host_id_vector_replica_set storage_proxy::get_endpoints_for_reading(const sstring& ks_name, const locator::effective_replication_map& erm, const dht::token& token) const {
+node_vector_replica_set storage_proxy::get_endpoints_for_reading(const sstring& ks_name, const locator::effective_replication_map& erm, const dht::token& token) const {
     auto endpoints = erm.get_hosts_for_reading(token);
     const auto& topo = erm.get_topology();
     auto it = boost::range::remove_if(endpoints, std::not_fn([this, &topo] (const locator::host_id& hid) {
@@ -6394,12 +6456,12 @@ host_id_vector_replica_set storage_proxy::get_endpoints_for_reading(const sstrin
 }
 
 // `live_endpoints` must already contain only replicas for this query; the function only filters out some of them.
-host_id_vector_replica_set
+node_vector_replica_set
 storage_proxy::filter_replicas_for_read(
         db::consistency_level cl,
         const locator::effective_replication_map& erm,
-        host_id_vector_replica_set live_endpoints,
-        const host_id_vector_replica_set& preferred_endpoints,
+        node_vector_replica_set live_endpoints,
+        const node_vector_replica_set& preferred_endpoints,
         db::read_repair_decision repair_decision,
         std::optional<locator::host_id>* extra,
         replica::column_family* cf) const {
@@ -6415,12 +6477,12 @@ storage_proxy::filter_replicas_for_read(
     return db::filter_for_query(cl, erm, std::move(live_endpoints), preferred_endpoints, repair_decision, gossiper, extra, cf);
 }
 
-host_id_vector_replica_set
+node_vector_replica_set
 storage_proxy::filter_replicas_for_read(
         db::consistency_level cl,
         const locator::effective_replication_map& erm,
-        const host_id_vector_replica_set& live_endpoints,
-        const host_id_vector_replica_set& preferred_endpoints,
+        const node_vector_replica_set& live_endpoints,
+        const node_vector_replica_set& preferred_endpoints,
         replica::column_family* cf) const {
     return filter_replicas_for_read(cl, erm, live_endpoints, preferred_endpoints, db::read_repair_decision::NONE, nullptr, cf);
 }
@@ -6440,8 +6502,8 @@ inet_address_vector_replica_set storage_proxy::intersection(const inet_address_v
 }
 */
 
-host_id_vector_replica_set storage_proxy::intersection(const host_id_vector_replica_set& l1, const host_id_vector_replica_set& l2) {
-    host_id_vector_replica_set inter;
+node_vector_replica_set storage_proxy::intersection(const node_vector_replica_set& l1, const node_vector_replica_set& l2) {
+    node_vector_replica_set inter;
     inter.reserve(l1.size());
     std::remove_copy_if(l1.begin(), l1.end(), std::back_inserter(inter), [&l2] (const auto& a) {
         return std::find(l2.begin(), l2.end(), a) == l2.end();

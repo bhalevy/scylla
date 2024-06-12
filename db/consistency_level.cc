@@ -177,12 +177,11 @@ bool assure_sufficient_live_nodes_each_quorum(
     return false;
 }
 
-template<typename Range, typename PendingRange>
 void assure_sufficient_live_nodes(
         consistency_level cl,
         const locator::effective_replication_map& erm,
-        const Range& live_endpoints,
-        const PendingRange& pending_endpoints) {
+        const node_vector_replica_set& live_endpoints,
+        const node_vector_topology_change& pending_endpoints) {
     size_t need = block_for(erm, cl);
 
     auto adjust_live_for_error = [] (size_t live, size_t pending) {
@@ -229,10 +228,6 @@ void assure_sufficient_live_nodes(
         break;
     }
 }
-
-template void assure_sufficient_live_nodes(consistency_level, const locator::effective_replication_map&, const inet_address_vector_replica_set&, const std::array<gms::inet_address, 0>&);
-template void assure_sufficient_live_nodes(db::consistency_level, const locator::effective_replication_map&, const inet_address_vector_replica_set&, const utils::small_vector<gms::inet_address, 1ul>&);
-template void assure_sufficient_live_nodes(consistency_level, const locator::effective_replication_map&, const host_id_vector_replica_set&, const std::array<gms::inet_address, 0>&);
 
 host_id_vector_replica_set
 filter_for_query(consistency_level cl,
