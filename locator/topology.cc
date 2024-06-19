@@ -94,13 +94,16 @@ future<> topology::clear_gently() noexcept {
     co_await utils::clear_gently(_nodes);
 }
 
-topology::topology(config cfg)
+topology::topology(config cfg, create_this_node do_create_this_node)
         : _shard(this_shard_id())
         , _cfg(cfg)
         , _sort_by_proximity(!cfg.disable_proximity_sorting)
 {
-    tlogger.trace("topology[{}]: constructing using config: endpoint={} dc={} rack={}", fmt::ptr(this),
-            cfg.this_endpoint, cfg.local_dc_rack.dc, cfg.local_dc_rack.rack);
+    tlogger.trace("topology[{}]: constructing using config: endpoint={} host_id={} dc={} rack={} create_this_node={}", fmt::ptr(this),
+            cfg.this_endpoint, cfg.this_host_id, cfg.local_dc_rack.dc, cfg.local_dc_rack.rack, do_create_this_node);
+    if (do_create_this_node && (cfg.this_host_id || cfg.this_endpoint != gms::inet_address{})) {
+        add_node(node::make(this, cfg.this_host_id, cfg.this_endpoint, cfg.local_dc_rack, node::state::none, smp::count, node::this_node::yes));
+    }
 }
 
 topology::topology(topology&& o) noexcept
@@ -136,7 +139,7 @@ topology& topology::operator=(topology&& o) noexcept {
 }
 
 future<topology> topology::clone_gently() const {
-    topology ret(_cfg);
+    topology ret(_cfg, create_this_node::no);
     tlogger.debug("topology[{}]: clone_gently to {} from shard {}", fmt::ptr(this), fmt::ptr(&ret), _shard);
     for (const auto& nptr : _nodes) {
         if (nptr) {
@@ -184,7 +187,7 @@ const node* topology::add_node(node_holder nptr) {
     _nodes.emplace_back(std::move(nptr));
 
     try {
-        if (is_configured_this_node(*node)) {
+        if (is_configured_this_node(*node) || node->is_this_node()) {
             if (_this_node) {
                 on_internal_error(tlogger, format("topology[{}]: {}: local node already mapped to {}", fmt::ptr(this), node_printer(node), node_printer(this_node())));
             }

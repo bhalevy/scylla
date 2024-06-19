@@ -175,7 +175,10 @@ public:
 
         bool operator==(const config&) const = default;
     };
-    topology(config cfg);
+    using create_this_node = bool_class<struct create_this_node_tag>;
+    topology(config cfg, create_this_node);
+public:
+    topology(config cfg) : topology(std::move(cfg), create_this_node::yes) {}
     topology(topology&&) noexcept;
 
     topology& operator=(topology&&) noexcept;
