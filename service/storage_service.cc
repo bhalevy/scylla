@@ -371,11 +371,8 @@ future<storage_service::nodes_to_notify_after_sync> storage_service::sync_raft_t
     const auto& t = _topology_state_machine._topology;
 
     auto update_topology = [&] (locator::host_id id, std::optional<inet_address> ip, const replica_state& rs) {
-        tmptr->update_topology(id, locator::endpoint_dc_rack{rs.datacenter, rs.rack},
+        tmptr->get_topology().add_or_update_endpoint(id, ip, locator::endpoint_dc_rack{rs.datacenter, rs.rack},
                                to_topology_node_state(rs.state), rs.shard_count);
-        if (ip) {
-            tmptr->update_host_id(id, *ip);
-        }
     };
 
     auto get_used_ips = [&, used_ips = std::optional<std::unordered_set<inet_address>>{}]() mutable
