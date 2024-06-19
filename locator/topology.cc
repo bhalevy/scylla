@@ -94,11 +94,12 @@ future<> topology::clear_gently() noexcept {
     co_await utils::clear_gently(_nodes);
 }
 
-topology::topology(config cfg, create_this_node do_create_this_node)
+topology::topology(config cfg)
         : _shard(this_shard_id())
         , _cfg(cfg)
         , _sort_by_proximity(!cfg.disable_proximity_sorting)
 {
+    auto do_create_this_node = std::exchange(_cfg.do_create_this_node, false);
     tlogger.trace("topology[{}]: constructing using config: endpoint={} host_id={} dc={} rack={} create_this_node={}", fmt::ptr(this),
             cfg.this_endpoint, cfg.this_host_id, cfg.local_dc_rack.dc, cfg.local_dc_rack.rack, do_create_this_node);
     if (do_create_this_node && (cfg.this_host_id || cfg.this_endpoint != gms::inet_address{})) {
@@ -139,7 +140,7 @@ topology& topology::operator=(topology&& o) noexcept {
 }
 
 future<topology> topology::clone_gently() const {
-    topology ret(_cfg, create_this_node::no);
+    topology ret(_cfg);
     tlogger.debug("topology[{}]: clone_gently to {} from shard {}", fmt::ptr(this), fmt::ptr(&ret), _shard);
     for (const auto& nptr : _nodes) {
         if (nptr) {

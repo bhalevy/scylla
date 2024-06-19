@@ -167,18 +167,22 @@ private:
 class topology {
 public:
     struct config {
+        using create_this_node = bool_class<struct create_this_node_tag>;
         inet_address this_endpoint;
         inet_address this_cql_address;   // corresponds to broadcast_rpc_address
         host_id this_host_id;
         endpoint_dc_rack local_dc_rack = endpoint_dc_rack::default_location;
         bool disable_proximity_sorting = false;
+        bool do_create_this_node = true;
 
-        bool operator==(const config&) const = default;
+        bool operator==(const config& o) const noexcept {
+            return this_endpoint == o.this_endpoint &&
+                    this_cql_address == o.this_cql_address &&
+                    this_host_id == o.this_host_id &&
+                    local_dc_rack == o.local_dc_rack;
+        }
     };
-    using create_this_node = bool_class<struct create_this_node_tag>;
-    topology(config cfg, create_this_node);
-public:
-    topology(config cfg) : topology(std::move(cfg), create_this_node::yes) {}
+    topology(config cfg);
     topology(topology&&) noexcept;
 
     topology& operator=(topology&&) noexcept;
