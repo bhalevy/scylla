@@ -354,13 +354,21 @@ void messaging_service::do_start_listen() {
                 case encrypt_what::dc:
                     so.filter_connection = [this](const seastar::socket_address& caddr) {
                         auto addr = get_public_endpoint_for(caddr);
-                        return topology_known_for(addr) && is_same_dc(addr);
+                        auto ret = topology_known_for(addr) && is_same_dc(addr);
+                        if (!ret) {
+                            mlogger.warn("Filtering dc connection from {}: topology_known={}", addr, topology_known_for(addr));
+                        }
+                        return ret;
                     };
                     break;
                 case encrypt_what::rack:
                     so.filter_connection = [this](const seastar::socket_address& caddr) {
                         auto addr = get_public_endpoint_for(caddr);
-                        return topology_known_for(addr) && is_same_dc(addr) && is_same_rack(addr);
+                        auto ret = topology_known_for(addr) && is_same_dc(addr) && is_same_rack(addr);
+                        if (!ret) {
+                            mlogger.warn("Filtering rack connection from {}: topology_known={}", addr, topology_known_for(addr));
+                        }
+                        return ret;
                     };
                     break;
             }
