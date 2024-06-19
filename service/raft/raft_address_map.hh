@@ -171,6 +171,7 @@ class raft_address_map_t : public peering_sharded_service<raft_address_map_t<Clo
                 on_internal_error(rslog, format(
                     "raft_address_map::drop_expired_entries: missing entry with id {}", list_it->entry_id()));
             }
+            rslog.debug("raft_address_map_t::drop_expired_entries: id={} addr={} generation={} force={}", map_it->first, map_it->second._addr.value_or(gms::inet_address{}), map_it->second._generation_number, force);
             _map.erase(map_it);
             // Point at the oldest entry again
             list_it = _expiring_list.rbegin();
@@ -182,6 +183,7 @@ class raft_address_map_t : public peering_sharded_service<raft_address_map_t<Clo
     }
 
     void add_expiring_entry(const raft::server_id& entry_id, timestamped_entry& entry) {
+        rslog.debug("raft_address_map_t::add_expiring_entry id={} addr={} generation={}", entry_id, entry._addr.value_or(gms::inet_address{}), entry._generation_number);
         entry._lru_entry = std::make_unique<expiring_entry_ptr>(_expiring_list, entry_id);
         if (!_timer.armed()) {
             _timer.arm(_expiry_period);
@@ -262,6 +264,7 @@ class raft_address_map_t : public peering_sharded_service<raft_address_map_t<Clo
         } else if ((update_if_exists && generation_number >= entry._generation_number) || !entry._addr) {
             entry._addr = ip_addr;
             entry._generation_number = generation_number;
+            rslog.debug("raft_address_map_t::handle_add_or_update_entry: updating id={} addr={} generation={}", id, ip_addr, generation_number);
             if (entry.expiring()) {
                 entry._lru_entry->touch(); // Re-insert in the front of _expiring_list
             }
