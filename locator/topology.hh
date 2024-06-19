@@ -170,7 +170,7 @@ public:
         inet_address this_endpoint;
         inet_address this_cql_address;   // corresponds to broadcast_rpc_address
         host_id this_host_id;
-        endpoint_dc_rack local_dc_rack;
+        endpoint_dc_rack local_dc_rack = endpoint_dc_rack::default_location;
         bool disable_proximity_sorting = false;
 
         bool operator==(const config&) const = default;
