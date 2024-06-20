@@ -1954,7 +1954,7 @@ future<> repair_service::removenode_with_repair(locator::token_metadata_ptr tmpt
     });
 }
 
-future<> repair_service::do_rebuild_replace_with_repair(locator::token_metadata_ptr tmptr, sstring op, sstring source_dc, streaming::stream_reason reason, std::unordered_set<gms::inet_address> ignore_nodes) {
+future<> repair_service::do_rebuild_replace_with_repair(locator::token_metadata_ptr tmptr, sstring op, std::optional<source_dc_param> source_dc, streaming::stream_reason reason, std::unordered_set<gms::inet_address> ignore_nodes) {
     assert(this_shard_id() == 0);
     return seastar::async([this, tmptr = std::move(tmptr), source_dc = std::move(source_dc), op = std::move(op), reason, ignore_nodes = std::move(ignore_nodes)] () mutable {
         auto& db = get_db().local();
@@ -1984,7 +1984,17 @@ future<> repair_service::do_rebuild_replace_with_repair(locator::token_metadata_
                 rs.get_metrics().replace_total_ranges = nr_ranges_total;
             }).get();
         }
-        rlogger.info("{}: started with keyspaces={}, source_dc={}, nr_ranges_total={}, ignore_nodes={}", op, ks_erms | boost::adaptors::map_keys, source_dc, nr_ranges_total, ignore_nodes);
+        sstring source_dc_desc;
+        if (source_dc) {
+            if (source_dc->user_provided) {
+                source_dc_desc = format("{} (user-provided)", source_dc->name);
+            } else {
+                source_dc_desc = format("{} (implicit)", source_dc->name);
+            }
+        } else {
+            source_dc_desc = "(none)";
+        }
+        rlogger.info("{}: started with keyspaces={}, source_dc={}, nr_ranges_total={}, ignore_nodes={}", op, ks_erms | boost::adaptors::map_keys, source_dc_desc, nr_ranges_total, ignore_nodes);
         for (const auto& [keyspace_name, erm] : ks_erms) {
             size_t nr_ranges_skipped = 0;
             if (!db.has_keyspace(keyspace_name)) {
@@ -1996,7 +2006,7 @@ future<> repair_service::do_rebuild_replace_with_repair(locator::token_metadata_
             auto& topology = erm->get_token_metadata().get_topology();
             std::unordered_map<dht::token_range, repair_neighbors> range_sources;
             auto nr_tables = get_nr_tables(db, keyspace_name);
-            rlogger.info("{}: started with keyspace={}, source_dc={}, nr_ranges={}, ignore_nodes={}", op, keyspace_name, source_dc, ranges.size() * nr_tables, ignore_nodes);
+            rlogger.info("{}: started with keyspace={}, source_dc={}, nr_ranges={}, ignore_nodes={}", op, keyspace_name, source_dc_desc, ranges.size() * nr_tables, ignore_nodes);
             for (auto it = ranges.begin(); it != ranges.end();) {
                 auto& r = *it;
                 seastar::thread::maybe_yield();
@@ -2009,7 +2019,7 @@ future<> repair_service::do_rebuild_replace_with_repair(locator::token_metadata_
                         if (ignore_nodes.contains(node)) {
                             return false;
                         }
-                        return source_dc.empty() ? true : topology.get_datacenter(node) == source_dc;
+                        return !source_dc || topology.get_datacenter(node) == source_dc->name;
                     })
                 );
                 rlogger.debug("{}: keyspace={}, range={}, neighbors={}", op, keyspace_name, r, neighbors);
@@ -2033,21 +2043,23 @@ future<> repair_service::do_rebuild_replace_with_repair(locator::token_metadata_
             }
             auto nr_ranges = ranges.size();
             sync_data_using_repair(keyspace_name, erm, std::move(ranges), std::move(range_sources), reason, nullptr).get();
-            rlogger.info("{}: finished with keyspace={}, source_dc={}, nr_ranges={}", op, keyspace_name, source_dc, nr_ranges);
+            rlogger.info("{}: finished with keyspace={}, source_dc={}, nr_ranges={}", op, keyspace_name, source_dc_desc, nr_ranges);
         }
-        rlogger.info("{}: finished with keyspaces={}, source_dc={}", op, ks_erms | boost::adaptors::map_keys, source_dc);
+        rlogger.info("{}: finished with keyspaces={}, source_dc={}", op, ks_erms | boost::adaptors::map_keys, source_dc_desc);
     });
 }
 
 future<> repair_service::rebuild_with_repair(locator::token_metadata_ptr tmptr, sstring source_dc) {
     assert(this_shard_id() == 0);
     auto op = sstring("rebuild_with_repair");
-    if (source_dc.empty()) {
+    bool user_provided_dc = !source_dc.empty();
+    auto sdc_param = source_dc_param{source_dc, user_provided_dc};
+    if (!user_provided_dc) {
         auto& topology = tmptr->get_topology();
-        source_dc = topology.get_datacenter();
+        sdc_param.name = topology.get_datacenter();
     }
     auto reason = streaming::stream_reason::rebuild;
-    co_await do_rebuild_replace_with_repair(std::move(tmptr), std::move(op), std::move(source_dc), reason, {});
+    co_await do_rebuild_replace_with_repair(std::move(tmptr), std::move(op), std::move(sdc_param), reason, {});
     co_await get_db().invoke_on_all([](replica::database& db) {
         for (auto& t : db.get_non_system_column_families()) {
             t->trigger_offstrategy_compaction();
@@ -2067,7 +2079,8 @@ future<> repair_service::replace_with_repair(locator::token_metadata_ptr tmptr, 
     auto cloned_tmptr = make_token_metadata_ptr(std::move(cloned_tm));
     cloned_tmptr->update_topology(tmptr->get_my_id(), myloc, locator::node::state::replacing);
     co_await cloned_tmptr->update_normal_tokens(replacing_tokens, tmptr->get_my_id());
-    co_return co_await do_rebuild_replace_with_repair(std::move(cloned_tmptr), std::move(op), myloc.dc, reason, std::move(ignore_nodes));
+    auto sdc_param = source_dc_param{myloc.dc, false};
+    co_return co_await do_rebuild_replace_with_repair(std::move(cloned_tmptr), std::move(op), std::move(sdc_param), reason, std::move(ignore_nodes));
 }
 
 static std::unordered_set<gms::inet_address> get_nodes_in_dcs(std::vector<sstring> data_centers, locator::effective_replication_map_ptr erm) {

@@ -153,7 +153,13 @@ public:
     future<> replace_with_repair(locator::token_metadata_ptr tmptr, std::unordered_set<dht::token> replacing_tokens, std::unordered_set<gms::inet_address> ignore_nodes);
 private:
     future<> do_decommission_removenode_with_repair(locator::token_metadata_ptr tmptr, gms::inet_address leaving_node, shared_ptr<node_ops_info> ops);
-    future<> do_rebuild_replace_with_repair(locator::token_metadata_ptr tmptr, sstring op, sstring source_dc, streaming::stream_reason reason, std::unordered_set<gms::inet_address> ignore_nodes);
+
+    struct source_dc_param {
+        sstring name;
+        bool user_provided;   // picked as default by us pr given by user
+    };
+
+    future<> do_rebuild_replace_with_repair(locator::token_metadata_ptr tmptr, sstring op, std::optional<source_dc_param> source_dc, streaming::stream_reason reason, std::unordered_set<gms::inet_address> ignore_nodes);
 
     // Must be called on shard 0
     future<> sync_data_using_repair(sstring keyspace,
