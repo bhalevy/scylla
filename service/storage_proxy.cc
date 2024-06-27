@@ -847,22 +847,26 @@ private:
             cmd.max_result_size.emplace(cinfo.retrieve_auxiliary<uint64_t>("max_result_size"));
         }
 
-        return get_schema_for_read(cmd.schema_version, src_addr, *timeout).then([&sp = _sp, &sys_ks = _sys_ks, cmd = std::move(cmd), key = std::move(key), ballot,
-                         only_digest, da, timeout, tr_state = std::move(tr_state), src_ip] (schema_ptr schema) mutable {
+        auto schema = co_await get_schema_for_read(cmd.schema_version, src_addr, *timeout);
+            // FIXME: indentation
             dht::token token = dht::get_token(*schema, key);
             unsigned shard = schema->table().shard_for_reads(token);
             bool local = shard == this_shard_id();
-            sp.get_stats().replica_cross_shard_ops += !local;
-            return sp.container().invoke_on(shard, sp._write_smp_service_group, [gs = global_schema_ptr(schema), gt = tracing::global_trace_state_ptr(std::move(tr_state)),
+            _sp.get_stats().replica_cross_shard_ops += !local;
+            co_return co_await _sp.container().invoke_on(shard, _sp._write_smp_service_group, [gs = global_schema_ptr(schema), gt = tracing::global_trace_state_ptr(std::move(tr_state)),
                                      cmd = make_lw_shared<query::read_command>(std::move(cmd)), key = std::move(key),
+<<<<<<< HEAD
                                      ballot, only_digest, da, timeout, src_ip, &sys_ks] (storage_proxy& sp) -> future<foreign_ptr<std::unique_ptr<paxos::prepare_response>>> {
                 tracing::trace_state_ptr tr_state = gt;
                 co_return co_await paxos::paxos_state::prepare(sp, sys_ks.local(), tr_state, co_await gs.get(), *cmd, key, ballot, only_digest, da, *timeout).then([src_ip, tr_state] (paxos::prepare_response r) {
+=======
+                                     ballot, only_digest, da, timeout, src_ip, &sys_ks = _sys_ks] (storage_proxy& sp) -> future<foreign_ptr<std::unique_ptr<service::paxos::prepare_response>>> {
+                tracing::trace_state_ptr tr_state = gt;
+                auto r = co_await paxos::paxos_state::prepare(sp, sys_ks.local(), tr_state, gs, *cmd, key, ballot, only_digest, da, *timeout);
+>>>>>>> 5c6654c910 (storage_proxy: remote: coroutinize handle_paxos_prepare and prune)
                     tracing::trace(tr_state, "paxos_prepare: handling is done, sending a response to /{}", src_ip);
-                    return make_foreign(std::make_unique<paxos::prepare_response>(std::move(r)));
-                });
+                    co_return make_foreign(std::make_unique<paxos::prepare_response>(std::move(r)));
             });
-        });
     }
 
     future<bool> handle_paxos_accept(
@@ -909,26 +913,32 @@ private:
         if (pruning >= pruning_limit) {
             _sp.get_stats().cas_replica_dropped_prune++;
             tracing::trace(tr_state, "paxos_prune: do not prune due to overload", src_ip);
-            return make_ready_future<seastar::rpc::no_wait_type>(netw::messaging_service::no_wait());
+            co_return netw::messaging_service::no_wait();
         }
 
         pruning++;
         auto d = defer([] { pruning--; });
-        return get_schema_for_read(schema_id, src_addr, *timeout).then([&sp = _sp, &sys_ks = _sys_ks, key = std::move(key), ballot,
-                         timeout, tr_state = std::move(tr_state), src_ip, d = std::move(d)] (schema_ptr schema) mutable {
+        auto schema = co_await get_schema_for_read(schema_id, src_addr, *timeout);
+            // FIXME: indentation
             dht::token token = dht::get_token(*schema, key);
             unsigned shard = schema->table().shard_for_reads(token);
             bool local = shard == this_shard_id();
+<<<<<<< HEAD
             sp.get_stats().replica_cross_shard_ops += !local;
             return smp::submit_to(shard, sp._write_smp_service_group, [gs = global_schema_ptr(schema), gt = tracing::global_trace_state_ptr(std::move(tr_state)),
                                      key = std::move(key), ballot, timeout, src_ip, d = std::move(d), &sys_ks] () -> future<rpc::no_wait_type> {
                 tracing::trace_state_ptr tr_state = gt;
                 co_return co_await paxos::paxos_state::prune(sys_ks.local(), co_await gs.get(), key, ballot,  *timeout, tr_state).then([src_ip, tr_state] () {
+=======
+            _sp.get_stats().replica_cross_shard_ops += !local;
+            co_return co_await smp::submit_to(shard, _sp._write_smp_service_group, [gs = global_schema_ptr(schema), gt = tracing::global_trace_state_ptr(std::move(tr_state)),
+                                     key = std::move(key), ballot, timeout, src_ip, d = std::move(d), &sys_ks = _sys_ks] () -> future<rpc::no_wait_type> {
+                tracing::trace_state_ptr tr_state = gt;
+                co_await paxos::paxos_state::prune(sys_ks.local(), gs, key, ballot,  *timeout, tr_state);
+>>>>>>> 5c6654c910 (storage_proxy: remote: coroutinize handle_paxos_prepare and prune)
                     tracing::trace(tr_state, "paxos_prune: handling is done, sending a response to /{}", src_ip);
-                    return netw::messaging_service::no_wait();
-                });
+                    co_return netw::messaging_service::no_wait();
             });
-        });
     }
 
     void connection_dropped(gms::inet_address addr) {
