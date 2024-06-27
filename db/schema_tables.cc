@@ -226,7 +226,7 @@ static future<> save_system_schema_to_keyspace(cql3::query_processor& qp, const 
             deletion_timestamp), { ksm->name() }, cql3::query_processor::cache_internal::yes).discard_result();
     });
     {
-        auto mvec  = make_create_keyspace_mutations(qp.db().features().cluster_schema_features(), ksm, system_keyspace::schema_creation_timestamp(), true);
+        auto mvec = co_await make_create_keyspace_mutations(qp.db().features().cluster_schema_features(), ksm, system_keyspace::schema_creation_timestamp(), true);
         co_await qp.proxy().mutate_locally(std::move(mvec), tracing::trace_state_ptr());
     }
 }
@@ -2057,7 +2057,7 @@ static void store_map(mutation& m, const K& ckey, const bytes& name, api::timest
  * Keyspace metadata serialization/deserialization.
  */
 
-std::vector<mutation> make_create_keyspace_mutations(schema_features features, lw_shared_ptr<keyspace_metadata> keyspace, api::timestamp_type timestamp, bool with_tables_and_types_and_functions)
+future<std::vector<mutation>> make_create_keyspace_mutations(schema_features features, lw_shared_ptr<keyspace_metadata> keyspace, api::timestamp_type timestamp, bool with_tables_and_types_and_functions)
 {
     std::vector<mutation> mutations;
     schema_ptr s = keyspaces();
@@ -2094,10 +2094,11 @@ std::vector<mutation> make_create_keyspace_mutations(schema_features features, l
             add_type_to_schema_mutation(kv.second, timestamp, mutations);
         }
         for (auto&& s : keyspace->cf_meta_data() | boost::adaptors::map_values) {
+            co_await coroutine::maybe_yield();
             add_table_or_view_to_schema_mutation(s, timestamp, true, mutations);
         }
     }
-    return mutations;
+    co_return mutations;
 }
 
 std::vector<mutation> make_drop_keyspace_mutations(schema_features features, lw_shared_ptr<keyspace_metadata> keyspace, api::timestamp_type timestamp)

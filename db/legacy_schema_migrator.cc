@@ -547,7 +547,7 @@ public:
                             , ks.durable_writes);
 
             // we want separate time stamps for tables/types, so cannot bulk them into the ksm.
-            for (auto&& m : db::schema_tables::make_create_keyspace_mutations(schema_features::full(), ksm, ks.timestamp.time_since_epoch().count(), false)) {
+            for (auto&& m : co_await db::schema_tables::make_create_keyspace_mutations(schema_features::full(), ksm, ks.timestamp.time_since_epoch().count(), false)) {
                 mutations.emplace_back(std::move(m));
             }
             for (auto& t : ks.tables) {
@@ -557,7 +557,7 @@ public:
                 db::schema_tables::add_type_to_schema_mutation(t.metadata, t.timestamp.time_since_epoch().count(), mutations);
             }
         }
-        return _qp.proxy().mutate_locally(std::move(mutations), tracing::trace_state_ptr());
+        co_return co_await _qp.proxy().mutate_locally(std::move(mutations), tracing::trace_state_ptr());
     }
 
     future<> flush_schemas() {

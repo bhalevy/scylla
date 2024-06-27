@@ -612,13 +612,13 @@ void migration_notifier::before_drop_keyspace(const sstring& keyspace_name,
 future<std::vector<mutation>> prepare_keyspace_update_announcement(replica::database& db, lw_shared_ptr<keyspace_metadata> ksm, api::timestamp_type ts) {
     db.validate_keyspace_update(*ksm);
     mlogger.info("Update Keyspace: {}", ksm);
-    co_return db::schema_tables::make_create_keyspace_mutations(db.features().cluster_schema_features(), ksm, ts);
+    return db::schema_tables::make_create_keyspace_mutations(db.features().cluster_schema_features(), ksm, ts);
 }
 
 future<std::vector<mutation>> prepare_new_keyspace_announcement(replica::database& db, lw_shared_ptr<keyspace_metadata> ksm, api::timestamp_type timestamp) {
     db.validate_new_keyspace(*ksm);
     mlogger.info("Create new Keyspace: {}", ksm);
-    co_return db::schema_tables::make_create_keyspace_mutations(db.features().cluster_schema_features(), ksm, timestamp);
+    return db::schema_tables::make_create_keyspace_mutations(db.features().cluster_schema_features(), ksm, timestamp);
 }
 
 static future<std::vector<mutation>> include_keyspace(
