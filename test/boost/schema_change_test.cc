@@ -457,7 +457,7 @@ SEASTAR_TEST_CASE(test_merging_does_not_alter_tables_which_didnt_change) {
             std::vector<mutation> muts1;
             {
                 auto group0_guard = mm.start_group0_operation().get();
-                muts1 = db::schema_tables::make_create_table_mutations(s0, group0_guard.write_timestamp());
+                muts1 = db::schema_tables::make_create_table_mutations(s0, group0_guard.write_timestamp()).get();
                 mm.announce(muts1, std::move(group0_guard), "").get();
             }
 

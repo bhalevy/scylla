@@ -157,6 +157,7 @@ public:
         });
     }
 
+    // Called in a seastar thread
     void on_before_create_column_family(const keyspace_metadata& ksm, const schema& schema, std::vector<mutation>& mutations, api::timestamp_type timestamp) override {
         if (schema.cdc_options().enabled()) {
             auto& db = _ctxt._proxy.get_db().local();
@@ -168,7 +169,7 @@ public:
             // in seastar thread
             auto log_schema = create_log_schema(schema);
 
-            auto log_mut = db::schema_tables::make_create_table_mutations(log_schema, timestamp);
+            auto log_mut = db::schema_tables::make_create_table_mutations(log_schema, timestamp).get();
 
             mutations.insert(mutations.end(), std::make_move_iterator(log_mut.begin()), std::make_move_iterator(log_mut.end()));
         }
@@ -209,7 +210,7 @@ public:
 
             auto log_mut = log_schema 
                 ? db::schema_tables::make_update_table_mutations(db, keyspace.metadata(), log_schema, new_log_schema, timestamp)
-                : db::schema_tables::make_create_table_mutations(new_log_schema, timestamp)
+                : db::schema_tables::make_create_table_mutations(new_log_schema, timestamp).get()
                 ;
 
             mutations.insert(mutations.end(), std::make_move_iterator(log_mut.begin()), std::make_move_iterator(log_mut.end()));

@@ -231,7 +231,7 @@ std::vector<mutation> make_drop_type_mutations(lw_shared_ptr<keyspace_metadata> 
 
 void add_type_to_schema_mutation(user_type type, api::timestamp_type timestamp, std::vector<mutation>& mutations);
 
-std::vector<mutation> make_create_table_mutations(schema_ptr table, api::timestamp_type timestamp);
+future<std::vector<mutation>> make_create_table_mutations(schema_ptr table, api::timestamp_type timestamp);
 
 // Calls notifications.
 // Must be called in a seastar thread

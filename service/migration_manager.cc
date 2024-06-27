@@ -642,7 +642,7 @@ static future<std::vector<mutation>> do_prepare_new_column_family_announcement(s
     mlogger.info("Create new ColumnFamily: {}", cfm);
 
     return seastar::async([&db, &ksm, cfm, timestamp] {
-        auto mutations = db::schema_tables::make_create_table_mutations(cfm, timestamp);
+        auto mutations = db::schema_tables::make_create_table_mutations(cfm, timestamp).get();
         db.get_notifier().before_create_column_family(ksm, *cfm, mutations, timestamp);
         return mutations;
     }).then([&sp, &ksm](std::vector<mutation> mutations) {
