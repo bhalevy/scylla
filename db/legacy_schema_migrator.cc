@@ -551,7 +551,7 @@ public:
                 mutations.emplace_back(std::move(m));
             }
             for (auto& t : ks.tables) {
-                db::schema_tables::add_table_or_view_to_schema_mutation(t.metadata, t.timestamp.time_since_epoch().count(), true, mutations);
+                co_await db::schema_tables::add_table_or_view_to_schema_mutation(t.metadata, t.timestamp.time_since_epoch().count(), true, mutations);
             }
             for (auto& t : ks.types) {
                 db::schema_tables::add_type_to_schema_mutation(t.metadata, t.timestamp.time_since_epoch().count(), mutations);

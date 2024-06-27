@@ -2094,8 +2094,7 @@ future<std::vector<mutation>> make_create_keyspace_mutations(schema_features fea
             add_type_to_schema_mutation(kv.second, timestamp, mutations);
         }
         for (auto&& s : keyspace->cf_meta_data() | boost::adaptors::map_values) {
-            co_await coroutine::maybe_yield();
-            add_table_or_view_to_schema_mutation(s, timestamp, true, mutations);
+            co_await add_table_or_view_to_schema_mutation(s, timestamp, true, mutations);
         }
     }
     co_return mutations;
@@ -2460,7 +2459,7 @@ static schema_mutations make_table_deleting_mutations(const sstring& ks, const s
 future<std::vector<mutation>> make_create_table_mutations(schema_ptr table, api::timestamp_type timestamp)
 {
     std::vector<mutation> mutations;
-    add_table_or_view_to_schema_mutation(table, timestamp, true, mutations);
+    co_await add_table_or_view_to_schema_mutation(table, timestamp, true, mutations);
     make_table_deleting_mutations(table->ks_name(), table->cf_name(), table->is_view(), timestamp)
         .move_to(mutations);
     co_return mutations;
@@ -2658,9 +2657,9 @@ static schema_mutations make_table_mutations(schema_ptr table, api::timestamp_ty
                             std::move(scylla_tables_mutation)};
 }
 
-void add_table_or_view_to_schema_mutation(schema_ptr s, api::timestamp_type timestamp, bool with_columns, std::vector<mutation>& mutations)
-{
+future<> add_table_or_view_to_schema_mutation(schema_ptr s, api::timestamp_type timestamp, bool with_columns, std::vector<mutation>& mutations) {
     make_schema_mutations(s, timestamp, with_columns).move_to(mutations);
+    return make_ready_future(); // FIXME: for now
 }
 
 static schema_mutations make_view_mutations(view_ptr view, api::timestamp_type timestamp, bool with_columns);
@@ -2791,7 +2790,7 @@ std::vector<mutation> make_update_table_mutations(replica::database& db,
     api::timestamp_type timestamp)
 {
     std::vector<mutation> mutations;
-    add_table_or_view_to_schema_mutation(new_table, timestamp, false, mutations);
+    add_table_or_view_to_schema_mutation(new_table, timestamp, false, mutations).get();
     make_update_indices_mutations(db, old_table, new_table, timestamp, mutations);
     make_update_columns_mutations(std::move(old_table), std::move(new_table), timestamp, mutations);
 
@@ -3405,8 +3404,8 @@ future<std::vector<mutation>> make_create_view_mutations(lw_shared_ptr<keyspace_
     // timestamp makes sure that the update mutations take precedence. Although there is no known
     // scenario involving creation of new view where this might happen, there is one with updating
     // a view (see `make_update_view_mutations`); we use similarly modified timestamp here for consistency.
-    add_table_or_view_to_schema_mutation(base, timestamp - 1, true, mutations);
-    add_table_or_view_to_schema_mutation(view, timestamp, true, mutations);
+    co_await add_table_or_view_to_schema_mutation(base, timestamp - 1, true, mutations);
+    co_await add_table_or_view_to_schema_mutation(view, timestamp, true, mutations);
     make_table_deleting_mutations(view->ks_name(), view->cf_name(), view->is_view(), timestamp)
         .move_to(mutations);
     co_return mutations;
@@ -3433,9 +3432,9 @@ future<std::vector<mutation>> make_update_view_mutations(lw_shared_ptr<keyspace_
         // timestamp makes sure that the update mutations take precedence. Such conflicting mutations
         // may appear, for example, when we modify a user defined type that is referenced by both base table
         // and its attached view. See #15530.
-        add_table_or_view_to_schema_mutation(base, timestamp - 1, true, mutations);
+        co_await add_table_or_view_to_schema_mutation(base, timestamp - 1, true, mutations);
     }
-    add_table_or_view_to_schema_mutation(new_view, timestamp, false, mutations);
+    co_await add_table_or_view_to_schema_mutation(new_view, timestamp, false, mutations);
     make_update_columns_mutations(old_view, new_view, timestamp, mutations);
     co_return mutations;
 }

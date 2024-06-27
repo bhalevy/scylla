@@ -1167,7 +1167,7 @@ static future<executor::request_return_type> create_table_on_shard0(tracing::tra
     co_await service::prepare_new_column_family_announcement(schema_mutations, sp, *ksm, schema, ts);
     for (schema_builder& view_builder : view_builders) {
         view_ptr view(view_builder.build());
-        db::schema_tables::add_table_or_view_to_schema_mutation(
+        co_await db::schema_tables::add_table_or_view_to_schema_mutation(
             view, ts, true, schema_mutations);
         // add_table_or_view_to_schema_mutation() is a low-level function that
         // doesn't call the callbacks that prepare_new_view_announcement()
