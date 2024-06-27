@@ -855,9 +855,9 @@ private:
             sp.get_stats().replica_cross_shard_ops += !local;
             return sp.container().invoke_on(shard, sp._write_smp_service_group, [gs = global_schema_ptr(schema), gt = tracing::global_trace_state_ptr(std::move(tr_state)),
                                      cmd = make_lw_shared<query::read_command>(std::move(cmd)), key = std::move(key),
-                                     ballot, only_digest, da, timeout, src_ip, &sys_ks] (storage_proxy& sp) {
+                                     ballot, only_digest, da, timeout, src_ip, &sys_ks] (storage_proxy& sp) -> future<foreign_ptr<std::unique_ptr<paxos::prepare_response>>> {
                 tracing::trace_state_ptr tr_state = gt;
-                return paxos::paxos_state::prepare(sp, sys_ks.local(), tr_state, gs, *cmd, key, ballot, only_digest, da, *timeout).then([src_ip, tr_state] (paxos::prepare_response r) {
+                co_return co_await paxos::paxos_state::prepare(sp, sys_ks.local(), tr_state, co_await gs.get(), *cmd, key, ballot, only_digest, da, *timeout).then([src_ip, tr_state] (paxos::prepare_response r) {
                     tracing::trace(tr_state, "paxos_prepare: handling is done, sending a response to /{}", src_ip);
                     return make_foreign(std::make_unique<paxos::prepare_response>(std::move(r)));
                 });
@@ -921,9 +921,9 @@ private:
             bool local = shard == this_shard_id();
             sp.get_stats().replica_cross_shard_ops += !local;
             return smp::submit_to(shard, sp._write_smp_service_group, [gs = global_schema_ptr(schema), gt = tracing::global_trace_state_ptr(std::move(tr_state)),
-                                     key = std::move(key), ballot, timeout, src_ip, d = std::move(d), &sys_ks] () {
+                                     key = std::move(key), ballot, timeout, src_ip, d = std::move(d), &sys_ks] () -> future<rpc::no_wait_type> {
                 tracing::trace_state_ptr tr_state = gt;
-                return paxos::paxos_state::prune(sys_ks.local(), gs, key, ballot,  *timeout, tr_state).then([src_ip, tr_state] () {
+                co_return co_await paxos::paxos_state::prune(sys_ks.local(), co_await gs.get(), key, ballot,  *timeout, tr_state).then([src_ip, tr_state] () {
                     tracing::trace(tr_state, "paxos_prune: handling is done, sending a response to /{}", src_ip);
                     return netw::messaging_service::no_wait();
                 });
@@ -6454,8 +6454,8 @@ storage_proxy::query_mutations_locally(schema_ptr s, lw_shared_ptr<query::read_c
     if (auto shard_opt = dht::is_single_shard(erm->get_sharder(*s), *s, pr)) {
         auto shard = *shard_opt;
         get_stats().replica_cross_shard_ops += shard != this_shard_id();
-        return _db.invoke_on(shard, _read_smp_service_group, [cmd, &pr, gs=global_schema_ptr(s), timeout, gt = tracing::global_trace_state_ptr(std::move(trace_state))] (replica::database& db) mutable {
-            return db.query_mutations(gs, *cmd, pr, gt, timeout).then([] (std::tuple<reconcilable_result, cache_temperature> result_ht) {
+        return _db.invoke_on(shard, _read_smp_service_group, [cmd, &pr, gs=global_schema_ptr(s), timeout, gt = tracing::global_trace_state_ptr(std::move(trace_state))] (replica::database& db) mutable -> future<rpc::tuple<foreign_ptr<lw_shared_ptr<reconcilable_result>>, cache_temperature>> {
+            co_return co_await db.query_mutations(co_await gs.get(), *cmd, pr, gt, timeout).then([] (std::tuple<reconcilable_result, cache_temperature> result_ht) {
                 auto&& [result, ht] = result_ht;
                 return make_ready_future<rpc::tuple<foreign_ptr<lw_shared_ptr<reconcilable_result>>, cache_temperature>>(rpc::tuple(make_foreign(make_lw_shared<reconcilable_result>(std::move(result))), ht));
             });

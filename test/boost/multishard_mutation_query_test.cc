@@ -118,7 +118,9 @@ static generated_table create_test_table(
             compacted_frozen_mutations.emplace_back(freeze(mut.compacted()));
             (void)with_gate(write_gate, [&] {
                 return smp::submit_to(dht::static_shard_of(*schema, mut.decorated_key().token()), [&env, gs = global_schema_ptr(schema), mut = freeze(mut)] () mutable {
-                    return env.local_db().apply(gs.get(), std::move(mut), {}, db::commitlog_force_sync::no, db::no_timeout);
+                  return gs.get().then([&env, mut = std::move(mut)] (schema_ptr s) {
+                    return env.local_db().apply(s, std::move(mut), {}, db::commitlog_force_sync::no, db::no_timeout);
+                  });
                 });
             });
             thread::maybe_yield();
@@ -228,7 +230,8 @@ static std::vector<mutation> read_all_partitions_one_by_one(distributed<replica:
 
     for (const auto& pkey : pkeys) {
         const auto res = db.invoke_on(sharder.shard_for_reads(pkey.token()), [gs = global_schema_ptr(s), &pkey, &slice] (replica::database& db) {
-            return async([s = gs.get(), &pkey, &slice, &db] () mutable {
+            return async([gs = std::move(gs), &pkey, &slice, &db] () mutable {
+                auto s = gs.get().get();
                 const auto cmd = query::read_command(s->id(), s->version(), slice,
                         query::max_result_size(query::result_memory_limiter::unlimited_result_size), query::tombstone_limit::max);
                 const auto range = dht::partition_range::make_singular(pkey);
@@ -1145,16 +1148,18 @@ SEASTAR_THREAD_TEST_CASE(fuzzy_test) {
         testlog.info("Running test workload with configuration: seed={}, timeout={}s, concurrency={}, scans={}", cfg.seed, cfg.timeout.count(),
                 cfg.concurrency, cfg.scans);
 
-        smp::invoke_on_all([cfg, db = &env.db(), gs = global_schema_ptr(tbl.schema), &compacted_frozen_mutations = tbl.compacted_frozen_mutations] {
-            return run_fuzzy_test_workload(cfg, *db, gs.get(), compacted_frozen_mutations);
-        }).handle_exception([seed] (std::exception_ptr e) {
+        smp::invoke_on_all([cfg, db = &env.db(), gs = global_schema_ptr(tbl.schema), &compacted_frozen_mutations = tbl.compacted_frozen_mutations] () -> future<> {
+          try {
+            co_await run_fuzzy_test_workload(cfg, *db, co_await gs.get(), compacted_frozen_mutations);
+          } catch (...) {
             testlog.error("Test workload failed with exception {}."
                     " To repeat this particular run, replace the random seed of the test, with that of this run ({})."
                     " Look for `REPLACE RANDOM SEED HERE` in the source of the test.",
-                    e,
+                    std::current_exception(),
                     seed);
             // Fail the test on any exception.
             BOOST_FAIL("Test run finished with exception");
+          }
         }).get();
 
         return make_ready_future<>();

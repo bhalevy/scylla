@@ -307,9 +307,17 @@ schema_registry& local_schema_registry() {
     return registry;
 }
 
-global_schema_ptr::global_schema_ptr(const global_schema_ptr& o)
-    : global_schema_ptr(o.get())
-{ }
+future<global_schema_ptr> global_schema_ptr::clone(const global_schema_ptr& o) {
+    co_return global_schema_ptr(co_await o.get());
+}
+
+global_schema_ptr::global_schema_ptr(const global_schema_ptr& o) noexcept {
+    auto current = this_shard_id();
+    assert(o._cpu_of_origin == current);
+    _ptr = o._ptr;
+    _base_schema = o._base_schema;
+    _cpu_of_origin = current;
+}
 
 global_schema_ptr::global_schema_ptr(global_schema_ptr&& o) noexcept {
     auto current = this_shard_id();
@@ -319,74 +327,60 @@ global_schema_ptr::global_schema_ptr(global_schema_ptr&& o) noexcept {
     _base_schema = std::move(o._base_schema);
 }
 
-schema_ptr global_schema_ptr::get() const {
+future<schema_ptr> global_schema_ptr::get() const {
     if (this_shard_id() == _cpu_of_origin) {
-        return _ptr;
+        co_return _ptr.ptr;
     } else {
-        auto registered_schema = [](const schema_registry_entry& e) {
-            schema_ptr ret = local_schema_registry().get_or_null(e.version());
-            if (!ret) {
-                ret = local_schema_registry().get_or_load(e.version(), [&e](table_schema_version) {
-                    return e.frozen();
+        auto registered_schema = [this] (schema_ptr_and_version& sv) -> future<schema_ptr> {
+            return local_schema_registry().get_or_load(sv.version, [this, &sv] (table_schema_version) {
+                return smp::submit_to(_cpu_of_origin, [&sv] () {
+                    if (!sv.ptr->registry_entry()) {
+                        sv.ptr = local_schema_registry().get_or_load(sv.version, [s = sv.ptr] (table_schema_version) {
+                            return frozen_schema(s);
+                        });
+                    }
+                    return sv.ptr->registry_entry()->frozen();
                 });
-            }
-            return ret;
+            });
         };
 
-        schema_ptr registered_bs;
         // the following code contains registry entry dereference of a foreign shard
         // however, it is guaranteed to succeed since we made sure in the constructor
         // that _bs_schema and _ptr will have a registry on the foreign shard where this
         // object originated so as long as this object lives the registry entries lives too
         // and it is safe to reference them on foreign shards.
-        if (_base_schema) {
-            registered_bs = registered_schema(*_base_schema->registry_entry());
-            if (_base_schema->registry_entry()->is_synced()) {
-                registered_bs->registry_entry()->mark_synced();
+        auto sync_sync = [] (const schema_ptr& remote, schema_ptr& local) {
+            if (const auto* e = remote->registry_entry(); e->is_synced()) {
+                local->registry_entry()->mark_synced();
             }
+        };
+
+        schema_ptr registered_bs;
+        if (_base_schema.ptr) {
+            registered_bs = co_await registered_schema(_base_schema);
+            sync_sync(_base_schema.ptr, registered_bs);
         }
-        schema_ptr s = registered_schema(*_ptr->registry_entry());
+        schema_ptr s = co_await registered_schema(_ptr);
         if (s->is_view()) {
             if (!s->view_info()->base_info()) {
                 // we know that registered_bs is valid here because we make sure of it in the constructors.
                 s->view_info()->set_base_info(s->view_info()->make_base_dependent_view_info(*registered_bs));
             }
         }
-        if (_ptr->registry_entry()->is_synced()) {
-            s->registry_entry()->mark_synced();
-        }
-        return s;
+        sync_sync(_ptr.ptr, s);
+        co_return s;
     }
 }
 
-global_schema_ptr::global_schema_ptr(const schema_ptr& ptr)
-        : _cpu_of_origin(this_shard_id()) {
-    // _ptr must always have an associated registry entry,
-    // if ptr doesn't, we need to load it into the registry.
-    auto ensure_registry_entry = [] (const schema_ptr& s) {
-        schema_registry_entry* e = s->registry_entry();
-        if (e) {
-            return s;
-        } else {
-            return local_schema_registry().get_or_load(s->version(), [&s] (table_schema_version) {
-                return frozen_schema(s);
-            });
-        }
-    };
-
-    schema_ptr s = ensure_registry_entry(ptr);
+global_schema_ptr::global_schema_ptr(const schema_ptr& s)
+        : _ptr(s)
+        , _cpu_of_origin(this_shard_id())
+{
     if (s->is_view()) {
         if (s->view_info()->base_info()) {
-            _base_schema = ensure_registry_entry(s->view_info()->base_info()->base_schema());
-        } else if (ptr->view_info()->base_info()) {
-            _base_schema = ensure_registry_entry(ptr->view_info()->base_info()->base_schema());
+            _base_schema = schema_ptr_and_version(s->view_info()->base_info()->base_schema());
         } else {
             on_internal_error(slogger, format("Tried to build a global schema for view {}.{} with an uninitialized base info", s->ks_name(), s->cf_name()));
         }
-
-        if (!s->view_info()->base_info() || !s->view_info()->base_info()->base_schema()->registry_entry()) {
-            s->view_info()->set_base_info(s->view_info()->make_base_dependent_view_info(*_base_schema));
-        }
     }
-    _ptr = s;
 }

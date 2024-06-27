@@ -821,7 +821,7 @@ future<> shard_reader_v2::do_fill_buffer() {
                             mutation_reader::forwarding fwd_mr) {
                     return lifecycle_policy->create_reader(std::move(s), std::move(permit), pr, ps, std::move(ts), fwd_mr);
                 });
-                auto s = gs.get();
+                auto s = co_await gs.get();
                 auto permit = co_await _lifecycle_policy->obtain_reader_permit(s, "shard-reader", timeout(), _trace_state);
                 if (permit.needs_readmission()) {
                     co_await permit.wait_readmission();

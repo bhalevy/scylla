@@ -1449,11 +1449,11 @@ enum class schema_diff_side {
     right, // new, after
 };
 
-static schema_diff diff_table_or_view(distributed<service::storage_proxy>& proxy,
+static future<schema_diff> diff_table_or_view(distributed<service::storage_proxy>& proxy,
     std::map<table_id, schema_mutations>&& before,
     std::map<table_id, schema_mutations>&& after,
     bool reload,
-    noncopyable_function<schema_ptr (schema_mutations sm, schema_diff_side)> create_schema)
+    noncopyable_function<future<schema_ptr> (schema_mutations sm, schema_diff_side)> create_schema)
 {
     schema_diff d;
     auto diff = difference(before, after);
@@ -1463,24 +1463,24 @@ static schema_diff diff_table_or_view(distributed<service::storage_proxy>& proxy
         d.dropped.emplace_back(schema_diff::dropped_schema{s});
     }
     for (auto&& key : diff.entries_only_on_right) {
-        auto s = create_schema(std::move(after.at(key)), schema_diff_side::right);
+        auto s = co_await create_schema(std::move(after.at(key)), schema_diff_side::right);
         slogger.info("Creating {}.{} id={} version={}", s->ks_name(), s->cf_name(), s->id(), s->version());
         d.created.emplace_back(s);
     }
     for (auto&& key : diff.entries_differing) {
-        auto s_before = create_schema(std::move(before.at(key)), schema_diff_side::left);
-        auto s = create_schema(std::move(after.at(key)), schema_diff_side::right);
+        auto s_before = co_await create_schema(std::move(before.at(key)), schema_diff_side::left);
+        auto s = co_await create_schema(std::move(after.at(key)), schema_diff_side::right);
         slogger.info("Altering {}.{} id={} version={}", s->ks_name(), s->cf_name(), s->id(), s->version());
         d.altered.emplace_back(schema_diff::altered_schema{s_before, s});
     }
     if (reload) {
         for (auto&& key: diff.entries_in_common) {
-            auto s = create_schema(std::move(after.at(key)), schema_diff_side::right);
+            auto s = co_await create_schema(std::move(after.at(key)), schema_diff_side::right);
             slogger.info("Reloading {}.{} id={} version={}", s->ks_name(), s->cf_name(), s->id(), s->version());
             d.altered.emplace_back(schema_diff::altered_schema {s, s});
         }
     }
-    return d;
+    co_return d;
 }
 
 // see the comments for merge_keyspaces()
@@ -1497,10 +1497,10 @@ static future<> merge_tables_and_views(distributed<service::storage_proxy>& prox
     bool reload,
     bool has_tablet_mutations)
 {
-    auto tables_diff = diff_table_or_view(proxy, std::move(tables_before), std::move(tables_after), reload, [&] (schema_mutations sm, schema_diff_side) {
-        return create_table_from_mutations(proxy, std::move(sm));
+    auto tables_diff = co_await diff_table_or_view(proxy, std::move(tables_before), std::move(tables_after), reload, [&] (schema_mutations sm, schema_diff_side) {
+        return make_ready_future<schema_ptr>(create_table_from_mutations(proxy, std::move(sm)));
     });
-    auto views_diff = diff_table_or_view(proxy, std::move(views_before), std::move(views_after), reload, [&] (schema_mutations sm, schema_diff_side side) {
+    auto views_diff = co_await diff_table_or_view(proxy, std::move(views_before), std::move(views_after), reload, [&] (schema_mutations sm, schema_diff_side side) {
         // The view schema mutation should be created with reference to the base table schema because we definitely know it by now.
         // If we don't do it we are leaving a window where write commands to this schema are illegal.
         // There are 3 possibilities:
@@ -1512,7 +1512,7 @@ static future<> merge_tables_and_views(distributed<service::storage_proxy>& prox
         schema_ptr base_schema;
         for (auto&& altered : tables_diff.altered) {
             // Chose the appropriate version of the base table schema: old -> old, new -> new.
-            schema_ptr s = side == schema_diff_side::left ? altered.old_schema : altered.new_schema;
+            schema_ptr s = co_await (side == schema_diff_side::left ? altered.old_schema.get() : altered.new_schema.get());
             if (s->ks_name() == vp->ks_name() && s->cf_name() == vp->view_info()->base_name() ) {
                 base_schema = s;
                 break;
@@ -1536,7 +1536,7 @@ static future<> merge_tables_and_views(distributed<service::storage_proxy>& prox
         check_no_legacy_secondary_index_mv_schema(proxy.local().get_db().local(), vp, base_schema);
 
         vp->view_info()->set_base_info(vp->view_info()->make_base_dependent_view_info(*base_schema));
-        return vp;
+        co_return vp;
     });
 
     // First drop views and *only then* the tables, if interleaved it can lead

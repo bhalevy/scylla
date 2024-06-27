@@ -91,8 +91,9 @@ struct toppartitions_global_item_key {
     dht::decorated_key key;
 
     toppartitions_global_item_key(toppartitions_item_key&& tik) : schema(std::move(tik.schema)), key(std::move(tik.key)) {}
-    operator toppartitions_item_key() const {
-        return toppartitions_item_key(schema, key);
+
+    future<toppartitions_item_key> get() const {
+        co_return toppartitions_item_key(co_await schema.get(), key);
     }
 
     struct hash {

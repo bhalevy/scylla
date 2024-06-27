@@ -41,8 +41,8 @@ static auto make_populate(bool evict_paused_readers, bool single_fragment_buffer
 
         auto remote_memtables = make_lw_shared<std::vector<foreign_ptr<lw_shared_ptr<replica::memtable>>>>();
         for (unsigned shard = 0; shard < sharder.shard_count(); ++shard) {
-            auto remote_mt = smp::submit_to(shard, [shard, gs = global_schema_ptr(s), &merged_mutations, sharder] {
-                auto s = gs.get();
+            auto remote_mt = smp::submit_to(shard, [shard, gs = global_schema_ptr(s), &merged_mutations, sharder] () -> future<foreign_ptr<lw_shared_ptr<replica::memtable>>> {
+                auto s = co_await gs.get();
                 auto mt = make_lw_shared<replica::memtable>(s);
 
                 for (unsigned i = shard; i < merged_mutations.size(); i += sharder.shard_count()) {
@@ -51,7 +51,7 @@ static auto make_populate(bool evict_paused_readers, bool single_fragment_buffer
                     }
                 }
 
-                return make_foreign(mt);
+                co_return make_foreign(mt);
             }).get();
             remote_memtables->emplace_back(std::move(remote_mt));
         }

@@ -298,7 +298,7 @@ public:
         , _timestamp(s.current_timestamp()) {
     }
 
-    simple_schema get() const {
-        return simple_schema(_gs.get(), _timestamp);
+    future<simple_schema> get() const {
+        co_return simple_schema(co_await _gs.get(), _timestamp);
     }
 };

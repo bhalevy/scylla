@@ -165,17 +165,33 @@ schema_registry& local_schema_registry();
 // automatically propagated to other shards, no matter how long the processing
 // chain will last.
 class global_schema_ptr {
-    schema_ptr _ptr;
-    schema_ptr _base_schema;
+    struct schema_ptr_and_version {
+        schema_ptr ptr;
+        table_schema_version version;
+
+        schema_ptr_and_version() = default;
+
+        schema_ptr_and_version(schema_ptr s) noexcept
+            : ptr(std::move(s))
+            , version(ptr->version())
+        {}
+
+        explicit operator bool() const noexcept {
+            return bool(ptr);
+        }
+    };
+    mutable schema_ptr_and_version _ptr;
+    mutable schema_ptr_and_version _base_schema;
     unsigned _cpu_of_origin;
 public:
     // Note: the schema_ptr must come from the current shard and can't be nullptr.
     global_schema_ptr(const schema_ptr&);
-    // The other may come from a different shard.
-    global_schema_ptr(const global_schema_ptr& other);
+    // The other must come from current shard.
+    global_schema_ptr(const global_schema_ptr& other) noexcept;
     // The other must come from current shard.
     global_schema_ptr(global_schema_ptr&& other) noexcept;
     // May be invoked across shards. Always returns an engaged pointer.
-    schema_ptr get() const;
-    operator schema_ptr() const { return get(); }
+    future<schema_ptr> get() const;
+
+    future<global_schema_ptr> clone(const global_schema_ptr& other);
 };
