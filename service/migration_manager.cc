@@ -685,9 +685,8 @@ future<std::vector<mutation>> prepare_column_family_update_announcement(storage_
         for (auto&& view : view_updates) {
             auto& old_view = keyspace->cf_meta_data().at(view->cf_name());
             mlogger.info("Update view '{}.{}' From {} To {}", view->ks_name(), view->cf_name(), *old_view, *view);
-            auto view_mutations = db::schema_tables::make_update_view_mutations(keyspace, view_ptr(old_view), std::move(view), ts, false);
+            auto view_mutations = co_await db::schema_tables::make_update_view_mutations(keyspace, view_ptr(old_view), std::move(view), ts, false);
             std::move(view_mutations.begin(), view_mutations.end(), std::back_inserter(mutations));
-            co_await coroutine::maybe_yield();
         }
         co_await seastar::async([&] {
             db.get_notifier().before_update_column_family(*cfm, *old_schema, mutations, ts);
@@ -795,7 +794,7 @@ future<std::vector<mutation>> prepare_column_family_drop_announcement(storage_pr
         for (auto& v : views) {
             if (!old_cfm.get_index_manager().is_index(v)) {
                 mlogger.info("Drop view '{}.{}' of table '{}'", v->ks_name(), v->cf_name(), schema->cf_name());
-                auto m = db::schema_tables::make_drop_view_mutations(keyspace, v, ts);
+                auto m = co_await db::schema_tables::make_drop_view_mutations(keyspace, v, ts);
                 mutations.insert(mutations.end(), std::make_move_iterator(m.begin()), std::make_move_iterator(m.end()));
             }
         }
@@ -832,7 +831,7 @@ future<std::vector<mutation>> prepare_new_view_announcement(storage_proxy& sp, v
         }
         mlogger.info("Create new view: {}", view);
         return seastar::async([&db, keyspace = std::move(keyspace), &sp, view = std::move(view), ts] {
-            auto mutations = db::schema_tables::make_create_view_mutations(keyspace, view, ts);
+            auto mutations = db::schema_tables::make_create_view_mutations(keyspace, view, ts).get();
             // We don't have a separate on_before_create_view() listener to
             // call. But a view is also a column family, and we need to call
             // the on_before_create_column_family listener - notably, to
@@ -855,7 +854,7 @@ future<std::vector<mutation>> prepare_view_update_announcement(storage_proxy& sp
             co_await coroutine::return_exception(exceptions::invalid_request_exception("Cannot use ALTER MATERIALIZED VIEW on Table"));
         }
         mlogger.info("Update view '{}.{}' From {} To {}", view->ks_name(), view->cf_name(), *old_view, *view);
-        auto mutations = db::schema_tables::make_update_view_mutations(keyspace, view_ptr(old_view), std::move(view), ts, true);
+        auto mutations = co_await db::schema_tables::make_update_view_mutations(keyspace, view_ptr(old_view), std::move(view), ts, true);
         co_return co_await include_keyspace(sp, *keyspace, std::move(mutations));
     } catch (const std::out_of_range& e) {
         auto&& ex = std::make_exception_ptr(exceptions::configuration_exception(format("Cannot update non existing materialized view '{}' in keyspace '{}'.",
@@ -876,7 +875,7 @@ future<std::vector<mutation>> prepare_view_drop_announcement(storage_proxy& sp, 
         }
         auto keyspace = db.find_keyspace(ks_name).metadata();
         mlogger.info("Drop view '{}.{}'", view->ks_name(), view->cf_name());
-        auto mutations = db::schema_tables::make_drop_view_mutations(keyspace, view_ptr(std::move(view)), ts);
+        auto mutations = co_await db::schema_tables::make_drop_view_mutations(keyspace, view_ptr(std::move(view)), ts);
         // notifiers must run in seastar thread
         co_await seastar::async([&] {
             db.get_notifier().before_drop_column_family(*view, mutations, ts);

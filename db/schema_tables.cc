@@ -3394,7 +3394,7 @@ schema_mutations make_schema_mutations(schema_ptr s, api::timestamp_type timesta
     return s->is_view() ? make_view_mutations(view_ptr(s), timestamp, with_columns) : make_table_mutations(s, timestamp, with_columns);
 }
 
-std::vector<mutation> make_create_view_mutations(lw_shared_ptr<keyspace_metadata> keyspace, view_ptr view, api::timestamp_type timestamp)
+future<std::vector<mutation>> make_create_view_mutations(lw_shared_ptr<keyspace_metadata> keyspace, view_ptr view, api::timestamp_type timestamp)
 {
     std::vector<mutation> mutations;
     // Include the serialized base table mutations in case the target node is missing them.
@@ -3409,7 +3409,7 @@ std::vector<mutation> make_create_view_mutations(lw_shared_ptr<keyspace_metadata
     add_table_or_view_to_schema_mutation(view, timestamp, true, mutations);
     make_table_deleting_mutations(view->ks_name(), view->cf_name(), view->is_view(), timestamp)
         .move_to(mutations);
-    return mutations;
+    co_return mutations;
 }
 
 /**
@@ -3417,7 +3417,7 @@ std::vector<mutation> make_create_view_mutations(lw_shared_ptr<keyspace_metadata
  * case, the new base schema isn't yet loaded, thus can't be accessed from this
  * function.
  */
-std::vector<mutation> make_update_view_mutations(lw_shared_ptr<keyspace_metadata> keyspace,
+future<std::vector<mutation>> make_update_view_mutations(lw_shared_ptr<keyspace_metadata> keyspace,
                                                  view_ptr old_view,
                                                  view_ptr new_view,
                                                  api::timestamp_type timestamp,
@@ -3437,13 +3437,13 @@ std::vector<mutation> make_update_view_mutations(lw_shared_ptr<keyspace_metadata
     }
     add_table_or_view_to_schema_mutation(new_view, timestamp, false, mutations);
     make_update_columns_mutations(old_view, new_view, timestamp, mutations);
-    return mutations;
+    co_return mutations;
 }
 
-std::vector<mutation> make_drop_view_mutations(lw_shared_ptr<keyspace_metadata> keyspace, view_ptr view, api::timestamp_type timestamp) {
+future<std::vector<mutation>> make_drop_view_mutations(lw_shared_ptr<keyspace_metadata> keyspace, view_ptr view, api::timestamp_type timestamp) {
     std::vector<mutation> mutations;
     make_drop_table_or_view_mutations(views(), view, timestamp, mutations);
-    return mutations;
+    co_return mutations;
 }
 
 data_type parse_type(sstring str)
