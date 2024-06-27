@@ -574,10 +574,10 @@ future<> read_context::save_reader(shard_id shard, full_position_view last_pos) 
 
 future<> read_context::lookup_readers(db::timeout_clock::time_point timeout) noexcept {
     if (!_cmd.query_uuid || _cmd.is_first_page) {
-        return make_ready_future<>();
+        co_return;
     }
-    try {
-        return _db.invoke_on_all([this, cmd = &_cmd, ranges = &_ranges, gs = global_schema_ptr(_schema),
+    // FIXME: indentation
+        co_await _db.invoke_on_all([this, cmd = &_cmd, ranges = &_ranges, gs = global_schema_ptr(_schema),
                 gts = tracing::global_trace_state_ptr(_trace_state), timeout] (replica::database& db) mutable -> future<> {
             auto schema = co_await gs.get();
             auto& table = db.find_column_family(schema);
@@ -598,9 +598,6 @@ future<> read_context::lookup_readers(db::timeout_clock::time_point timeout) noe
                     reader_meta::remote_parts(q.permit(), std::move(q).reader_range(), std::move(q).reader_slice(), table.read_in_progress(),
                             std::move(handle)));
         });
-    } catch (...) {
-        return current_exception_as_future();
-    }
 }
 
 future<> read_context::save_readers(mutation_reader::tracked_buffer unconsumed_buffer, std::optional<detached_compaction_state> compaction_state,
