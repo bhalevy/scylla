@@ -6,6 +6,8 @@
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
+#include <seastar/core/coroutine.hh>
+
 #include "db/data_listeners.hh"
 #include "replica/database.hh"
 #include "readers/filtering.hh"
@@ -46,6 +48,13 @@ void data_listeners::on_write(const schema_ptr& s, const frozen_mutation& m) {
 
 toppartitions_item_key::operator sstring() const {
     return fmt::to_string(key.key().with_schema(*schema));
+}
+
+future<toppartitions_global_item_key> toppartitions_global_item_key::make(toppartitions_item_key&& tik) {
+    co_return toppartitions_global_item_key{
+        co_await global_schema_ptr::make(std::move(tik.schema)),
+        std::move(tik.key)
+    };
 }
 
 toppartitions_data_listener::toppartitions_data_listener(replica::database& db, std::unordered_set<std::tuple<sstring, sstring>, utils::tuple_hash> table_filters,
@@ -91,14 +100,14 @@ void toppartitions_data_listener::on_write(const schema_ptr& s, const frozen_mut
     }
 }
 
-toppartitions_data_listener::global_top_k::results
+future<toppartitions_data_listener::global_top_k::results>
 toppartitions_data_listener::globalize(top_k::results&& r) {
     toppartitions_data_listener::global_top_k::results n;
     n.reserve(r.size());
     for (auto&& e : r) {
-        n.emplace_back(global_top_k::results::value_type{toppartitions_global_item_key(std::move(e.item)), e.count, e.error});
+        n.emplace_back(global_top_k::results::value_type{co_await toppartitions_global_item_key::make(std::move(e.item)), e.count, e.error});
     }
-    return n;
+    co_return n;
 }
 
 toppartitions_data_listener::top_k::results
@@ -128,18 +137,18 @@ using top_t = toppartitions_data_listener::global_top_k::results;
 future<toppartitions_query::results> toppartitions_query::gather(unsigned res_size) {
     dblog.debug("toppartitions_query::gather");
 
-    auto map = [res_size] (toppartitions_data_listener& listener) {
+    auto map = [res_size] (toppartitions_data_listener& listener) -> future<foreign_ptr<std::unique_ptr<std::tuple<top_t, top_t>>>> {
         dblog.trace("toppartitions_query::map_reduce with listener {}", fmt::ptr(&listener));
-        top_t rd = toppartitions_data_listener::globalize(listener._top_k_read.top(res_size));
-        top_t wr = toppartitions_data_listener::globalize(listener._top_k_write.top(res_size));
-        return make_foreign(std::make_unique<std::tuple<top_t, top_t>>(std::move(rd), std::move(wr)));
+        top_t rd = co_await toppartitions_data_listener::globalize(listener._top_k_read.top(res_size));
+        top_t wr = co_await toppartitions_data_listener::globalize(listener._top_k_write.top(res_size));
+        co_return make_foreign(std::make_unique<std::tuple<top_t, top_t>>(std::move(rd), std::move(wr)));
     };
     auto reduce = [] (results res, foreign_ptr<std::unique_ptr<std::tuple<top_t, top_t>>> rd_wr) {
         res.read.append(toppartitions_data_listener::localize(std::get<0>(*rd_wr)));
         res.write.append(toppartitions_data_listener::localize(std::get<1>(*rd_wr)));
         return res;
     };
-    return _query->map_reduce0(map, results{res_size}, reduce)
+    co_return co_await _query->map_reduce0(map, results{res_size}, reduce)
         .handle_exception([] (auto ep) {
             dblog.error("toppartitions_query::gather: {}", ep);
             return make_exception_future<results>(ep);

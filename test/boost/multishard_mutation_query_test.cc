@@ -79,6 +79,7 @@ public:
 
 } // anonymous namespace
 
+// Called in a seastar thread
 static generated_table create_test_table(
         cql_test_env& env,
         uint32_t seed,
@@ -117,10 +118,15 @@ static generated_table create_test_table(
             keys.emplace_back(mut.decorated_key());
             compacted_frozen_mutations.emplace_back(freeze(mut.compacted()));
             (void)with_gate(write_gate, [&] {
+<<<<<<< HEAD
                 return smp::submit_to(dht::static_shard_of(*schema, mut.decorated_key().token()), [&env, gs = global_schema_ptr(schema), mut = freeze(mut)] () mutable {
                   return gs.get().then([&env, mut = std::move(mut)] (schema_ptr s) {
                     return env.local_db().apply(s, std::move(mut), {}, db::commitlog_force_sync::no, db::no_timeout);
                   });
+=======
+                return smp::submit_to(dht::static_shard_of(*schema, mut.decorated_key().token()), [&env, gs = global_schema_ptr::make(schema).get(), mut = freeze(mut)] () mutable {
+                    return env.local_db().apply(gs.get(), std::move(mut), {}, db::commitlog_force_sync::no, db::no_timeout);
+>>>>>>> de2e46be26 (schema_registry: coroutinize making and cloning of global_schema_ptr)
                 });
             });
             thread::maybe_yield();
@@ -222,6 +228,7 @@ SEASTAR_THREAD_TEST_CASE(test_abandoned_read) {
     }, cql_config_with_extensions()).get();
 }
 
+// Called in a seastar thread
 static std::vector<mutation> read_all_partitions_one_by_one(distributed<replica::database>& db, schema_ptr s, std::vector<dht::decorated_key> pkeys,
         const query::partition_slice& slice) {
     const auto& sharder = s->get_sharder();
@@ -229,9 +236,14 @@ static std::vector<mutation> read_all_partitions_one_by_one(distributed<replica:
     results.reserve(pkeys.size());
 
     for (const auto& pkey : pkeys) {
+<<<<<<< HEAD
         const auto res = db.invoke_on(sharder.shard_for_reads(pkey.token()), [gs = global_schema_ptr(s), &pkey, &slice] (replica::database& db) {
             return async([gs = std::move(gs), &pkey, &slice, &db] () mutable {
                 auto s = gs.get().get();
+=======
+        const auto res = db.invoke_on(sharder.shard_for_reads(pkey.token()), [gs = global_schema_ptr::make(s).get(), &pkey, &slice] (replica::database& db) {
+            return async([s = gs.get(), &pkey, &slice, &db] () mutable {
+>>>>>>> de2e46be26 (schema_registry: coroutinize making and cloning of global_schema_ptr)
                 const auto cmd = query::read_command(s->id(), s->version(), slice,
                         query::max_result_size(query::result_memory_limiter::unlimited_result_size), query::tombstone_limit::max);
                 const auto range = dht::partition_range::make_singular(pkey);
@@ -1148,10 +1160,17 @@ SEASTAR_THREAD_TEST_CASE(fuzzy_test) {
         testlog.info("Running test workload with configuration: seed={}, timeout={}s, concurrency={}, scans={}", cfg.seed, cfg.timeout.count(),
                 cfg.concurrency, cfg.scans);
 
+<<<<<<< HEAD
         smp::invoke_on_all([cfg, db = &env.db(), gs = global_schema_ptr(tbl.schema), &compacted_frozen_mutations = tbl.compacted_frozen_mutations] () -> future<> {
           try {
             co_await run_fuzzy_test_workload(cfg, *db, co_await gs.get(), compacted_frozen_mutations);
           } catch (...) {
+=======
+        auto gs = global_schema_ptr::make(tbl.schema).get();
+        smp::invoke_on_all([cfg, db = &env.db(), &gs, &compacted_frozen_mutations = tbl.compacted_frozen_mutations] {
+            return run_fuzzy_test_workload(cfg, *db, gs.get(), compacted_frozen_mutations);
+        }).handle_exception([seed] (std::exception_ptr e) {
+>>>>>>> de2e46be26 (schema_registry: coroutinize making and cloning of global_schema_ptr)
             testlog.error("Test workload failed with exception {}."
                     " To repeat this particular run, replace the random seed of the test, with that of this run ({})."
                     " Look for `REPLACE RANDOM SEED HERE` in the source of the test.",

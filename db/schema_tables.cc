@@ -1460,24 +1460,25 @@ static future<schema_diff> diff_table_or_view(distributed<service::storage_proxy
     for (auto&& key : diff.entries_only_on_left) {
         auto&& s = proxy.local().get_db().local().find_schema(key);
         slogger.info("Dropping {}.{} id={} version={}", s->ks_name(), s->cf_name(), s->id(), s->version());
-        d.dropped.emplace_back(schema_diff::dropped_schema{s});
+        d.dropped.emplace_back(schema_diff::dropped_schema{co_await global_schema_ptr::make(s)});
     }
     for (auto&& key : diff.entries_only_on_right) {
         auto s = co_await create_schema(std::move(after.at(key)), schema_diff_side::right);
         slogger.info("Creating {}.{} id={} version={}", s->ks_name(), s->cf_name(), s->id(), s->version());
-        d.created.emplace_back(s);
+        d.created.emplace_back(co_await global_schema_ptr::make(s));
     }
     for (auto&& key : diff.entries_differing) {
         auto s_before = co_await create_schema(std::move(before.at(key)), schema_diff_side::left);
         auto s = co_await create_schema(std::move(after.at(key)), schema_diff_side::right);
         slogger.info("Altering {}.{} id={} version={}", s->ks_name(), s->cf_name(), s->id(), s->version());
-        d.altered.emplace_back(schema_diff::altered_schema{s_before, s});
+        d.altered.emplace_back(schema_diff::altered_schema{co_await global_schema_ptr::make(s_before), co_await global_schema_ptr::make(s)});
     }
     if (reload) {
         for (auto&& key: diff.entries_in_common) {
             auto s = co_await create_schema(std::move(after.at(key)), schema_diff_side::right);
             slogger.info("Reloading {}.{} id={} version={}", s->ks_name(), s->cf_name(), s->id(), s->version());
-            d.altered.emplace_back(schema_diff::altered_schema {s, s});
+            auto gs = co_await global_schema_ptr::make(s);
+            d.altered.emplace_back(schema_diff::altered_schema {gs, gs});
         }
     }
     co_return d;
@@ -1498,7 +1499,11 @@ static future<> merge_tables_and_views(distributed<service::storage_proxy>& prox
     bool has_tablet_mutations)
 {
     auto tables_diff = co_await diff_table_or_view(proxy, std::move(tables_before), std::move(tables_after), reload, [&] (schema_mutations sm, schema_diff_side) {
+<<<<<<< HEAD
         return make_ready_future<schema_ptr>(create_table_from_mutations(proxy, std::move(sm)));
+=======
+        return create_table_from_mutations(proxy, std::move(sm));
+>>>>>>> de2e46be26 (schema_registry: coroutinize making and cloning of global_schema_ptr)
     });
     auto views_diff = co_await diff_table_or_view(proxy, std::move(views_before), std::move(views_after), reload, [&] (schema_mutations sm, schema_diff_side side) {
         // The view schema mutation should be created with reference to the base table schema because we definitely know it by now.

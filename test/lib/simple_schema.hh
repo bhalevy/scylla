@@ -291,11 +291,17 @@ public:
 class global_simple_schema {
     global_schema_ptr _gs;
     api::timestamp_type _timestamp;
+
+    global_simple_schema(global_schema_ptr gs, api::timestamp_type ts)
+        : _gs(std::move(gs))
+        , _timestamp(ts) {
+    }
 public:
 
-    global_simple_schema(simple_schema& s)
-        : _gs(s.schema())
-        , _timestamp(s.current_timestamp()) {
+    static future<global_simple_schema> make(simple_schema& s) {
+        co_return global_simple_schema(
+                co_await global_schema_ptr::make(s.schema()),
+                s.current_timestamp());
     }
 
     future<simple_schema> get() const {

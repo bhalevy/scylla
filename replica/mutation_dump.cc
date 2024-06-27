@@ -410,8 +410,8 @@ future<mutation_reader> make_partition_mutation_dump_reader(
         co_return make_mutation_reader<mutation_dump_reader>(std::move(output_schema), std::move(underlying_schema), std::move(permit),
                 db.local(), dk, ps, std::move(ts));
     }
-    auto gos = global_schema_ptr(output_schema);
-    auto gus = global_schema_ptr(underlying_schema);
+    auto gos = co_await global_schema_ptr::make(output_schema);
+    auto gus = co_await global_schema_ptr::make(underlying_schema);
     auto gts = tracing::global_trace_state_ptr(ts);
     auto remote_reader = co_await db.invoke_on(shard,
             [gos = std::move(gos), gus = std::move(gus), &dk, &ps, gts = std::move(gts), timeout] (replica::database& local_db) -> future<foreign_ptr<std::unique_ptr<mutation_reader>>> {

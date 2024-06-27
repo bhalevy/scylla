@@ -203,7 +203,11 @@ SEASTAR_THREAD_TEST_CASE(test_table_is_attached) {
         BOOST_REQUIRE(learned_s2->maybe_table() == s0->maybe_table());
 
         if (smp::count > 1) {
+<<<<<<< HEAD
             smp::submit_to(1, [&e, gs = global_schema_ptr(learned_s2)] () -> future<> {
+=======
+            smp::submit_to(1, [&e, gs = global_schema_ptr::make(learned_s2).get()] {
+>>>>>>> de2e46be26 (schema_registry: coroutinize making and cloning of global_schema_ptr)
                 schema_ptr s0 = e.local_db().find_column_family("ks", "cf").schema();
                 auto s = co_await gs.get();
                 BOOST_REQUIRE(s->maybe_table());
