@@ -848,6 +848,7 @@ private:
         }
 
         auto schema = co_await get_schema_for_read(cmd.schema_version, src_addr, *timeout);
+<<<<<<< HEAD
             // FIXME: indentation
             dht::token token = dht::get_token(*schema, key);
             unsigned shard = schema->table().shard_for_reads(token);
@@ -867,6 +868,21 @@ private:
                     tracing::trace(tr_state, "paxos_prepare: handling is done, sending a response to /{}", src_ip);
                     co_return make_foreign(std::make_unique<paxos::prepare_response>(std::move(r)));
             });
+=======
+        dht::token token = dht::get_token(*schema, key);
+        unsigned shard = schema->table().shard_for_reads(token);
+        bool local = shard == this_shard_id();
+        _sp.get_stats().replica_cross_shard_ops += !local;
+        co_return co_await _sp.container().invoke_on(shard, _sp._write_smp_service_group,
+                [gs = global_schema_ptr(schema), gt = tracing::global_trace_state_ptr(std::move(tr_state)),
+                 cmd = make_lw_shared<query::read_command>(std::move(cmd)), key = std::move(key),
+                 ballot, only_digest, da, timeout, src_ip, &sys_ks = _sys_ks] (storage_proxy& sp) -> future<foreign_ptr<std::unique_ptr<service::paxos::prepare_response>>> {
+            tracing::trace_state_ptr tr_state = gt;
+            auto r = co_await paxos::paxos_state::prepare(sp, sys_ks.local(), tr_state, gs, *cmd, key, ballot, only_digest, da, *timeout);
+            tracing::trace(tr_state, "paxos_prepare: handling is done, sending a response to /{}", src_ip);
+            co_return make_foreign(std::make_unique<paxos::prepare_response>(std::move(r)));
+        });
+>>>>>>> c91b850052 (storage_proxy: remote: handle_paxos_prepare and prune: fixup indentation)
     }
 
     future<bool> handle_paxos_accept(
@@ -919,6 +935,7 @@ private:
         pruning++;
         auto d = defer([] { pruning--; });
         auto schema = co_await get_schema_for_read(schema_id, src_addr, *timeout);
+<<<<<<< HEAD
             // FIXME: indentation
             dht::token token = dht::get_token(*schema, key);
             unsigned shard = schema->table().shard_for_reads(token);
@@ -939,6 +956,20 @@ private:
                     tracing::trace(tr_state, "paxos_prune: handling is done, sending a response to /{}", src_ip);
                     co_return netw::messaging_service::no_wait();
             });
+=======
+        dht::token token = dht::get_token(*schema, key);
+        unsigned shard = schema->table().shard_for_reads(token);
+        bool local = shard == this_shard_id();
+        _sp.get_stats().replica_cross_shard_ops += !local;
+        co_return co_await smp::submit_to(shard, _sp._write_smp_service_group,
+                [gs = global_schema_ptr(schema), gt = tracing::global_trace_state_ptr(std::move(tr_state)),
+                 key = std::move(key), ballot, timeout, src_ip, d = std::move(d), &sys_ks = _sys_ks] () -> future<rpc::no_wait_type> {
+            tracing::trace_state_ptr tr_state = gt;
+            co_await paxos::paxos_state::prune(sys_ks.local(), gs, key, ballot,  *timeout, tr_state);
+            tracing::trace(tr_state, "paxos_prune: handling is done, sending a response to /{}", src_ip);
+            co_return netw::messaging_service::no_wait();
+        });
+>>>>>>> c91b850052 (storage_proxy: remote: handle_paxos_prepare and prune: fixup indentation)
     }
 
     void connection_dropped(gms::inet_address addr) {
