@@ -576,28 +576,27 @@ future<> read_context::lookup_readers(db::timeout_clock::time_point timeout) noe
     if (!_cmd.query_uuid || _cmd.is_first_page) {
         co_return;
     }
-    // FIXME: indentation
-        co_await _db.invoke_on_all([this, cmd = &_cmd, ranges = &_ranges, gs = global_schema_ptr(_schema),
-                gts = tracing::global_trace_state_ptr(_trace_state), timeout] (replica::database& db) mutable -> future<> {
-            auto schema = co_await gs.get();
-            auto& table = db.find_column_family(schema);
-            auto& semaphore = this->semaphore();
-            auto shard = this_shard_id();
+    co_await _db.invoke_on_all([this, cmd = &_cmd, ranges = &_ranges, gs = global_schema_ptr(_schema),
+            gts = tracing::global_trace_state_ptr(_trace_state), timeout] (replica::database& db) mutable -> future<> {
+        auto schema = co_await gs.get();
+        auto& table = db.find_column_family(schema);
+        auto& semaphore = this->semaphore();
+        auto shard = this_shard_id();
 
-            auto querier_opt = db.get_querier_cache().lookup_shard_mutation_querier(cmd->query_uuid, *schema, *ranges, cmd->slice, semaphore, gts.get(), timeout);
+        auto querier_opt = db.get_querier_cache().lookup_shard_mutation_querier(cmd->query_uuid, *schema, *ranges, cmd->slice, semaphore, gts.get(), timeout);
 
-            if (!querier_opt) {
-                _readers[shard] = reader_meta(reader_state::inexistent);
-                co_return;
-            }
+        if (!querier_opt) {
+            _readers[shard] = reader_meta(reader_state::inexistent);
+            co_return;
+        }
 
-            auto& q = *querier_opt;
-            auto handle = semaphore.register_inactive_read(std::move(q).reader());
-            _readers[shard] = reader_meta(
-                    reader_state::successful_lookup,
-                    reader_meta::remote_parts(q.permit(), std::move(q).reader_range(), std::move(q).reader_slice(), table.read_in_progress(),
-                            std::move(handle)));
-        });
+        auto& q = *querier_opt;
+        auto handle = semaphore.register_inactive_read(std::move(q).reader());
+        _readers[shard] = reader_meta(
+                reader_state::successful_lookup,
+                reader_meta::remote_parts(q.permit(), std::move(q).reader_range(), std::move(q).reader_slice(), table.read_in_progress(),
+                        std::move(handle)));
+    });
 }
 
 future<> read_context::save_readers(mutation_reader::tracked_buffer unconsumed_buffer, std::optional<detached_compaction_state> compaction_state,
