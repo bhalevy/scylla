@@ -29,23 +29,23 @@ schema_mutations::schema_mutations(canonical_mutation columnfamilies,
     , _scylla_tables(scylla_tables ? mutation_opt{scylla_tables.value().to_mutation(db::schema_tables::scylla_tables())} : std::nullopt)
 {}
 
-void schema_mutations::copy_to(std::vector<mutation>& dst) const {
-    dst.push_back(_columnfamilies);
-    dst.push_back(_columns);
+void schema_mutations::move_to(std::vector<mutation>& dst) && {
+    dst.push_back(std::move(_columnfamilies));
+    dst.push_back(std::move(_columns));
     if (_view_virtual_columns) {
-        dst.push_back(*_view_virtual_columns);
+        dst.push_back(*std::exchange(_view_virtual_columns, std::nullopt));
     }
     if (_computed_columns) {
-        dst.push_back(*_computed_columns);
+        dst.push_back(*std::exchange(_computed_columns, std::nullopt));
     }
     if (_indices) {
-        dst.push_back(*_indices);
+        dst.push_back(*std::exchange(_indices, std::nullopt));
     }
     if (_dropped_columns) {
-        dst.push_back(*_dropped_columns);
+        dst.push_back(*std::exchange(_dropped_columns, std::nullopt));
     }
     if (_scylla_tables) {
-        dst.push_back(*_scylla_tables);
+        dst.push_back(*std::exchange(_scylla_tables, std::nullopt));
     }
 }
 

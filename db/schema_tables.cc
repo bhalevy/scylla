@@ -2461,7 +2461,7 @@ std::vector<mutation> make_create_table_mutations(schema_ptr table, api::timesta
     std::vector<mutation> mutations;
     add_table_or_view_to_schema_mutation(table, timestamp, true, mutations);
     make_table_deleting_mutations(table->ks_name(), table->cf_name(), table->is_view(), timestamp)
-        .copy_to(mutations);
+        .move_to(mutations);
     return mutations;
 }
 
@@ -2659,7 +2659,7 @@ static schema_mutations make_table_mutations(schema_ptr table, api::timestamp_ty
 
 void add_table_or_view_to_schema_mutation(schema_ptr s, api::timestamp_type timestamp, bool with_columns, std::vector<mutation>& mutations)
 {
-    make_schema_mutations(s, timestamp, with_columns).copy_to(mutations);
+    make_schema_mutations(s, timestamp, with_columns).move_to(mutations);
 }
 
 static schema_mutations make_view_mutations(view_ptr view, api::timestamp_type timestamp, bool with_columns);
@@ -2696,8 +2696,7 @@ static void make_update_indices_mutations(
         add_index_to_schema_mutation(new_table, index, timestamp, indices_mutation);
         auto& cf = db.find_column_family(new_table);
         auto view = cf.get_index_manager().create_view_for_index(index);
-        auto view_mutations = make_view_mutations(view, timestamp, true);
-        view_mutations.copy_to(mutations);
+        make_view_mutations(view, timestamp, true).move_to(mutations);
         return view;
     };
 
@@ -3406,7 +3405,7 @@ std::vector<mutation> make_create_view_mutations(lw_shared_ptr<keyspace_metadata
     add_table_or_view_to_schema_mutation(base, timestamp - 1, true, mutations);
     add_table_or_view_to_schema_mutation(view, timestamp, true, mutations);
     make_table_deleting_mutations(view->ks_name(), view->cf_name(), view->is_view(), timestamp)
-        .copy_to(mutations);
+        .move_to(mutations);
     return mutations;
 }
 
