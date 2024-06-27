@@ -784,8 +784,11 @@ future<std::vector<mutation>> prepare_column_family_drop_announcement(storage_pr
 
         std::vector<mutation> drop_si_mutations;
         if (!schema->all_indices().empty()) {
+          drop_si_mutations = co_await seastar::async([&] {
             auto builder = schema_builder(schema).without_indexes();
-            drop_si_mutations = db::schema_tables::make_update_table_mutations(db, keyspace, schema, builder.build(), ts);
+            // Can call notifier when it creates new indexes, so needs to run in Seastar thread
+            return db::schema_tables::make_update_table_mutations(db, keyspace, schema, builder.build(), ts);
+          });
         }
         auto mutations = db::schema_tables::make_drop_table_mutations(keyspace, schema, ts);
         mutations.insert(mutations.end(), std::make_move_iterator(drop_si_mutations.begin()), std::make_move_iterator(drop_si_mutations.end()));

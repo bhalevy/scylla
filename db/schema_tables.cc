@@ -2666,6 +2666,7 @@ void add_table_or_view_to_schema_mutation(schema_ptr s, api::timestamp_type time
 static schema_mutations make_view_mutations(view_ptr view, api::timestamp_type timestamp, bool with_columns);
 static void make_drop_table_or_view_mutations(schema_ptr schema_table, schema_ptr table_or_view, api::timestamp_type timestamp, std::vector<mutation>& mutations);
 
+// Called in a seastar thread
 static void make_update_indices_mutations(
         replica::database& db,
         schema_ptr old_table,
@@ -2782,6 +2783,7 @@ static void make_update_columns_mutations(schema_ptr old_table,
     }
 }
 
+// Called in a seastar thread
 std::vector<mutation> make_update_table_mutations(replica::database& db,
     lw_shared_ptr<keyspace_metadata> keyspace,
     schema_ptr old_table,

@@ -174,6 +174,7 @@ public:
         }
     }
 
+    // Called in a seastar thread
     void on_before_update_column_family(const schema& new_schema, const schema& old_schema, std::vector<mutation>& mutations, api::timestamp_type timestamp) override {
         bool is_cdc = new_schema.cdc_options().enabled();
         bool was_cdc = old_schema.cdc_options().enabled();
