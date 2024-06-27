@@ -265,7 +265,7 @@ future<> system_distributed_keyspace::start() {
                 {{"replication_factor", "3"}},
                 std::nullopt);
         if (!db.has_keyspace(NAME)) {
-            mutations = service::prepare_new_keyspace_announcement(db.real_database(), sd_ksm, ts);
+            mutations = co_await service::prepare_new_keyspace_announcement(db.real_database(), sd_ksm, ts);
             description += format(" create {} keyspace;", NAME);
         } else {
             dlogger.info("{} keyspace is already present. Not creating", NAME);
@@ -277,7 +277,7 @@ future<> system_distributed_keyspace::start() {
                 {},
                 std::nullopt);
         if (!db.has_keyspace(NAME_EVERYWHERE)) {
-            auto sde_mutations = service::prepare_new_keyspace_announcement(db.real_database(), sde_ksm, ts);
+            auto sde_mutations = co_await service::prepare_new_keyspace_announcement(db.real_database(), sde_ksm, ts);
             std::move(sde_mutations.begin(), sde_mutations.end(), std::back_inserter(mutations));
             description += format(" create {} keyspace;", NAME_EVERYWHERE);
         } else {

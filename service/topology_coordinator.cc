@@ -818,7 +818,7 @@ class topology_coordinator : public endpoint_lifecycle_subscriber {
                     auto ks_md = keyspace_metadata::new_keyspace(ks_name, strategy_name, repl_opts,
                                                                  new_ks_props.get_initial_tablets(strategy_name, true),
                                                                  new_ks_props.get_durable_writes(), new_ks_props.get_storage_options());
-                    auto schema_muts = prepare_keyspace_update_announcement(_db, ks_md, guard.write_timestamp());
+                    auto schema_muts = co_await prepare_keyspace_update_announcement(_db, ks_md, guard.write_timestamp());
                     for (auto& m: schema_muts) {
                         updates.emplace_back(m);
                     }

@@ -517,7 +517,7 @@ SEASTAR_TEST_CASE(test_merging_creates_a_table_even_if_keyspace_was_recreated) {
                 const auto ts = group0_guard.write_timestamp();
 
                 // all_muts contains keyspace drop.
-                auto muts = service::prepare_new_keyspace_announcement(e.db().local(), keyspace, ts);
+                auto muts = service::prepare_new_keyspace_announcement(e.db().local(), keyspace, ts).get();
                 boost::copy(muts, std::back_inserter(all_muts));
                 mm.announce(muts, std::move(group0_guard), "").get();
             }

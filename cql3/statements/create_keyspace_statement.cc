@@ -97,7 +97,7 @@ future<std::tuple<::shared_ptr<cql_transport::event::schema_change>, std::vector
 
     try {
         auto ksm = _attrs->as_ks_metadata(_name, tm, feat);
-        m = service::prepare_new_keyspace_announcement(qp.db().real_database(), ksm, ts);
+        m = co_await service::prepare_new_keyspace_announcement(qp.db().real_database(), ksm, ts);
         // If the new keyspace uses tablets, as long as there are features
         // which aren't supported by tablets we want to warn the user that
         // they will not be usable on the new keyspace - and suggest how a

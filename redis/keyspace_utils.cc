@@ -199,7 +199,7 @@ future<> create_keyspace_if_not_exists_impl(seastar::sharded<service::storage_pr
                 continue;
             }
 
-            auto muts = service::prepare_new_keyspace_announcement(db.real_database(), ksm, ts);
+            auto muts = co_await service::prepare_new_keyspace_announcement(db.real_database(), ksm, ts);
             std::move(muts.begin(), muts.end(), std::back_inserter(mutations));
         }
 

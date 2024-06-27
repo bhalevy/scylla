@@ -211,7 +211,7 @@ future<> service::create_legacy_keyspace_if_missing(::service::migration_manager
                     std::nullopt);
 
             try {
-                co_return co_await mm.announce(::service::prepare_new_keyspace_announcement(db.real_database(), ksm, ts),
+                co_return co_await mm.announce(co_await ::service::prepare_new_keyspace_announcement(db.real_database(), ksm, ts),
                         std::move(group0_guard), format("auth_service: create {} keyspace", meta::legacy::AUTH_KS));
             } catch (::service::group0_concurrent_modification&) {
                 log.info("Concurrent operation is detected while creating {} keyspace, retrying.", meta::legacy::AUTH_KS);

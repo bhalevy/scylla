@@ -208,9 +208,9 @@ future<> migration_manager::announce<topology_change>(std::vector<mutation> sche
 
 future<column_mapping> get_column_mapping(db::system_keyspace& sys_ks, table_id, table_schema_version v);
 
-std::vector<mutation> prepare_keyspace_update_announcement(replica::database& db, lw_shared_ptr<keyspace_metadata> ksm, api::timestamp_type ts);
+future<std::vector<mutation>> prepare_keyspace_update_announcement(replica::database& db, lw_shared_ptr<keyspace_metadata> ksm, api::timestamp_type ts);
 
-std::vector<mutation> prepare_new_keyspace_announcement(replica::database& db, lw_shared_ptr<keyspace_metadata> ksm, api::timestamp_type timestamp);
+future<std::vector<mutation>> prepare_new_keyspace_announcement(replica::database& db, lw_shared_ptr<keyspace_metadata> ksm, api::timestamp_type timestamp);
 
 // The timestamp parameter can be used to ensure that all nodes update their internal tables' schemas
 // with identical timestamps, which can prevent an undeeded schema exchange

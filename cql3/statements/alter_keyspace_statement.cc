@@ -137,11 +137,11 @@ cql3::statements::alter_keyspace_statement::prepare_schema_mutations(query_proce
         // we only want to run the tablets path if there are actually any tablets changes, not only schema changes
         if (changes_tablets(qp)) {
             if (!qp.topology_global_queue_empty()) {
-                return make_exception_future<std::tuple<::shared_ptr<::cql_transport::event::schema_change>, cql3::cql_warnings_vec>>(
+                co_await coroutine::return_exception(
                         exceptions::invalid_request_exception("Another global topology request is ongoing, please retry."));
             }
             if (_attrs->get_replication_options().contains(ks_prop_defs::REPLICATION_FACTOR_KEY)) {
-                return make_exception_future<std::tuple<::shared_ptr<::cql_transport::event::schema_change>, cql3::cql_warnings_vec>>(
+                co_await coroutine::return_exception(
                        exceptions::invalid_request_exception("'replication_factor' tag is not allowed when executing ALTER KEYSPACE with tablets, please list the DCs explicitly"));
             }
             qp.db().real_database().validate_keyspace_update(*ks_md_update);
@@ -167,7 +167,7 @@ cql3::statements::alter_keyspace_statement::prepare_schema_mutations(query_proce
                 return cm.to_mutation(topo_req_schema);
             });
         } else {
-            auto schema_mutations = service::prepare_keyspace_update_announcement(qp.db().real_database(), ks_md_update, ts);
+            auto schema_mutations = co_await service::prepare_keyspace_update_announcement(qp.db().real_database(), ks_md_update, ts);
             muts.insert(muts.begin(), schema_mutations.begin(), schema_mutations.end());
         }
 
@@ -176,9 +176,9 @@ cql3::statements::alter_keyspace_statement::prepare_schema_mutations(query_proce
                 target_type,
                 keyspace());
         mc.add_mutations(std::move(muts), "CQL alter keyspace");
-        return make_ready_future<std::tuple<::shared_ptr<cql_transport::event::schema_change>, cql3::cql_warnings_vec>>(std::make_tuple(std::move(ret), warnings));
+        co_return std::make_tuple(std::move(ret), warnings);
     } catch (data_dictionary::no_such_keyspace& e) {
-        return make_exception_future<std::tuple<::shared_ptr<cql_transport::event::schema_change>, cql3::cql_warnings_vec>>(exceptions::invalid_request_exception("Unknown keyspace " + _name));
+        co_return coroutine::exception(std::make_exception_ptr(exceptions::invalid_request_exception("Unknown keyspace " + _name)));
     }
 }
 

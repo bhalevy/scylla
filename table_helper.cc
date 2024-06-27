@@ -153,7 +153,7 @@ future<> table_helper::setup_keyspace(cql3::query_processor& qp, service::migrat
 
         if (!db.has_keyspace(keyspace_name)) {
             try {
-                co_await mm.announce(service::prepare_new_keyspace_announcement(db.real_database(), ksm, ts),
+                co_await mm.announce(co_await service::prepare_new_keyspace_announcement(db.real_database(), ksm, ts),
                         std::move(group0_guard), format("table_helper: create {} keyspace", keyspace_name));
             } catch (service::group0_concurrent_modification&) {
                 tlogger.info("Concurrent operation is detected while creating {} keyspace, retrying.", keyspace_name);

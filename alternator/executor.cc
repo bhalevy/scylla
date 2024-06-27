@@ -1154,7 +1154,7 @@ static future<executor::request_return_type> create_table_on_shard0(tracing::tra
         }
     }
     try {
-        schema_mutations = service::prepare_new_keyspace_announcement(sp.local_db(), ksm, ts);
+        schema_mutations = co_await service::prepare_new_keyspace_announcement(sp.local_db(), ksm, ts);
     } catch (exceptions::already_exists_exception&) {
         if (sp.data_dictionary().has_schema(keyspace_name, table_name)) {
             co_return api_error::resource_in_use(format("Table {} already exists", table_name));
