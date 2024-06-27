@@ -810,7 +810,7 @@ future<> shard_reader_v2::do_fill_buffer() {
 
     auto res = co_await std::invoke([&] () -> future<remote_fill_buffer_result_v2> {
         if (!_reader) {
-            reader_and_buffer_fill_result res = co_await smp::submit_to(_shard, coroutine::lambda([this, gs = co_await global_schema_ptr::make(_schema)] () -> future<reader_and_buffer_fill_result> {
+            reader_and_buffer_fill_result res = co_await smp::submit_to(_shard, coroutine::lambda([this, gs = global_schema_ptr(_schema)] () -> future<reader_and_buffer_fill_result> {
                 auto ms = mutation_source([lifecycle_policy = _lifecycle_policy.get()] (
                             schema_ptr s,
                             reader_permit permit,

@@ -183,15 +183,9 @@ class global_schema_ptr {
     mutable schema_ptr_and_version _ptr;
     mutable schema_ptr_and_version _base_schema;
     unsigned _cpu_of_origin;
-
-    // _ptr must always have an associated registry entry,
-    global_schema_ptr(schema_ptr ptr, schema_ptr base) noexcept
-        : _ptr(std::move(ptr))
-        , _base_schema(std::move(base))
-        , _cpu_of_origin(this_shard_id())
-    {}
 public:
     // Note: the schema_ptr must come from the current shard and can't be nullptr.
+<<<<<<< HEAD
 <<<<<<< HEAD
     global_schema_ptr(const schema_ptr&);
     // The other must come from current shard.
@@ -205,6 +199,11 @@ public:
     // The other must come from current shard.
     global_schema_ptr(const global_schema_ptr& o) noexcept;
 >>>>>>> de2e46be26 (schema_registry: coroutinize making and cloning of global_schema_ptr)
+=======
+    global_schema_ptr(const schema_ptr&);
+    // The other may come from a different shard.
+    global_schema_ptr(const global_schema_ptr& other);
+>>>>>>> 9dc98abedb (Revert "schema_registry: coroutinize making and cloning of global_schema_ptr")
     // The other must come from current shard.
     global_schema_ptr(global_schema_ptr&& other) noexcept;
     // May be invoked across shards. Always returns an engaged pointer.

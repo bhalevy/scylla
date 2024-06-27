@@ -113,7 +113,7 @@ multishard_writer::multishard_writer(
 future<> multishard_writer::make_shard_writer(unsigned shard) {
     auto [reader, handle] = make_queue_reader_v2(_s, _producer.permit());
     _queue_reader_handles[shard] = std::move(handle);
-    _shard_writers[shard] = co_await smp::submit_to(shard, [gs = co_await global_schema_ptr::make(_s),
+    _shard_writers[shard] = co_await smp::submit_to(shard, [gs = global_schema_ptr(_s),
             consumer = _consumer,
             reader = make_foreign(std::make_unique<mutation_reader>(std::move(reader)))] () mutable -> future<foreign_ptr<std::unique_ptr<shard_writer>>> {
         auto s = co_await gs.get();

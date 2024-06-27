@@ -307,6 +307,7 @@ schema_registry& local_schema_registry() {
     return registry;
 }
 
+<<<<<<< HEAD
 future<global_schema_ptr> global_schema_ptr::clone(const global_schema_ptr& o) {
 <<<<<<< HEAD
     co_return global_schema_ptr(co_await o.get());
@@ -333,6 +334,11 @@ global_schema_ptr::global_schema_ptr(const global_schema_ptr& o) noexcept
     assert(this_shard_id() == _cpu_of_origin);
 >>>>>>> de2e46be26 (schema_registry: coroutinize making and cloning of global_schema_ptr)
 }
+=======
+global_schema_ptr::global_schema_ptr(const global_schema_ptr& o)
+    : global_schema_ptr(o.get())
+{ }
+>>>>>>> 9dc98abedb (Revert "schema_registry: coroutinize making and cloning of global_schema_ptr")
 
 global_schema_ptr::global_schema_ptr(global_schema_ptr&& o) noexcept {
     auto current = this_shard_id();
@@ -388,6 +394,7 @@ future<schema_ptr> global_schema_ptr::get() const {
 }
 
 <<<<<<< HEAD
+<<<<<<< HEAD
 global_schema_ptr::global_schema_ptr(const schema_ptr& s)
         : _ptr(s)
         , _cpu_of_origin(this_shard_id())
@@ -401,6 +408,10 @@ global_schema_ptr::global_schema_ptr(const schema_ptr& s)
     }
 =======
 future<global_schema_ptr> global_schema_ptr::make(const schema_ptr& ptr) {
+=======
+global_schema_ptr::global_schema_ptr(const schema_ptr& ptr)
+        : _cpu_of_origin(this_shard_id()) {
+>>>>>>> 9dc98abedb (Revert "schema_registry: coroutinize making and cloning of global_schema_ptr")
     // _ptr must always have an associated registry entry,
     // if ptr doesn't, we need to load it into the registry.
     auto ensure_registry_entry = [] (const schema_ptr& s) {
@@ -415,20 +426,23 @@ future<global_schema_ptr> global_schema_ptr::make(const schema_ptr& ptr) {
     };
 
     schema_ptr s = ensure_registry_entry(ptr);
-    schema_ptr base_schema;
     if (s->is_view()) {
         if (s->view_info()->base_info()) {
-            base_schema = ensure_registry_entry(s->view_info()->base_info()->base_schema());
+            _base_schema = ensure_registry_entry(s->view_info()->base_info()->base_schema());
         } else if (ptr->view_info()->base_info()) {
-            base_schema = ensure_registry_entry(ptr->view_info()->base_info()->base_schema());
+            _base_schema = ensure_registry_entry(ptr->view_info()->base_info()->base_schema());
         } else {
             on_internal_error(slogger, format("Tried to build a global schema for view {}.{} with an uninitialized base info", s->ks_name(), s->cf_name()));
         }
 
         if (!s->view_info()->base_info() || !s->view_info()->base_info()->base_schema()->registry_entry()) {
-            s->view_info()->set_base_info(s->view_info()->make_base_dependent_view_info(*base_schema));
+            s->view_info()->set_base_info(s->view_info()->make_base_dependent_view_info(*_base_schema));
         }
     }
+<<<<<<< HEAD
     co_return global_schema_ptr(std::move(s), std::move(base_schema));
 >>>>>>> de2e46be26 (schema_registry: coroutinize making and cloning of global_schema_ptr)
+=======
+    _ptr = s;
+>>>>>>> 9dc98abedb (Revert "schema_registry: coroutinize making and cloning of global_schema_ptr")
 }

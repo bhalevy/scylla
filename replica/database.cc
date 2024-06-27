@@ -3003,11 +3003,15 @@ future<foreign_ptr<lw_shared_ptr<reconcilable_result>>> query_mutations(
     if (auto shard_opt = dht::is_single_shard(erm->get_sharder(*s), *s, pr)) {
         auto shard = *shard_opt;
 <<<<<<< HEAD
+<<<<<<< HEAD
         co_return co_await db.invoke_on(shard, [gs = global_schema_ptr(s), &cmd, &pr, timeout] (replica::database& db) mutable {
           return gs.get().then([&cmd, &pr, timeout] (schema_ptr s) {
             return db.query_mutations(s, cmd, pr, {}, timeout).then([] (std::tuple<reconcilable_result, cache_temperature>&& res) {
 =======
         co_return co_await db.invoke_on(shard, [gs = co_await global_schema_ptr::make(s), &cmd, &pr, timeout] (replica::database& db) mutable {
+=======
+        co_return co_await db.invoke_on(shard, [gs = global_schema_ptr(s), &cmd, &pr, timeout] (replica::database& db) mutable {
+>>>>>>> 9dc98abedb (Revert "schema_registry: coroutinize making and cloning of global_schema_ptr")
             return db.query_mutations(gs, cmd, pr, {}, timeout).then([] (std::tuple<reconcilable_result, cache_temperature>&& res) {
 >>>>>>> de2e46be26 (schema_registry: coroutinize making and cloning of global_schema_ptr)
                 return make_foreign(make_lw_shared<reconcilable_result>(std::move(std::get<0>(res))));
@@ -3035,11 +3039,15 @@ future<foreign_ptr<lw_shared_ptr<query::result>>> query_data(
     if (auto shard_opt = dht::is_single_shard(erm->get_sharder(*s), *s, pr)) {
         auto shard = *shard_opt;
 <<<<<<< HEAD
+<<<<<<< HEAD
         co_return co_await db.invoke_on(shard, [gs = global_schema_ptr(s), &cmd, opts, &prs, timeout] (replica::database& db) mutable {
           return gs.get().then([&cmd, opts, &prs, timeout] (schema_ptr s) {
             return db.query(s, cmd, opts, prs, {}, timeout).then([] (std::tuple<lw_shared_ptr<query::result>, cache_temperature>&& res) {
 =======
         co_return co_await db.invoke_on(shard, [gs = co_await global_schema_ptr::make(s), &cmd, opts, &prs, timeout] (replica::database& db) mutable {
+=======
+        co_return co_await db.invoke_on(shard, [gs = global_schema_ptr(s), &cmd, opts, &prs, timeout] (replica::database& db) mutable {
+>>>>>>> 9dc98abedb (Revert "schema_registry: coroutinize making and cloning of global_schema_ptr")
             return db.query(gs, cmd, opts, prs, {}, timeout).then([] (std::tuple<lw_shared_ptr<query::result>, cache_temperature>&& res) {
 >>>>>>> de2e46be26 (schema_registry: coroutinize making and cloning of global_schema_ptr)
                 return make_foreign(std::move(std::get<0>(res)));

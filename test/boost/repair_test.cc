@@ -146,7 +146,7 @@ SEASTAR_TEST_CASE(test_reader_with_different_strategies) {
 
     return do_with_cql_env([] (cql_test_env& e) -> future<> {
         random_mutation_generator gen{random_mutation_generator::generate_counters::no, local_shard_only::no};
-        co_await e.db().invoke_on_all([gs = co_await global_schema_ptr::make(gen.schema())](replica::database& db) -> future<> {
+        co_await e.db().invoke_on_all([gs = global_schema_ptr(gen.schema())](replica::database& db) -> future<> {
             co_await db.add_column_family_and_make_directory(gs.get(), replica::database::is_new_cf::yes);
         });
         auto& cf = e.local_db().find_column_family(gen.schema());

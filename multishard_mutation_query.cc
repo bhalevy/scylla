@@ -577,12 +577,16 @@ future<> read_context::lookup_readers(db::timeout_clock::time_point timeout) noe
         co_return;
     }
 <<<<<<< HEAD
+<<<<<<< HEAD
     co_await _db.invoke_on_all([this, cmd = &_cmd, ranges = &_ranges, gs = global_schema_ptr(_schema),
             gts = tracing::global_trace_state_ptr(_trace_state), timeout] (replica::database& db) mutable -> future<> {
         auto schema = co_await gs.get();
 =======
     auto gs = co_await global_schema_ptr::make(_schema);
     co_await _db.invoke_on_all([this, cmd = &_cmd, ranges = &_ranges, &gs,
+=======
+    co_await _db.invoke_on_all([this, cmd = &_cmd, ranges = &_ranges, gs = global_schema_ptr(_schema),
+>>>>>>> 9dc98abedb (Revert "schema_registry: coroutinize making and cloning of global_schema_ptr")
             gts = tracing::global_trace_state_ptr(_trace_state), timeout] (replica::database& db) mutable {
         auto schema = gs.get();
 >>>>>>> de2e46be26 (schema_registry: coroutinize making and cloning of global_schema_ptr)
@@ -814,11 +818,15 @@ future<foreign_ptr<lw_shared_ptr<typename ResultBuilder::result_type>>> do_query
     while (auto range_opt = range_splitter()) {
         auto& r = *results.emplace_back(co_await db.invoke_on(range_opt->shard,
 <<<<<<< HEAD
+<<<<<<< HEAD
                     [&result_builder, &gs, &query_cmd, &range_opt, gts = tracing::global_trace_state_ptr(trace_state), timeout] (replica::database& db) {
           return gs.get().then([&db, &result_builder, &query_cmd, &range_opt, gts, timeout] (schema_ptr gs) {
 =======
                     [&result_builder, gs = co_await global_schema_ptr::make(s), &query_cmd, &range_opt, gts = tracing::global_trace_state_ptr(trace_state), timeout] (replica::database& db) {
 >>>>>>> de2e46be26 (schema_registry: coroutinize making and cloning of global_schema_ptr)
+=======
+                    [&result_builder, gs = global_schema_ptr(s), &query_cmd, &range_opt, gts = tracing::global_trace_state_ptr(trace_state), timeout] (replica::database& db) {
+>>>>>>> 9dc98abedb (Revert "schema_registry: coroutinize making and cloning of global_schema_ptr")
             return result_builder.query(db, gs, query_cmd, range_opt->range, gts, timeout);
           });
         }));

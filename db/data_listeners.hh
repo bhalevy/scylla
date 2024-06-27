@@ -91,6 +91,7 @@ struct toppartitions_global_item_key {
     dht::decorated_key key;
 
 <<<<<<< HEAD
+<<<<<<< HEAD
     toppartitions_global_item_key(toppartitions_item_key&& tik) : schema(std::move(tik.schema)), key(std::move(tik.key)) {}
 
     future<toppartitions_item_key> get() const {
@@ -98,6 +99,9 @@ struct toppartitions_global_item_key {
 =======
     static future<toppartitions_global_item_key> make(toppartitions_item_key&& tik);
 
+=======
+    toppartitions_global_item_key(toppartitions_item_key&& tik) : schema(std::move(tik.schema)), key(std::move(tik.key)) {}
+>>>>>>> 9dc98abedb (Revert "schema_registry: coroutinize making and cloning of global_schema_ptr")
     operator toppartitions_item_key() const {
         return toppartitions_item_key(schema, key);
 >>>>>>> de2e46be26 (schema_registry: coroutinize making and cloning of global_schema_ptr)
@@ -129,7 +133,7 @@ public:
     using top_k = utils::space_saving_top_k<toppartitions_item_key, toppartitions_item_key::hash, toppartitions_item_key::comp>;
     using global_top_k = utils::space_saving_top_k<toppartitions_global_item_key, toppartitions_global_item_key::hash, toppartitions_global_item_key::comp>;
 public:
-    static future<global_top_k::results> globalize(top_k::results&& r);
+    static global_top_k::results globalize(top_k::results&& r);
     static top_k::results localize(const global_top_k::results& r);
 private:
     top_k _top_k_read;

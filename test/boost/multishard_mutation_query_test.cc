@@ -79,7 +79,6 @@ public:
 
 } // anonymous namespace
 
-// Called in a seastar thread
 static generated_table create_test_table(
         cql_test_env& env,
         uint32_t seed,
@@ -119,12 +118,16 @@ static generated_table create_test_table(
             compacted_frozen_mutations.emplace_back(freeze(mut.compacted()));
             (void)with_gate(write_gate, [&] {
 <<<<<<< HEAD
+<<<<<<< HEAD
                 return smp::submit_to(dht::static_shard_of(*schema, mut.decorated_key().token()), [&env, gs = global_schema_ptr(schema), mut = freeze(mut)] () mutable {
                   return gs.get().then([&env, mut = std::move(mut)] (schema_ptr s) {
                     return env.local_db().apply(s, std::move(mut), {}, db::commitlog_force_sync::no, db::no_timeout);
                   });
 =======
                 return smp::submit_to(dht::static_shard_of(*schema, mut.decorated_key().token()), [&env, gs = global_schema_ptr::make(schema).get(), mut = freeze(mut)] () mutable {
+=======
+                return smp::submit_to(dht::static_shard_of(*schema, mut.decorated_key().token()), [&env, gs = global_schema_ptr(schema), mut = freeze(mut)] () mutable {
+>>>>>>> 9dc98abedb (Revert "schema_registry: coroutinize making and cloning of global_schema_ptr")
                     return env.local_db().apply(gs.get(), std::move(mut), {}, db::commitlog_force_sync::no, db::no_timeout);
 >>>>>>> de2e46be26 (schema_registry: coroutinize making and cloning of global_schema_ptr)
                 });
@@ -228,7 +231,6 @@ SEASTAR_THREAD_TEST_CASE(test_abandoned_read) {
     }, cql_config_with_extensions()).get();
 }
 
-// Called in a seastar thread
 static std::vector<mutation> read_all_partitions_one_by_one(distributed<replica::database>& db, schema_ptr s, std::vector<dht::decorated_key> pkeys,
         const query::partition_slice& slice) {
     const auto& sharder = s->get_sharder();
@@ -237,11 +239,15 @@ static std::vector<mutation> read_all_partitions_one_by_one(distributed<replica:
 
     for (const auto& pkey : pkeys) {
 <<<<<<< HEAD
+<<<<<<< HEAD
         const auto res = db.invoke_on(sharder.shard_for_reads(pkey.token()), [gs = global_schema_ptr(s), &pkey, &slice] (replica::database& db) {
             return async([gs = std::move(gs), &pkey, &slice, &db] () mutable {
                 auto s = gs.get().get();
 =======
         const auto res = db.invoke_on(sharder.shard_for_reads(pkey.token()), [gs = global_schema_ptr::make(s).get(), &pkey, &slice] (replica::database& db) {
+=======
+        const auto res = db.invoke_on(sharder.shard_for_reads(pkey.token()), [gs = global_schema_ptr(s), &pkey, &slice] (replica::database& db) {
+>>>>>>> 9dc98abedb (Revert "schema_registry: coroutinize making and cloning of global_schema_ptr")
             return async([s = gs.get(), &pkey, &slice, &db] () mutable {
 >>>>>>> de2e46be26 (schema_registry: coroutinize making and cloning of global_schema_ptr)
                 const auto cmd = query::read_command(s->id(), s->version(), slice,
@@ -1161,6 +1167,7 @@ SEASTAR_THREAD_TEST_CASE(fuzzy_test) {
                 cfg.concurrency, cfg.scans);
 
 <<<<<<< HEAD
+<<<<<<< HEAD
         smp::invoke_on_all([cfg, db = &env.db(), gs = global_schema_ptr(tbl.schema), &compacted_frozen_mutations = tbl.compacted_frozen_mutations] () -> future<> {
           try {
             co_await run_fuzzy_test_workload(cfg, *db, co_await gs.get(), compacted_frozen_mutations);
@@ -1168,6 +1175,9 @@ SEASTAR_THREAD_TEST_CASE(fuzzy_test) {
 =======
         auto gs = global_schema_ptr::make(tbl.schema).get();
         smp::invoke_on_all([cfg, db = &env.db(), &gs, &compacted_frozen_mutations = tbl.compacted_frozen_mutations] {
+=======
+        smp::invoke_on_all([cfg, db = &env.db(), gs = global_schema_ptr(tbl.schema), &compacted_frozen_mutations = tbl.compacted_frozen_mutations] {
+>>>>>>> 9dc98abedb (Revert "schema_registry: coroutinize making and cloning of global_schema_ptr")
             return run_fuzzy_test_workload(cfg, *db, gs.get(), compacted_frozen_mutations);
         }).handle_exception([seed] (std::exception_ptr e) {
 >>>>>>> de2e46be26 (schema_registry: coroutinize making and cloning of global_schema_ptr)

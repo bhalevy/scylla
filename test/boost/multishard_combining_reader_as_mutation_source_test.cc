@@ -42,10 +42,14 @@ static auto make_populate(bool evict_paused_readers, bool single_fragment_buffer
         auto remote_memtables = make_lw_shared<std::vector<foreign_ptr<lw_shared_ptr<replica::memtable>>>>();
         for (unsigned shard = 0; shard < sharder.shard_count(); ++shard) {
 <<<<<<< HEAD
+<<<<<<< HEAD
             auto remote_mt = smp::submit_to(shard, [shard, gs = global_schema_ptr(s), &merged_mutations, sharder] () -> future<foreign_ptr<lw_shared_ptr<replica::memtable>>> {
                 auto s = co_await gs.get();
 =======
             auto remote_mt = smp::submit_to(shard, [shard, gs = global_schema_ptr::make(s).get(), &merged_mutations, sharder] {
+=======
+            auto remote_mt = smp::submit_to(shard, [shard, gs = global_schema_ptr(s), &merged_mutations, sharder] {
+>>>>>>> 9dc98abedb (Revert "schema_registry: coroutinize making and cloning of global_schema_ptr")
                 auto s = gs.get();
 >>>>>>> de2e46be26 (schema_registry: coroutinize making and cloning of global_schema_ptr)
                 auto mt = make_lw_shared<replica::memtable>(s);
