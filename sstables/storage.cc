@@ -68,7 +68,8 @@ private:
 
 public:
     explicit filesystem_storage(sstring dir, sstable_state state)
-        : _dir(make_path(dir, state))
+        : storage(dir)
+        , _dir(make_path(dir, state))
     {}
 
     virtual future<> seal(const sstable& sst) override;
@@ -517,7 +518,8 @@ class s3_storage : public sstables::storage {
 
 public:
     s3_storage(shared_ptr<s3::client> client, sstring bucket, sstring dir)
-        : _client(std::move(client))
+        : storage(dir)
+        , _client(std::move(client))
         , _bucket(std::move(bucket))
         , _location(std::move(dir))
     {
