@@ -558,13 +558,23 @@ bool sstable_directory::compare_sstable_storage_prefix(const sstring& prefix_a, 
     return size_a == size_b && sstring::traits_type::compare(prefix_a.begin(), prefix_b.begin(), size_a) == 0;
 }
 
-future<std::pair<sstring, sstring>> sstable_directory::create_pending_deletion_log(const std::vector<shared_sstable>& ssts) {
-    return seastar::async([&ssts] {
+future<std::pair<sstring, sstring>> sstable_directory::create_pending_deletion_log(const std::filesystem::path& base_dir, const std::vector<shared_sstable>& ssts) {
+    dirlog.debug("Creating pending_delete_log in {}: {}", base_dir.native(), ssts);
+    return seastar::async([&] {
         shared_sstable first = nullptr;
         min_max_tracker<generation_type> gen_tracker;
+        std::stringstream buf;
 
         for (const auto& sst : ssts) {
             gen_tracker.update(sst->generation());
+
+            auto prefix = sst->_storage->prefix();
+            dirlog.trace("Examining {}", prefix);
+            // The pending_delete_log is placed at base_dir
+            // So all sstables must be based there
+            if (!prefix.starts_with(base_dir.native())) {
+                on_internal_error(dirlog, format("SSTable prefix '{}' does not start with expected base_dir={}", prefix, base_dir.native()));
+            }
 
             if (first == nullptr) {
                 first = sst;
@@ -580,10 +590,10 @@ future<std::pair<sstring, sstring>> sstable_directory::create_pending_deletion_l
             }
         }
 
-        sstring pending_delete_dir = first->_storage->prefix() + "/" + sstables::pending_delete_dir;
+        sstring pending_delete_dir = (base_dir / sstables::pending_delete_dir).native();
         sstring pending_delete_log = format("{}/sstables-{}-{}.log", pending_delete_dir, gen_tracker.min(), gen_tracker.max());
         sstring tmp_pending_delete_log = pending_delete_log + ".tmp";
-        sstlog.trace("Writing {}", tmp_pending_delete_log);
+        dirlog.trace("Writing {}", tmp_pending_delete_log);
         try {
             touch_directory(pending_delete_dir).get();
             auto oflags = open_flags::wo | open_flags::create | open_flags::exclusive;
@@ -593,10 +603,17 @@ future<std::pair<sstring, sstring>> sstable_directory::create_pending_deletion_l
             auto out = make_file_output_stream(std::move(f), 4096).get();
             auto close_out = deferred_close(out);
 
+            auto trim_size = base_dir.native().size() + 1; // Account for the '/' delimiter
             for (const auto& sst : ssts) {
+                auto prefix = sst->_storage->prefix();
+                if (prefix.size() > trim_size) {
+                    out.write(prefix.begin() + trim_size, prefix.size() - trim_size).get();
+                    out.write("/").get();
+                }
                 auto toc = sst->component_basename(component_type::TOC);
                 out.write(toc).get();
                 out.write("\n").get();
+                dirlog.trace("Wrote '{}/{}' to {}", sstring(prefix.begin() + trim_size, prefix.size() - trim_size), sst->component_basename(component_type::TOC), tmp_pending_delete_log);
             }
 
             out.flush().get();
@@ -610,9 +627,9 @@ future<std::pair<sstring, sstring>> sstable_directory::create_pending_deletion_l
             // Guarantee that the changes above reached the disk.
             dir_f.flush().get();
             close_dir.close_now();
-            sstlog.debug("{} written successfully.", pending_delete_log);
+            dirlog.debug("{} written successfully.", pending_delete_log);
         } catch (...) {
-            sstlog.warn("Error while writing {}: {}. Ignoring.", pending_delete_log, std::current_exception());
+            dirlog.warn("Error while writing {}: {}. Ignoring.", pending_delete_log, std::current_exception());
         }
 
         return std::make_pair<sstring, sstring>(std::move(pending_delete_log), first->_storage->prefix());
@@ -622,7 +639,7 @@ future<std::pair<sstring, sstring>> sstable_directory::create_pending_deletion_l
 // FIXME: Go through maybe_delete_large_partitions_entry on recovery since
 // this is an indication we crashed in the middle of atomic deletion
 future<> sstable_directory::filesystem_components_lister::replay_pending_delete_log(fs::path pending_delete_log) {
-    sstlog.debug("Reading pending_deletes log file {}", pending_delete_log);
+    dirlog.debug("Reading pending_deletes log file {}", pending_delete_log);
     fs::path pending_delete_dir = pending_delete_log.parent_path();
     try {
         sstring sstdir = pending_delete_dir.parent_path().native();
@@ -632,14 +649,15 @@ future<> sstable_directory::filesystem_components_lister::replay_pending_delete_
         std::vector<sstring> basenames;
         boost::split(basenames, all, boost::is_any_of("\n"), boost::token_compress_on);
         auto tocs = boost::copy_range<std::vector<sstring>>(basenames | boost::adaptors::filtered([] (auto&& basename) { return !basename.empty(); }));
+        dirlog.debug("TOCs to remove: {}", tocs);
         co_await parallel_for_each(tocs, [&sstdir] (const sstring& name) {
             // Only move TOC to TOC.tmp, the rest will be finished by regular process
             return make_toc_temporary(sstdir + "/" + name).discard_result();
         });
-        sstlog.debug("Replayed {}, removing", pending_delete_log);
+        dirlog.debug("Replayed {}, removing", pending_delete_log);
         co_await remove_file(pending_delete_log.native());
     } catch (...) {
-        sstlog.warn("Error replaying {}: {}. Ignoring.", pending_delete_log, std::current_exception());
+        dirlog.warn("Error replaying {}: {}. Ignoring.", pending_delete_log, std::current_exception());
     }
 }
 
@@ -658,7 +676,7 @@ future<> sstable_directory::filesystem_components_lister::cleanup_column_family_
         // reading the next entry in the directory.
         fs::path dirpath = sstdir / de.name;
         if (dirpath.extension().string() == tempdir_extension) {
-            sstlog.info("Found temporary sstable directory: {}, removing", dirpath);
+            dirlog.info("Found temporary sstable directory: {}, removing", dirpath);
             futures.push_back(io_check([dirpath = std::move(dirpath)] () { return lister::rmdir(dirpath); }));
         }
         return make_ready_future<>();
@@ -682,14 +700,14 @@ future<> sstable_directory::filesystem_components_lister::handle_sstables_pendin
         // reading the next entry in the directory.
         fs::path file_path = dir / de.name;
         if (file_path.extension() == ".tmp") {
-            sstlog.info("Found temporary pending_delete log file: {}, deleting", file_path);
+            dirlog.info("Found temporary pending_delete log file: {}, deleting", file_path);
             futures.push_back(remove_file(file_path.string()));
         } else if (file_path.extension() == ".log") {
-            sstlog.info("Found pending_delete log file: {}, replaying", file_path);
+            dirlog.info("Found pending_delete log file: {}, replaying", file_path);
             auto f = replay_pending_delete_log(std::move(file_path));
             futures.push_back(std::move(f));
         } else {
-            sstlog.debug("Found unknown file in pending_delete directory: {}, ignoring", file_path);
+            dirlog.debug("Found unknown file in pending_delete directory: {}, ignoring", file_path);
         }
         return make_ready_future<>();
     });

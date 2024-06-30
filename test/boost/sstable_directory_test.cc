@@ -781,20 +781,27 @@ SEASTAR_THREAD_TEST_CASE(test_system_datadir_layout) {
 }
 
 SEASTAR_TEST_CASE(test_pending_log_garbage_collection) {
-    return sstables::test_env::do_with_sharded_async([] (auto& env) {
+  for (const auto& prefix : {"", "staging"}) {
+    co_await sstables::test_env::do_with_sharded_async([&] (auto& env) {
+        auto dir = env.local().tempdir().path() / prefix;
+        touch_directory(dir.native()).get();
+
+        auto new_sstable = [&] {
+            return env.local().make_sstable(test_table_schema(), dir.native());
+        };
         std::vector<shared_sstable> ssts_to_keep;
         for (int i = 0; i < 2; i++) {
-            ssts_to_keep.emplace_back(make_sstable_for_this_shard(std::bind(new_env_sstable, std::ref(env.local()))));
+            ssts_to_keep.emplace_back(make_sstable_for_this_shard(new_sstable));
         }
         std::vector<shared_sstable> ssts_to_remove;
         for (int i = 0; i < 3; i++) {
-            ssts_to_remove.emplace_back(make_sstable_for_this_shard(std::bind(new_env_sstable, std::ref(env.local()))));
+            ssts_to_remove.emplace_back(make_sstable_for_this_shard(new_sstable));
         }
 
         // Now start atomic deletion -- create the pending deletion log for all
         // three sstables, move TOC file for one of them into temporary-TOC, and 
         // partially delete another
-        sstable_directory::create_pending_deletion_log(ssts_to_remove).get();
+        sstable_directory::create_pending_deletion_log(env.local().tempdir().path(), ssts_to_remove).get();
         rename_file(test(ssts_to_remove[1]).filename(sstables::component_type::TOC).native(), test(ssts_to_remove[1]).filename(sstables::component_type::TemporaryTOC).native()).get();
         rename_file(test(ssts_to_remove[2]).filename(sstables::component_type::TOC).native(), test(ssts_to_remove[2]).filename(sstables::component_type::TemporaryTOC).native()).get();
         remove_file(test(ssts_to_remove[2]).filename(sstables::component_type::Data).native()).get();
@@ -828,4 +835,5 @@ SEASTAR_TEST_CASE(test_pending_log_garbage_collection) {
             BOOST_REQUIRE_EQUAL(expected, collected);
         });
     });
+  }
 }
