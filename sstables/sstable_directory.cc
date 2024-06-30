@@ -563,6 +563,26 @@ future<std::pair<sstring, std::unordered_set<sstring>>> sstable_directory::creat
         min_max_tracker<generation_type> gen_tracker;
         std::unordered_set<sstring> prefixes;
 
+    for (const auto& sst : ssts) {
+        gen_tracker.update(sst->generation());
+        prefixes.insert(sst->_storage->prefix());
+    }
+
+    sstring pending_delete_dir = (base_dir / sstables::pending_delete_dir).native();
+    sstring pending_delete_log = format("{}/sstables-{}-{}.log", pending_delete_dir, gen_tracker.min(), gen_tracker.max());
+    sstring tmp_pending_delete_log = pending_delete_log + ".tmp";
+    sstring* ret_pending_delete_log = &tmp_pending_delete_log;   // until renamed
+    sstlog.trace("Writing {}", tmp_pending_delete_log);
+    std::optional<output_stream<char>> out;
+    std::optional<file> dir_f;
+    std::exception_ptr ex;
+    try {
+        co_await touch_directory(pending_delete_dir);
+        auto oflags = open_flags::wo | open_flags::create | open_flags::exclusive;
+        // Create temporary pending_delete log file.
+        auto f = co_await open_file_dma(tmp_pending_delete_log, oflags);
+        // Write all toc names into the log file.
+        out = co_await make_file_output_stream(std::move(f), 4096);
         for (const auto& sst : ssts) {
             gen_tracker.update(sst->generation());
 
@@ -627,7 +647,7 @@ future<std::pair<sstring, std::unordered_set<sstring>>> sstable_directory::creat
             }
         }
 
-        co_return std::make_pair(std::move(pending_delete_log), std::move(prefixes));
+        co_return std::make_pair(std::move(*ret_pending_delete_log), std::move(prefixes));
 }
 
 // FIXME: Go through maybe_delete_large_partitions_entry on recovery since
