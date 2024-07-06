@@ -50,7 +50,7 @@ cql_test_config tablet_cql_test_config() {
 
 static
 future<table_id> add_table(cql_test_env& e, sstring test_ks_name = "") {
-    auto id = table_id(utils::UUID_gen::get_time_UUID_v1());
+    auto id = table_id(utils::UUID_gen::get_time_UUID());
     co_await e.create_table([&] (std::string_view ks_name) {
         if (!test_ks_name.empty()) {
             ks_name = test_ks_name;

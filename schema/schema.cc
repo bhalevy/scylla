@@ -1246,7 +1246,7 @@ schema_builder& schema_builder::with_sharder(unsigned shard_count, unsigned shar
 
 schema_builder::schema_builder(std::string_view ks_name, std::string_view cf_name,
         std::optional<table_id> id, data_type rct)
-        : _raw(id ? *id : table_id(utils::UUID_gen::get_time_UUID_v1()))
+        : _raw(id ? *id : table_id(utils::UUID_gen::get_time_UUID()))
 {
     // Various schema-creation commands (creating tables, indexes, etc.)
     // usually place limits on which characters are allowed in keyspace or

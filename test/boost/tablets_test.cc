@@ -94,7 +94,7 @@ cql_test_config tablet_cql_test_config(db::tablets_mode_t::mode enable_tablets =
 
 static
 future<table_id> add_table(cql_test_env& e, sstring test_ks_name = "") {
-    auto id = table_id(utils::UUID_gen::get_time_UUID_v1());
+    auto id = table_id(utils::UUID_gen::get_time_UUID());
     co_await e.create_table([&] (std::string_view ks_name) {
         if (!test_ks_name.empty()) {
             ks_name = test_ks_name;
@@ -140,9 +140,9 @@ void mutate_tablets(cql_test_env& e, seastar::noncopyable_function<future<>(tabl
 
 SEASTAR_TEST_CASE(test_tablet_metadata_persistence) {
     return do_with_cql_env_thread([] (cql_test_env& e) {
-        auto h1 = host_id(utils::UUID_gen::get_time_UUID_v1());
-        auto h2 = host_id(utils::UUID_gen::get_time_UUID_v1());
-        auto h3 = host_id(utils::UUID_gen::get_time_UUID_v1());
+        auto h1 = host_id(utils::UUID_gen::get_time_UUID());
+        auto h2 = host_id(utils::UUID_gen::get_time_UUID());
+        auto h3 = host_id(utils::UUID_gen::get_time_UUID());
 
         auto table1 = add_table(e).get();
         auto table2 = add_table(e).get();
@@ -231,7 +231,7 @@ SEASTAR_TEST_CASE(test_tablet_metadata_persistence) {
                         tablet_replica {h2, 2},
                     },
                     tablet_replica {h1, 4},
-                    session_id(utils::UUID_gen::get_time_UUID_v1())
+                    session_id(utils::UUID_gen::get_time_UUID())
                 });
             });
 
@@ -323,9 +323,9 @@ SEASTAR_TEST_CASE(test_tablet_metadata_persistence) {
 
 SEASTAR_TEST_CASE(test_read_required_hosts) {
     return do_with_cql_env_thread([] (cql_test_env& e) {
-        auto h1 = host_id(utils::UUID_gen::get_time_UUID_v1());
-        auto h2 = host_id(utils::UUID_gen::get_time_UUID_v1());
-        auto h3 = host_id(utils::UUID_gen::get_time_UUID_v1());
+        auto h1 = host_id(utils::UUID_gen::get_time_UUID());
+        auto h2 = host_id(utils::UUID_gen::get_time_UUID());
+        auto h3 = host_id(utils::UUID_gen::get_time_UUID());
 
         tablet_metadata tm = read_tablet_metadata(e.local_qp()).get();
 
@@ -390,9 +390,9 @@ SEASTAR_TEST_CASE(test_read_required_hosts) {
 // disk yields the correct metadata.
 SEASTAR_TEST_CASE(test_tablet_metadata_update) {
     return do_with_cql_env_thread([] (cql_test_env& e) {
-        auto h1 = host_id(utils::UUID_gen::get_time_UUID_v1());
-        auto h2 = host_id(utils::UUID_gen::get_time_UUID_v1());
-        auto h3 = host_id(utils::UUID_gen::get_time_UUID_v1());
+        auto h1 = host_id(utils::UUID_gen::get_time_UUID());
+        auto h2 = host_id(utils::UUID_gen::get_time_UUID());
+        auto h3 = host_id(utils::UUID_gen::get_time_UUID());
 
         auto& db = e.local_db();
 
@@ -616,8 +616,8 @@ SEASTAR_TEST_CASE(test_tablet_metadata_update) {
 
 SEASTAR_TEST_CASE(test_tablet_metadata_hint) {
     return do_with_cql_env_thread([] (cql_test_env& e) {
-        auto h2 = host_id(utils::UUID_gen::get_time_UUID_v1());
-        auto h3 = host_id(utils::UUID_gen::get_time_UUID_v1());
+        auto h2 = host_id(utils::UUID_gen::get_time_UUID());
+        auto h3 = host_id(utils::UUID_gen::get_time_UUID());
 
         auto table1 = add_table(e).get();
         auto table2 = add_table(e).get();
@@ -779,15 +779,15 @@ SEASTAR_TEST_CASE(test_tablet_metadata_hint) {
 
 SEASTAR_TEST_CASE(test_get_shard) {
     return do_with_cql_env_thread([] (cql_test_env& e) {
-        auto h1 = host_id(utils::UUID_gen::get_time_UUID_v1());
-        auto h2 = host_id(utils::UUID_gen::get_time_UUID_v1());
-        auto h3 = host_id(utils::UUID_gen::get_time_UUID_v1());
+        auto h1 = host_id(utils::UUID_gen::get_time_UUID());
+        auto h2 = host_id(utils::UUID_gen::get_time_UUID());
+        auto h3 = host_id(utils::UUID_gen::get_time_UUID());
 
         inet_address ip1("192.168.0.1");
         inet_address ip2("192.168.0.2");
         inet_address ip3("192.168.0.3");
 
-        auto table1 = table_id(utils::UUID_gen::get_time_UUID_v1());
+        auto table1 = table_id(utils::UUID_gen::get_time_UUID());
         const auto shard_count = 2;
 
         semaphore sem(1);
@@ -856,9 +856,9 @@ SEASTAR_TEST_CASE(test_get_shard) {
 
 SEASTAR_TEST_CASE(test_mutation_builder) {
     return do_with_cql_env_thread([] (cql_test_env& e) {
-        auto h1 = host_id(utils::UUID_gen::get_time_UUID_v1());
-        auto h2 = host_id(utils::UUID_gen::get_time_UUID_v1());
-        auto h3 = host_id(utils::UUID_gen::get_time_UUID_v1());
+        auto h1 = host_id(utils::UUID_gen::get_time_UUID());
+        auto h2 = host_id(utils::UUID_gen::get_time_UUID());
+        auto h3 = host_id(utils::UUID_gen::get_time_UUID());
 
         auto table1 = add_table(e).get();
         auto ts = current_timestamp(e);
@@ -1041,11 +1041,11 @@ SEASTAR_TEST_CASE(test_mutation_builder) {
 
 SEASTAR_TEST_CASE(test_sharder) {
     return do_with_cql_env_thread([] (cql_test_env& e) {
-        auto h1 = host_id(utils::UUID_gen::get_time_UUID_v1());
-        auto h2 = host_id(utils::UUID_gen::get_time_UUID_v1());
-        auto h3 = host_id(utils::UUID_gen::get_time_UUID_v1());
+        auto h1 = host_id(utils::UUID_gen::get_time_UUID());
+        auto h2 = host_id(utils::UUID_gen::get_time_UUID());
+        auto h3 = host_id(utils::UUID_gen::get_time_UUID());
 
-        auto table1 = table_id(utils::UUID_gen::get_time_UUID_v1());
+        auto table1 = table_id(utils::UUID_gen::get_time_UUID());
 
         token_metadata tokm(token_metadata::config{ .topo_cfg{ .this_host_id = h1, .local_dc_rack = locator::endpoint_dc_rack::default_location } });
         tokm.get_topology().add_or_update_endpoint(h1);
@@ -1257,10 +1257,10 @@ SEASTAR_TEST_CASE(test_sharder) {
 
 SEASTAR_TEST_CASE(test_intranode_sharding) {
     return do_with_cql_env_thread([] (cql_test_env& e) {
-        auto h1 = host_id(utils::UUID_gen::get_time_UUID_v1());
-        auto h2 = host_id(utils::UUID_gen::get_time_UUID_v1());
+        auto h1 = host_id(utils::UUID_gen::get_time_UUID());
+        auto h2 = host_id(utils::UUID_gen::get_time_UUID());
 
-        auto table1 = table_id(utils::UUID_gen::get_time_UUID_v1());
+        auto table1 = table_id(utils::UUID_gen::get_time_UUID());
 
         token_metadata tokm(token_metadata::config{ .topo_cfg{ .this_host_id = h1, .local_dc_rack = locator::endpoint_dc_rack::default_location } });
         tokm.get_topology().add_or_update_endpoint(h1);
@@ -1334,9 +1334,9 @@ SEASTAR_TEST_CASE(test_large_tablet_metadata) {
     return do_with_cql_env_thread([] (cql_test_env& e) {
         tablet_metadata tm;
 
-        auto h1 = host_id(utils::UUID_gen::get_time_UUID_v1());
-        auto h2 = host_id(utils::UUID_gen::get_time_UUID_v1());
-        auto h3 = host_id(utils::UUID_gen::get_time_UUID_v1());
+        auto h1 = host_id(utils::UUID_gen::get_time_UUID());
+        auto h2 = host_id(utils::UUID_gen::get_time_UUID());
+        auto h3 = host_id(utils::UUID_gen::get_time_UUID());
 
         const int nr_tables = 1'00;
         const int tablets_per_table = 1024;
@@ -3366,9 +3366,9 @@ SEASTAR_THREAD_TEST_CASE(test_tablet_range_splitter) {
 
     const auto dks = ss.make_pkeys(4);
 
-    auto h1 = host_id(utils::UUID_gen::get_time_UUID_v1());
-    auto h2 = host_id(utils::UUID_gen::get_time_UUID_v1());
-    auto h3 = host_id(utils::UUID_gen::get_time_UUID_v1());
+    auto h1 = host_id(utils::UUID_gen::get_time_UUID());
+    auto h2 = host_id(utils::UUID_gen::get_time_UUID());
+    auto h3 = host_id(utils::UUID_gen::get_time_UUID());
 
     tablet_map tmap(4);
     auto tb = tmap.first_tablet();
