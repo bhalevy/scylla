@@ -220,7 +220,7 @@ distributed_loader::process_upload_dir(distributed<replica::database>& db, shard
         // - segregate resharded tables into compaction groups
         // - split the keyspace local ranges per compaction_group as done in table::perform_cleanup_compaction
         //   so that cleanup can be considered per compaction group
-        auto owned_ranges_ptr = compaction::make_owned_ranges_ptr(db.local().get_keyspace_local_ranges(ks));
+        auto owned_ranges_ptr = compaction::make_owned_ranges_ptr(db.local().get_keyspace_local_ranges(ks).get());
         reshard(directory, db, ks, cf, make_sstable, owned_ranges_ptr).get();
         reshape(directory, db, sstables::reshape_mode::strict, ks, cf, make_sstable,
                 [] (const sstables::shared_sstable&) { return true; }).get();

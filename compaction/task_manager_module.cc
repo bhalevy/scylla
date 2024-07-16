@@ -467,7 +467,7 @@ future<> shard_cleanup_keyspace_compaction_task_impl::run() {
 
 future<> table_cleanup_keyspace_compaction_task_impl::run() {
     co_await wait_for_your_turn(_cv, _current_task, _status.id);
-    auto owned_ranges_ptr = compaction::make_owned_ranges_ptr(_db.get_keyspace_local_ranges(_status.keyspace));
+    auto owned_ranges_ptr = compaction::make_owned_ranges_ptr(co_await _db.get_keyspace_local_ranges(_status.keyspace));
     co_await run_on_table("force_keyspace_cleanup", _db, _status.keyspace, _ti, [&] (replica::table& t) {
         // skip the flush, as cleanup_keyspace_compaction_task_impl::run should have done this.
         return t.perform_cleanup_compaction(owned_ranges_ptr, tasks::task_info{_status.id, _status.shard}, replica::table::do_flush::no);
@@ -531,7 +531,7 @@ future<> shard_upgrade_sstables_compaction_task_impl::run() {
 
 future<> table_upgrade_sstables_compaction_task_impl::run() {
     co_await wait_for_your_turn(_cv, _current_task, _status.id);
-    auto owned_ranges = _db.maybe_get_keyspace_local_ranges(_status.keyspace);
+    auto owned_ranges = co_await _db.maybe_get_keyspace_local_ranges(_status.keyspace);
     auto owned_ranges_ptr = owned_ranges ? compaction::make_owned_ranges_ptr(std::move(owned_ranges.value())) : nullptr;
     tasks::task_info info{_status.id, _status.shard};
     co_await run_on_table("upgrade_sstables", _db, _status.keyspace, _ti, [&] (replica::table& t) -> future<> {
