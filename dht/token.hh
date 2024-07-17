@@ -218,13 +218,10 @@ const token& maximum_token() noexcept;
 
 inline std::strong_ordering operator<=>(const token& t1, const token& t2) {
     if (t1._kind == t2._kind) {
-      // FIXME: indentation broken in advance of next patch
-      if (t1._kind == token_kind::key) {
         // No need to check is_minimum/is_maximum
-        // when both are key tokens
+        // when both are key tokens.
+        // And if both are non-key, their data value is 0.
         return tri_compare_raw(t1._data, t2._data);
-      }
-        return std::strong_ordering::equal;
     } else if (t1._kind < t2._kind) {
         return std::strong_ordering::less;
     } else {
