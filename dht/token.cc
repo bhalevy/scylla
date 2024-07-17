@@ -18,14 +18,6 @@ namespace dht {
 
 using uint128_t = unsigned __int128;
 
-inline int64_t long_token(const token& t) {
-    if (t.is_minimum() || t.is_maximum()) {
-        return std::numeric_limits<int64_t>::min();
-    }
-
-    return t._data;
-}
-
 static const token min_token{ token::kind::before_all_keys, 0 };
 static const token max_token{ token::kind::after_all_keys, 0 };
 
@@ -37,21 +29,6 @@ minimum_token() noexcept {
 const token&
 maximum_token() noexcept {
     return max_token;
-}
-
-std::strong_ordering operator<=>(const token& t1, const token& t2) {
-    if (t1._kind < t2._kind) {
-            return std::strong_ordering::less;
-    } else if (t1._kind > t2._kind) {
-            return std::strong_ordering::greater;
-    } else if (t1._kind == token_kind::key) {
-        return tri_compare_raw(long_token(t1), long_token(t2));
-    }
-    return std::strong_ordering::equal;
-}
-
-std::strong_ordering token_comparator::operator()(const token& t1, const token& t2) const {
-    return t1 <=> t2;
 }
 
 std::ostream& operator<<(std::ostream& out, const token& t) {
