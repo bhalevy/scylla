@@ -42,7 +42,9 @@ public:
     kind _kind;
     int64_t _data;
 
-    token() : _kind(kind::before_all_keys) {
+    token()
+        : _kind(kind::before_all_keys)
+        , _data(0) {
     }
 
     token(kind k, int64_t d)
@@ -229,7 +231,9 @@ inline std::strong_ordering operator<=>(const token& t1, const token& t2) {
         return std::strong_ordering::greater;
     }
 }
-inline bool operator==(const token& t1, const token& t2) { return t1 <=> t2 == 0; }
+inline bool operator==(const token& t1, const token& t2) {
+    return t1._data == t2._data && t1._kind == t2._kind;
+}
 std::ostream& operator<<(std::ostream& out, const token& t);
 
 // Returns a successor for token t.
