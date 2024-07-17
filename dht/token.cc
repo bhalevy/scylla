@@ -18,6 +18,14 @@ namespace dht {
 
 using uint128_t = unsigned __int128;
 
+inline int64_t long_token(const token& t) {
+    if (t.is_minimum() || t.is_maximum()) {
+        return std::numeric_limits<int64_t>::min();
+    }
+
+    return t._data;
+}
+
 static const token min_token{ token::kind::before_all_keys, 0 };
 static const token max_token{ token::kind::after_all_keys, 0 };
 

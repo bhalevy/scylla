@@ -214,23 +214,20 @@ struct raw_token_less_comparator {
 const token& minimum_token() noexcept;
 const token& maximum_token() noexcept;
 
-inline int64_t long_token(const token& t) {
-    if (t.is_minimum() || t.is_maximum()) {
-        return std::numeric_limits<int64_t>::min();
-    }
-
-    return t._data;
-}
-
 inline std::strong_ordering operator<=>(const token& t1, const token& t2) {
-    if (t1._kind < t2._kind) {
+    if (t1._kind == t2._kind) {
+      // FIXME: indentation broken in advance of next patch
+      if (t1._kind == token_kind::key) {
+        // No need to check is_minimum/is_maximum
+        // when both are key tokens
+        return tri_compare_raw(t1._data, t2._data);
+      }
+        return std::strong_ordering::equal;
+    } else if (t1._kind < t2._kind) {
         return std::strong_ordering::less;
-    } else if (t1._kind > t2._kind) {
+    } else {
         return std::strong_ordering::greater;
-    } else if (t1._kind == token_kind::key) {
-        return tri_compare_raw(long_token(t1), long_token(t2));
     }
-    return std::strong_ordering::equal;
 }
 inline bool operator==(const token& t1, const token& t2) { return t1 <=> t2 == 0; }
 std::ostream& operator<<(std::ostream& out, const token& t);
