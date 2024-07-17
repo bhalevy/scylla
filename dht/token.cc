@@ -26,19 +26,6 @@ inline int64_t long_token(const token& t) {
     return t._data;
 }
 
-static const token min_token{ token::kind::before_all_keys, 0 };
-static const token max_token{ token::kind::after_all_keys, 0 };
-
-const token&
-minimum_token() noexcept {
-    return min_token;
-}
-
-const token&
-maximum_token() noexcept {
-    return max_token;
-}
-
 std::ostream& operator<<(std::ostream& out, const token& t) {
     fmt::print(out, "{}", t);
     return out;
