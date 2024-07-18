@@ -304,7 +304,7 @@ static std::unordered_map<token, gms::inet_address> get_token_to_endpoint(const 
     const auto& map = tm.get_token_to_endpoint();
     std::unordered_map<token, gms::inet_address> result;
     result.reserve(map.size());
-    for (const auto [t, id]: map) {
+    for (const auto& [t, id]: map) {
         result.insert({t, tm.get_endpoint_for_host_id(id)});
     }
     return result;
@@ -5105,10 +5105,10 @@ storage_service::construct_range_to_endpoint_map(
 std::map<token, inet_address> storage_service::get_token_to_endpoint_map() {
     const auto& tm = get_token_metadata();
     std::map<token, inet_address> result;
-    for (const auto [t, id]: tm.get_token_to_endpoint()) {
+    for (const auto& [t, id]: tm.get_token_to_endpoint()) {
         result.insert({t, tm.get_endpoint_for_host_id(id)});
     }
-    for (const auto [t, id]: tm.get_bootstrap_tokens()) {
+    for (const auto& [t, id]: tm.get_bootstrap_tokens()) {
         result.insert({t, tm.get_endpoint_for_host_id(id)});
     }
     return result;

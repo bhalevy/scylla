@@ -7,6 +7,7 @@
  */
 
 #include "repair.hh"
+#include "dht/token.hh"
 #include "repair/row_level.hh"
 
 #include "locator/network_topology_strategy.hh"
@@ -1615,7 +1616,7 @@ future<> repair_service::bootstrap_with_repair(locator::token_metadata_ptr tmptr
                 for (auto& x : range_addresses) {
                     const wrapping_interval<dht::token>& src_range = x.first;
                     seastar::thread::maybe_yield();
-                    if (src_range.contains(desired_range, dht::operator<=>)) {
+                    if (src_range.contains(desired_range, dht::token_comparator())) {
                         std::vector<inet_address> old_endpoints(x.second.begin(), x.second.end());
                         auto it = pending_range_addresses.find(desired_range);
                         if (it == pending_range_addresses.end()) {

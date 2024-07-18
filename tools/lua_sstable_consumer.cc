@@ -131,7 +131,7 @@ T* get_userdata_ptr(lua_State* l, int i) {
     if constexpr (alignof(T) <= 8) {
         return reinterpret_cast<T*>(p);
     } else {
-        return align_up(reinterpret_cast<char*>(p), alignof(T));
+        return reinterpret_cast<T*>(align_up(reinterpret_cast<char*>(p), alignof(T)));
     }
 }
 
@@ -337,8 +337,8 @@ int ring_position_index_l(lua_State* l) {
         lua_pushcfunction(l, ring_position_tri_cmp_l);
         return 1;
     } else if (strcmp(field, "token") == 0) {
-        if (rp.token()._kind == dht::token_kind::key) {
-            lua_pushinteger(l, rp.token()._data);
+        if (rp.token().is_key()) {
+            lua_pushinteger(l, rp.token().get_data());
             return 1;
         }
     } else if (strcmp(field, "key") == 0) {
@@ -435,7 +435,7 @@ int token_of_l(lua_State* l) {
     const auto& k = pop_userdata_as_ref<partition_key>(l, 1);
     lua_pop(l, 2);
     auto t = dht::get_token(s, k);
-    lua_pushinteger(l, t._data);
+    lua_pushinteger(l, t.get_data());
     return 1;
 }
 
@@ -458,7 +458,7 @@ int partition_start_index_l(lua_State* l) {
         push_userdata<partition_key>(l, ps.key().key());
         return 1;
     } else if (strcmp(field, "token") == 0) {
-        lua_pushinteger(l, ps.key().token()._data);
+        lua_pushinteger(l, ps.key().token().get_data());
         return 1;
     } else if (strcmp(field, "tombstone") == 0) {
         if (!ps.partition_tombstone()) {

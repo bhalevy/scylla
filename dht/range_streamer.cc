@@ -9,6 +9,7 @@
  */
 
 #include "dht/range_streamer.hh"
+#include "dht/token.hh"
 #include "replica/database.hh"
 #include "gms/gossiper.hh"
 #include "log.hh"
@@ -96,7 +97,7 @@ range_streamer::get_all_ranges_with_sources_for(const sstring& keyspace_name, lo
                 seastar::thread::yield();
             }
             const wrapping_interval<token>& src_range = x.first;
-            if (src_range.contains(desired_range, dht::operator<=>)) {
+            if (src_range.contains(desired_range, dht::token_comparator())) {
                 inet_address_vector_replica_set preferred(x.second.begin(), x.second.end());
                 get_token_metadata().get_topology().sort_by_proximity(address_ep, preferred);
                 for (inet_address& p : preferred) {
@@ -143,7 +144,7 @@ range_streamer::get_all_ranges_with_strict_sources_for(const sstring& keyspace_n
             if (need_preempt()) {
                 seastar::thread::yield();
             }
-            if (src_range.contains(desired_range, dht::operator<=>)) {
+            if (src_range.contains(desired_range, dht::token_comparator())) {
                 std::vector<inet_address> old_endpoints(x.second.begin(), x.second.end());
                 auto it = pending_range_addresses.find(desired_range);
                 if (it == pending_range_addresses.end()) {

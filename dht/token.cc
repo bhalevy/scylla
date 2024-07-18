@@ -16,10 +16,8 @@
 
 namespace dht {
 
-using uint128_t = unsigned __int128;
-
 inline int64_t long_token(const token& t) {
-    return t._data;
+    return t.get_data();
 }
 
 std::ostream& operator<<(std::ostream& out, const token& t) {
@@ -152,29 +150,25 @@ init_zero_based_shard_start(unsigned shards, unsigned sharding_ignore_msb_bits) 
 
 unsigned
 shard_of(unsigned shard_count, unsigned sharding_ignore_msb_bits, const token& t) {
-    switch (t._kind) {
-        case token::kind::before_all_keys:
+    if (t.is_minimum()) {
             return token::shard_of_minimum_token();
-        case token::kind::after_all_keys:
+    } else if (t.is_maximum()) {
             return shard_count - 1;
-        case token::kind::key:
+    } else [[likely]] {
             uint64_t adjusted = unbias(t);
             return zero_based_shard_of(adjusted, shard_count, sharding_ignore_msb_bits);
     }
-    abort();
 }
 
 token
 token_for_next_shard(const std::vector<uint64_t>& shard_start, unsigned shard_count, unsigned sharding_ignore_msb_bits, const token& t, shard_id shard, unsigned spans) {
     uint64_t n = 0;
-    switch (t._kind) {
-        case token::kind::before_all_keys:
-            break;
-        case token::kind::after_all_keys:
+    if (t.is_minimum()) {
+            // do nothing
+    } else if (t.is_maximum()) {
             return maximum_token();
-        case token::kind::key:
+    } else [[likely]] {
             n = unbias(t);
-            break;
     }
     auto s = zero_based_shard_of(n, shard_count, sharding_ignore_msb_bits);
 
@@ -241,16 +235,14 @@ compaction_group_of(unsigned most_significant_bits, const token& t) {
     if (!most_significant_bits) {
         return 0;
     }
-    switch (t._kind) {
-        case token::kind::before_all_keys:
+    if (t.is_minimum()) {
             return 0;
-        case token::kind::after_all_keys:
+    } else if (t.is_maximum()) {
             return (1 << most_significant_bits) - 1;
-        case token::kind::key:
+    } else {
             uint64_t adjusted = unbias(t);
             return adjusted >> (64 - most_significant_bits);
     }
-    __builtin_unreachable();
 }
 
 token last_token_of_compaction_group(unsigned most_significant_bits, size_t group) {

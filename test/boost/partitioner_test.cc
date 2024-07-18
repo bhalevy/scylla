@@ -39,7 +39,32 @@ static dht::token token_from_long(uint64_t value) {
 }
 
 static int64_t long_from_token(dht::token token) {
-    return token._data;
+    return token.get_data();
+}
+
+void print_token(sstring desc, dht::token t) {
+    testlog.debug("{:032x} {}={}", (dht::uint128_t)t.value(), desc, t);
+}
+
+SEASTAR_THREAD_TEST_CASE(test_token_ordering) {
+    print_token("minimum", dht::token::minimum());
+    print_token("first", dht::token::first());
+    BOOST_REQUIRE(dht::token::minimum() <=> dht::token::first() < 0);
+    auto next = dht::token::first().next();
+    print_token("next", next);
+    BOOST_REQUIRE(dht::token::first() <=> next < 0);
+    print_token("last", dht::token::last());
+    BOOST_REQUIRE(next < dht::token::last());
+    print_token("maximum", dht::token::maximum());
+    BOOST_REQUIRE(dht::token::last() <=> dht::token::maximum() < 0);
+
+    auto midpoint = dht::token::midpoint(dht::token::first(), dht::token::last());
+    print_token("midpoint", dht::token::maximum());
+    BOOST_REQUIRE(dht::token::first() <=> midpoint < 0);
+    next = midpoint.next();
+    print_token("next", next);
+    BOOST_REQUIRE(midpoint <=> next < 0);
+    BOOST_REQUIRE(next <=> dht::token::last() < 0);
 }
 
 SEASTAR_THREAD_TEST_CASE(test_decorated_key_is_compatible_with_origin) {

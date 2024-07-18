@@ -17,7 +17,7 @@ class token {
         key,
         after_all_keys,
     };
-    dht::token::kind _kind;
+    dht::token::kind get_kind();
     bytes data();
 };
 
