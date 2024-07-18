@@ -44,7 +44,7 @@ public:
 
     constexpr token() noexcept
         : _kind(kind::before_all_keys)
-        , _data(0) {
+        , _data(std::numeric_limits<int64_t>::min()) {
     }
 
     constexpr token(kind k, int64_t d) noexcept
@@ -56,7 +56,7 @@ public:
     // (deserialized_bytes_proxy is convertible to bytes&&, but not bytes_view.)
     token(kind k, const bytes& b) : _kind(std::move(k)) {
         if (_kind != kind::key) {
-            _data = 0;
+            _data = std::numeric_limits<int64_t>::min();
         } else {
             if (b.size() != sizeof(_data)) {
                 throw std::runtime_error(fmt::format("Wrong token bytes size: expected {} but got {}", sizeof(_data), b.size()));
@@ -67,7 +67,7 @@ public:
 
     token(kind k, bytes_view b) : _kind(std::move(k)) {
         if (_kind != kind::key) {
-            _data = 0;
+            _data = std::numeric_limits<int64_t>::min();
         } else {
             if (b.size() != sizeof(_data)) {
                 throw std::runtime_error(fmt::format("Wrong token bytes size: expected {} but got {}", sizeof(_data), b.size()));
@@ -161,9 +161,6 @@ public:
     }
 
     constexpr int64_t raw() const noexcept {
-        if (is_minimum()) {
-            return std::numeric_limits<int64_t>::min();
-        }
         if (is_maximum()) {
             return std::numeric_limits<int64_t>::max();
         }
@@ -214,18 +211,18 @@ struct raw_token_less_comparator {
 };
 
 inline constexpr token minimum_token() noexcept {
-    return token{ token::kind::before_all_keys, 0 };
+    return token{ token::kind::before_all_keys, std::numeric_limits<int64_t>::min() };
 }
 
 inline constexpr token maximum_token() noexcept {
-    return token{ token::kind::after_all_keys, 0 };
+    return token{ token::kind::after_all_keys, std::numeric_limits<int64_t>::min() };
 }
 
 inline constexpr std::strong_ordering operator<=>(const token& t1, const token& t2) noexcept {
     if (t1._kind == t2._kind) {
         // No need to check is_minimum/is_maximum
         // when both are key tokens.
-        // And if both are non-key, their data value is 0.
+        // And if both are non-key, their data value is std::numeric_limits<int64_t>::min().
         return tri_compare_raw(t1._data, t2._data);
     } else if (t1._kind < t2._kind) {
         return std::strong_ordering::less;
