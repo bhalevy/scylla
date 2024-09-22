@@ -2272,7 +2272,7 @@ std::vector<schema_ptr> system_keyspace::all_tables(const db::config& cfg) {
         r.insert(r.end(), {broadcast_kv_store()});
     }
 
-    if (cfg.enable_tablets_feature()) {
+    if (cfg.enable_tablets()) {
         r.insert(r.end(), {tablets()});
     }
 

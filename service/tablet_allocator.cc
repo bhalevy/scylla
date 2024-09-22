@@ -1938,7 +1938,7 @@ public:
         if (_config.initial_tablets_scale == 0) {
             throw std::runtime_error("Initial tablets scale must be positive");
         }
-        if (db.get_config().enable_tablets_feature()) {
+        if (db.get_config().enable_tablets()) {
             _migration_notifier.register_listener(this);
         }
     }

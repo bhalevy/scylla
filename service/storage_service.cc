@@ -660,7 +660,7 @@ future<> storage_service::topology_state_load(state_change_hint hint) {
     std::unordered_set<raft::server_id> prev_normal = boost::copy_range<std::unordered_set<raft::server_id>>(_topology_state_machine._topology.normal_nodes | boost::adaptors::map_keys);
 
     std::unordered_set<locator::host_id> tablet_hosts;
-    if (_db.local().get_config().enable_tablets_feature()) {
+    if (_db.local().get_config().enable_tablets()) {
         tablet_hosts = co_await replica::read_required_hosts(_qp);
     }
 
@@ -754,7 +754,7 @@ future<> storage_service::topology_state_load(state_change_hint hint) {
 
         auto nodes_to_notify = co_await sync_raft_topology_nodes(tmptr, std::nullopt, std::move(prev_normal));
 
-        if (_db.local().get_config().enable_tablets_feature()) {
+        if (_db.local().get_config().enable_tablets()) {
             std::optional<locator::tablet_metadata> tablets;
             if (hint.tablets_hint) {
                 // We want to update the tablet metadata incrementally, so copy it
@@ -5353,7 +5353,7 @@ void storage_service::on_update_tablet_metadata(const locator::tablet_metadata_c
 }
 
 future<> storage_service::load_tablet_metadata(const locator::tablet_metadata_change_hint& hint) {
-    if (!_db.local().get_config().enable_tablets_feature()) {
+    if (!_db.local().get_config().enable_tablets()) {
         return make_ready_future<>();
     }
     return mutate_token_metadata([this, &hint] (mutable_token_metadata_ptr tmptr) -> future<> {
@@ -5446,7 +5446,7 @@ void storage_service::start_tablet_split_monitor() {
     if (this_shard_id() != 0) {
         return;
     }
-    if (!_db.local().get_config().enable_tablets_feature()) {
+    if (!_db.local().get_config().enable_tablets()) {
         return;
     }
     slogger.info("Starting the tablet split monitor...");

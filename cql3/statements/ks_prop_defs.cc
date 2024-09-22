@@ -16,7 +16,6 @@
 #include "locator/abstract_replication_strategy.hh"
 #include "exceptions/exceptions.hh"
 #include "gms/feature_service.hh"
-#include "db/config.hh"
 
 namespace cql3 {
 
@@ -208,9 +207,9 @@ std::map<sstring, sstring> ks_prop_defs::get_all_options_flattened(const gms::fe
     return all_options;
 }
 
-lw_shared_ptr<data_dictionary::keyspace_metadata> ks_prop_defs::as_ks_metadata(sstring ks_name, const locator::token_metadata& tm, const gms::feature_service& feat, const db::config& cfg) {
+lw_shared_ptr<data_dictionary::keyspace_metadata> ks_prop_defs::as_ks_metadata(sstring ks_name, const locator::token_metadata& tm, const gms::feature_service& feat) {
     auto sc = get_replication_strategy_class().value();
-    auto initial_tablets = get_initial_tablets(sc, feat.tablets && cfg.enable_tablets());
+    auto initial_tablets = get_initial_tablets(sc, feat.tablets);
     // if tablets options have not been specified, but tablets are globally enabled, set the value to 0
     if (initial_tablets.enabled && !initial_tablets.specified_count) {
         initial_tablets.specified_count = 0;
