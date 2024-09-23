@@ -7,6 +7,7 @@
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
+#include <stdexcept>
 #include <unordered_map>
 #include <sstream>
 
@@ -97,6 +98,17 @@ static
 json::json_return_type
 error_injection_list_to_json(const std::vector<db::config::error_injection_at_startup>& eil) {
     return value_to_json("error_injection_list");
+}
+
+static
+json::json_return_type
+opt_in_out_to_json(db::config::opt_in_out o) {
+    switch (o) {
+    case db::config::opt_in_out::opt_in:
+        return value_to_json("opt-in");
+    case db::config::opt_in_out::opt_out:
+        return value_to_json("opt-out");
+    }
 }
 
 template <>
@@ -1159,7 +1171,7 @@ db::config::config(std::shared_ptr<db::extensions> exts)
     , service_levels_interval(this, "service_levels_interval_ms", liveness::LiveUpdate, value_status::Used, 10000, "Controls how often service levels module polls configuration table")
     , error_injections_at_startup(this, "error_injections_at_startup", error_injection_value_status, {}, "List of error injections that should be enabled on startup.")
     , topology_barrier_stall_detector_threshold_seconds(this, "topology_barrier_stall_detector_threshold_seconds", value_status::Used, 2, "Report sites blocking topology barrier if it takes longer than this.")
-    , enable_tablets(this, "enable_tablets", value_status::Used, false, "Enable tablets for newly created keyspaces")
+    , enable_tablets(this, "enable_tablets", value_status::Used, opt_in_out::opt_in, "Enable tablets for newly created keyspaces. Valid values are: 'opt-in' (default) or 'opt-out'")
     , default_log_level(this, "default_log_level", value_status::Used, seastar::log_level::info, "Default log level for log messages")
     , logger_log_level(this, "logger_log_level", value_status::Used, {}, "Map of logger name to log level. Valid log levels are 'error', 'warn', 'info', 'debug' and 'trace'")
     , log_to_stdout(this, "log_to_stdout", value_status::Used, true, "Send log output to stdout")

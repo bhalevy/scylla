@@ -489,7 +489,12 @@ public:
 
     named_value<std::vector<error_injection_at_startup>> error_injections_at_startup;
     named_value<double> topology_barrier_stall_detector_threshold_seconds;
-    named_value<bool> enable_tablets;
+
+    enum class opt_in_out : bool {
+        opt_in = false,
+        opt_out = true
+    };
+    named_value<opt_in_out> enable_tablets;
 
     static const sstring default_tls_priority;
 private:
