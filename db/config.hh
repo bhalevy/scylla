@@ -81,12 +81,29 @@ struct error_injection_at_startup {
 
 std::istream& operator>>(std::istream& is, error_injection_at_startup&);
 
+struct opt_in_out {
+    bool value = false;
+
+    opt_in_out() = default;
+    opt_in_out(bool v) noexcept : value(v) {}
+    explicit opt_in_out(std::string_view s);
+
+    constexpr operator bool() const noexcept { return value; }
+};
+
+std::istream& operator>>(std::istream& is, error_injection_at_startup&);
+
 }
 
 template<>
 struct fmt::formatter<db::error_injection_at_startup> {
     constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
     auto format(const db::error_injection_at_startup&, fmt::format_context& ctx) const -> decltype(ctx.out());
+};
+
+template<>
+struct fmt::formatter<db::opt_in_out> : public fmt::formatter<std::string_view> {
+    auto format(const db::opt_in_out&, fmt::format_context& ctx) const -> decltype(ctx.out());
 };
 
 namespace utils {
@@ -163,6 +180,7 @@ public:
     using seed_provider_type = db::seed_provider_type;
     using hinted_handoff_enabled_type = db::hints::host_filter;
     using error_injection_at_startup = db::error_injection_at_startup;
+    using opt_in_out = db::opt_in_out;
 
     /*
      * All values and documentation taken from
@@ -489,7 +507,7 @@ public:
 
     named_value<std::vector<error_injection_at_startup>> error_injections_at_startup;
     named_value<double> topology_barrier_stall_detector_threshold_seconds;
-    named_value<bool> enable_tablets;
+    named_value<opt_in_out> enable_tablets;
 
     static const sstring default_tls_priority;
 private:

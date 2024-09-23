@@ -7,6 +7,7 @@
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
+#include <stdexcept>
 #include <unordered_map>
 #include <sstream>
 
@@ -99,6 +100,12 @@ error_injection_list_to_json(const std::vector<db::config::error_injection_at_st
     return value_to_json("error_injection_list");
 }
 
+static
+json::json_return_type
+opt_in_out_to_json(const db::config::opt_in_out& o) {
+    return value_to_json(fmt::format("{}", o));
+}
+
 template <>
 bool
 config_from_string(std::string_view value) {
@@ -178,6 +185,9 @@ const config_type config_type_for<db::config::hinted_handoff_enabled_type> = con
 
 template <>
 const config_type config_type_for<std::vector<db::config::error_injection_at_startup>> = config_type("error injection list", error_injection_list_to_json);
+
+template <>
+const config_type config_type_for<db::config::opt_in_out> = config_type("string", opt_in_out_to_json);
 
 }
 
@@ -306,6 +316,18 @@ struct convert<db::config::error_injection_at_startup> {
                 }
             }
             return !rhs.name.empty();
+        } else {
+            return false;
+        }
+    }
+};
+
+template<>
+struct convert<db::config::opt_in_out> {
+    static bool decode(const Node& node, db::config::opt_in_out& o) {
+        if (node.IsScalar()) {
+            o = db::config::opt_in_out(node.as<sstring>());
+            return true;
         } else {
             return false;
         }
@@ -1159,7 +1181,7 @@ db::config::config(std::shared_ptr<db::extensions> exts)
     , service_levels_interval(this, "service_levels_interval_ms", liveness::LiveUpdate, value_status::Used, 10000, "Controls how often service levels module polls configuration table")
     , error_injections_at_startup(this, "error_injections_at_startup", error_injection_value_status, {}, "List of error injections that should be enabled on startup.")
     , topology_barrier_stall_detector_threshold_seconds(this, "topology_barrier_stall_detector_threshold_seconds", value_status::Used, 2, "Report sites blocking topology barrier if it takes longer than this.")
-    , enable_tablets(this, "enable_tablets", value_status::Used, false, "Enable tablets for newly created keyspaces")
+    , enable_tablets(this, "enable_tablets", value_status::Used, opt_in_out(false), "Enable tablets for newly created keyspaces. Valid values are: 'opt-in' or 'opt-out'")
     , default_log_level(this, "default_log_level", value_status::Used, seastar::log_level::info, "Default log level for log messages")
     , logger_log_level(this, "logger_log_level", value_status::Used, {}, "Map of logger name to log level. Valid log levels are 'error', 'warn', 'info', 'debug' and 'trace'")
     , log_to_stdout(this, "log_to_stdout", value_status::Used, true, "Send log output to stdout")
@@ -1244,12 +1266,33 @@ std::istream& operator>>(std::istream& is, error_injection_at_startup& eias) {
     return is;
 }
 
+std::istream& operator>>(std::istream& is, opt_in_out& o) {
+    std::string s;
+    is >> s;
+    o = opt_in_out(s);
+    return is;
+}
+
+opt_in_out::opt_in_out(std::string_view s) {
+    if (s == "opt-in" || s == "false" || s == "0") {
+        value = false;
+    } else if (s == "opt-out" || s == "true" || s == "1") {
+        value = true;
+    } else {
+        throw boost::bad_lexical_cast(typeid(std::string_view), typeid(opt_in_out));
+    }
+}
+
 }
 
 auto fmt::formatter<db::error_injection_at_startup>::format(const db::error_injection_at_startup& eias, fmt::format_context& ctx) const
     -> decltype(ctx.out()) {
     return fmt::format_to(ctx.out(), "error_injection_at_startup{{name={}, one_short={}, parameters={}}}",
                           eias.name, eias.one_shot, eias.parameters);
+}
+
+auto fmt::formatter<db::opt_in_out>::format(const db::opt_in_out& o, fmt::format_context& ctx) const -> decltype(ctx.out()) {
+    return fmt::format_to(ctx.out(), "opt-{}", o ? "out" : "in");
 }
 
 namespace utils {
