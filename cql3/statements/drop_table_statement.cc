@@ -16,6 +16,7 @@
 #include "service/storage_proxy.hh"
 #include "mutation/mutation.hh"
 #include "cdc/log.hh"
+#include "replica/database.hh"
 
 namespace cql3 {
 
@@ -45,6 +46,9 @@ future<std::tuple<::shared_ptr<cql_transport::event::schema_change>, cql3::cql_w
     try {
         auto muts = co_await service::prepare_column_family_drop_announcement(qp.proxy(), keyspace(), column_family(), mc.write_timestamp());
         mc.add_mutations(std::move(muts));
+
+        auto s = qp.db().find_schema(keyspace(), column_family());
+        _fenced_tables.insert(s->id());
 
         using namespace cql_transport;
         ret = ::make_shared<event::schema_change>(
