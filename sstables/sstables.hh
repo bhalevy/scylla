@@ -591,6 +591,7 @@ private:
     std::optional<scylla_metadata::large_data_stats> _large_data_stats;
     sstring _origin;
     std::optional<scylla_metadata::ext_timestamp_stats> _ext_timestamp_stats;
+    generation_type _original_sstable_generation;
 
     // Total reclaimable memory from all the components of the SSTable.
     // It is initialized to 0 to prevent the sstables manager from reclaiming memory
@@ -966,6 +967,10 @@ public:
 
     const sstring& get_origin() const noexcept {
         return _origin;
+    }
+
+    const generation_type& original_sstable_generation() const noexcept {
+        return _original_sstable_generation;
     }
 
     // Drops all evictable in-memory caches of on-disk content.

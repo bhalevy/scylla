@@ -533,6 +533,7 @@ enum class scylla_metadata_type : uint32_t {
     ScyllaBuildId = 7,
     ScyllaVersion = 8,
     ExtTimestampStats = 9,
+    SSTableGeneration = 10,
 };
 
 // UUID is used for uniqueness across nodes, such that an imported sstable
@@ -544,6 +545,15 @@ struct run_identifier {
 
     template <typename Describer>
     auto describe_type(sstable_version_types v, Describer f) { return f(id); }
+};
+
+// UUID is used for uniqueness across nodes, such that an imported sstable
+// will not have its generation conflicted with the one of a local sstable.
+struct sstable_generation_type {
+    utils::UUID value;
+
+    template <typename Describer>
+    auto describe_type(sstable_version_types v, Describer f) { return f(value); }
 };
 
 // Types of large data statistics.
@@ -583,6 +593,7 @@ struct scylla_metadata {
     using scylla_build_id = disk_string<uint32_t>;
     using scylla_version = disk_string<uint32_t>;
     using ext_timestamp_stats = disk_hash<uint32_t, ext_timestamp_stats_type, int64_t>;
+    using sstable_generation = sstable_generation_type;
 
     disk_set_of_tagged_union<scylla_metadata_type,
             disk_tagged_union_member<scylla_metadata_type, scylla_metadata_type::Sharding, sharding_metadata>,
@@ -593,7 +604,8 @@ struct scylla_metadata {
             disk_tagged_union_member<scylla_metadata_type, scylla_metadata_type::SSTableOrigin, sstable_origin>,
             disk_tagged_union_member<scylla_metadata_type, scylla_metadata_type::ScyllaBuildId, scylla_build_id>,
             disk_tagged_union_member<scylla_metadata_type, scylla_metadata_type::ScyllaVersion, scylla_version>,
-            disk_tagged_union_member<scylla_metadata_type, scylla_metadata_type::ExtTimestampStats, ext_timestamp_stats>
+            disk_tagged_union_member<scylla_metadata_type, scylla_metadata_type::ExtTimestampStats, ext_timestamp_stats>,
+            disk_tagged_union_member<scylla_metadata_type, scylla_metadata_type::SSTableGeneration, sstable_generation>
             > data;
 
     sstable_enabled_features get_features() const {
@@ -623,6 +635,10 @@ struct scylla_metadata {
     }
     const ext_timestamp_stats* get_ext_timestamp_stats() const {
         return data.get<scylla_metadata_type::ExtTimestampStats, ext_timestamp_stats>();
+    }
+    std::optional<utils::UUID> get_optional_sstable_generation() const {
+        auto* gen = data.get<scylla_metadata_type::SSTableGeneration, scylla_metadata::sstable_generation>();
+        return gen ? std::make_optional(gen->value) : std::nullopt;
     }
 
     template <typename Describer>

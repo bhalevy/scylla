@@ -1391,6 +1391,12 @@ future<> sstable::update_info_for_opened_data(sstable_open_config cfg) {
     if (cfg.load_first_and_last_position_metadata) {
         co_await load_first_and_last_position_in_partition();
     }
+    if (auto opt_gen = _components->scylla_metadata->get_optional_sstable_generation()) {
+        _original_sstable_generation = generation_type(*opt_gen);
+    }
+    if (cfg.load_first_and_last_position_metadata) {
+        co_await load_first_and_last_position_in_partition();
+    }
 }
 
 future<> sstable::create_data() noexcept {
@@ -1871,6 +1877,15 @@ sstable::write_scylla_metadata(shard_id shard, sstable_enabled_features features
 
         _components->scylla_metadata->data.set<scylla_metadata_type::ExtTimestampStats>(std::move(*ts_stats));
     }
+
+    utils::UUID gen;
+    if (generation().is_uuid_based()) {
+        gen = generation().as_uuid();
+    } else {
+        sstlog.warn("SSTable generation {} expected to be UUID based when writing scylla metadata", generation());
+        gen = utils::UUID_gen::get_time_UUID();
+    }
+    _components->scylla_metadata->data.set<scylla_metadata_type::SSTableGeneration>(scylla_metadata::sstable_generation{gen});
 
     write_simple<component_type::Scylla>(*_components->scylla_metadata);
 }
