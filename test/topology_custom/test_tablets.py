@@ -416,3 +416,9 @@ async def test_keyspace_creation_cql_vs_config_sanity(manager: ManagerClient, wi
     await cql.run_async(f"CREATE KEYSPACE test_n WITH replication = {{'class': '{replication_strategy}', 'replication_factor': 1}} AND TABLETS = {{'enabled': false}};")
     res = cql.execute(f"SELECT initial_tablets FROM system_schema.scylla_keyspaces WHERE keyspace_name = 'test_n'").one()
     assert res is None
+
+@pytest.mark.asyncio
+async def test_tablets_and_gossip_topology_changes_are_incompatible(manager: ManagerClient):
+    cfg = {"force_gossip_topology_changes": True, "enable_tablets": True}
+    with pytest.raises(Exception, match="Failed to add server"):
+        await manager.server_add(config=cfg)
