@@ -16,6 +16,7 @@
 #include "cdc/cdc_extension.hh"
 #include "gms/feature.hh"
 #include "gms/feature_service.hh"
+#include "timestamp.hh"
 #include "tombstone_gc_extension.hh"
 #include "tombstone_gc.hh"
 #include "db/per_partition_rate_limit_extension.hh"
@@ -41,6 +42,7 @@ const sstring cf_prop_defs::KW_SPECULATIVE_RETRY = "speculative_retry";
 const sstring cf_prop_defs::KW_BF_FP_CHANCE = "bloom_filter_fp_chance";
 const sstring cf_prop_defs::KW_MEMTABLE_FLUSH_PERIOD = "memtable_flush_period_in_ms";
 const sstring cf_prop_defs::KW_SYNCHRONOUS_UPDATES = "synchronous_updates";
+const sstring cf_prop_defs::KW_TRUNCATE_TIMESTAMP = "truncate_timestamp";
 
 const sstring cf_prop_defs::KW_COMPACTION = "compaction";
 const sstring cf_prop_defs::KW_COMPRESSION = "compression";
@@ -81,7 +83,7 @@ void cf_prop_defs::validate(const data_dictionary::database db, sstring ks_name,
         KW_MIN_INDEX_INTERVAL, KW_MAX_INDEX_INTERVAL, KW_SPECULATIVE_RETRY,
         KW_BF_FP_CHANCE, KW_MEMTABLE_FLUSH_PERIOD, KW_COMPACTION,
         KW_COMPRESSION, KW_CRC_CHECK_CHANCE,  KW_ID, KW_PAXOSGRACESECONDS,
-        KW_SYNCHRONOUS_UPDATES
+        KW_SYNCHRONOUS_UPDATES, KW_TRUNCATE_TIMESTAMP
     });
     static std::set<sstring> obsolete_keywords({
         sstring("index_interval"),
@@ -185,6 +187,16 @@ int32_t cf_prop_defs::get_gc_grace_seconds() const
 
 bool cf_prop_defs::get_synchronous_updates_flag() const {
     return get_boolean(KW_SYNCHRONOUS_UPDATES, false);
+}
+
+std::optional<api::timestamp_type> cf_prop_defs::get_truncate_timestamp() const {
+    if (auto value_opt = get_simple(KW_TRUNCATE_TIMESTAMP)) {
+        if (*value_opt == "none") {
+            return api::missing_timestamp;
+        }
+        return to_long(KW_TRUNCATE_TIMESTAMP, value_opt, api::missing_timestamp);
+    }
+    return std::nullopt;
 }
 
 int32_t cf_prop_defs::get_paxos_grace_seconds() const {
@@ -343,6 +355,14 @@ void cf_prop_defs::apply_to_builder(schema_builder& builder, schema::extensions_
         };
 
         builder.add_extension(db::tags_extension::NAME, ::make_shared<db::tags_extension>(tags_map));
+    }
+
+    if (auto ts_opt = get_truncate_timestamp()) {
+        if (*ts_opt == api::missing_timestamp) {
+            builder.with_truncate_tombstone(tombstone{});
+        } else {
+            builder.with_truncate_tombstone({*ts_opt, gc_clock::now()});
+        }
     }
 }
 

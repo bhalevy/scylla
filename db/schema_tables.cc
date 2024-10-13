@@ -9,6 +9,7 @@
 
 #include "db/schema_tables.hh"
 
+#include "seastar/core/shard_id.hh"
 #include "service/migration_manager.hh"
 #include "service/storage_proxy.hh"
 #include "gms/feature_service.hh"
@@ -19,9 +20,11 @@
 #include "query-result-writer.hh"
 #include "schema/schema_builder.hh"
 #include "map_difference.hh"
+#include "timestamp.hh"
 #include "utils/assert.hh"
 #include "utils/UUID_gen.hh"
 #include "utils/to_string.hh"
+#include <chrono>
 #include <seastar/coroutine/all.hh>
 #include "log.hh"
 #include "frozen_schema.hh"
@@ -289,6 +292,8 @@ schema_ptr tables() {
          // compatible
          {"read_repair_chance", double_type},
          {"speculative_retry", utf8_type},
+         {"truncate_timestamp", long_type},
+         {"truncated_at", int32_type},
         },
         // static columns
         {},
@@ -534,6 +539,8 @@ schema_ptr views() {
          // compatible
          {"read_repair_chance", double_type},
          {"speculative_retry", utf8_type},
+         {"truncate_timestamp", long_type},
+         {"truncated_at", map_type_impl::get_instance(uuid_type, bytes_type, true)},
         },
         // static columns
         {},
@@ -1659,6 +1666,14 @@ static void add_table_params_to_mutations(mutation& m, const clustering_key& cke
     }
 
     store_map(m, ckey, "extensions", timestamp, map);
+
+    if (auto tt = table->truncate_tombstone()) {
+        m.set_clustered_cell(ckey, "truncate_timestamp", tt.timestamp, timestamp);
+        m.set_clustered_cell(ckey, "truncated_at", gc_clock::as_int32(tt.deletion_time.time_since_epoch()), timestamp);
+    } else {
+        m.set_clustered_cell(ckey, "truncate_timestamp", api::missing_timestamp, timestamp);
+        m.set_clustered_cell(ckey, "truncated_at", 0, timestamp);
+    }
 }
 
 static data_type expand_user_type(data_type);

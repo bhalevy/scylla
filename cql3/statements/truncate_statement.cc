@@ -8,6 +8,7 @@
  * SPDX-License-Identifier: (AGPL-3.0-or-later and Apache-2.0)
  */
 
+#include "gc_clock.hh"
 #include "utils/assert.hh"
 #include "cql3/statements/raw/truncate_statement.hh"
 #include "cql3/statements/truncate_statement.hh"
@@ -16,6 +17,7 @@
 #include "data_dictionary/data_dictionary.hh"
 #include "cql3/query_processor.hh"
 #include "service/storage_proxy.hh"
+#include "service/migration_manager.hh"
 #include <optional>
 #include "validation.hh"
 
@@ -30,8 +32,7 @@ truncate_statement::truncate_statement(cf_name name, std::unique_ptr<attributes:
         , _attrs(std::move(attrs))
 {
     // Validate the attributes.
-    // Currently, TRUNCATE supports only USING TIMEOUT
-    SCYLLA_ASSERT(!_attrs->timestamp.has_value());
+    // Currently, TRUNCATE supports only USING TIMEOUT and USING TIMESTAMP
     SCYLLA_ASSERT(!_attrs->time_to_live.has_value());
 }
 
@@ -47,25 +48,17 @@ std::unique_ptr<prepared_statement> truncate_statement::prepare(data_dictionary:
 } // namespace raw
 
 truncate_statement::truncate_statement(schema_ptr schema, std::unique_ptr<attributes> prepared_attrs)
-    : cql_statement_no_metadata(&timeout_config::truncate_timeout)
+    : schema_altering_statement(&timeout_config::truncate_timeout)
     , _schema{std::move(schema)}
     , _attrs(std::move(prepared_attrs))
 {
 }
 
 truncate_statement::truncate_statement(const truncate_statement& ts)
-    : cql_statement_no_metadata(ts)
+    : schema_altering_statement(ts)
     , _schema(ts._schema)
     , _attrs(std::make_unique<attributes>(*ts._attrs))
 { }
-
-const sstring& truncate_statement::keyspace() const {
-    return _schema->ks_name();
-}
-
-const sstring& truncate_statement::column_family() const {
-    return _schema->cf_name();
-}
 
 uint32_t truncate_statement::get_bound_terms() const
 {
@@ -82,27 +75,57 @@ future<> truncate_statement::check_access(query_processor& qp, const service::cl
     return state.has_column_family_access(keyspace(), column_family(), auth::permission::MODIFY);
 }
 
-void truncate_statement::validate(query_processor&, const service::client_state& state) const
-{
-    warn(unimplemented::cause::VALIDATION);
+std::unique_ptr<cql3::statements::prepared_statement> truncate_statement::prepare(data_dictionary::database db, cql_stats& stats) {
+    utils::on_internal_error("truncate_statement cannot be prepared.");
 }
 
 future<::shared_ptr<cql_transport::messages::result_message>>
 truncate_statement::execute(query_processor& qp, service::query_state& state, const query_options& options, std::optional<service::group0_guard> guard) const
 {
-    if (qp.db().find_schema(keyspace(), column_family())->is_view()) {
+    auto table = validation::validate_column_family(qp.db(), keyspace(), column_family());
+    if (table->is_view()) {
         throw exceptions::invalid_request_exception("Cannot TRUNCATE materialized view directly; must truncate base table instead");
     }
-    auto timeout_in_ms = std::chrono::duration_cast<std::chrono::milliseconds>(get_timeout(state.get_client_state(), options));
-    return qp.proxy().truncate_blocking(keyspace(), column_family(), timeout_in_ms).handle_exception([](auto ep) {
-        throw exceptions::truncate_exception(ep);
-    }).then([] {
-        return ::shared_ptr<cql_transport::messages::result_message>{};
-    });
+    return schema_altering_statement::execute(qp, state, options, std::move(guard));
 }
 
 db::timeout_clock::duration truncate_statement::get_timeout(const service::client_state& state, const query_options& options) const {
     return _attrs->is_timeout_set() ? _attrs->get_timeout(options) : state.get_timeout_config().truncate_timeout;
+}
+
+std::pair<schema_ptr, std::vector<view_ptr>> truncate_statement::prepare_schema_update(data_dictionary::database db, const query_options& options, api::timestamp_type ts) const {
+    auto s = validation::validate_column_family(db, keyspace(), column_family());
+    if (s->is_view()) {
+        throw exceptions::invalid_request_exception("Cannot use TRUNCATE TABLE on a Materialized View");
+    }
+
+    tombstone truncate_tombstone(_attrs->get_timestamp(ts, options), gc_clock::now());
+    auto cfm = schema_builder(s).with_truncate_tombstone(truncate_tombstone).build();
+
+    auto cf = db.find_column_family(s);
+    std::vector<view_ptr> view_updates;
+    view_updates.reserve(cf.views().size());
+
+    for (const auto& view : cf.views()) {
+        view_updates.emplace_back(schema_builder(view).with_truncate_tombstone(truncate_tombstone).build());
+    }
+
+    return make_pair(std::move(cfm), std::move(view_updates));
+}
+
+future<std::tuple<::shared_ptr<cql_transport::event::schema_change>, std::vector<mutation>, cql3::cql_warnings_vec>> truncate_statement::prepare_schema_mutations(query_processor& qp, const query_options& options, api::timestamp_type ts) const {
+    data_dictionary::database db = qp.db();
+    auto [cfm, view_updates] = prepare_schema_update(db, options, ts);
+    auto m = co_await service::prepare_column_family_update_announcement(qp.proxy(), std::move(cfm), std::move(view_updates), ts);
+
+    using namespace cql_transport;
+    auto ret = ::make_shared<event::schema_change>(
+            event::schema_change::change_type::UPDATED,
+            event::schema_change::target_type::TABLE,
+            keyspace(),
+            column_family());
+
+    co_return std::make_tuple(std::move(ret), std::move(m), std::vector<sstring>());
 }
 
 }

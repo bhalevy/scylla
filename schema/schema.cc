@@ -1007,6 +1007,9 @@ std::ostream& schema::schema_properties(const schema_describe_helper& helper, st
             os << "\n    AND synchronous_updates = " << *is_sync_update;
         }
     }
+    if (auto t = truncate_tombstone()) {
+        os << "\n    AND truncate_timestamp = " << t.timestamp;
+    }
     return os;
 }
 
@@ -1483,6 +1486,11 @@ schema_builder& schema_builder::with_tombstone_gc_options(const tombstone_gc_opt
 
 schema_builder& schema_builder::with_per_partition_rate_limit_options(const db::per_partition_rate_limit_options& opts) {
     add_extension(db::per_partition_rate_limit_extension::NAME, ::make_shared<db::per_partition_rate_limit_extension>(opts));
+    return *this;
+}
+
+schema_builder& schema_builder::with_truncate_tombstone(const tombstone& t) {
+    _raw._truncate_tombstone = t;
     return *this;
 }
 

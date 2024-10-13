@@ -129,6 +129,11 @@ int32_t property_definitions::get_int(sstring key, int32_t default_value) const 
     return to_int(key, value, default_value);
 }
 
+int64_t property_definitions::get_long(sstring key, int64_t default_value) const {
+    auto value = get_simple(key);
+    return to_long(key, value, default_value);
+}
+
 int32_t property_definitions::to_int(sstring key, std::optional<sstring> value, int32_t default_value) {
     if (value) {
         auto val = value.value();
@@ -142,7 +147,7 @@ int32_t property_definitions::to_int(sstring key, std::optional<sstring> value, 
     }
 }
 
-long property_definitions::to_long(sstring key, std::optional<sstring> value, long default_value) {
+int64_t property_definitions::to_long(sstring key, std::optional<sstring> value, int64_t default_value) {
     if (value) {
         auto val = value.value();
         try {

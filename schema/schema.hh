@@ -32,6 +32,7 @@
 #include "timestamp.hh"
 #include "tombstone_gc_options.hh"
 #include "db/per_partition_rate_limit_options.hh"
+#include "mutation/tombstone.hh"
 #include "schema_fwd.hh"
 
 namespace dht {
@@ -607,6 +608,7 @@ private:
         // Sharding info is not stored in the schema mutation and does not affect
         // schema digest. It is also not set locally on a schema tables.
         std::reference_wrapper<const dht::static_sharder> _sharder;
+        tombstone _truncate_tombstone;
     };
     raw_schema _raw;
     schema_static_props _static_props;
@@ -942,6 +944,10 @@ public:
     bool equal_columns(const schema&) const;
     bool wait_for_sync_to_commitlog() const {
         return _static_props.wait_for_sync_to_commitlog;
+    }
+
+    const tombstone& truncate_tombstone() const noexcept {
+        return _raw._truncate_tombstone;
     }
 private:
     // Print all schema properties in CQL syntax

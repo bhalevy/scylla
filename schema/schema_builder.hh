@@ -8,6 +8,8 @@
 
 #pragma once
 
+#include "db_clock.hh"
+#include "mutation/tombstone.hh"
 #include "schema.hh"
 #include "replica/database_fwd.hh"
 #include "cdc/log.hh"
@@ -266,7 +268,9 @@ public:
     schema_builder& with_cdc_options(const cdc::options&);
     schema_builder& with_tombstone_gc_options(const tombstone_gc_options& opts);
     schema_builder& with_per_partition_rate_limit_options(const db::per_partition_rate_limit_options&);
-    
+
+    schema_builder& with_truncate_tombstone(const tombstone&);
+
     default_names get_default_names() const {
         return default_names(_raw);
     }

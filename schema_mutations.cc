@@ -44,8 +44,8 @@ void schema_mutations::copy_to(std::vector<mutation>& dst) const {
     if (_dropped_columns) {
         dst.push_back(*_dropped_columns);
     }
-    if (_scylla_tables) {
-        dst.push_back(*_scylla_tables);
+    if (_dropped_columns) {
+        dst.push_back(*_dropped_columns);
     }
 }
 

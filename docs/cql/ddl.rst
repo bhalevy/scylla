@@ -1016,7 +1016,7 @@ A table can be truncated using the ``TRUNCATE`` statement:
 
 .. code-block::
    
-   truncate_statement: TRUNCATE [ TABLE ] `table_name`
+   truncate_statement: TRUNCATE [ TABLE ] `table_name` [ USING TIMESTAMP `timestamp` ]
                      : [ USING TIMEOUT `timeout` ]
    timeout: `duration`
 
@@ -1024,6 +1024,8 @@ Note that ``TRUNCATE TABLE foo`` is allowed for consistency with other DDL state
 that can be truncated currently and so the ``TABLE`` keyword can be omitted.
 
 Truncating a table permanently removes all existing data from the table, but without removing the table itself.
+
+The ``USING TIMESTAMP`` clause allows specifying a write timestamp deleting all data with write timestamp less than or equal to the given timestamp.
 
 The ``USING TIMEOUT`` clause allows specifying a timeout for a specific request.
 

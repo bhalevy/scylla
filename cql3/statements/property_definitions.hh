@@ -67,9 +67,12 @@ public:
     // Return a property value, typed as an Integer
     int32_t get_int(sstring key, int32_t default_value) const;
 
+    // Return a property value, typed as a Long integer
+    int64_t get_long(sstring key, int64_t default_value) const;
+
     static int32_t to_int(sstring key, std::optional<sstring> value, int32_t default_value);
 
-    static long to_long(sstring key, std::optional<sstring> value, long default_value);
+    static int64_t to_long(sstring key, std::optional<sstring> value, int64_t default_value);
 };
 
 }

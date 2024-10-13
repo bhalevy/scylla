@@ -14,6 +14,7 @@
  
 #include "schema/schema_builder.hh"
 #include "compaction/compaction_strategy.hh"
+#include "timestamp.hh"
 #include "utils/UUID.hh"
 
 namespace data_dictionary {
@@ -48,6 +49,7 @@ public:
     static const sstring KW_BF_FP_CHANCE;
     static const sstring KW_MEMTABLE_FLUSH_PERIOD;
     static const sstring KW_SYNCHRONOUS_UPDATES;
+    static const sstring KW_TRUNCATE_TIMESTAMP;
 
     static const sstring KW_COMPACTION;
     static const sstring KW_COMPRESSION;
@@ -100,6 +102,7 @@ public:
     int32_t get_paxos_grace_seconds() const;
     std::optional<table_id> get_id() const;
     bool get_synchronous_updates_flag() const;
+    std::optional<api::timestamp_type> get_truncate_timestamp() const;
 
     void apply_to_builder(schema_builder& builder, schema::extensions_map schema_extensions, const data_dictionary::database& db, sstring ks_name) const;
     void validate_minimum_int(const sstring& field, int32_t minimum_value, int32_t default_value) const;
