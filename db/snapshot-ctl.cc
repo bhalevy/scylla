@@ -67,6 +67,7 @@ future<> snapshot_ctl::run_snapshot_operation(std::function<future<>()> f, bool 
 
     auto func = std::move(f);
     auto lh = co_await (modifying ? _lock.hold_write_lock() : _lock.hold_read_lock());
+    co_await _db.local().await_background_ops();
     co_return co_await func();
 }
 
@@ -82,6 +83,7 @@ future<T> snapshot_ctl::run_snapshot_operation(std::function<future<T>()> f, boo
 
     auto func = std::move(f);
     auto lh = co_await (modifying ? _lock.hold_write_lock() : _lock.hold_read_lock());
+    co_await _db.local().await_background_ops();
     co_return co_await func();
 }
 
