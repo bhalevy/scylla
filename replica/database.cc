@@ -12,6 +12,7 @@
 #include <fmt/std.h>
 #include "log.hh"
 #include "replica/database_fwd.hh"
+#include "seastar/core/shard_id.hh"
 #include "utils/assert.hh"
 #include "utils/lister.hh"
 #include "replica/database.hh"
@@ -23,8 +24,7 @@
 #include "db/config.hh"
 #include "db/extensions.hh"
 #include "cql3/functions/functions.hh"
-#include "cql3/functions/user_function.hh"
-#include "cql3/functions/user_aggregate.hh"
+#include "cql3/query_processor.hh"
 #include <seastar/core/seastar.hh>
 #include <seastar/core/coroutine.hh>
 #include <seastar/coroutine/parallel_for_each.hh>
@@ -1032,7 +1032,7 @@ future<> database::drop_table_on_all_shards(sharded<database>& sharded_db, shard
         return db.detach_column_family(*table_shards);
     });
 
-    auto f = truncate_and_stop_table(sharded_db, sys_ks, std::move(table_shards), with_snapshot, std::move(snapshot_name_opt));
+    auto f = truncate_and_stop_table(sharded_db, sys_ks, std::move(table_shards), with_snapshot, std::move(snapshot_name_opt), truncate_in_background);
     if (truncate_in_background && !f.failed()) {
         // Perform the rest in the background
         // This is safe since it holds the _async_gate that is await in database::shutdown()
@@ -1044,8 +1044,15 @@ future<> database::drop_table_on_all_shards(sharded<database>& sharded_db, shard
     }
 }
 
-future<> database::truncate_and_stop_table(sharded<database>& sharded_db, sharded<db::system_keyspace>& sys_ks, global_table_ptr table_shards, bool with_snapshot, std::optional<sstring> snapshot_name_opt) {
+future<> database::truncate_and_stop_table(sharded<database>& sharded_db, sharded<db::system_keyspace>& sys_ks, global_table_ptr table_shards, bool with_snapshot, std::optional<sstring> snapshot_name_opt, bool in_background) {
     auto holder = sharded_db.local()._async_gate.hold();
+
+    locator::effective_replication_map_ptr erm;
+    if (in_background) {
+        erm = table_shards->get_effective_replication_map();
+        co_await sys_ks.local().query_processor().wait_for_topology_not_busy().
+    }
+
     // Use a time point in the far future (9999-12-31T00:00:00+0000)
     // to ensure all sstables are truncated,
     // but be careful to stays within the client's datetime limits.
