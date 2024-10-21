@@ -113,13 +113,11 @@ locator::host_id validate_host_id(const sstring& param) {
     return hoep.id();
 }
 
-bool validate_bool(const sstring& param, std::optional<bool> default_val = std::nullopt) {
+bool validate_bool(const sstring& param) {
     if (param == "true") {
         return true;
     } else if (param == "false") {
         return false;
-    } else if (param.empty() && default_val) {
-        return *default_val;
     } else {
         throw std::runtime_error("Parameter must be either 'true' or 'false'");
     }
@@ -1539,8 +1537,8 @@ void set_storage_service(http_context& ctx, routes& r, sharded<service::storage_
 
     ss::tablet_balancing_enable.set(r, [&ss] (std::unique_ptr<http::request> req) -> future<json_return_type> {
         auto enabled = validate_bool(req->get_query_param("enabled"));
-        auto if_needed = validate_bool(req->get_query_param("if_needed"), false);
-        co_return co_await ss.local().set_tablet_balancing_enabled(enabled, if_needed);
+        co_await ss.local().set_tablet_balancing_enabled(enabled);
+        co_return json_void();
     });
 
     ss::quiesce_topology.set(r, [&ss] (std::unique_ptr<http::request> req) -> future<json_return_type> {

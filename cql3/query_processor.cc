@@ -14,7 +14,6 @@
 #include <seastar/core/shared_ptr.hh>
 #include <seastar/coroutine/parallel_for_each.hh>
 
-#include "seastar/coroutine/exception.hh"
 #include "service/storage_proxy.hh"
 #include "service/migration_manager.hh"
 #include "service/mapreduce_service.hh"
@@ -537,39 +536,19 @@ future<::shared_ptr<cql_transport::messages::result_message>> query_processor::e
 
     auto [remote_, holder] = remote();
     size_t retries = remote_.get().mm.get_concurrent_ddl_retries();
-    ::shared_ptr<cql_transport::messages::result_message> ret;
-    std::exception_ptr ex;
-    bool reenable_tablet_balancing = false;
-
-    if (statement->needs_topology_quiesce()) {
-        reenable_tablet_balancing = co_await remote_.get().ss.set_tablet_balancing_enabled(false, true);
-    }
-
-    while (true) {
+    while (true)  {
         try {
             auto guard = co_await remote_.get().mm.start_group0_operation();
-            ret = co_await fn(query_state, statement, options, std::move(guard));
-            break;
-        } catch (const service::group0_concurrent_modification&) {
+            co_return co_await fn(query_state, statement, options, std::move(guard));
+        } catch (const service::group0_concurrent_modification& ex) {
             log.warn("Failed to execute statement \"{}\" due to guard conflict.{}.",
                     statement->raw_cql_statement, retries ? " Retrying" : " Number of retries exceeded, giving up");
             if (retries--) {
                 continue;
             }
-            ex = std::current_exception();
-            break;
+            throw;
         }
     }
-
-    if (reenable_tablet_balancing) {
-        co_await remote_.get().ss.set_tablet_balancing_enabled(false);
-    }
-
-    if (ex) {
-        co_await coroutine::return_exception_ptr(std::move(ex));
-    }
-
-    co_return ret;
 }
 
 template<typename... Args>

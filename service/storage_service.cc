@@ -6426,19 +6426,14 @@ future<> storage_service::transit_tablet(table_id table, dht::token token, nonco
     });
 }
 
-future<bool> storage_service::set_tablet_balancing_enabled(bool enabled, bool if_needed) {
+future<> storage_service::set_tablet_balancing_enabled(bool enabled) {
     auto holder = _async_gate.hold();
 
     if (this_shard_id() != 0) {
         // group0 is only set on shard 0.
         co_return co_await container().invoke_on(0, [&] (auto& ss) {
-            return ss.set_tablet_balancing_enabled(enabled, if_needed);
+            return ss.set_tablet_balancing_enabled(enabled);
         });
-    }
-
-    bool current_tablet_balancing_enabled = _topology_state_machine._topology.tablet_balancing_enabled;
-    if (if_needed && enabled == current_tablet_balancing_enabled) {
-        co_return current_tablet_balancing_enabled;
     }
 
     while (true) {
@@ -6465,8 +6460,6 @@ future<bool> storage_service::set_tablet_balancing_enabled(bool enabled, bool if
         rtlogger.debug("set_tablet_balancing_enabled(): topology is busy");
         co_await _topology_state_machine.event.wait();
     }
-
-    co_return current_tablet_balancing_enabled;
 }
 
 future<> storage_service::await_topology_quiesced() {

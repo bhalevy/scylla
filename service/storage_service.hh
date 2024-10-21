@@ -923,10 +923,7 @@ public:
     future<> move_tablet(table_id, dht::token, locator::tablet_replica src, locator::tablet_replica dst, loosen_constraints force = loosen_constraints::no);
     future<> add_tablet_replica(table_id, dht::token, locator::tablet_replica dst, loosen_constraints force = loosen_constraints::no);
     future<> del_tablet_replica(table_id, dht::token, locator::tablet_replica dst, loosen_constraints force = loosen_constraints::no);
-    // If `if_needed` is set to true, sets the tablet_balancing_enabled state
-    // to the new value only if different than the current state.
-    // Returns the current tablet_balancing_enabled state
-    future<bool> set_tablet_balancing_enabled(bool enabled, bool if_needed = false);
+    future<> set_tablet_balancing_enabled(bool);
     future<> await_topology_quiesced();
 
     // In the maintenance mode, other nodes won't be available thus we disabled joining
