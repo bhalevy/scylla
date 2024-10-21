@@ -1534,6 +1534,9 @@ private:
 
     db_clock::time_point _all_tables_flushed_at;
 
+    // Gate for background operations like dropping tables
+    seastar::gate _async_gate;
+
 public:
     data_dictionary::database as_data_dictionary() const;
     db::commitlog* commitlog_for(const schema_ptr& schema);
@@ -1832,6 +1835,7 @@ private:
 
     struct table_truncate_state;
 
+    static future<> truncate_and_stop_table(sharded<database>& db, sharded<db::system_keyspace>& sys_ks, global_table_ptr, bool with_snapshot, std::optional<sstring> snapshot_name_opt);
     static future<> truncate_table_on_all_shards(sharded<database>& db, sharded<db::system_keyspace>& sys_ks, const global_table_ptr&, std::optional<db_clock::time_point> truncated_at_opt, bool with_snapshot, std::optional<sstring> snapshot_name_opt);
     future<> truncate(db::system_keyspace& sys_ks, column_family& cf, const table_truncate_state&, db_clock::time_point truncated_at);
 public:
@@ -1840,7 +1844,7 @@ public:
     static future<> truncate_table_on_all_shards(sharded<database>& db, sharded<db::system_keyspace>& sys_ks, sstring ks_name, sstring cf_name, std::optional<db_clock::time_point> truncated_at_opt = {}, bool with_snapshot = true, std::optional<sstring> snapshot_name_opt = {});
 
     // drops the table on all shards and removes the table directory if there are no snapshots
-    static future<> drop_table_on_all_shards(sharded<database>& db, sharded<db::system_keyspace>& sys_ks, sstring ks_name, sstring cf_name, bool with_snapshot = true);
+    static future<> drop_table_on_all_shards(sharded<database>& db, sharded<db::system_keyspace>& sys_ks, sstring ks_name, sstring cf_name, bool with_snapshot = true, bool truncate_in_background = false);
 
     const dirty_memory_manager_logalloc::region_group& dirty_memory_region_group() const {
         return _dirty_memory_manager.region_group();

@@ -666,40 +666,51 @@ SEASTAR_TEST_CASE(snapshot_list_okay) {
 
 SEASTAR_TEST_CASE(snapshot_list_contains_dropped_tables) {
     return do_with_some_data({"cf1", "cf2", "cf3", "cf4"}, [] (cql_test_env& e) {
+        using database_details_map = std::unordered_map<sstring, replica::database::snapshot_details>;
+        struct expected_details {
+            bool live = true;
+            bool total;
+        };
+        auto verify_snapshot = [] (const database_details_map& details, size_t expected) {
+            if (details.size() != expected) {
+                return false;
+            }
+            for (const auto& [name, r] : details) {
+                BOOST_REQUIRE_EQUAL(r.size(), 1);
+                const auto& result = r.front();
+                const auto& sd = result.details;
+                if (name == "test2" || name == "test3") {
+                    if (sd.live != 0 || sd.total <= 0) {
+                        return false;
+                    }
+                } else {
+                    if (sd.live <= 0 || sd.total != sd.live) {
+                        return false;
+                    }
+                }
+            }
+            return true;
+        };
+        auto verify_snapshot_eventually = [&] (size_t expected, db_clock::duration timeout = db_clock::duration(10s)) {
+            auto deadline = db_clock::now() + timeout;
+            do {
+                auto details = e.local_db().get_snapshot_details().get();
+                if (verify_snapshot(details, expected)) {
+                    return;
+                }
+            } while (db_clock::now() < deadline);
+            BOOST_FAIL("snapshot details failed verification");
+        };
+
         e.execute_cql("DROP TABLE ks.cf1;").get();
-
-        auto details = e.local_db().get_snapshot_details().get();
-        BOOST_REQUIRE_EQUAL(details.size(), 1);
-        BOOST_REQUIRE_EQUAL(details.begin()->second.size(), 1);
-
-        const auto& sd = details.begin()->second.front().details;
-        BOOST_REQUIRE_GT(sd.live, 0);
-        BOOST_REQUIRE_EQUAL(sd.total, sd.live);
+        verify_snapshot_eventually(1);
 
         take_snapshot(e, "ks", "cf2", "test2").get();
         take_snapshot(e, "ks", "cf3", "test3").get();
-
-        details = e.local_db().get_snapshot_details().get();
-        BOOST_REQUIRE_EQUAL(details.size(), 3);
+        verify_snapshot_eventually(3);
 
         e.execute_cql("DROP TABLE ks.cf4;").get();
-
-        details = e.local_db().get_snapshot_details().get();
-        BOOST_REQUIRE_EQUAL(details.size(), 4);
-
-        for (const auto& [name, r] : details) {
-            BOOST_REQUIRE_EQUAL(r.size(), 1);
-            const auto& result = r.front();
-            const auto& sd = result.details;
-
-            if (name == "test2" || name == "test3") {
-                BOOST_REQUIRE_EQUAL(sd.live, 0);
-                BOOST_REQUIRE_GT(sd.total, 0);
-            } else {
-                BOOST_REQUIRE_GT(sd.live, 0);
-                BOOST_REQUIRE_EQUAL(sd.total, sd.live);
-            }
-        }
+        verify_snapshot_eventually(4);
 
         return make_ready_future<>();
     });
