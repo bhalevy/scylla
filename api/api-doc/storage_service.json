@@ -2871,6 +2871,14 @@
                      "allowMultiple":false,
                      "type":"boolean",
                      "paramType":"query"
+                  },
+                  {
+                     "name":"if_needed",
+                     "description":"When set to true, tablet load balancing state will be enabled/disabled only if different than the current state",
+                     "required":false,
+                     "allowMultiple":false,
+                     "type":"boolean",
+                     "paramType":"query"
                   }
                ]
             }
