@@ -50,6 +50,7 @@
 #include "gms/inet_address.hh"
 #include "gms/feature_service.hh"
 #include "keys.hh"
+#include "locator/abstract_replication_strategy.hh"
 #include "locator/network_topology_strategy.hh"
 #include "mutation/mutation.hh"
 #include "mutation/mutation_partition.hh"
@@ -1725,20 +1726,33 @@ bool should_generate_view_updates_on_this_shard(const schema_ptr& base, const lo
 // (with the other nodes paired by order in the list
 // after taking this node out).
 //
+// If the table uses tablets and the replication strategy is NetworkTopologyStrategy
+// and the replication factor in the node's datacenter is a multiple of the number
+// of racks in the datacenter, then pairing is rack-aware.  In this case,
+// all racks have the same number of replicas, and those are never migrated
+// outside their racks. Therefore, the base replicas are naturally paired with the
+// view replicas that are in the same rack, based on the ordinal position.
+// Note that typically, there is a single replica per rack and pairing is trivial.
+//
 // If the assumption that the given base token belongs to this replica
 // does not hold, we return an empty optional.
 static std::optional<gms::inet_address>
 get_view_natural_endpoint(
         const locator::effective_replication_map_ptr& base_erm,
         const locator::effective_replication_map_ptr& view_erm,
-        bool network_topology,
+        const locator::abstract_replication_strategy& replication_strategy,
         const dht::token& base_token,
         const dht::token& view_token,
         bool use_legacy_self_pairing,
+        bool use_tablets_rack_aware_view_pairing,
         replica::cf_stats& cf_stats) {
     auto& topology = base_erm->get_token_metadata_ptr()->get_topology();
     auto me = topology.my_host_id();
-    auto my_datacenter = topology.get_datacenter();
+    auto& my_location = topology.get_location(me);
+    auto& my_datacenter = my_location.dc;
+    auto* network_topology = dynamic_cast<const locator::network_topology_strategy*>(&replication_strategy);
+    auto rack_aware_pairing = use_tablets_rack_aware_view_pairing && network_topology;
+    auto simple_rack_aware_pairing = rack_aware_pairing && (network_topology->get_replication_factor(my_datacenter) % topology.get_datacenter_racks().at(my_datacenter).size()) == 0;
     using node_vector = std::vector<std::reference_wrapper<const locator::node>>;
     node_vector base_endpoints, view_endpoints;
 
@@ -1762,7 +1776,10 @@ get_view_natural_endpoint(
         return np;
     };
     std::function<bool(const locator::node&)> is_candidate;
-    if (network_topology) {
+    if (simple_rack_aware_pairing) {
+        is_candidate = [&] (const locator::node& node) { return node.dc_rack() == my_location; };
+    } else if (network_topology) {
+        // Also for the (rack_aware_pairing && !simple_rack_aware_pairing) case
         is_candidate = [&] (const locator::node& node) { return node.dc() == my_datacenter; };
     } else {
         is_candidate = [&] (const locator::node&) { return true; };
@@ -1805,6 +1822,13 @@ get_view_natural_endpoint(
         for (auto&& view_endpoint : view_erm->get_replicas(view_token)) {
             process_candidate(view_endpoints, view_topology, view_endpoint, true);
         }
+    }
+
+    if (rack_aware_pairing && !simple_rack_aware_pairing) {
+        // For the complex rack_aware_pairing case, nodes are already filtered by datacenter
+        // so just stable_sort by rack (and keep ordinal order within the racks)
+        std::ranges::stable_sort(base_endpoints, std::ranges::less{}, std::mem_fn(&locator::node::rack));
+        std::ranges::stable_sort(view_endpoints, std::ranges::less{}, std::mem_fn(&locator::node::rack));
     }
 
     auto base_it = std::ranges::find(base_endpoints, me, std::mem_fn(&locator::node::host_id));
@@ -1882,13 +1906,17 @@ future<> view_update_generator::mutate_MV(
         wait_for_all_updates wait_for_all)
 {
     auto& ks = _db.find_keyspace(base->ks_name());
-    bool network_topology = dynamic_cast<const locator::network_topology_strategy*>(&ks.get_replication_strategy());
+    auto& replication = ks.get_replication_strategy();
     // We set legacy self-pairing for old vnode-based tables (for backward
     // compatibility), and unset it for tablets - where range movements
     // are more frequent and backward compatibility is less important.
     // TODO: Maybe allow users to set use_legacy_self_pairing explicitly
     // on a view, like we have the synchronous_updates_flag.
     bool use_legacy_self_pairing = !ks.uses_tablets();
+    // Enable rack-aware view updates pairing for tablets
+    // when the cluster feature is enabled so that all replicas agree
+    // on the pairing algorithm.
+    bool use_tablets_rack_aware_view_pairing = _db.features().tablets_rack_aware_view_pairing && ks.uses_tablets();
     std::unordered_map<table_id, locator::effective_replication_map_ptr> erms;
     auto get_erm = [&] (table_id id) {
         auto it = erms.find(id);
@@ -1906,7 +1934,8 @@ future<> view_update_generator::mutate_MV(
     co_await max_concurrent_for_each(view_updates, max_concurrent_updates, [&] (frozen_mutation_and_schema mut) mutable -> future<> {
         auto view_token = dht::get_token(*mut.s, mut.fm.key());
         auto view_ermp = erms.at(mut.s->id());
-        auto target_endpoint = get_view_natural_endpoint(base_ermp, view_ermp, network_topology, base_token, view_token, use_legacy_self_pairing, cf_stats);
+        auto target_endpoint = get_view_natural_endpoint(base_ermp, view_ermp, replication, base_token, view_token,
+                use_legacy_self_pairing, use_tablets_rack_aware_view_pairing, cf_stats);
         auto remote_endpoints = view_ermp->get_pending_endpoints(view_token);
         auto sem_units = seastar::make_lw_shared<db::timeout_semaphore_units>(pending_view_updates.split(memory_usage_of(mut)));
 
