@@ -145,6 +145,11 @@ public:
     gms::feature maintenance_tenant { *this, "MAINTENANCE_TENANT"sv };
 
     gms::feature tablet_repair_scheduler { *this, "TABLET_REPAIR_SCHEDULER"sv };
+    // Enable rack-aware view updates pairing for tablets
+    // when using NetworkTopologyStrategy (always with tablets at this time)
+    // and when the replication factor is a multiple of the number of racks
+    // in the datacenter.
+    gms::feature tablets_rack_aware_view_pairing { *this, "TABLETS_RACK_AWARE_VIEW_PAIRING"sv };
 
     // A feature just for use in tests. It must not be advertised unless
     // the "features_enable_test_feature" injection is enabled.
