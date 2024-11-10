@@ -68,6 +68,7 @@
 #include "sstables/sstables_manager.hh"
 #include "init.hh"
 #include "lang/manager.hh"
+#include "utils/disk_space_monitor.hh"
 
 #include <sys/time.h>
 #include <sys/resource.h>
@@ -153,6 +154,7 @@ private:
     sharded<locator::shared_token_metadata> _token_metadata;
     sharded<locator::effective_replication_map_factory> _erm_factory;
     sharded<sstables::directory_semaphore> _sst_dir_semaphore;
+    utils::disk_space_monitor _disk_space_monitor;
     sharded<lang::manager> _lang_manager;
     sharded<cql3::cql_config> _cql_config;
     sharded<service::endpoint_lifecycle_notifier> _elc_notif;
@@ -573,6 +575,13 @@ private:
             auto stop_task_manager = defer([this] {
                 _task_manager.stop().get();
             });
+
+            utils::disk_space_monitor::config dsm_cfg = {
+                .sched_group = scheduling_groups.compaction_scheduling_group
+            };
+            _disk_space_monitor.start(data_dir_path, dsm_cfg);
+            auto stop_dsm = defer([this] { _disk_space_monitor.stop().get(); });
+            auto dsm_logger = utils::disk_space_monitor_logger(_disk_space_monitor);
 
             // get_cm_cfg is called on each shard when starting a sharded<compaction_manager>
             // we need the getter since updateable_value is not shard-safe (#7316)
