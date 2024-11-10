@@ -479,6 +479,7 @@ scylla_tests = set([
     'test/boost/data_listeners_test',
     'test/boost/database_test',
     'test/boost/dirty_memory_manager_test',
+    'test/boost/disk_space_monitor_test',
     'test/boost/double_decker_test',
     'test/boost/duration_test',
     'test/boost/dynamic_bitset_test',
@@ -1189,6 +1190,7 @@ scylla_core = (['message/messaging_service.cc',
                 'service/topology_coordinator.cc',
                 'node_ops/node_ops_ctl.cc',
                 'node_ops/task_manager_module.cc',
+                'utils/disk_space_monitor.cc',
                 ] + [Antlr3Grammar('cql3/Cql.g')] \
                   + scylla_raft_core
                )
