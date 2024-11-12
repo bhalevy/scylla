@@ -1856,6 +1856,14 @@ future<> view_update_generator::mutate_MV(
         service::allow_hints allow_hints,
         wait_for_all_updates wait_for_all)
 {
+    auto& ks = _db.find_keyspace(base->ks_name());
+    bool network_topology = dynamic_cast<const locator::network_topology_strategy*>(&ks.get_replication_strategy());
+    // We set legacy self-pairing for old vnode-based tables (for backward
+    // compatibility), and unset it for tablets - where range movements
+    // are more frequent and backward compatibility is less important.
+    // TODO: Maybe allow users to set use_legacy_self_pairing explicitly
+    // on a view, like we have the synchronous_updates_flag.
+    bool use_legacy_self_pairing = !ks.uses_tablets();
     std::unordered_map<table_id, locator::effective_replication_map_ptr> erms;
     auto get_erm = [&] (table_id id) {
         auto it = erms.find(id);
@@ -1873,14 +1881,6 @@ future<> view_update_generator::mutate_MV(
     co_await max_concurrent_for_each(view_updates, max_concurrent_updates, [&] (frozen_mutation_and_schema mut) mutable -> future<> {
         auto view_token = dht::get_token(*mut.s, mut.fm.key());
         auto view_ermp = erms.at(mut.s->id());
-        auto& ks = _proxy.local().local_db().find_keyspace(mut.s->ks_name());
-        bool network_topology = dynamic_cast<const locator::network_topology_strategy*>(&ks.get_replication_strategy());
-        // We set legacy self-pairing for old vnode-based tables (for backward
-        // compatibility), and unset it for tablets - where range movements
-        // are more frequent and backward compatibility is less important.
-        // TODO: Maybe allow users to set use_legacy_self_pairing explicitly
-        // on a view, like we have the synchronous_updates_flag.
-        bool use_legacy_self_pairing = !ks.uses_tablets();
         auto target_endpoint = get_view_natural_endpoint(base_ermp, view_ermp, network_topology, base_token, view_token, use_legacy_self_pairing, cf_stats);
         auto remote_endpoints = view_ermp->get_pending_endpoints(view_token);
         auto sem_units = seastar::make_lw_shared<db::timeout_semaphore_units>(pending_view_updates.split(memory_usage_of(mut)));
