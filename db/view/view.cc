@@ -29,6 +29,7 @@
 #include <seastar/core/coroutine.hh>
 #include <seastar/coroutine/maybe_yield.hh>
 
+#include "locator/abstract_replication_strategy.hh"
 #include "replica/database.hh"
 #include "clustering_bounds_comparator.hh"
 #include "cql3/statements/select_statement.hh"
@@ -1855,13 +1856,23 @@ future<> view_update_generator::mutate_MV(
         service::allow_hints allow_hints,
         wait_for_all_updates wait_for_all)
 {
-    auto base_ermp = base->table().get_effective_replication_map();
+    std::unordered_map<table_id, locator::effective_replication_map_ptr> erms;
+    auto get_erm = [&] (table_id id) {
+        auto it = erms.find(id);
+        if (it == erms.end()) {
+            it = erms.emplace(id, _db.find_column_family(id).get_effective_replication_map()).first;
+        }
+        return it->second;
+    };
+    auto base_ermp = get_erm(base->id());
+    for (const auto& mut : view_updates) {
+        (void)get_erm(mut.s->id());
+    }
     static constexpr size_t max_concurrent_updates = 128;
     co_await utils::get_local_injector().inject("delay_before_get_view_natural_endpoint", 8000ms);
-    co_await max_concurrent_for_each(view_updates, max_concurrent_updates,
-            [this, base_token, &stats, &cf_stats, tr_state, &pending_view_updates, allow_hints, wait_for_all, base_ermp] (frozen_mutation_and_schema mut) mutable -> future<> {
+    co_await max_concurrent_for_each(view_updates, max_concurrent_updates, [&] (frozen_mutation_and_schema mut) mutable -> future<> {
         auto view_token = dht::get_token(*mut.s, mut.fm.key());
-        auto view_ermp = mut.s->table().get_effective_replication_map();
+        auto view_ermp = erms.at(mut.s->id());
         auto& ks = _proxy.local().local_db().find_keyspace(mut.s->ks_name());
         bool network_topology = dynamic_cast<const locator::network_topology_strategy*>(&ks.get_replication_strategy());
         // We set legacy self-pairing for old vnode-based tables (for backward
