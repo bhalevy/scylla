@@ -1883,7 +1883,6 @@ future<> view_update_generator::mutate_MV(
         // on a view, like we have the synchronous_updates_flag.
         bool use_legacy_self_pairing = !ks.uses_tablets();
         auto target_endpoint = get_view_natural_endpoint(base_ermp, view_ermp, network_topology, base_token, view_token, use_legacy_self_pairing, cf_stats);
-        std::optional<gms::inet_address> pending_endpoint;
         auto remote_endpoints = view_ermp->get_pending_endpoints(view_token);
         auto sem_units = seastar::make_lw_shared<db::timeout_semaphore_units>(pending_view_updates.split(memory_usage_of(mut)));
 
@@ -1906,12 +1905,18 @@ future<> view_update_generator::mutate_MV(
                 target_endpoint = *remote_it;
                 remote_endpoints.erase(remote_it);
             } else {
-                // Keep the paired replica as the primary pending replica
-                if (*target_endpoint != *remote_it) {
-                    pending_endpoint = std::exchange(*target_endpoint, *remote_it);
-                }
                 // Remove the duplicated entry
-                remote_endpoints.erase(remote_it);
+                if (*target_endpoint == *remote_it) {
+                    remote_endpoints.erase(remote_it);
+                } else {
+                    auto target_remote_it = std::find(remote_endpoints.begin(), remote_endpoints.end(), *target_endpoint);
+                    if (target_remote_it != remote_endpoints.end()) {
+                        target_endpoint = *remote_it;
+                        remote_endpoints.erase(remote_it);
+                    } else {
+                        std::swap(*target_endpoint, *remote_it);
+                    }
+                }
             }
         } else if (target_endpoint) {
             // It's still possible that a target endpoint is duplicated in the remote endpoints list,
@@ -1927,7 +1932,7 @@ future<> view_update_generator::mutate_MV(
             ++stats.view_updates_pushed_local;
             ++cf_stats.total_view_updates_pushed_local;
             ++stats.writes;
-            auto mut_ptr = remote_endpoints.empty() && !pending_endpoint ? std::make_unique<frozen_mutation>(std::move(mut.fm)) : std::make_unique<frozen_mutation>(mut.fm);
+            auto mut_ptr = remote_endpoints.empty() ? std::make_unique<frozen_mutation>(std::move(mut.fm)) : std::make_unique<frozen_mutation>(mut.fm);
             tracing::trace(tr_state, "Locally applying view update for {}.{}; base token = {}; view token = {}",
                     mut.s->ks_name(), mut.s->cf_name(), base_token, view_token);
             local_view_update = _proxy.local().mutate_mv_locally(mut.s, *mut_ptr, tr_state, db::commitlog::force_sync::no).then_wrapped(
@@ -1953,21 +1958,17 @@ future<> view_update_generator::mutate_MV(
             target_endpoint.reset();
         }
 
-        // If pending_endpoint is not engaged, but there are remote endpoints,
+        // If target endpoint is not engaged, but there are remote endpoints,
         // one of the remote endpoints should become a primary target
-        if (!pending_endpoint) {
-            if (target_endpoint) {
-                pending_endpoint = std::exchange(target_endpoint, std::nullopt);
-            } else if (!remote_endpoints.empty()) {
-                pending_endpoint = std::move(remote_endpoints.back());
-                remote_endpoints.pop_back();
-            }
+        if (!target_endpoint && !remote_endpoints.empty()) {
+            target_endpoint = std::move(remote_endpoints.back());
+            remote_endpoints.pop_back();
         }
 
-        // If pending_endpoint is engaged by this point, then either the update
+        // If target_endpoint is engaged by this point, then either the update
         // is not local, or the local update was already applied but we still
         // have pending endpoints to send to.
-        if (pending_endpoint) {
+        if (target_endpoint) {
             size_t updates_pushed_remote = remote_endpoints.size() + 1;
             stats.view_updates_pushed_remote += updates_pushed_remote;
             cf_stats.total_view_updates_pushed_remote += updates_pushed_remote;
