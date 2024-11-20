@@ -13,10 +13,10 @@
 #include "map_difference.hh"
 
 #include <map>
-
-#include "test/lib/log.hh"
+#include <unordered_map>
 
 using std::map;
+using std::unordered_map;
 
 BOOST_AUTO_TEST_CASE(both_empty) {
     map<int, int> left;
@@ -46,10 +46,6 @@ BOOST_AUTO_TEST_CASE(left_empty) {
     auto diff = difference(left, right, [](int x, int y) -> bool {
         return x == y;
     });
-
-    for (auto& i : diff.entries_only_on_right) {
-        testlog.info("{}", i.get());
-    }
 
     BOOST_REQUIRE(diff.entries_only_on_left.empty());
     BOOST_REQUIRE(diff.entries_only_on_right == keys);
@@ -113,6 +109,106 @@ BOOST_AUTO_TEST_CASE(differing_values) {
     right.emplace(2, 2000);
 
     auto diff = difference(left, right, [](int x, int y) -> bool {
+        return x == y;
+    });
+
+    BOOST_REQUIRE(diff.entries_only_on_left.empty());
+    BOOST_REQUIRE(diff.entries_only_on_right.empty());
+    BOOST_REQUIRE(diff.entries_in_common.empty());
+    BOOST_REQUIRE(diff.entries_differing.size() == 2);
+}
+
+BOOST_AUTO_TEST_CASE(unordered_both_empty) {
+    unordered_map<int, int> left;
+    unordered_map<int, int> right;
+
+    auto diff = unordered_difference(left, right, [](int x, int y) -> bool {
+        return x == y;
+    });
+
+    BOOST_REQUIRE(diff.entries_only_on_left.empty());
+    BOOST_REQUIRE(diff.entries_only_on_right.empty());
+    BOOST_REQUIRE(diff.entries_in_common.empty());
+    BOOST_REQUIRE(diff.entries_differing.empty());
+}
+
+BOOST_AUTO_TEST_CASE(unordered_left_empty) {
+    unordered_map<int, int> left;
+    unordered_map<int, int> right;
+
+    right.emplace(1, 100);
+    right.emplace(2, 200);
+
+    unordered_map_difference<int>::set_type keys;
+    keys.emplace(right.find(1)->first);
+    keys.emplace(right.find(2)->first);
+
+    auto diff = unordered_difference(left, right, [](int x, int y) -> bool {
+        return x == y;
+    });
+
+    BOOST_REQUIRE(diff.entries_only_on_left.empty());
+    BOOST_REQUIRE(diff.entries_only_on_right == keys);
+    BOOST_REQUIRE(diff.entries_in_common.empty());
+    BOOST_REQUIRE(diff.entries_differing.empty());
+}
+
+BOOST_AUTO_TEST_CASE(unordered_right_empty) {
+    unordered_map<int, int> left;
+    unordered_map<int, int> right;
+
+    left.emplace(1, 100);
+    left.emplace(2, 200);
+
+    unordered_map_difference<int>::set_type keys;
+    keys.emplace(left.find(1)->first);
+    keys.emplace(left.find(2)->first);
+
+    auto diff = unordered_difference(left, right, [](int x, int y) -> bool {
+        return x == y;
+    });
+
+    BOOST_REQUIRE(diff.entries_only_on_left == keys);
+    BOOST_REQUIRE(diff.entries_only_on_right.empty());
+    BOOST_REQUIRE(diff.entries_in_common.empty());
+    BOOST_REQUIRE(diff.entries_differing.empty());
+}
+
+BOOST_AUTO_TEST_CASE(unordered_both_same) {
+    unordered_map<int, int> left;
+    unordered_map<int, int> right;
+
+    left.emplace(1, 100);
+    left.emplace(2, 200);
+
+    right.emplace(1, 100);
+    right.emplace(2, 200);
+
+    unordered_map_difference<int>::set_type keys;
+    keys.emplace(left.find(1)->first);
+    keys.emplace(left.find(2)->first);
+
+    auto diff = unordered_difference(left, right, [](int x, int y) -> bool {
+        return x == y;
+    });
+
+    BOOST_REQUIRE(diff.entries_only_on_left.empty());
+    BOOST_REQUIRE(diff.entries_only_on_right.empty());
+    BOOST_REQUIRE(diff.entries_in_common == keys);
+    BOOST_REQUIRE(diff.entries_differing.empty());
+}
+
+BOOST_AUTO_TEST_CASE(unordered_differing_values) {
+    unordered_map<int, int> left;
+    unordered_map<int, int> right;
+
+    left.emplace(1, 100);
+    left.emplace(2, 200);
+
+    right.emplace(1, 1000);
+    right.emplace(2, 2000);
+
+    auto diff = unordered_difference(left, right, [](int x, int y) -> bool {
         return x == y;
     });
 

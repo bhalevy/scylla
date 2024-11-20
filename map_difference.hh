@@ -9,6 +9,7 @@
 #pragma once
 
 #include <set>
+#include <unordered_set>
 #include <utility>
 
 #include "utils/hashing.hh"
@@ -25,19 +26,35 @@ public:
 
     map_difference_reference_wrapper& operator=(const map_difference_reference_wrapper&) = default;
 
-    T& get() const noexcept {
+    T& get() noexcept {
         return *_ptr;
     }
 
-    operator T&() const noexcept {
+    const T& get() const noexcept {
+        return *_ptr;
+    }
+
+    operator T&() noexcept {
         return get();
     }
 
-    T& operator*() const noexcept {
+    operator T const&() const noexcept {
         return get();
     }
 
-    T* operator->() const noexcept {
+    T& operator*() noexcept {
+        return get();
+    }
+
+    const T& operator*() const noexcept {
+        return get();
+    }
+
+    T* operator->() noexcept {
+        return _ptr;
+    }
+
+    const T* operator->() const noexcept {
         return _ptr;
     }
 
@@ -60,16 +77,24 @@ public:
 
 namespace std {
 template<typename T>
-struct hash<map_difference_reference_wrapper<T>> : public hash<T> {
+struct hash<map_difference_reference_wrapper<T>> : public std::hash<T> {
     size_t operator()(const map_difference_reference_wrapper<T>& x) const noexcept {
-        return std::hash<T>(x.get());
+        return std::hash<T>::operator()(x.get());
     }
 };
 }
 
-template<typename Key, typename Set = std::set<map_difference_reference_wrapper<const Key>>>
+template <typename T>
+struct fmt::formatter<map_difference_reference_wrapper<T>> : fmt::formatter<string_view> {
+    template <typename FormatContext>
+    auto format(const map_difference_reference_wrapper<T>& x, FormatContext& ctx) const {
+        return fmt::format_to(ctx.out(), "{}", x.get());
+    }
+};
+
+template<typename Key, typename Set = std::set<map_difference_reference_wrapper<Key>>>
 struct map_difference {
-    using ref_type = map_difference_reference_wrapper<const Key>;
+    using ref_type = map_difference_reference_wrapper<Key>;
     using set_type = Set;
 
     // Entries in left map whose keys don't exist in the right map.
@@ -92,6 +117,9 @@ struct map_difference {
     { }
 };
 
+template<typename Key>
+using unordered_map_difference = map_difference<Key, std::unordered_set<map_difference_reference_wrapper<Key>>>;
+
 /**
  * Produces a map_difference between the two specified maps, with Key keys and
  * Tp values, using the provided equality function. In order to work with any
@@ -100,7 +128,7 @@ struct map_difference {
  */
 template<template<typename...> class Map,
          typename Key,
-         typename Set = std::set<map_difference_reference_wrapper<const Key>>,
+         typename Set = std::set<map_difference_reference_wrapper<Key>>,
          typename Tp,
          typename Eq = std::equal_to<Tp>,
          typename... Args>
@@ -118,7 +146,6 @@ difference(const Map<Key, Tp, Args...>& left,
     for (const auto& [left_key, left_value] : left) {
         auto&& it = right.find(left_key);
         if (it != right.end()) {
-            //auto erase_it = diff.entries_only_on_right.find(map_difference_type::ref_type(left_key));
             diff.entries_only_on_right.erase(typename map_difference_type::ref_type(left_key));
             const Tp& right_value = it->second;
             if (equals(left_value, right_value)) {
@@ -131,4 +158,18 @@ difference(const Map<Key, Tp, Args...>& left,
         }
     }
     return diff;
+}
+
+template<template<typename...> class Map,
+         typename Key,
+         typename UnorderedSet = std::unordered_set<map_difference_reference_wrapper<Key>>,
+         typename Tp,
+         typename Eq = std::equal_to<Tp>,
+         typename... Args>
+inline
+map_difference<Key, UnorderedSet>
+unordered_difference(const Map<Key, Tp, Args...>& left,
+           const Map<Key, Tp, Args...>& right,
+           Eq equals = Eq()) {
+    return difference<Map, Key, UnorderedSet, Tp, Eq, Args...>(left, right, equals);
 }
