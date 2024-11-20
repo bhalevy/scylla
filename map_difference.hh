@@ -26,32 +26,16 @@ public:
 
     map_difference_reference_wrapper& operator=(const map_difference_reference_wrapper&) = default;
 
-    T& get() noexcept {
-        return *_ptr;
-    }
-
     const T& get() const noexcept {
         return *_ptr;
-    }
-
-    operator T&() noexcept {
-        return get();
     }
 
     operator T const&() const noexcept {
         return get();
     }
 
-    T& operator*() noexcept {
-        return get();
-    }
-
     const T& operator*() const noexcept {
         return get();
-    }
-
-    T* operator->() noexcept {
-        return _ptr;
     }
 
     const T* operator->() const noexcept {
