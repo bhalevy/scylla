@@ -526,6 +526,8 @@ private:
     // Corresponding phaser for in-progress flushes
     utils::phased_barrier _pending_flushes_phaser;
 
+    future<> _stop_compaction_groups_fut = make_ready_future();
+
     // This field cashes the last truncation time for the table.
     // The master resides in system.truncated table
     std::optional<db_clock::time_point> _truncated_at;
@@ -863,7 +865,8 @@ public:
     void set_schema(schema_ptr);
     db::commitlog* commitlog() const;
     const locator::effective_replication_map_ptr& get_effective_replication_map() const { return _erm; }
-    future<> update_effective_replication_map(locator::effective_replication_map_ptr);
+    std::unique_ptr<storage_group_manager> prepare_update_effective_replication_map(locator::effective_replication_map_ptr) const;
+    void apply_update_effective_replication_map(locator::effective_replication_map_ptr, std::unique_ptr<storage_group_manager>) noexcept;
     [[gnu::always_inline]] bool uses_tablets() const;
 private:
     future<> clear_inactive_reads_for_tablet(database& db, storage_group& sg);

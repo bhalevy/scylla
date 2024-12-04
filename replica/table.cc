@@ -674,6 +674,7 @@ class single_storage_group_manager final : public storage_group_manager {
         return *_single_cg;
     }
 public:
+    single_storage_group_manager(const single_storage_group_manager& o) = default;
     single_storage_group_manager(replica::table& t)
         : _t(t)
     {
@@ -686,7 +687,12 @@ public:
         _storage_groups = std::move(r);
     }
 
-    future<> update_effective_replication_map(const locator::effective_replication_map& erm, noncopyable_function<void()> refresh_mutation_source) override { return make_ready_future(); }
+    std::unique_ptr<storage_group_manager> clone() const override {
+        return std::make_unique<single_storage_group_manager>(*this);
+    }
+
+    void prepare_update_effective_replication_map(const locator::effective_replication_map&) override {}
+    future<> apply_update_effective_replication_map(const locator::effective_replication_map&, noncopyable_function<void()> refresh_mutation_source) noexcept override { return make_ready_future(); }
 
     compaction_group& compaction_group_for_token(dht::token token) const noexcept override {
         return get_compaction_group();
@@ -737,6 +743,12 @@ class tablet_storage_group_manager final : public storage_group_manager {
     // current split, and not a previously revoked (stale) decision.
     // The minimum value, which is a negative number, is not used by coordinator for first decision.
     locator::resize_decision::seq_number_t _split_ready_seq_number = std::numeric_limits<locator::resize_decision::seq_number_t>::min();
+
+    // State for update_effective_replication_map:
+    // Set by `prepare_update_effective_replication_map`,
+    // applied by `apply_update_effective_replication_map`
+    std::vector<compaction_group_ptr> _compaction_groups_to_stop;
+    bool _tablet_migrating_in = false;
 private:
     const schema_ptr& schema() const {
         return _t.schema();
@@ -755,7 +767,7 @@ private:
     // Called when coordinator executes tablet splitting, i.e. commit the new tablet map with
     // each tablet split into two, so this replica will remap all of its compaction groups
     // that were previously split.
-    future<> handle_tablet_split_completion(const locator::tablet_map& old_tmap, const locator::tablet_map& new_tmap);
+    void handle_tablet_split_completion(const locator::tablet_map& old_tmap, const locator::tablet_map& new_tmap);
 
     storage_group& storage_group_for_id(size_t i) const {
         return storage_group_manager::storage_group_for_id(schema(), i);
@@ -791,6 +803,7 @@ private:
         return sg;
     }
 public:
+    tablet_storage_group_manager(const tablet_storage_group_manager&) = default;
     tablet_storage_group_manager(table& t, const locator::effective_replication_map& erm)
         : _t(t)
         , _my_host_id(erm.get_token_metadata().get_my_id())
@@ -812,7 +825,12 @@ public:
         _storage_groups = std::move(ret);
     }
 
-    future<> update_effective_replication_map(const locator::effective_replication_map& erm, noncopyable_function<void()> refresh_mutation_source) override;
+    std::unique_ptr<storage_group_manager> clone() const override {
+        return std::make_unique<tablet_storage_group_manager>(*this);
+    }
+
+    void prepare_update_effective_replication_map(const locator::effective_replication_map&) override;
+    future<> apply_update_effective_replication_map(const locator::effective_replication_map&, noncopyable_function<void()> refresh_mutation_source) noexcept override;
 
     compaction_group& compaction_group_for_token(dht::token token) const noexcept override;
     utils::chunked_vector<compaction_group*> compaction_groups_for_token_range(dht::token_range tr) const override;
@@ -1611,6 +1629,7 @@ table::stop() {
         _sstables = make_compound_sstable_set();
     }));
     _cache.refresh_snapshot();
+    co_await std::move(_stop_compaction_groups_fut);
 }
 static seastar::metrics::label_instance node_table_metrics("__per_table", "node");
 void table::set_metrics() {
@@ -2367,7 +2386,7 @@ locator::table_load_stats table::table_load_stats(std::function<bool(const locat
     return _sg_manager->table_load_stats(std::move(tablet_filter));
 }
 
-future<> tablet_storage_group_manager::handle_tablet_split_completion(const locator::tablet_map& old_tmap, const locator::tablet_map& new_tmap) {
+void tablet_storage_group_manager::handle_tablet_split_completion(const locator::tablet_map& old_tmap, const locator::tablet_map& new_tmap) {
     auto table_id = schema()->id();
     size_t old_tablet_count = old_tmap.tablet_count();
     size_t new_tablet_count = new_tmap.tablet_count();
@@ -2390,7 +2409,7 @@ future<> tablet_storage_group_manager::handle_tablet_split_completion(const loca
     }
 
     // Stop the released main compaction groups asynchronously
-    future<> stop_fut = make_ready_future<>();
+    _compaction_groups_to_stop.reserve(_storage_groups.size());
     for (auto& [id, sg] : _storage_groups) {
         if (!sg->main_compaction_group()->empty()) {
             on_internal_error(tlogger, format("Found that storage of group {} for table {} wasn't split correctly, " \
@@ -2398,15 +2417,7 @@ future<> tablet_storage_group_manager::handle_tablet_split_completion(const loca
                                               id, table_id));
         }
         // Remove old main groups, they're unused, but they need to be deregistered properly
-        auto cg_ptr = sg->main_compaction_group();
-        auto f = cg_ptr->stop("tablet split");
-        if (!f.available() || f.failed()) [[unlikely]] {
-            stop_fut = stop_fut.then([f = std::move(f), cg_ptr = std::move(cg_ptr)] () mutable {
-                return std::move(f).handle_exception([cg_ptr = std::move(cg_ptr)] (std::exception_ptr ex) {
-                    tlogger.warn("Failed to stop compaction group: {}.  Ignored", std::move(ex));
-                });
-            });
-        }
+        _compaction_groups_to_stop.emplace_back(sg->main_compaction_group());
         unsigned first_new_id = id << growth_factor;
         auto split_ready_groups = sg->split_ready_compaction_groups();
         if (split_ready_groups.size() != split_size) {
@@ -2423,11 +2434,9 @@ future<> tablet_storage_group_manager::handle_tablet_split_completion(const loca
     }
 
     _storage_groups = std::move(new_storage_groups);
-
-    return stop_fut;
 }
 
-future<> tablet_storage_group_manager::update_effective_replication_map(const locator::effective_replication_map& erm, noncopyable_function<void()> refresh_mutation_source) {
+void tablet_storage_group_manager::prepare_update_effective_replication_map(const locator::effective_replication_map& erm) {
     auto* new_tablet_map = &erm.get_token_metadata().tablets().get_tablet_map(schema()->id());
     auto* old_tablet_map = std::exchange(_tablet_map, new_tablet_map);
 
@@ -2436,8 +2445,8 @@ future<> tablet_storage_group_manager::update_effective_replication_map(const lo
     if (new_tablet_count > old_tablet_count) {
         tlogger.info0("Detected tablet split for table {}.{}, increasing from {} to {} tablets",
                         schema()->ks_name(), schema()->cf_name(), old_tablet_count, new_tablet_count);
-        co_await handle_tablet_split_completion(*old_tablet_map, *new_tablet_map);
-        co_return;
+        handle_tablet_split_completion(*old_tablet_map, *new_tablet_map);
+        return;
     }
 
     // Allocate storage group if tablet is migrating in.
@@ -2448,21 +2457,44 @@ future<> tablet_storage_group_manager::update_effective_replication_map(const lo
     auto tablet_migrates_in = [this_replica] (locator::tablet_transition_info& transition_info) {
         return transition_info.stage == locator::tablet_transition_stage::allow_write_both_read_old && transition_info.pending_replica == this_replica;
     };
-    bool tablet_migrating_in = false;
+    _tablet_migrating_in = false;
     for (auto& transition : new_tablet_map->transitions()) {
         auto tid = transition.first;
         auto transition_info = transition.second;
         if (!_storage_groups.contains(tid.value()) && tablet_migrates_in(transition_info)) {
             auto range = new_tablet_map->get_token_range(tid);
             _storage_groups[tid.value()] = allocate_storage_group(*new_tablet_map, tid, std::move(range));
-            tablet_migrating_in = true;
+            _tablet_migrating_in = true;
         }
     }
+}
+
+future<> tablet_storage_group_manager::apply_update_effective_replication_map(const locator::effective_replication_map& erm, noncopyable_function<void()> refresh_mutation_source) noexcept {
+    // Stop the released main compaction groups asynchronously
+
+    future<> stop_fut = make_ready_future<>();
+    for (auto& cg_ptr : _compaction_groups_to_stop) {
+        auto f = cg_ptr->stop("tablet split");
+        if (!f.available() || f.failed()) [[unlikely]] {
+            stop_fut = stop_fut.then([f = std::move(f), cg_ptr = std::move(cg_ptr)] () mutable {
+                return std::move(f).handle_exception([cg_ptr = std::move(cg_ptr)] (std::exception_ptr ex) {
+                    tlogger.warn("Failed to stop compaction group: {}.  Ignored", std::move(ex));
+                });
+            });
+        }
+    }
+    _compaction_groups_to_stop.clear();
+
+    // Allocate storage group if tablet is migrating in.
+    auto this_replica = locator::tablet_replica{
+        .host = erm.get_token_metadata().get_my_id(),
+        .shard = this_shard_id()
+    };
 
     // update the per compaction group tombstone GC enabled flag
     for_each_storage_group([&] (size_t group_id, storage_group& sg) {
         const locator::tablet_id tid = static_cast<locator::tablet_id>(group_id);
-        const locator::tablet_info& tinfo = new_tablet_map->get_tablet_info(tid);
+        const locator::tablet_info& tinfo = _tablet_map->get_tablet_info(tid);
         const bool tombstone_gc_enabled = std::ranges::contains(tinfo.replicas, this_replica);
 
         sg.for_each_compaction_group([tombstone_gc_enabled] (const compaction_group_ptr& cg_ptr) {
@@ -2475,22 +2507,33 @@ future<> tablet_storage_group_manager::update_effective_replication_map(const lo
     //  Also serves as a protection for clearing the cache on the new range, although it shouldn't be a
     //  problem as fresh node won't have any data in new range and migration cleanup invalidates the
     //  range being moved away.
-    if (tablet_migrating_in) {
+    if (_tablet_migrating_in) {
         refresh_mutation_source();
     }
-    co_return;
+
+    return stop_fut;
 }
 
-future<> table::update_effective_replication_map(locator::effective_replication_map_ptr erm) {
+std::unique_ptr<storage_group_manager> table::prepare_update_effective_replication_map(locator::effective_replication_map_ptr erm) const {
+    auto ret = _sg_manager->clone();
+    ret->prepare_update_effective_replication_map(*erm);
+    return ret;
+}
+
+void table::apply_update_effective_replication_map(locator::effective_replication_map_ptr erm, std::unique_ptr<storage_group_manager> sg_manager) noexcept {
     auto old_erm = std::exchange(_erm, std::move(erm));
+    _sg_manager = std::move(sg_manager);
 
     auto refresh_mutation_source = [this] {
         refresh_compound_sstable_set();
         _cache.refresh_snapshot();
     };
 
-    if (uses_tablets()) {
-        co_await _sg_manager->update_effective_replication_map(*_erm, refresh_mutation_source);
+    auto fut = _sg_manager->apply_update_effective_replication_map(*_erm, refresh_mutation_source);
+    if (!fut.available()) {
+        _stop_compaction_groups_fut = _stop_compaction_groups_fut.then([fut = std::move(fut)] () mutable {
+            return std::move(fut);
+        });
     }
     if (old_erm) {
         old_erm->invalidate();
