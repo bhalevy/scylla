@@ -911,13 +911,19 @@ SEASTAR_TEST_CASE(test_invalid_dcs) {
     });
 }
 
-namespace locator {
+std::weak_ordering compare_endpoints(const locator::topology& topo, const inet_address& address, const inet_address& a1, const inet_address& a2) {
+    const auto& loc = topo.get_location(address);
+    const auto& loc1 = topo.get_location(a1);
+    const auto& loc2 = topo.get_location(a2);
 
-void topology::test_compare_endpoints(const inet_address& address, const inet_address& a1, const inet_address& a2) const {
+    return topo.distance(address, loc, a1, loc1) <=> topo.distance(address, loc, a2, loc2);
+}
+
+void test_compare_endpoints(const locator::topology& topo, const inet_address& address, const inet_address& a1, const inet_address& a2) {
     std::optional<std::partial_ordering> expected;
-    const auto& loc = get_location(address);
-    const auto& loc1 = get_location(a1);
-    const auto& loc2 = get_location(a2);
+    const auto& loc = topo.get_location(address);
+    const auto& loc1 = topo.get_location(a1);
+    const auto& loc2 = topo.get_location(a2);
     if (a1 == a2) {
         expected = std::partial_ordering::equivalent;
     } else {
@@ -943,7 +949,7 @@ void topology::test_compare_endpoints(const inet_address& address, const inet_ad
             }
         }
     }
-    auto res = compare_endpoints(address, a1, a2);
+    auto res = compare_endpoints(topo, address, a1, a2);
     testlog.debug("compare_endpoint: address={} [{}/{}] a1={} [{}/{}] a2={} [{}/{}]: res={} expected={} expected_value={}",
             address, loc.dc, loc.rack,
             a1, loc1.dc, loc1.rack,
@@ -953,8 +959,6 @@ void topology::test_compare_endpoints(const inet_address& address, const inet_ad
         BOOST_REQUIRE_EQUAL(res, *expected);
     }
 }
-
-} // namespace locator
 
 SEASTAR_THREAD_TEST_CASE(test_topology_compare_endpoints) {
     locator::token_metadata::config tm_cfg;
@@ -996,17 +1000,17 @@ SEASTAR_THREAD_TEST_CASE(test_topology_compare_endpoints) {
         const auto& a1 = tm.get_endpoint_for_host_id(nodes[tests::random::get_int<size_t>(0, NODES-1)]);
         const auto& a2 = tm.get_endpoint_for_host_id(nodes[tests::random::get_int<size_t>(0, NODES-1)]);
 
-        topo.test_compare_endpoints(address, address, address);
-        topo.test_compare_endpoints(address, address, a1);
-        topo.test_compare_endpoints(address, a1, address);
-        topo.test_compare_endpoints(address, a1, a1);
-        topo.test_compare_endpoints(address, a1, a2);
-        topo.test_compare_endpoints(address, a2, a1);
+        test_compare_endpoints(topo, address, address, address);
+        test_compare_endpoints(topo, address, address, a1);
+        test_compare_endpoints(topo, address, a1, address);
+        test_compare_endpoints(topo, address, a1, a1);
+        test_compare_endpoints(topo, address, a1, a2);
+        test_compare_endpoints(topo, address, a2, a1);
 
-        topo.test_compare_endpoints(bogus_address, bogus_address, bogus_address);
-        topo.test_compare_endpoints(address, bogus_address, bogus_address);
-        topo.test_compare_endpoints(address, a1, bogus_address);
-        topo.test_compare_endpoints(address, bogus_address, a2);
+        test_compare_endpoints(topo, bogus_address, bogus_address, bogus_address);
+        test_compare_endpoints(topo, address, bogus_address, bogus_address);
+        test_compare_endpoints(topo, address, a1, bogus_address);
+        test_compare_endpoints(topo, address, bogus_address, a2);
         return make_ready_future<>();
     }).get();
 }

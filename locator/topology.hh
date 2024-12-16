@@ -369,6 +369,17 @@ public:
     template <typename T>
     void do_sort_by_proximity(T address, utils::small_vector<T, 3>& addresses) const;
 
+    /**
+     * Calculates topology-distance between two endpoints.
+     *
+     * The closest nodes to a given node are:
+     * 1. The node itself
+     * 2. Nodes in the same RACK
+     * 3. Nodes in the same DC
+     */
+    template<typename T>
+    static int distance(const T& address, const endpoint_dc_rack& loc, const T& address1, const endpoint_dc_rack& loc1) noexcept;
+
     // Executes a function for each node in a state other than "none" and "left".
     void for_each_node(std::function<void(const node&)> func) const;
 
@@ -412,18 +423,6 @@ private:
     static node* make_mutable(const node* nptr) {
         return const_cast<node*>(nptr);
     }
-
-    /**
-     * compares two endpoints in relation to the target endpoint, returning as
-     * Comparator.compare would
-     *
-     * The closest nodes to a given node are:
-     * 1. The node itself
-     * 2. Nodes in the same RACK as the reference node
-     * 3. Nodes in the same DC as the reference node
-     */
-    template<typename T>
-    std::weak_ordering compare_endpoints(const T& address, const T& a1, const T& a2) const;
 
     unsigned _shard;
     config _cfg;

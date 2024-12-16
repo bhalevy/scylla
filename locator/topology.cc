@@ -580,20 +580,31 @@ void topology::sort_by_proximity(locator::host_id address, host_id_vector_replic
 
 template <typename T>
 void topology::do_sort_by_proximity(T address, utils::small_vector<T, 3>& addresses) const {
-    std::sort(addresses.begin(), addresses.end(), [this, &address](T& a1, T& a2) {
-        return compare_endpoints(address, a1, a2) < 0;
+    struct info {
+        T id;
+        int distance;
+    };
+    utils::small_vector<info, 3> host_infos;
+    host_infos.reserve(addresses.size());
+    const auto& loc = get_location(address);
+    for (const auto& id : addresses) {
+        const auto& loc1 = get_location(id);
+        host_infos.emplace_back(id, distance(address, loc, id, loc1));
+    }
+    std::ranges::sort(host_infos, [&](const info& i1, const info& i2) {
+        return i1.distance < i2.distance;
     });
+    auto it = addresses.begin();
+    for (const auto& i : host_infos) {
+        *it++ = i.id;
+    }
 }
 
 template void topology::do_sort_by_proximity<gms::inet_address>(gms::inet_address address, inet_address_vector_replica_set& addresses) const;
 template void topology::do_sort_by_proximity<locator::host_id>(locator::host_id address, host_id_vector_replica_set& addresses) const;
 
-template<typename T>
-std::weak_ordering topology::compare_endpoints(const T& address, const T& a1, const T& a2) const {
-    const auto& loc = get_location(address);
-    const auto& loc1 = get_location(a1);
-    const auto& loc2 = get_location(a2);
-
+template <typename T>
+int topology::distance(const T& address, const endpoint_dc_rack& loc, const T& a1, const endpoint_dc_rack& loc1) noexcept {
     // The farthest nodes from a given node are:
     // 1. Nodes in other DCs then the reference node
     // 2. Nodes in the other RACKs in the same DC as the reference node
@@ -602,14 +613,11 @@ std::weak_ordering topology::compare_endpoints(const T& address, const T& a1, co
     int same_rack1 = same_dc1 & (loc1.rack == loc.rack);
     int same_node1 = a1 == address;
     int d1 = ((same_dc1 << 2) | (same_rack1 << 1) | same_node1) ^ 7;
-
-    int same_dc2 = loc2.dc == loc.dc;
-    int same_rack2 = same_dc2 & (loc2.rack == loc.rack);
-    int same_node2 = a2 == address;
-    int d2 = ((same_dc2 << 2) | (same_rack2 << 1) | same_node2) ^ 7;
-
-    return d1 <=> d2;
+    return d1;
 }
+
+template int topology::distance<gms::inet_address>(const gms::inet_address&, const endpoint_dc_rack&, const gms::inet_address&, const endpoint_dc_rack&) noexcept;
+template int topology::distance<locator::host_id>(const locator::host_id&, const endpoint_dc_rack&, const locator::host_id&, const endpoint_dc_rack&) noexcept;
 
 void topology::for_each_node(std::function<void(const node&)> func) const {
     for (const auto& np : _nodes) {
