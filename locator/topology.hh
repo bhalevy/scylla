@@ -350,6 +350,10 @@ public:
         return std::count_if(endpoints.begin(), endpoints.end(), get_local_dc_filter());
     }
 
+    bool can_sort_by_proximity() const noexcept {
+        return _sort_by_proximity;
+    }
+
     /**
      * This method will sort the <tt>List</tt> by proximity to the given
      * address.
@@ -361,6 +365,9 @@ public:
      * host_id.
      */
     void sort_by_proximity(locator::host_id address, host_id_vector_replica_set& addresses) const;
+
+    template <typename T>
+    void do_sort_by_proximity(T address, utils::small_vector<T, 3>& addresses) const;
 
     // Executes a function for each node in a state other than "none" and "left".
     void for_each_node(std::function<void(const node&)> func) const;
