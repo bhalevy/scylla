@@ -11,6 +11,7 @@
 #include <seastar/core/on_internal_error.hh>
 #include <seastar/util/lazy.hh>
 #include <utility>
+#include <bit>
 
 #include "seastar/core/shard_id.hh"
 #include "utils/log.hh"
@@ -580,6 +581,9 @@ void topology::sort_by_proximity(locator::host_id address, host_id_vector_replic
 
 template <typename T>
 void topology::do_sort_by_proximity(T address, utils::small_vector<T, 3>& addresses) const {
+    static thread_local std::mt19937_64 random_engine(std::random_device{}());
+    auto shuffler = random_engine();
+
     struct info {
         T id;
         int distance;
@@ -595,8 +599,15 @@ void topology::do_sort_by_proximity(T address, utils::small_vector<T, 3>& addres
         return i1.distance < i2.distance;
     });
     auto it = addresses.begin();
-    for (const auto& i : host_infos) {
-        *it++ = i.id;
+    for (size_t i = 1; i < host_infos.size(); ++i) {
+        // Shuffle equal-distance replicas to improve load-balancing
+        if (host_infos[i].distance == host_infos[i-1].distance) {
+            if (shuffler & 1) {
+                std::swap(host_infos[i], host_infos[i-1]);
+            }
+            shuffler = std::rotr(shuffler, 1);
+        }
+        *it++ = host_infos[i-1].id;
     }
 }
 
