@@ -20,6 +20,8 @@
 
 #include "locator/token_metadata.hh"
 #include "test/lib/topology.hh"
+#include "test/lib/log.hh"
+#include "test/lib/random_utils.hh"
 
 struct sort_by_proximity_topology {
     static constexpr size_t NODES = 15;
@@ -51,7 +53,10 @@ struct sort_by_proximity_topology {
         };
 
         stm->mutate_token_metadata_for_test([&] (locator::token_metadata& tm) {
-            tests::generate_topology(tm.get_topology(), datacenters, nodes);
+            auto seed = tests::random::get_int<locator::topology::random_engine_type::result_type>();
+            auto& topology = tm.get_topology();
+            topology.seed_random_engine(seed);
+            tests::generate_topology(topology, datacenters, nodes);
         });
     }
 };
