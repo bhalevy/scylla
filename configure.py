@@ -616,6 +616,7 @@ scylla_tests = set([
     'test/manual/message',
     'test/manual/partition_data_test',
     'test/manual/row_locker_test',
+    'test/manual/sort_by_proximity_test',
     'test/manual/streaming_histogram_test',
     'test/manual/sstable_scan_footprint_test',
     'test/perf/memory_footprint_test',
@@ -1338,6 +1339,7 @@ scylla_tests_dependencies = scylla_core + alternator + idls + scylla_tests_gener
     'test/lib/exception_utils.cc',
     'test/lib/random_schema.cc',
     'test/lib/key_utils.cc',
+    'test/lib/topology.cc',
 ]
 
 scylla_raft_dependencies = scylla_raft_core + ['utils/uuid.cc', 'utils/error_injection.cc', 'utils/exceptions.cc']
