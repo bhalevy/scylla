@@ -37,6 +37,7 @@
 #include "test/lib/key_utils.hh"
 #include "test/lib/random_utils.hh"
 #include "test/lib/test_utils.hh"
+#include "test/lib/topology.hh"
 #include <seastar/core/coroutine.hh>
 #include "db/schema_tables.hh"
 
@@ -842,35 +843,6 @@ static void test_equivalence(const shared_token_metadata& stm, const locator::to
     }
 }
 
-void generate_topology(topology& topo, const std::unordered_map<sstring, size_t> datacenters, const host_id_vector_replica_set& nodes) {
-    auto& e1 = seastar::testing::local_random_engine;
-
-    std::unordered_map<sstring, size_t> racks_per_dc;
-    std::vector<std::reference_wrapper<const sstring>> dcs;
-
-    dcs.reserve(datacenters.size() * 4);
-
-    using udist = std::uniform_int_distribution<size_t>;
-
-    auto out = std::back_inserter(dcs);
-
-    for (auto& p : datacenters) {
-        auto& dc = p.first;
-        auto rf = p.second;
-        auto rc = udist(0, rf * 3 - 1)(e1) + 1;
-        racks_per_dc.emplace(dc, rc);
-        out = std::fill_n(out, rf, std::cref(dc));
-    }
-
-    unsigned i = 0;
-    for (auto& node : nodes) {
-        const sstring& dc = dcs[udist(0, dcs.size() - 1)(e1)];
-        auto rc = racks_per_dc.at(dc);
-        auto r = udist(0, rc)(e1);
-        topo.add_or_update_endpoint(node, inet_address((127u << 24) | ++i), endpoint_dc_rack{dc, to_sstring(r)}, locator::node::state::normal);
-    }
-}
-
 SEASTAR_THREAD_TEST_CASE(testCalculateEndpoints) {
     locator::token_metadata::config tm_cfg;
     auto my_address = gms::inet_address("localhost");
@@ -915,7 +887,7 @@ SEASTAR_THREAD_TEST_CASE(testCalculateEndpoints) {
         }
 
         stm.mutate_token_metadata([&] (token_metadata& tm) -> future<> {
-            generate_topology(tm.get_topology(), datacenters, nodes);
+            tests::generate_topology(tm.get_topology(), datacenters, nodes);
             for (auto&& i : endpoint_tokens) {
                 co_await tm.update_normal_tokens(std::move(i.second), i.first);
             }
@@ -1036,7 +1008,7 @@ SEASTAR_THREAD_TEST_CASE(test_topology_compare_endpoints) {
     shared_token_metadata stm([&sem] () noexcept { return get_units(sem, 1); }, tm_cfg);
     stm.mutate_token_metadata([&] (token_metadata& tm) {
         auto& topo = tm.get_topology();
-        generate_topology(topo, datacenters, nodes);
+        tests::generate_topology(topo, datacenters, nodes);
 
         const auto& address = nodes[tests::random::get_int<size_t>(0, NODES-1)];
         const auto& a1 = nodes[tests::random::get_int<size_t>(0, NODES-1)];
@@ -1079,7 +1051,7 @@ SEASTAR_THREAD_TEST_CASE(test_topology_sort_by_proximity) {
     semaphore sem(1);
     shared_token_metadata stm([&sem] () noexcept { return get_units(sem, 1); }, tm_cfg);
     stm.mutate_token_metadata([&] (token_metadata& tm) -> future<> {
-        generate_topology(tm.get_topology(), datacenters, nodes);
+        tests::generate_topology(tm.get_topology(), datacenters, nodes);
         return make_ready_future();
     }).get();
 
