@@ -10,8 +10,11 @@
 
 #include <boost/test/unit_test.hpp>
 
+#include <seastar/core/coroutine.hh>
+#include <seastar/core/manual_clock.hh>
 #include <seastar/core/sleep.hh>
 #include <seastar/util/noncopyable_function.hh>
+#include <seastar/util/later.hh>
 
 #include "seastarx.hh"
 
@@ -20,6 +23,16 @@ using sleep_fn = std::function<future<>(std::chrono::milliseconds)>;
 struct seastar_sleep_fn {
     future<> operator()(std::chrono::milliseconds ms) const {
         return seastar::sleep(ms);
+    }
+};
+
+struct manual_clock_sleep_fn {
+    future<> operator()(std::chrono::milliseconds ms) const {
+        auto end = manual_clock::now() + ms;
+        while (manual_clock::now() < end) {
+            manual_clock::advance(std::chrono::milliseconds(1));
+            co_await yield();
+        }
     }
 };
 
@@ -50,7 +63,7 @@ bool eventually_true(noncopyable_function<bool ()> f, sleep_fn sleep = seastar_s
         }
 
         if (++attempts < max_attempts) {
-            seastar::sleep(std::chrono::milliseconds(1 << attempts)).get();
+            sleep(std::chrono::milliseconds(1 << attempts)).get();
         } else {
             return false;
         }
