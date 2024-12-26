@@ -12,6 +12,7 @@
 #include <boost/range/adaptor/map.hpp>
 #include <seastar/core/format.hh>
 #include <seastar/util/backtrace.hh>
+#include "test/lib/eventually.hh"
 #include "test/lib/log.hh"
 #include "test/lib/simple_schema.hh"
 #include "utils/to_string.hh"
@@ -100,4 +101,8 @@ future<> touch_file(std::string name) {
 
 std::mutex boost_logger_mutex;
 
-}
+} // namespace tests
+
+sleep_fn seastar_sleep_fn = [] (std::chrono::milliseconds ms) -> future<> {
+    return seastar::sleep(ms);
+};
