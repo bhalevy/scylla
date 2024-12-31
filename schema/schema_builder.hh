@@ -227,6 +227,8 @@ public:
         return *this;
     }
 
+    schema_builder& set_tablet_hints(std::map<sstring, sstring>&& hints);
+
     class default_names {
     public:
         default_names(const schema_builder&);
@@ -283,7 +285,8 @@ public:
     schema_builder& with_cdc_options(const cdc::options&);
     schema_builder& with_tombstone_gc_options(const tombstone_gc_options& opts);
     schema_builder& with_per_partition_rate_limit_options(const db::per_partition_rate_limit_options&);
-    
+    schema_builder& with_tablet_hints(const std::map<sstring, sstring>& hints);
+
     default_names get_default_names() const {
         return default_names(_raw);
     }

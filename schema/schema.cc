@@ -9,6 +9,7 @@
 #include <seastar/core/on_internal_error.hh>
 #include <map>
 #include "cql3/description.hh"
+#include "db/tablet_hints.hh"
 #include "db/view/view.hh"
 #include "timestamp.hh"
 #include "utils/assert.hh"
@@ -582,6 +583,7 @@ bool operator==(const schema& x, const schema& y)
         && x._raw._indices_by_name == y._raw._indices_by_name
         && x._raw._is_counter == y._raw._is_counter
         && x._raw._in_memory == y._raw._in_memory
+        && x._raw._tablet_hints == y._raw._tablet_hints
         ;
 }
 
@@ -838,6 +840,15 @@ auto fmt::formatter<schema>::format(const schema& s, fmt::format_context& ctx) c
     out = fmt::format_to(out, ",minIndexInterval={}", s._raw._min_index_interval);
     out = fmt::format_to(out, ",maxIndexInterval={}", s._raw._max_index_interval);
     out = fmt::format_to(out, ",speculativeRetry={}", s._raw._speculative_retry.to_sstring());
+    out = fmt::format_to(out, ",tablet_hints={{");
+    n = 0;
+    for (auto& [k, v] : s._raw._tablet_hints) {
+        if (n++) {
+            out = fmt::format_to(out, ", ");
+        }
+        out = fmt::format_to(out, "{}={}", k, v);
+    }
+    out = fmt::format_to(out, "}}");
     out = fmt::format_to(out, ",triggers=[]");
     out = fmt::format_to(out, ",isDense={}", s._raw._is_dense);
     out = fmt::format_to(out, ",in_memory={}", s._raw._in_memory);
@@ -1131,7 +1142,13 @@ std::ostream& schema::schema_properties(const schema_describe_helper& helper, st
     os << "\n    AND memtable_flush_period_in_ms = " << memtable_flush_period();
     os << "\n    AND min_index_interval = " << min_index_interval();
     os << "\n    AND speculative_retry = '" << speculative_retry().to_sstring() << "'";
-    
+
+    if (has_tablet_hints()) {
+        os << "\n    AND tablet_hints = {";
+        map_as_cql_param(os, tablet_hints().to_map());
+        os << "}";
+    }
+
     for (auto& [type, ext] : extensions()) {
         os << "\n    AND " << type << " = " << ext->options_to_string();
     }
@@ -1616,6 +1633,18 @@ const ::tombstone_gc_options& schema::tombstone_gc_options() const {
     return default_tombstone_gc_options;
 }
 
+bool schema::has_tablet_hints() const noexcept {
+    return !_raw._tablet_hints.empty();
+}
+
+db::tablet_hints schema::tablet_hints() const noexcept {
+    return db::tablet_hints(raw_tablet_hints());
+}
+
+const db::tablet_hints::map_type& schema::raw_tablet_hints() const noexcept {
+    return _raw._tablet_hints;
+}
+
 schema_builder& schema_builder::with_cdc_options(const cdc::options& opts) {
     add_extension(cdc::cdc_extension::NAME, ::make_shared<cdc::cdc_extension>(opts));
     return *this;
@@ -1633,6 +1662,11 @@ schema_builder& schema_builder::with_per_partition_rate_limit_options(const db::
 
 schema_builder& schema_builder::set_paxos_grace_seconds(int32_t seconds) {
     add_extension(db::paxos_grace_seconds_extension::NAME, ::make_shared<db::paxos_grace_seconds_extension>(seconds));
+    return *this;
+}
+
+schema_builder& schema_builder::set_tablet_hints(std::map<sstring, sstring>&& hints) {
+    _raw._tablet_hints = std::move(hints);
     return *this;
 }
 
