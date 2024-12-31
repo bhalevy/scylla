@@ -20,6 +20,7 @@
 #include "tombstone_gc.hh"
 #include "db/per_partition_rate_limit_extension.hh"
 #include "db/per_partition_rate_limit_options.hh"
+#include "db/tablet_hints_extension.hh"
 #include "utils/bloom_calculations.hh"
 
 #include <boost/algorithm/string/predicate.hpp>
@@ -162,6 +163,11 @@ void cf_prop_defs::validate(const data_dictionary::database db, sstring ks_name,
     }
 
     speculative_retry::from_sstring(get_string(KW_SPECULATIVE_RETRY, speculative_retry(speculative_retry::type::NONE, 0).to_sstring()));
+
+    const auto& ks = db.find_keyspace(ks_name);
+    if (!ks.uses_tablets() && schema_extensions.contains(db::tablet_hints_extension::NAME)) {
+        throw exceptions::configuration_exception(format("{} cannot be used when tablets are disabled for the keyspace", db::tablet_hints_extension::NAME));
+    }
 }
 
 std::map<sstring, sstring> cf_prop_defs::get_compaction_type_options() const {
@@ -250,6 +256,16 @@ const db::per_partition_rate_limit_options* cf_prop_defs::get_per_partition_rate
 
     auto ext = dynamic_pointer_cast<db::per_partition_rate_limit_extension>(it->second);
     return &ext->get_options();
+}
+
+const db::tablet_hints* cf_prop_defs::get_tablet_hints(const schema::extensions_map& schema_exts) const {
+    auto it = schema_exts.find(db::tablet_hints_extension::NAME);
+    if (it == schema_exts.end()) {
+        return nullptr;
+    }
+
+    auto ext = dynamic_pointer_cast<db::tablet_hints_extension>(it->second);
+    return &ext->get_hints();
 }
 
 void cf_prop_defs::apply_to_builder(schema_builder& builder, schema::extensions_map schema_extensions, const data_dictionary::database& db, sstring ks_name) const {
