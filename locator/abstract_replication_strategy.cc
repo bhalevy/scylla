@@ -76,7 +76,7 @@ abstract_replication_strategy::abstract_replication_strategy(
     replication_strategy_type my_type)
         : _config_options(params.options)
         , _my_type(my_type) {
-    if (params.initial_tablets.has_value()) {
+    if (params.uses_tablets) {
         _uses_tablets = true;
     }
 }

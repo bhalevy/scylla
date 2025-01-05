@@ -21,6 +21,7 @@
 #include "utils/sequenced_set.hh"
 #include "utils/simple_hashers.hh"
 #include "tablets.hh"
+#include "db/tablet_hints.hh"
 
 // forward declaration since replica/database.hh includes this file
 namespace replica {
@@ -51,8 +52,9 @@ using can_yield = utils::can_yield;
 using replication_strategy_config_options = std::map<sstring, sstring>;
 struct replication_strategy_params {
     const replication_strategy_config_options options;
-    std::optional<unsigned> initial_tablets;
-    explicit replication_strategy_params(const replication_strategy_config_options& o, std::optional<unsigned> it) noexcept : options(o), initial_tablets(it) {}
+    bool uses_tablets;
+    db::tablet_hints tablet_hints;
+    explicit replication_strategy_params(const replication_strategy_config_options& o, bool uses_tablets, db::tablet_hints tablet_hints = {}) noexcept : options(o), uses_tablets(uses_tablets), tablet_hints(tablet_hints) {}
 };
 
 using replication_map = std::unordered_map<token, host_id_vector_replica_set>;
