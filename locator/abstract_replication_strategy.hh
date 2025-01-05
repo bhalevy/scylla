@@ -19,6 +19,7 @@
 #include "utils/sequenced_set.hh"
 #include "utils/simple_hashers.hh"
 #include "tablets.hh"
+#include "db/tablet_hints.hh"
 
 // forward declaration since replica/database.hh includes this file
 namespace replica {
@@ -50,7 +51,12 @@ using replication_strategy_config_options = std::map<sstring, sstring>;
 struct replication_strategy_params {
     const replication_strategy_config_options options;
     std::optional<unsigned> initial_tablets;
-    explicit replication_strategy_params(const replication_strategy_config_options& o, std::optional<unsigned> it) noexcept : options(o), initial_tablets(it) {}
+    db::tablet_hints tablet_hints;
+    explicit replication_strategy_params(const replication_strategy_config_options& o, std::optional<unsigned> it, db::tablet_hints tablet_hints = {}) noexcept : options(o), initial_tablets(it), tablet_hints(tablet_hints) {}
+
+    bool uses_tablets() const noexcept {
+        return initial_tablets.has_value();
+    }
 };
 
 using replication_map = std::unordered_map<token, host_id_vector_replica_set>;
