@@ -115,7 +115,7 @@ future<std::tuple<::shared_ptr<cql_transport::event::schema_change>, std::vector
                 "To use CDC, LWT or counters, drop this keyspace and re-create it "
                 "without tablets by adding AND TABLETS = {'enabled': false} "
                 "to the CREATE KEYSPACE statement.");
-            if (ksm->initial_tablets().value()) {
+            if (ksm->initial_tablets().value_or(0)) {
                 warnings.push_back("Keyspace `initial` tablets option is deprecated.  Use per-table tablet_hints instead.");
             }
         }

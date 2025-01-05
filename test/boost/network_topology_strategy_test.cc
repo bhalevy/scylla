@@ -8,6 +8,7 @@
 
 #include <boost/test/unit_test.hpp>
 #include <fmt/ranges.h>
+#include "db/tablet_hints.hh"
 #include "gms/inet_address.hh"
 #include "inet_address_vectors.hh"
 #include "locator/types.hh"
@@ -511,18 +512,20 @@ SEASTAR_THREAD_TEST_CASE(NetworkTopologyStrategy_tablets_test) {
         // Create the replication strategy
         auto options = make_random_options();
         size_t tablet_count = 1 + tests::random::get_int(99);
+        db::tablet_hints tablet_hints;
+        tablet_hints.min_tablet_count.emplace(tablet_count);
         testlog.debug("tablet_count={} rf_options={}", tablet_count, options);
-        locator::replication_strategy_params params(options, tablet_count);
+        locator::replication_strategy_params params(options, tablet_count, tablet_hints);
         auto ars_ptr = abstract_replication_strategy::create_replication_strategy(
                 "NetworkTopologyStrategy", params);
         auto tab_awr_ptr = ars_ptr->maybe_as_tablet_aware();
         BOOST_REQUIRE(tab_awr_ptr);
-        auto tmap = tab_awr_ptr->allocate_tablets_for_new_table(s, stm.get(), 1).get();
+        auto tmap = tab_awr_ptr->allocate_tablets_for_new_table(s, stm.get(), service::default_target_tablet_size).get();
         full_ring_check(tmap, ars_ptr, stm.get());
 
         // Test reallocate_tablets after randomizing a different set of options
         auto realloc_options = make_random_options();
-        locator::replication_strategy_params realloc_params(realloc_options, tablet_count);
+        locator::replication_strategy_params realloc_params(realloc_options, tablet_count, tablet_hints);
         auto realloc_ars_ptr = abstract_replication_strategy::create_replication_strategy(
                 "NetworkTopologyStrategy", params);
         auto realloc_tab_awr_ptr = realloc_ars_ptr->maybe_as_tablet_aware();
