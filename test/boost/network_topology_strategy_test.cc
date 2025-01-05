@@ -8,6 +8,7 @@
 
 #include <boost/test/unit_test.hpp>
 #include <fmt/ranges.h>
+#include "db/tablet_hints.hh"
 #include "gms/inet_address.hh"
 #include "inet_address_vectors.hh"
 #include "locator/types.hh"
@@ -315,7 +316,7 @@ void simple_test() {
         {"101", "2"},
         {"102", "3"}
     };
-    locator::replication_strategy_params params323(options323, std::nullopt);
+    locator::replication_strategy_params params323(options323, false);
 
     auto ars_ptr = abstract_replication_strategy::create_replication_strategy(
         "NetworkTopologyStrategy", params323);
@@ -329,7 +330,7 @@ void simple_test() {
         {"101", "2"},
         {"102", "0"}
     };
-    locator::replication_strategy_params params320(options320, std::nullopt);
+    locator::replication_strategy_params params320(options320, false);
 
     ars_ptr = abstract_replication_strategy::create_replication_strategy(
         "NetworkTopologyStrategy", params320);
@@ -416,7 +417,7 @@ void heavy_origin_test() {
         }
     }).get();
 
-    locator::replication_strategy_params params(config_options, std::nullopt);
+    locator::replication_strategy_params params(config_options, false);
     auto ars_ptr = abstract_replication_strategy::create_replication_strategy(
         "NetworkTopologyStrategy", params);
 
@@ -510,18 +511,20 @@ SEASTAR_THREAD_TEST_CASE(NetworkTopologyStrategy_tablets_test) {
         // Create the replication strategy
         auto options = make_random_options();
         size_t tablet_count = 1 + tests::random::get_int(99);
+        db::tablet_hints tablet_hints;
+        tablet_hints.min_tablet_count.emplace(tablet_count);
         testlog.debug("tablet_count={} rf_options={}", tablet_count, options);
-        locator::replication_strategy_params params(options, tablet_count);
+        locator::replication_strategy_params params(options, true, tablet_hints);
         auto ars_ptr = abstract_replication_strategy::create_replication_strategy(
                 "NetworkTopologyStrategy", params);
         auto tab_awr_ptr = ars_ptr->maybe_as_tablet_aware();
         BOOST_REQUIRE(tab_awr_ptr);
-        auto tmap = tab_awr_ptr->allocate_tablets_for_new_table(s, stm.get(), 1).get();
+        auto tmap = tab_awr_ptr->allocate_tablets_for_new_table(s, stm.get(), service::default_target_tablet_size).get();
         full_ring_check(tmap, ars_ptr, stm.get());
 
         // Test reallocate_tablets after randomizing a different set of options
         auto realloc_options = make_random_options();
-        locator::replication_strategy_params realloc_params(realloc_options, tablet_count);
+        locator::replication_strategy_params realloc_params(realloc_options, true, tablet_hints);
         auto realloc_ars_ptr = abstract_replication_strategy::create_replication_strategy(
                 "NetworkTopologyStrategy", params);
         auto realloc_tab_awr_ptr = realloc_ars_ptr->maybe_as_tablet_aware();
@@ -825,7 +828,7 @@ static void test_equivalence(const shared_token_metadata& stm, const locator::to
                                                                         return std::make_pair(p.first, to_sstring(p.second));
                                                                     })
                                                 | std::ranges::to<std::map<sstring, sstring>>(),
-                                    std::nullopt));
+                                    false));
 
     const token_metadata& tm = *stm.get();
     for (size_t i = 0; i < 1000; ++i) {

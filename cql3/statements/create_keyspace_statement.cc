@@ -107,7 +107,7 @@ future<std::tuple<::shared_ptr<cql_transport::event::schema_change>, std::vector
         // remove this check.
         auto rs = locator::abstract_replication_strategy::create_replication_strategy(
             ksm->strategy_name(),
-            locator::replication_strategy_params(ksm->strategy_options(), ksm->initial_tablets()));
+            locator::replication_strategy_params(ksm->strategy_options(), ksm->uses_tablets()));
         if (rs->uses_tablets()) {
             warnings.push_back(
                 "Tables in this keyspace will be replicated using Tablets "
@@ -115,7 +115,7 @@ future<std::tuple<::shared_ptr<cql_transport::event::schema_change>, std::vector
                 "To use CDC, LWT or counters, drop this keyspace and re-create it "
                 "without tablets by adding AND TABLETS = {'enabled': false} "
                 "to the CREATE KEYSPACE statement.");
-            if (ksm->initial_tablets().value()) {
+            if (ksm->initial_tablets().value_or(0)) {
                 warnings.push_back("Keyspace `initial` tablets option is deprecated.  Use per-table tablet_hints instead.");
             }
         }
@@ -174,7 +174,7 @@ std::vector<sstring> check_against_restricted_replication_strategies(
 
     std::vector<sstring> warnings;
     locator::replication_strategy_config_options opts;
-    locator::replication_strategy_params params(opts, std::nullopt);
+    locator::replication_strategy_params params(opts, false);
     auto replication_strategy = locator::abstract_replication_strategy::create_replication_strategy(
             locator::abstract_replication_strategy::to_qualified_class_name(
                     *attrs.get_replication_strategy_class()), params)->get_type();

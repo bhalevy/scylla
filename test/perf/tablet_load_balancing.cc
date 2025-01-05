@@ -296,12 +296,12 @@ future<results> test_load_balancing_with_many_tables(params p, bool tablet_aware
             }
         }).get();
 
-        auto allocate = [&] (schema_ptr s, int rf, std::optional<int> initial_tablets) {
+        auto allocate = [&] (schema_ptr s, int rf, bool uses_tablets) {
             replication_strategy_config_options opts;
             opts[rack1.dc] = format("{}", rf);
-            network_topology_strategy tablet_rs(replication_strategy_params(opts, initial_tablets.value_or(0)));
+            network_topology_strategy tablet_rs(replication_strategy_params(opts, uses_tablets));
             stm.mutate_token_metadata([&] (token_metadata& tm) -> future<> {
-                auto map = co_await tablet_rs.allocate_tablets_for_new_table(s, stm.get(), 1);
+                auto map = co_await tablet_rs.allocate_tablets_for_new_table(s, stm.get(), service::default_target_tablet_size);
                 tm.tablets().set_tablet_map(s->id(), std::move(map));
             }).get();
         };
@@ -310,8 +310,8 @@ future<results> test_load_balancing_with_many_tables(params p, bool tablet_aware
         auto id2 = add_table(e).get();
         schema_ptr s1 = e.local_db().find_schema(id1);
         schema_ptr s2 = e.local_db().find_schema(id2);
-        allocate(s1, p.rf1, p.tablets1);
-        allocate(s2, p.rf2, p.tablets2);
+        allocate(s1, p.rf1, p.tablets1.has_value());
+        allocate(s2, p.rf2, p.tablets2.has_value());
 
         auto check_balance = [&] () -> cluster_balance {
             cluster_balance res;
