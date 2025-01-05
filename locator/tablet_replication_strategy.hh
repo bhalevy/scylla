@@ -24,12 +24,15 @@ namespace locator {
 /// system's tablet_metadata.
 class tablet_aware_replication_strategy : public per_table_replication_strategy {
 private:
-    size_t _initial_tablets = 1;
+    db::tablet_hints _tablet_hints;
 protected:
     void validate_tablet_options(const abstract_replication_strategy&, const gms::feature_service&, const replication_strategy_config_options&) const;
     void process_tablet_options(abstract_replication_strategy&, replication_strategy_config_options&, replication_strategy_params);
     std::unordered_set<sstring> recognized_tablet_options() const;
-    size_t get_initial_tablets() const { return _initial_tablets; }
+    const db::tablet_hints& tablet_hints() const noexcept {
+        return _tablet_hints;
+    }
+    size_t get_initial_tablets() const noexcept;
     effective_replication_map_ptr do_make_replication_map(table_id,
                                                           replication_strategy_ptr,
                                                           token_metadata_ptr,
@@ -38,7 +41,7 @@ protected:
 public:
     /// Generates tablet_map for a new table.
     /// Runs under group0 guard.
-    virtual future<tablet_map> allocate_tablets_for_new_table(schema_ptr, token_metadata_ptr, unsigned initial_scale) const = 0;
+    virtual future<tablet_map> allocate_tablets_for_new_table(schema_ptr, token_metadata_ptr, uint64_t target_tablet_size, std::optional<unsigned> initial_scale = std::nullopt) const = 0;
 
     /// Generates tablet_map for a new table or when increasing replication factor.
     /// For a new table, cur_tablets is initialized with the tablet_count,
