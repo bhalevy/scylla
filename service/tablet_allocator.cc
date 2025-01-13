@@ -17,6 +17,7 @@
 #include "utils/stall_free.hh"
 #include "utils/overloaded_functor.hh"
 #include "db/config.hh"
+#include "db/tablet_hints.hh"
 #include "locator/load_sketch.hh"
 #include "replica/database.hh"
 #include "gms/feature_service.hh"
@@ -485,6 +486,7 @@ class load_balancer {
         locator::resize_decision resize_decision;
         size_t tablet_count;
         size_t shard_count;
+        size_t min_tablet_count;
 
         uint64_t target_max_tablet_size() const noexcept {
             return target_tablet_size * 2;
@@ -508,12 +510,13 @@ class load_balancer {
             // FIXME: this is not perfect and we may want to leave the mode too if we detect
             //  average size is decreasing significantly, before any split happened.
             bool left_growing_mode = !d.resize_decision.initial_decision();
-            lblogger.debug("table_needs_merge: tablet_count={}, avg_tablet_size={}, left_growing_mode={} (seq number: {})",
-                           d.tablet_count, d.avg_tablet_size, left_growing_mode, d.resize_decision.sequence_number);
-            return left_growing_mode && d.tablet_count > 1 && d.avg_tablet_size < d.target_min_tablet_size();
+            size_t min_tablet_count = std::max(d.min_tablet_count, 1UL);
+            lblogger.debug("table_needs_merge: tablet_count={}, avg_tablet_size={}, left_growing_mode={} (seq number: {}) min_tablet_count={}",
+                           d.tablet_count, d.avg_tablet_size, left_growing_mode, d.resize_decision.sequence_number, min_tablet_count);
+            return left_growing_mode && d.tablet_count >= 2 * min_tablet_count && d.avg_tablet_size < d.target_min_tablet_size();
         }
         static bool table_needs_split(const table_size_desc& d) {
-            return d.avg_tablet_size > d.target_max_tablet_size();
+            return d.avg_tablet_size > d.target_max_tablet_size() || d.tablet_count < d.min_tablet_count;
         }
 
         bool table_needs_resize(const table_size_desc& d) const {
@@ -1067,6 +1070,14 @@ public:
         for (auto&& [table, tmap_] : _tm->tablets().all_tables()) {
             auto& tmap = *tmap_;
 
+            auto t = _db.get_tables_metadata().get_table_if_exists(table);
+            if (!t) {
+                lblogger.warn("Table {} does not exist", table);
+                continue;
+            }
+            const auto& erm = t->get_effective_replication_map();
+            const auto* rs = dynamic_cast<const tablet_aware_replication_strategy*>(erm->get_replication_strategy().maybe_as_per_table());
+
             const auto* table_stats = load_stats_for_table(table);
             if (!table_stats) {
                 continue;
@@ -1084,7 +1095,8 @@ public:
                 .avg_tablet_size = avg_tablet_size,
                 .resize_decision = tmap.resize_decision(),
                 .tablet_count = tmap.tablet_count(),
-                .shard_count = shard_count
+                .shard_count = shard_count,
+                .min_tablet_count = rs->calculate_min_tablet_count(t->schema(), erm->get_token_metadata_ptr(), _target_tablet_size),
             };
 
             resize_load.update(table, std::move(size_desc));
