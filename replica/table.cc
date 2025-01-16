@@ -1680,9 +1680,13 @@ table::start() {
 
 future<>
 table::stop() {
-    if (_async_gate.is_closed()) {
-        co_return;
+    if (!_stopped) {
+        _stopped.emplace(do_stop());
     }
+    return wait_until_stopped();
+}
+
+future<> table::do_stop() {
     _flush_timer.cancel();
     // Allow `compaction_group::stop` to stop ongoing compactions
     // while they may still hold the table _async_gate
@@ -1701,6 +1705,14 @@ table::stop() {
     }));
     _cache.refresh_snapshot();
 }
+
+future<> table::wait_until_stopped() const {
+    if (!_stopped) {
+        on_internal_error(tlogger, "wait_until_stopped called before the table was stopped");
+    }
+    return _stopped->get_future();
+}
+
 static seastar::metrics::label_instance node_table_metrics("__per_table", "node");
 void table::set_metrics() {
     auto cf = column_family_label(_schema->cf_name());

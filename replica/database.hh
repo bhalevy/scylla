@@ -536,6 +536,9 @@ private:
     std::optional<db_clock::time_point> _truncated_at;
 
     bool _is_bootstrap_or_replace = false;
+
+    std::optional<shared_future<>> _stopped;
+
     sstables::shared_sstable make_sstable(sstables::sstable_state state);
 
 public:
@@ -939,6 +942,11 @@ public:
 
     void start();
     future<> stop();
+    bool is_stopped() const noexcept {
+        return _stopped.has_value();
+    }
+    // Must be called only after the table was stopped
+    future<> wait_until_stopped() const;
     future<> flush(std::optional<db::replay_position> = {});
     future<> clear(); // discards memtable(s) without flushing them to disk.
     future<db::replay_position> discard_sstables(db_clock::time_point);
@@ -959,6 +967,7 @@ public:
 private:
     using snapshot_file_set = foreign_ptr<std::unique_ptr<std::unordered_set<sstring>>>;
 
+    future<> do_stop();
     future<snapshot_file_set> take_snapshot(sstring jsondir);
     // Writes the table schema and the manifest of all files in the snapshot directory.
     future<> finalize_snapshot(database& db, sstring jsondir, std::vector<snapshot_file_set> file_sets);
