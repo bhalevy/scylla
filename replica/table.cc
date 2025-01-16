@@ -3068,6 +3068,12 @@ future<> table::flush(std::optional<db::replay_position> pos) {
     if (pos && *pos < _flush_rp) {
         co_return;
     }
+    if (is_stopped()) {
+        // memtables may be flushed as part of stop()
+        // so if the table is stopping, wait for stop() to complete
+        // as it will await the ongoing flushes.
+        co_return co_await wait_until_stopped();
+    }
     auto op = _pending_flushes_phaser.start();
     auto fp = _highest_rp;
     co_await parallel_foreach_compaction_group(std::mem_fn(&compaction_group::flush));
