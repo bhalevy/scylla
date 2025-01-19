@@ -491,7 +491,7 @@ async def new_test_keyspace(manager: ManagerClient, opts, host=None):
     try:
         yield keyspace
     finally:
-        await manager.get_cql().run_async("DROP KEYSPACE " + keyspace, host=host)
+        await manager.get_cql().run_async(f"DROP KEYSPACE IF EXISTS {keyspace}", host=host)
 
 previously_used_table_names = []
 @asynccontextmanager
