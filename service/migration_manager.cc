@@ -1057,9 +1057,9 @@ future<> migration_manager::maybe_sync(const schema_ptr& s, locator::host_id end
 // Returns schema of given version, either from cache or from remote node identified by 'from'.
 // Doesn't affect current node's schema in any way.
 static future<schema_ptr> get_schema_definition(table_schema_version v, locator::host_id dst, unsigned shard, netw::messaging_service& ms, service::storage_proxy& storage_proxy) {
-    return local_schema_registry().get_or_load(v, [&ms, &storage_proxy, dst, shard] (table_schema_version v) {
+    return local_schema_registry().get_or_load(v, [&ms, &storage_proxy, dst, shard] (table_schema_version v, db::schema_features features) {
         mlogger.debug("Requesting schema {} from {}", v, dst);
-        return ser::migration_manager_rpc_verbs::send_get_schema_version(&ms, dst, shard, v).then([&storage_proxy] (frozen_schema s) {
+        return ser::migration_manager_rpc_verbs::send_get_schema_version(&ms, dst, shard, v).then([&storage_proxy, features] (frozen_schema s) {
             auto& proxy = storage_proxy.container();
             // Since the latest schema version is always present in the schema registry
             // we only happen to query already outdated schema version, which is
@@ -1074,11 +1074,11 @@ static future<schema_ptr> get_schema_definition(table_schema_version v, locator:
                 base_schema = db.find_schema(us->view_info()->base_id());
                 db::schema_tables::check_no_legacy_secondary_index_mv_schema(db, view_ptr(us), base_schema);
             }
-            return db::schema_tables::store_column_mapping(proxy, us, true).then([us, base_schema] -> base_and_view_schemas {
+            return db::schema_tables::store_column_mapping(proxy, us, true).then([us, base_schema, features] -> base_and_view_schemas {
                 if (us->is_view()) {
-                    return {frozen_schema(us), base_schema};
+                    return {frozen_schema(us, features), base_schema};
                 } else {
-                    return {frozen_schema(us)};
+                    return {frozen_schema(us, features)};
                 }
             });
         });

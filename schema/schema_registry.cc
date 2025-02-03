@@ -14,6 +14,7 @@
 #include "db/schema_tables.hh"
 #include "view_info.hh"
 #include "replica/database.hh"
+#include "gms/feature_service.hh"
 
 static logging::logger slogger("schema_registry");
 
@@ -152,14 +153,14 @@ schema_ptr schema_registry::get_or_load(table_schema_version v, const schema_loa
     auto i = _entries.find(v);
     if (i == _entries.end()) {
         auto e_ptr = make_lw_shared<schema_registry_entry>(v, *this);
-        auto s = e_ptr->load(loader(v));
+        auto s = e_ptr->load(loader(v, cluster_schema_features()));
         attach_table(*e_ptr);
         _entries.emplace(v, e_ptr);
         return s;
     }
     schema_registry_entry& e = *i->second;
     if (e._state == schema_registry_entry::state::LOADING) {
-        auto s = e.load(loader(v));
+        auto s = e.load(loader(v, cluster_schema_features()));
         attach_table(e);
         return s;
     }
@@ -168,6 +169,10 @@ schema_ptr schema_registry::get_or_load(table_schema_version v, const schema_loa
 
 void schema_registry::clear() {
     _entries.clear();
+}
+
+db::schema_features schema_registry::cluster_schema_features() const noexcept {
+    return _ctxt->features().cluster_schema_features();
 }
 
 schema_ptr schema_registry_entry::load(base_and_view_schemas fs) {
@@ -186,7 +191,7 @@ schema_ptr schema_registry_entry::load(base_and_view_schemas fs) {
 }
 
 schema_ptr schema_registry_entry::load(schema_ptr s) {
-    _frozen_schema = frozen_schema(s);
+    _frozen_schema = frozen_schema(s, _registry.cluster_schema_features());
     if (s->is_view()) {
         _base_schema = s->view_info()->base_info()->base_schema();
     }
@@ -204,7 +209,7 @@ schema_ptr schema_registry_entry::load(schema_ptr s) {
 
 future<schema_ptr> schema_registry_entry::start_loading(async_schema_loader loader) {
     _loader = std::move(loader);
-    auto f = _loader(_version);
+    auto f = _loader(_version, _registry.cluster_schema_features());
     auto sf = _schema_promise.get_shared_future();
     _state = state::LOADING;
     slogger.trace("Loading {}", _version);
@@ -342,7 +347,7 @@ schema_ptr global_schema_ptr::get() const {
         auto registered_schema = [](const schema_registry_entry& e, std::optional<schema_ptr> base_schema = std::nullopt) -> schema_ptr {
             schema_ptr ret = local_schema_registry().get_or_null(e.version());
             if (!ret) {
-                ret = local_schema_registry().get_or_load(e.version(), [&e, &base_schema](table_schema_version) -> base_and_view_schemas {
+                ret = local_schema_registry().get_or_load(e.version(), [&e, &base_schema](table_schema_version, db::schema_features) -> base_and_view_schemas {
                     return {e.frozen(), base_schema};
                 });
             }
@@ -378,14 +383,14 @@ global_schema_ptr::global_schema_ptr(const schema_ptr& ptr)
         if (e) {
             return s;
         } else {
-            return local_schema_registry().get_or_load(s->version(), [&s] (table_schema_version) -> base_and_view_schemas {
+            return local_schema_registry().get_or_load(s->version(), [&] (table_schema_version, db::schema_features features) -> base_and_view_schemas {
                 if (s->is_view()) {
                     if (!s->view_info()->base_info()) {
                         on_internal_error(slogger, format("Tried to build a global schema for view {}.{} with an uninitialized base info", s->ks_name(), s->cf_name()));
                     }
-                    return {frozen_schema(s), s->view_info()->base_info()->base_schema()};
+                    return {frozen_schema(s, features), s->view_info()->base_info()->base_schema()};
                 } else {
-                    return {frozen_schema(s)};
+                    return {frozen_schema(s, features)};
                 }
             });
         }
