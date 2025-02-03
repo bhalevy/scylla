@@ -27,8 +27,8 @@ struct base_and_view_schemas {
     std::optional<schema_ptr> base_schema;
 };
 
-using async_schema_loader = std::function<future<base_and_view_schemas>(table_schema_version, db::schema_features)>;
-using schema_loader = std::function<base_and_view_schemas(table_schema_version, db::schema_features)>;
+using async_schema_loader = std::function<future<base_and_view_schemas>(table_schema_version)>;
+using schema_loader = std::function<base_and_view_schemas(table_schema_version)>;
 
 class schema_version_not_found : public std::runtime_error {
 public:
@@ -170,9 +170,6 @@ public:
     //
     // Prerequisite: all futures from get_or_load() are resolved.
     void clear();
-
-    // Return the cluster schema_features via the feature_service
-    db::schema_features cluster_schema_features() const noexcept;
 };
 
 schema_registry& local_schema_registry();

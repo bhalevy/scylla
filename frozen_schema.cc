@@ -7,16 +7,15 @@
  */
 
 #include "frozen_schema.hh"
-#include "db/schema_features.hh"
 #include "db/schema_tables.hh"
 #include "mutation/canonical_mutation.hh"
 #include "schema_mutations.hh"
 #include "idl/frozen_schema.dist.hh"
 #include "idl/frozen_schema.dist.impl.hh"
 
-frozen_schema::frozen_schema(const schema_ptr& s, db::schema_features features)
-    : _data([&] {
-        schema_mutations sm = db::schema_tables::make_schema_mutations(s, api::new_timestamp(), true, features);
+frozen_schema::frozen_schema(const schema_ptr& s)
+    : _data([&s] {
+        schema_mutations sm = db::schema_tables::make_schema_mutations(s, api::new_timestamp(), true);
         bytes_ostream out;
         ser::writer_of_schema<bytes_ostream> wr(out);
         std::move(wr).write_version(s->version())

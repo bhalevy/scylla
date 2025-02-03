@@ -482,7 +482,7 @@ SEASTAR_TEST_CASE(test_merging_does_not_alter_tables_which_didnt_change) {
             {
                 auto group0_guard = mm.start_group0_operation().get();
                 auto muts2 = muts1;
-                muts2.push_back(db::schema_tables::make_scylla_tables_mutation(s0, group0_guard.write_timestamp(), db::schema_features::full()));
+                muts2.push_back(db::schema_tables::make_scylla_tables_mutation(s0, group0_guard.write_timestamp()));
                 mm.announce(muts2, std::move(group0_guard), "").get();
             }
 

@@ -1710,7 +1710,7 @@ static void add_dropped_column_to_schema_mutation(schema_ptr table, const sstrin
     m.set_clustered_cell(ckey, "type", expand_user_type(column.type)->as_cql3_type().to_string(), timestamp);
 }
 
-mutation make_scylla_tables_mutation(schema_ptr table, api::timestamp_type timestamp, schema_features features) {
+mutation make_scylla_tables_mutation(schema_ptr table, api::timestamp_type timestamp) {
     schema_ptr s = tables();
     auto pkey = partition_key::from_singular(*s, table->ks_name());
     auto ckey = clustering_key::from_singular(*s, table->cf_name());
@@ -1733,14 +1733,13 @@ mutation make_scylla_tables_mutation(schema_ptr table, api::timestamp_type times
         auto& cdef = *scylla_tables()->get_column_definition("partitioner");
         m.set_clustered_cell(ckey, cdef, atomic_cell::make_dead(timestamp, gc_clock::now()));
     }
-    if (!table->is_in_memory() && features.contains(schema_feature::IN_MEMORY_TABLES)) {
-        auto& cdef = *scylla_tables()->get_column_definition("in_memory");
-        m.set_clustered_cell(ckey, cdef, atomic_cell::make_dead(timestamp, gc_clock::now()));
-    }
+    // In-memory tables are deprecated since scylla-2024.1.0
+    // FIXME: delete the column when there's no live version supporting it anymore.
+    // Writing it here breaks upgrade rollback to versions that do not support the in_memory schema_feature
     return m;
 }
 
-static schema_mutations make_table_mutations(schema_ptr table, api::timestamp_type timestamp, bool with_columns_and_triggers, schema_features features)
+static schema_mutations make_table_mutations(schema_ptr table, api::timestamp_type timestamp, bool with_columns_and_triggers)
 {
     // When adding new schema properties, don't set cells for default values so that
     // both old and new nodes will see the same version during rolling upgrades.
@@ -1753,7 +1752,7 @@ static schema_mutations make_table_mutations(schema_ptr table, api::timestamp_ty
     auto ckey = clustering_key::from_singular(*s, table->cf_name());
     m.set_clustered_cell(ckey, "id", table->id().uuid(), timestamp);
 
-    auto scylla_tables_mutation = make_scylla_tables_mutation(table, timestamp, features);
+    auto scylla_tables_mutation = make_scylla_tables_mutation(table, timestamp);
 
     list_type_impl::native_type flags;
     if (table->is_super()) {
@@ -1807,12 +1806,12 @@ static schema_mutations make_table_mutations(schema_ptr table, api::timestamp_ty
                             std::move(scylla_tables_mutation)};
 }
 
-void add_table_or_view_to_schema_mutation(schema_ptr s, api::timestamp_type timestamp, bool with_columns, schema_features features, std::vector<mutation>& mutations)
+void add_table_or_view_to_schema_mutation(schema_ptr s, api::timestamp_type timestamp, bool with_columns, std::vector<mutation>& mutations)
 {
-    make_schema_mutations(s, timestamp, with_columns, features).copy_to(mutations);
+    make_schema_mutations(s, timestamp, with_columns).copy_to(mutations);
 }
 
-static schema_mutations make_view_mutations(view_ptr view, api::timestamp_type timestamp, bool with_columns, schema_features features);
+static schema_mutations make_view_mutations(view_ptr view, api::timestamp_type timestamp, bool with_columns);
 static void make_drop_table_or_view_mutations(schema_ptr schema_table, schema_ptr table_or_view, api::timestamp_type timestamp, std::vector<mutation>& mutations);
 
 static void make_update_indices_mutations(
@@ -1820,7 +1819,6 @@ static void make_update_indices_mutations(
         schema_ptr old_table,
         schema_ptr new_table,
         api::timestamp_type timestamp,
-        schema_features features,
         std::vector<mutation>& mutations)
 {
     mutation indices_mutation(indexes(), partition_key::from_singular(*indexes(), old_table->ks_name()));
@@ -1847,7 +1845,7 @@ static void make_update_indices_mutations(
         add_index_to_schema_mutation(new_table, index, timestamp, indices_mutation);
         auto& cf = db.find_column_family(new_table);
         auto view = cf.get_index_manager().create_view_for_index(index);
-        auto view_mutations = make_view_mutations(view, timestamp, true, features);
+        auto view_mutations = make_view_mutations(view, timestamp, true);
         view_mutations.copy_to(mutations);
         return view;
     };
@@ -1937,12 +1935,11 @@ std::vector<mutation> make_update_table_mutations(replica::database& db,
     lw_shared_ptr<keyspace_metadata> keyspace,
     schema_ptr old_table,
     schema_ptr new_table,
-    api::timestamp_type timestamp,
-    schema_features features)
+    api::timestamp_type timestamp)
 {
     std::vector<mutation> mutations;
     add_table_or_view_to_schema_mutation(new_table, timestamp, false, mutations);
-    make_update_indices_mutations(db, old_table, new_table, timestamp, features, mutations);
+    make_update_indices_mutations(db, old_table, new_table, timestamp, mutations);
     make_update_columns_mutations(std::move(old_table), std::move(new_table), timestamp, mutations);
 
     warn(unimplemented::cause::TRIGGERS);
@@ -2499,7 +2496,7 @@ future<std::vector<view_ptr>> create_views_from_schema_partition(distributed<ser
     co_return std::move(views);
 }
 
-static schema_mutations make_view_mutations(view_ptr view, api::timestamp_type timestamp, bool with_columns, schema_features features)
+static schema_mutations make_view_mutations(view_ptr view, api::timestamp_type timestamp, bool with_columns)
 {
     // When adding new schema properties, don't set cells for default values so that
     // both old and new nodes will see the same version during rolling upgrades.
@@ -2546,7 +2543,7 @@ static schema_mutations make_view_mutations(view_ptr view, api::timestamp_type t
         }
     }
 
-    auto scylla_tables_mutation = make_scylla_tables_mutation(view, timestamp, features);
+    auto scylla_tables_mutation = make_scylla_tables_mutation(view, timestamp);
 
     return schema_mutations{std::move(m),
                             std::move(columns_mutation),
@@ -2557,9 +2554,9 @@ static schema_mutations make_view_mutations(view_ptr view, api::timestamp_type t
                             std::move(scylla_tables_mutation)};
 }
 
-schema_mutations make_schema_mutations(schema_ptr s, api::timestamp_type timestamp, bool with_columns, schema_features features)
+schema_mutations make_schema_mutations(schema_ptr s, api::timestamp_type timestamp, bool with_columns)
 {
-    return s->is_view() ? make_view_mutations(view_ptr(s), timestamp, with_columns, features) : make_table_mutations(s, timestamp, with_columns, features);
+    return s->is_view() ? make_view_mutations(view_ptr(s), timestamp, with_columns) : make_table_mutations(s, timestamp, with_columns);
 }
 
 std::vector<mutation> make_create_view_mutations(lw_shared_ptr<keyspace_metadata> keyspace, view_ptr view, api::timestamp_type timestamp)

@@ -7,7 +7,6 @@
  */
 
 
-#include "db/schema_features.hh"
 #include <seastar/core/thread.hh>
 
 #undef SEASTAR_TESTING_MAIN
@@ -62,8 +61,8 @@ SEASTAR_THREAD_TEST_CASE(test_load_with_non_nantive_type) {
            .with_column("val", my_list_type)
            .build();
 
-    local_schema_registry().get_or_load(s->version(), [s] (table_schema_version, db::schema_features features) {
-        return make_ready_future<base_and_view_schemas>(frozen_schema(s, features));
+    local_schema_registry().get_or_load(s->version(), [s] (table_schema_version) {
+        return make_ready_future<base_and_view_schemas>(frozen_schema(s));
     }).get();
 }
 
@@ -73,8 +72,8 @@ SEASTAR_TEST_CASE(test_async_loading) {
         auto s1 = random_schema();
         auto s2 = random_schema();
 
-        auto s1_loaded = local_schema_registry().get_or_load(s1->version(), [s1] (table_schema_version, db::schema_features features) {
-            return make_ready_future<base_and_view_schemas>(frozen_schema(s1, features));
+        auto s1_loaded = local_schema_registry().get_or_load(s1->version(), [s1] (table_schema_version) {
+            return make_ready_future<base_and_view_schemas>(frozen_schema(s1));
         }).get();
 
         BOOST_REQUIRE(s1_loaded);
@@ -82,8 +81,8 @@ SEASTAR_TEST_CASE(test_async_loading) {
         auto s1_later = local_schema_registry().get_or_null(s1->version());
         BOOST_REQUIRE(s1_later);
 
-        auto s2_loaded = local_schema_registry().get_or_load(s2->version(), [s2] (table_schema_version, db::schema_features features) {
-            return yield().then([s2] -> base_and_view_schemas { return {frozen_schema(s2, features)}; });
+        auto s2_loaded = local_schema_registry().get_or_load(s2->version(), [s2] (table_schema_version) {
+            return yield().then([s2] -> base_and_view_schemas { return {frozen_schema(s2)}; });
         }).get();
 
         BOOST_REQUIRE(s2_loaded);
@@ -97,7 +96,7 @@ SEASTAR_TEST_CASE(test_schema_is_synced_when_syncer_doesnt_defer) {
     return seastar::async([] {
         dummy_init dummy;
         auto s = random_schema();
-        s = local_schema_registry().get_or_load(s->version(), [s] (table_schema_version, db::schema_features features) -> base_and_view_schemas { return {frozen_schema(s, features)}; });
+        s = local_schema_registry().get_or_load(s->version(), [s] (table_schema_version) -> base_and_view_schemas { return {frozen_schema(s)}; });
         BOOST_REQUIRE(!s->is_synced());
         s->registry_entry()->maybe_sync([] { return make_ready_future<>(); }).get();
         BOOST_REQUIRE(s->is_synced());
@@ -108,7 +107,7 @@ SEASTAR_TEST_CASE(test_schema_is_synced_when_syncer_defers) {
     return seastar::async([] {
         dummy_init dummy;
         auto s = random_schema();
-        s = local_schema_registry().get_or_load(s->version(), [s] (table_schema_version, db::schema_features features) -> base_and_view_schemas { return {frozen_schema(s, features)}; });
+        s = local_schema_registry().get_or_load(s->version(), [s] (table_schema_version) -> base_and_view_schemas { return {frozen_schema(s)}; });
         BOOST_REQUIRE(!s->is_synced());
         s->registry_entry()->maybe_sync([] { return yield(); }).get();
         BOOST_REQUIRE(s->is_synced());
@@ -119,7 +118,7 @@ SEASTAR_TEST_CASE(test_failed_sync_can_be_retried) {
     return seastar::async([] {
         dummy_init dummy;
         auto s = random_schema();
-        s = local_schema_registry().get_or_load(s->version(), [s] (table_schema_version, db::schema_features features) -> base_and_view_schemas { return {frozen_schema(s, features)}; });
+        s = local_schema_registry().get_or_load(s->version(), [s] (table_schema_version) -> base_and_view_schemas { return {frozen_schema(s)}; });
         BOOST_REQUIRE(!s->is_synced());
 
         promise<> fail_sync;
@@ -172,7 +171,7 @@ SEASTAR_THREAD_TEST_CASE(test_table_is_attached) {
 
         // Use schema mutations so that table id is the same as in s0.
         {
-            auto sm0 = db::schema_tables::make_schema_mutations(s0, api::new_timestamp(), true, db::schema_features::full());
+            auto sm0 = db::schema_tables::make_schema_mutations(s0, api::new_timestamp(), true);
             std::vector<mutation> muts;
             sm0.copy_to(muts);
             db::schema_tables::merge_schema(e.get_system_keyspace(), e.get_storage_proxy(),
@@ -207,8 +206,8 @@ SEASTAR_THREAD_TEST_CASE(test_table_is_attached) {
                 .with_column(random_column_name(), bytes_type)
                 .build();
 
-        auto learned_s2 = local_schema_registry().get_or_load(s2->version(), [&] (table_schema_version, db::schema_features features) -> base_and_view_schemas {
-            return {frozen_schema(s2, features)};
+        auto learned_s2 = local_schema_registry().get_or_load(s2->version(), [&] (table_schema_version) -> base_and_view_schemas {
+            return {frozen_schema(s2)};
         });
         BOOST_REQUIRE(learned_s2->maybe_table() == s0->maybe_table());
 
@@ -226,7 +225,7 @@ SEASTAR_THREAD_TEST_CASE(test_table_is_attached) {
                 .build();
         utils::throttle s3_thr;
         auto s3_entered = s3_thr.block();
-        auto learned_s3 = local_schema_registry().get_or_load(s3->version(), [&, fs = frozen_schema(s3, local_schema_registry().cluster_schema_features())] (table_schema_version, db::schema_features features) -> future<base_and_view_schemas> {
+        auto learned_s3 = local_schema_registry().get_or_load(s3->version(), [&, fs = frozen_schema(s3)] (table_schema_version) -> future<base_and_view_schemas> {
             co_await s3_thr.enter();
             co_return base_and_view_schemas{fs};
         });
@@ -243,12 +242,12 @@ SEASTAR_THREAD_TEST_CASE(test_table_is_attached) {
                 .build();
         utils::throttle s4_thr;
         auto s4_entered = s4_thr.block();
-        auto learned_s4 = local_schema_registry().get_or_load(s4->version(), [&, fs = frozen_schema(s4, local_schema_registry().cluster_schema_features())] (table_schema_version, db::schema_features) -> future<base_and_view_schemas> {
+        auto learned_s4 = local_schema_registry().get_or_load(s4->version(), [&, fs = frozen_schema(s4)] (table_schema_version) -> future<base_and_view_schemas> {
             co_await s4_thr.enter();
             co_return base_and_view_schemas(fs);
         });
         s4_entered.get();
-        s4 = local_schema_registry().get_or_load(s4->version(), [&, fs = frozen_schema(s4, local_schema_registry().cluster_schema_features())] (table_schema_version, db::schema_features) -> base_and_view_schemas { return {fs}; });
+        s4 = local_schema_registry().get_or_load(s4->version(), [&, fs = frozen_schema(s4)] (table_schema_version) -> base_and_view_schemas { return {fs}; });
         s4_thr.unblock();
         auto s4_s = learned_s4.get();
         BOOST_REQUIRE(s4_s->maybe_table() == s0->maybe_table());
@@ -270,7 +269,7 @@ SEASTAR_THREAD_TEST_CASE(test_schema_is_recovered_after_dying) {
         .with_column("v", int32_type)
         .build();
     auto base_registry_schema = local_schema_registry().get_or_load(base_schema->version(),
-        [base_schema] (table_schema_version, db::schema_features features) -> base_and_view_schemas { return {frozen_schema(base_schema, features)}; });
+        [base_schema] (table_schema_version) -> base_and_view_schemas { return {frozen_schema(base_schema)}; });
     base_registry_schema = nullptr;
     auto recovered_registry_schema = local_schema_registry().get_or_null(base_schema->version());
     BOOST_REQUIRE(recovered_registry_schema);
@@ -293,7 +292,7 @@ SEASTAR_THREAD_TEST_CASE(test_view_info_is_recovered_after_dying) {
             .build();
     view_schema->view_info()->set_base_info(view_schema->view_info()->make_base_dependent_view_info(*base_schema));
     local_schema_registry().get_or_load(view_schema->version(),
-        [view_schema, base_schema] (table_schema_version, db::schema_features features) -> base_and_view_schemas { return {frozen_schema(view_schema, features), base_schema}; });
+        [view_schema, base_schema] (table_schema_version) -> base_and_view_schemas { return {frozen_schema(view_schema), base_schema}; });
     auto view_registry_schema = local_schema_registry().get_or_null(view_schema->version());
     BOOST_REQUIRE(view_registry_schema);
     BOOST_REQUIRE(view_registry_schema->view_info()->base_info());

@@ -291,8 +291,8 @@ view_ptr create_view_from_mutations(const schema_ctxt&, schema_mutations, std::o
 
 future<std::vector<view_ptr>> create_views_from_schema_partition(distributed<service::storage_proxy>& proxy, const schema_result::mapped_type& result);
 
-schema_mutations make_schema_mutations(schema_ptr s, api::timestamp_type timestamp, bool with_columns, schema_features features);
-mutation make_scylla_tables_mutation(schema_ptr, api::timestamp_type timestamp, schema_features features);
+schema_mutations make_schema_mutations(schema_ptr s, api::timestamp_type timestamp, bool with_columns);
+mutation make_scylla_tables_mutation(schema_ptr, api::timestamp_type timestamp);
 
 void add_table_or_view_to_schema_mutation(schema_ptr view, api::timestamp_type timestamp, bool with_columns, std::vector<mutation>& mutations);
 
