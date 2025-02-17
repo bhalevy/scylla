@@ -1318,9 +1318,9 @@ To start the scylla server proper, simply invoke as: scylla server (or just scyl
             proxy.start(std::ref(db), spcfg, std::ref(node_backlog),
                     scheduling_group_key_create(storage_proxy_stats_cfg).get(),
                     std::ref(feature_service), std::ref(token_metadata), std::ref(erm_factory)).get();
-
-            // #293 - do not stop anything
-            // engine().at_exit([&proxy] { return proxy.stop(); });
+            auto stop_proxy = defer_verbose_shutdown("storage_proxy", [&proxy] {
+                proxy.stop().get();
+            });
             api::set_server_storage_proxy(ctx, proxy).get();
             auto stop_sp_api = defer_verbose_shutdown("storage proxy API", [&ctx] {
                 api::unset_server_storage_proxy(ctx).get();
