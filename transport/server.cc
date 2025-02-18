@@ -1011,6 +1011,7 @@ cql_server::connection::process_on_shard(shard_id shard, uint16_t stream, fragme
         request_reader in(is, linearization_buffer);
         auto client_state = gcs.get();
         auto trace_state = gt.get();
+        auto gh = _server._query_processor.local().hold_gate();
         co_return co_await process_fn(client_state, server._query_processor, in, stream, _version,
                 /* FIXME */empty_service_permit(), std::move(trace_state), false, cached_vals, dialect);
     });
@@ -1039,6 +1040,7 @@ cql_server::connection::process(uint16_t stream, request_reader in, service::cli
     fragmented_temporary_buffer::istream is = in.get_stream();
 
     auto dialect = get_dialect();
+    permit.hold_gate(_server._query_processor.local().hold_gate());
     auto msg = co_await process_fn(client_state, _server._query_processor, in, stream,
             _version, permit, trace_state, true, {}, dialect);
     while (auto* bounce_msg = std::get_if<result_with_bounce_to_shard>(&msg)) {

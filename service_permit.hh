@@ -10,14 +10,19 @@
 
 #include <seastar/core/semaphore.hh>
 #include <seastar/core/shared_ptr.hh>
+#include <seastar/core/gate.hh>
 
 class service_permit {
     seastar::lw_shared_ptr<seastar::semaphore_units<>> _permit;
+    seastar::gate::holder _gate_holder;
     service_permit(seastar::semaphore_units<>&& u) : _permit(seastar::make_lw_shared<seastar::semaphore_units<>>(std::move(u))) {}
     friend service_permit make_service_permit(seastar::semaphore_units<>&& permit);
     friend service_permit empty_service_permit();
 public:
     size_t count() const { return _permit ? _permit->count() : 0; };
+    void hold_gate(seastar::gate::holder&& gh) {
+        _gate_holder = std::move(gh);
+    }
 };
 
 inline service_permit make_service_permit(seastar::semaphore_units<>&& permit) {
