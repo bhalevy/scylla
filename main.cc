@@ -1341,6 +1341,9 @@ To start the scylla server proper, simply invoke as: scylla server (or just scyl
             auth_prep_cache_config.refresh = std::chrono::milliseconds(cfg->permissions_update_interval_in_ms());
 
             qp.start(std::ref(proxy), std::move(local_data_dict), std::ref(mm_notifier), qp_mcfg, std::ref(cql_config), std::move(auth_prep_cache_config), std::ref(langman)).get();
+            auto stop_qp = defer_verbose_shutdown("query processor", [&qp] {
+                qp.stop().get();
+            });
 
             supervisor::notify("starting lifecycle notifier");
             lifecycle_notifier.start().get();
@@ -1747,8 +1750,6 @@ To start the scylla server proper, simply invoke as: scylla server (or just scyl
                 return db::initialize_virtual_tables(db, ss, gossiper, raft_gr, sys_ks, *cfg);
             }).get();
 
-            // #293 - do not stop anything
-            // engine().at_exit([&qp] { return qp.stop(); });
             sstables::init_metrics().get();
 
             db::sstables_format_listener sst_format_listener(gossiper.local(), feature_service, sst_format_selector);

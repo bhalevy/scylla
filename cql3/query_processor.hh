@@ -109,6 +109,7 @@ private:
     service::migration_notifier& _mnotifier;
     memory_config _mcfg;
     const cql_config& _cql_config;
+    gate _async_gate;
 
     struct remote;
     std::unique_ptr<remote> _remote;
@@ -168,6 +169,10 @@ public:
 
     service::storage_proxy& proxy() {
         return _proxy;
+    }
+
+    gate::holder hold_gate() {
+        return _async_gate.hold();
     }
 
     cql_stats& get_cql_stats() {

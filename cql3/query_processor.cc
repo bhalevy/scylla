@@ -522,6 +522,7 @@ future<> query_processor::stop_remote() {
 
 future<> query_processor::stop() {
     co_await _mnotifier.unregister_listener(_migration_subscriber.get());
+    co_await _async_gate.close();
     co_await _authorized_prepared_cache.stop();
     co_await _prepared_cache.stop();
 }
