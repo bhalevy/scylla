@@ -49,6 +49,7 @@ public:
                 _gate->leave();
             }
         }
+        operator bool() const noexcept { return bool(_gate); }
     };
 
     // Starts new operation. The operation ends when the "operation" object is destroyed.
