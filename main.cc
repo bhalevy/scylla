@@ -1258,6 +1258,10 @@ To start the scylla server proper, simply invoke as: scylla server (or just scyl
             auto stop_lang_man = defer_verbose_shutdown("lang manager", [] { langman.invoke_on_all(&lang::manager::stop).get(); });
             langman.invoke_on_all(&lang::manager::start).get();
 
+            auto stop_qp = defer_verbose_shutdown("query processor", [&qp] {
+                qp.stop().get();
+            });
+
             supervisor::notify("starting database");
             debug::the_database = &db;
             db.start(std::ref(*cfg), dbcfg, std::ref(mm_notifier), std::ref(feature_service), std::ref(token_metadata),
@@ -1341,6 +1345,8 @@ To start the scylla server proper, simply invoke as: scylla server (or just scyl
             auth_prep_cache_config.refresh = std::chrono::milliseconds(cfg->permissions_update_interval_in_ms());
 
             qp.start(std::ref(proxy), std::move(local_data_dict), std::ref(mm_notifier), qp_mcfg, std::ref(cql_config), std::move(auth_prep_cache_config), std::ref(langman)).get();
+            // Stop query processor only after the database is stopped
+            // Due to circular dependency (e.g. for updating compaction history)
 
             supervisor::notify("starting lifecycle notifier");
             lifecycle_notifier.start().get();
