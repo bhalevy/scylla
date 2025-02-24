@@ -247,6 +247,8 @@ public:
     named_value<uint32_t> stream_throughput_outbound_megabits_per_sec;
     named_value<uint32_t> inter_dc_stream_throughput_outbound_megabits_per_sec;
     named_value<float> streaming_min_shares;
+    named_value<float> streaming_max_shares;
+    named_value<float> streaming_disk_utilization_threshold;
     named_value<uint32_t> stream_io_throughput_mb_per_sec;
     named_value<double> stream_plan_ranges_fraction;
     named_value<bool> enable_file_stream;
