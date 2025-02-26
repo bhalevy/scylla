@@ -80,7 +80,8 @@ public:
     future<deletion_guard> prepare_for_deletion();
 
 private:
-    future<> delete_sstables_atomically(std::vector<sstables::shared_sstable> sstables_to_remove);
+    // Callers must hold deletion_guard ahead of calling delete_sstables_atomically
+    future<> delete_sstables_atomically(std::vector<sstables::shared_sstable> sstables_to_remove, const deletion_guard& unused);
     // Input SSTables that weren't added to any SSTable set, are considered unused and can be unlinked.
     // An input SSTable remains linked if it wasn't actually compacted, yet compaction manager wants
     // it to be moved from its original sstable set (e.g. maintenance) into a new one (e.g. main).

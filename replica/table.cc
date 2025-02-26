@@ -1886,9 +1886,8 @@ future<compaction_group::deletion_guard> compaction_group::prepare_for_deletion(
 }
 
 future<>
-compaction_group::delete_sstables_atomically(std::vector<sstables::shared_sstable> sstables_to_remove) {
+compaction_group::delete_sstables_atomically(std::vector<sstables::shared_sstable> sstables_to_remove, const deletion_guard& unused) {
     try {
-        auto guard = co_await prepare_for_deletion();
         co_await _t.get_sstables_manager().delete_atomically(std::move(sstables_to_remove));
     } catch (...) {
         // There is nothing more we can do here.
@@ -1899,13 +1898,14 @@ compaction_group::delete_sstables_atomically(std::vector<sstables::shared_sstabl
 
 future<>
 compaction_group::delete_unused_sstables(sstables::compaction_completion_desc desc) {
+    auto guard = co_await prepare_for_deletion();
     std::unordered_set<sstables::shared_sstable> output(desc.new_sstables.begin(), desc.new_sstables.end());
 
     auto sstables_to_remove = std::ranges::to<std::vector<sstables::shared_sstable>>(desc.old_sstables
             | std::views::filter([&output] (const sstables::shared_sstable& input_sst) {
         return !output.contains(input_sst);
     }));
-    return delete_sstables_atomically(std::move(sstables_to_remove));
+    co_await delete_sstables_atomically(std::move(sstables_to_remove), guard);
 }
 
 std::vector<sstables::shared_sstable> compaction_group::all_sstables() const {
@@ -3955,6 +3955,7 @@ future<> compaction_group::cleanup() {
     class compaction_group_cleaner : public row_cache::external_updater_impl {
         table& _t;
         compaction_group& _cg;
+        compaction_group::deletion_guard _guard;
         const lw_shared_ptr<sstables::sstable_set> _empty_main_set;
         const lw_shared_ptr<sstables::sstable_set> _empty_maintenance_set;
     private:
@@ -3982,7 +3983,8 @@ future<> compaction_group::cleanup() {
                 tlogger.info("Cleanup failed for tablet {}", _cg.group_id());
                 throw std::runtime_error("tablet cleanup failure");
             }
-            co_await _cg.delete_sstables_atomically(std::move(all_sstables));
+            _guard = co_await _cg.prepare_for_deletion();
+            co_await _cg.delete_sstables_atomically(std::move(all_sstables), _guard);
         }
 
         virtual void execute() override {
