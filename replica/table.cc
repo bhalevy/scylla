@@ -21,6 +21,7 @@
 #include "replica/data_dictionary_impl.hh"
 #include "replica/compaction_group.hh"
 #include "replica/query_state.hh"
+#include "seastar/core/on_internal_error.hh"
 #include "sstables/shared_sstable.hh"
 #include "sstables/sstable_set.hh"
 #include "sstables/sstables.hh"
@@ -3984,13 +3985,19 @@ future<> compaction_group::cleanup() {
                 throw std::runtime_error("tablet cleanup failure");
             }
             _guard = co_await _cg.prepare_for_deletion();
-            co_await _cg.delete_sstables_atomically(std::move(all_sstables), _guard);
+            // SSTable deletion must happen atomically with updating the compaction_group
+            // sstable sets in memory.
+            try {
+                _t.subtract_compaction_group_from_stats(_cg);
+                _cg.set_main_sstables(std::move(_empty_main_set));
+                _cg.set_maintenance_sstables(std::move(_empty_maintenance_set));
+                co_await _cg.delete_sstables_atomically(std::move(all_sstables), _guard);
+            } catch (...) {
+                on_fatal_internal_error(tlogger, format("compaction_group_cleaner failed: {}", std::current_exception()));
+            }
         }
 
         virtual void execute() override {
-            _t.subtract_compaction_group_from_stats(_cg);
-            _cg.set_main_sstables(std::move(_empty_main_set));
-            _cg.set_maintenance_sstables(std::move(_empty_maintenance_set));
             _t.refresh_compound_sstable_set();
         }
     };
