@@ -8,6 +8,7 @@
 
 #include <seastar/core/condition-variable.hh>
 #include <seastar/core/gate.hh>
+#include <seastar/core/semaphore.hh>
 
 #include "database_fwd.hh"
 #include "compaction/compaction_descriptor.hh"
@@ -71,6 +72,14 @@ private:
     // Update compaction backlog tracker with the same changes applied to the underlying sstable set.
     void backlog_tracker_adjust_charges(const std::vector<sstables::shared_sstable>& old_sstables, const std::vector<sstables::shared_sstable>& new_sstables);
 
+public:
+    struct deletion_guard {
+        gate::holder _gate_holder;
+        semaphore_units<named_semaphore_exception_factory> _sem_units;
+    };
+    future<deletion_guard> prepare_for_deletion();
+
+private:
     future<> delete_sstables_atomically(std::vector<sstables::shared_sstable> sstables_to_remove);
     // Input SSTables that weren't added to any SSTable set, are considered unused and can be unlinked.
     // An input SSTable remains linked if it wasn't actually compacted, yet compaction manager wants

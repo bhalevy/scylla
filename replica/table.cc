@@ -1878,11 +1878,17 @@ table::sstable_list_builder::build_new_list(const sstables::sstable_set& current
         make_lw_shared<sstables::sstable_set>(std::move(new_sstable_list)), std::move(removed_sstables)};
 }
 
+future<compaction_group::deletion_guard> compaction_group::prepare_for_deletion() {
+    auto gh = _t._sstable_deletion_gate.hold();
+    return get_units(_t._sstable_deletion_sem, 1).then([gh = std::move(gh)] (auto units) mutable {
+        return deletion_guard{std::move(gh), std::move(units)};
+    });
+}
+
 future<>
 compaction_group::delete_sstables_atomically(std::vector<sstables::shared_sstable> sstables_to_remove) {
     try {
-        auto gh = _t._sstable_deletion_gate.hold();
-        auto units = co_await get_units(_t._sstable_deletion_sem, 1);
+        auto guard = co_await prepare_for_deletion();
         co_await _t.get_sstables_manager().delete_atomically(std::move(sstables_to_remove));
     } catch (...) {
         // There is nothing more we can do here.
