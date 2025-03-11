@@ -120,6 +120,7 @@ future<> backup_task_impl::process_snapshot_dir() {
             try {
                 auto desc = sstables::parse_path(file_path, "", "");
                 _sstable_comps[desc.generation].emplace_back(name);
+                _sstables_in_snapshot.insert(desc.generation);
                 ++_num_sstable_comps;
 
                 if (desc.component == sstables::component_type::Data) {
@@ -177,9 +178,19 @@ future<> backup_task_impl::backup_sstable(sstables::generation_type gen, const c
     }
 };
 
-backup_task_impl::sstables_manager_for_table::sstables_manager_for_table(const replica::database& db, table_id t)
+backup_task_impl::sstables_manager_for_table::sstables_manager_for_table(const replica::database& db, table_id t,
+        std::function<future<>(sstables::generation_type gen, sstables::manager_event_type event)> callback)
     : manager(db.get_sstables_manager(*db.find_schema(t)))
+    , sub(manager.subscribe(callback))
 {
+}
+
+void backup_task_impl::on_unlink(sstables::generation_type gen) {
+    // Check that _sstable_comps contains `gen`.
+    // Otherwise, it was already uploaded.
+    if (_sstable_comps.contains(gen)) {
+        _unlinked_sstables.push_back(gen);
+    }
 }
 
 future<> backup_task_impl::do_backup() {
@@ -189,7 +200,28 @@ future<> backup_task_impl::do_backup() {
 
     co_await process_snapshot_dir();
 
-    co_await _sharded_sstables_manager.start(std::ref(_snap_ctl.db()), _table_id);
+    _backup_shard = this_shard_id();
+    co_await _sharded_sstables_manager.start(std::ref(_snap_ctl.db()), _table_id, [&] (sstables::generation_type gen, sstables::manager_event_type event) -> future<> {
+        switch (event) {
+        case sstables::manager_event_type::add:
+            break;
+        case sstables::manager_event_type::unlink:
+            // The notification is called for any sstable, so `gen` may belong
+            // to another table, or to an sstable that was created after the snapshot
+            // was taken.
+            // To avoid needless call to submit_to on another shard (which is expensive),
+            // check if `gen` was included in the snapshot.
+            //
+            // This is safe although `_sstables_in_snapshot` was created on `baskup_shard`,
+            // since the set is immutable after `process_snapshot_dir` is done.
+            if (_sstables_in_snapshot.contains(gen)) {
+                return smp::submit_to(_backup_shard, [this, gen] {
+                    on_unlink(gen);
+                });
+            }
+        }
+        return make_ready_future();
+    });
 
     try {
         while (!_sstable_comps.empty() && !_ex) {
