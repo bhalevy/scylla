@@ -112,12 +112,13 @@ future<> backup_task_impl::list_snapshot_dir() {
         while (auto component_ent = co_await snapshot_dir_lister.get()) {
             const auto& name = component_ent->name;
             auto file_path = _snapshot_dir / name;
+            auto st = co_await file_stat(file_path.native());
             try {
                 auto desc = sstables::parse_path(file_path, "", "");
-                _sstable_comps[desc.generation].emplace_back(name);
+                _sstable_comps[desc.generation].emplace_back(name, st.size);
                 ++_num_sstable_comps;
             } catch (const sstables::malformed_sstable_exception&) {
-                _non_sstable_files.emplace_back(name);
+                _non_sstable_files.emplace_back(name, st.size);
             }
         }
         snap_log.debug("backup_task: found {} SSTables consisting of {} component files, and {} non-sstable files",
@@ -133,19 +134,20 @@ future<> backup_task_impl::list_snapshot_dir() {
     }
 }
 
-future<> backup_task_impl::backup_file(const sstring& name) {
+future<> backup_task_impl::backup_file(const comp_desc& desc) {
     _as.check();
 
     auto gh = _uploads.hold();
+    uint64_t required = std::min(desc.size, max_concurrency);
+    auto units = co_await get_units(_concurrency_sem, required, _as);
 
     // okay to drop future since uploads is always closed before exiting the function
-    std::ignore = upload_component(name).handle_exception([this] (std::exception_ptr e) {
+    std::ignore = upload_component(desc.name).handle_exception([this] (std::exception_ptr e) {
         // keep the first exception
         if (!_ex) {
             _ex = std::move(e);
         }
-    }).finally([gh = std::move(gh)] {});
-    co_await coroutine::maybe_yield();
+    }).finally([gh = std::move(gh), units = std::move(units)] {});
 };
 
 future<> backup_task_impl::backup_sstable(sstables::generation_type gen, const comps_vector& comps) {
@@ -154,8 +156,8 @@ future<> backup_task_impl::backup_sstable(sstables::generation_type gen, const c
         // Pre-upload break point. For testing abort in actual s3 client usage.
         co_await utils::get_local_injector().inject("backup_task_pre_upload", utils::wait_for_message(std::chrono::minutes(2)));
 
-        const auto& name = *it;
-        co_await backup_file(name);
+        const auto& desc = *it;
+        co_await backup_file(desc);
 
         co_await utils::get_local_injector().inject("backup_task_pause", utils::wait_for_message(std::chrono::minutes(2)));
     }

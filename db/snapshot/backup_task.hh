@@ -15,6 +15,7 @@
 #include <unordered_map>
 
 #include <seastar/core/gate.hh>
+#include <seastar/core/semaphore.hh>
 
 #include "utils/s3/client_fwd.hh"
 #include "utils/small_vector.hh"
@@ -38,17 +39,25 @@ class backup_task_impl : public tasks::task_manager::task::impl {
 
     std::exception_ptr _ex;
     gate _uploads;
-    using comps_vector = utils::small_vector<std::string, sstables::num_component_types>;
+    struct comp_desc {
+        sstring name;
+        uint64_t size;
+    };
+    using comps_vector = utils::small_vector<comp_desc, sstables::num_component_types>;
     using comps_map = std::unordered_map<sstables::generation_type, comps_vector>;
     comps_map _sstable_comps;
     size_t _num_sstable_comps = 0;
     comps_vector _non_sstable_files;
+    // FIXME: this should be configurable, or derived dynamically from
+    // the concurrency level of S3 uploads
+    constexpr static size_t max_concurrency = 32 << 10;
+    semaphore _concurrency_sem{max_concurrency};
 
     future<> do_backup();
     future<> upload_component(sstring name);
     future<> list_snapshot_dir();
     // Leaves a background task, covered by _uploads gate
-    future<> backup_file(const sstring& name);
+    future<> backup_file(const comp_desc& desc);
     future<> backup_sstable(sstables::generation_type gen, const comps_vector& comps);
 
 protected:
