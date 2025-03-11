@@ -16,6 +16,7 @@
 #include <seastar/core/sharded.hh>
 #include <seastar/coroutine/maybe_yield.hh>
 
+#include "sstables/component_type.hh"
 #include "utils/lister.hh"
 #include "utils/s3/client.hh"
 #include "replica/database.hh"
@@ -147,6 +148,17 @@ future<> backup_task_impl::do_backup() {
                 auto [desc, ks, cf] = sstables::parse_path(file_path);
                 sstable_comps[desc.generation].emplace_back(name);
                 ++num_sstable_comps;
+
+                if (desc.component == sstables::component_type::Data) {
+                    auto st = co_await file_stat(file_path.native());
+                    // If the sstable is already unlinked after the snapshot was taken
+                    // track its generation in the unlinked_sstables list
+                    // so it can be prioritized for backup
+                    if (st.number_of_links == 1) {
+                        snap_log.trace("do_backup: sstable with gen={} is already unlinked", desc.generation);
+                        unlinked_sstables.push_back(desc.generation);
+                    }
+                }
             } catch (const sstables::malformed_sstable_exception&) {
                 non_sstable_files.emplace_back(name);
             }
