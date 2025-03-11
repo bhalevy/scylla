@@ -11,6 +11,7 @@
 
 #include <seastar/core/abort_source.hh>
 #include <seastar/core/seastar.hh>
+#include <seastar/core/semaphore.hh>
 #include <seastar/coroutine/maybe_yield.hh>
 
 #include "utils/lister.hh"
@@ -113,6 +114,10 @@ future<> backup_task_impl::do_backup() {
     }
 
     std::exception_ptr ex;
+    // FIXME: this should be configurable, or derived dynamically from
+    // the concurrency level of S3 uploads
+    constexpr size_t max_concurrency = sstables::num_component_types * 2;
+    auto concurrency_sem = semaphore(max_concurrency);
     gate uploads;
     auto snapshot_dir_lister = directory_lister(_snapshot_dir, lister::dir_entry_types::of<directory_entry_type::regular>());
 
@@ -151,18 +156,16 @@ future<> backup_task_impl::do_backup() {
         co_await coroutine::return_exception_ptr(std::move(ex));
     }
 
-    auto backup_comp = [&] (sstring name) {
-        _as.check();
-
+    auto backup_comp = [&] (sstring name) -> future<> {
         auto gh = uploads.hold();
-
+        auto units = co_await get_units(concurrency_sem, 1, _as);
         // okay to drop future since uploads is always closed before exiting the function
         std::ignore = upload_component(std::move(name)).handle_exception([&ex] (std::exception_ptr e) {
             // keep the first exception
             if (!ex) {
                 ex = std::move(e);
             }
-        }).finally([gh = std::move(gh)] {});
+        }).finally([gh = std::move(gh), units = std::move(units)] {});
     };
 
     auto backup_sstable = [&] (sstables::generation_type gen, const comps_vector& comps) -> future<> {
@@ -172,9 +175,8 @@ future<> backup_task_impl::do_backup() {
             co_await utils::get_local_injector().inject("backup_task_pre_upload", utils::wait_for_message(std::chrono::minutes(2)));
 
             const auto& name = *it;
-            backup_comp(name);
+            co_await backup_comp(name);
 
-            co_await coroutine::maybe_yield();
             co_await utils::get_local_injector().inject("backup_task_pause", utils::wait_for_message(std::chrono::minutes(2)));
         }
     };
@@ -186,7 +188,7 @@ future<> backup_task_impl::do_backup() {
         }
 
         for (auto it = non_sstable_files.begin(); it != non_sstable_files.end() && !ex; ++it) {
-            backup_comp(*it);
+            co_await backup_comp(*it);
         }
     } catch (...) {
         ex = std::current_exception();
