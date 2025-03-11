@@ -21,6 +21,7 @@
 #include "sstables/exceptions.hh"
 #include "sstables/sstables.hh"
 #include "sstables/sstables_manager.hh"
+#include "sstables/component_type.hh"
 #include "utils/error_injection.hh"
 
 extern logging::logger snap_log;
@@ -120,6 +121,16 @@ future<> backup_task_impl::list_snapshot_dir() {
                 auto desc = sstables::parse_path(file_path, "", "");
                 _sstable_comps[desc.generation].emplace_back(name, st.size);
                 ++_num_sstable_comps;
+
+                if (desc.component == sstables::component_type::Data) {
+                    // If the sstable is already unlinked after the snapshot was taken
+                    // track its generation in the unlinked_sstables list
+                    // so it can be prioritized for backup
+                    if (st.number_of_links == 1) {
+                        snap_log.trace("do_backup: sstable with gen={} is already unlinked", desc.generation);
+                        _unlinked_sstables.push_back(desc.generation);
+                    }
+                }
             } catch (const sstables::malformed_sstable_exception&) {
                 _non_sstable_files.emplace_back(name, st.size);
             }
