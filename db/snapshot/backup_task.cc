@@ -20,6 +20,7 @@
 #include "schema/schema_fwd.hh"
 #include "sstables/exceptions.hh"
 #include "sstables/sstables.hh"
+#include "sstables/sstables_manager.hh"
 #include "utils/error_injection.hh"
 
 extern logging::logger snap_log;
@@ -33,6 +34,7 @@ backup_task_impl::backup_task_impl(tasks::task_manager::module_ptr module,
                                    sstring prefix,
                                    sstring ks,
                                    std::filesystem::path snapshot_dir,
+                                   table_id tid,
                                    bool move_files) noexcept
     : tasks::task_manager::task::impl(module, tasks::task_id::create_random_id(), 0, "node", ks, "", "", tasks::task_id::create_null_id())
     , _snap_ctl(ctl)
@@ -40,6 +42,7 @@ backup_task_impl::backup_task_impl(tasks::task_manager::module_ptr module,
     , _bucket(std::move(bucket))
     , _prefix(std::move(prefix))
     , _snapshot_dir(std::move(snapshot_dir))
+    , _table_id(tid)
     , _remove_on_uploaded(move_files) {
     _status.progress_units = "bytes ('total' may grow along the way)";
 }
@@ -163,16 +166,56 @@ future<> backup_task_impl::backup_sstable(sstables::generation_type gen, const c
     }
 };
 
+void backup_task_impl::on_unlink(sstables::generation_type gen) {
+    if (_sstable_comps.contains(gen)) {
+        _unlinked_sstables.push_back(gen);
+    }
+}
+
 future<> backup_task_impl::do_backup() {
     if (!co_await file_exists(_snapshot_dir.native())) {
         throw std::invalid_argument(fmt::format("snapshot does not exist at {}", _snapshot_dir.native()));
     }
 
+    _backup_shard = this_shard_id();
+
+    co_await _subscriptions.start();
+    co_await _snap_ctl.db().invoke_on_all([&] (replica::database& db) {
+        auto schema = db.find_schema(_table_id);
+        auto sub = db.get_sstables_manager(*schema).subscribe([&] (sstables::generation_type gen, sstables::manager_event_type event) -> future<> {
+            switch (event) {
+            case sstables::manager_event_type::add:
+                break;
+            case sstables::manager_event_type::unlink:
+                if (_sstable_comps.contains(gen)) {
+                    return smp::submit_to(_backup_shard, [this, gen] {
+                        on_unlink(gen);
+                    });
+                }
+            }
+            return make_ready_future();
+        });
+        _subscriptions.local() = make_foreign(seastar::make_shared(std::move(sub)));
+    });
+
     co_await list_snapshot_dir();
 
     try {
         while (!_sstable_comps.empty() && !_ex) {
-            auto ent = _sstable_comps.extract(_sstable_comps.begin());
+            auto to_backup = _sstable_comps.begin();
+            // Prioritize unlinked sstables to free-up their disk space earlier.
+            // This is particularly important when running backup at high utilization levels (e.g. over 90%)
+            if (!_unlinked_sstables.empty()) {
+                auto gen = _unlinked_sstables.back();
+                _unlinked_sstables.pop_back();
+                if (auto it = _sstable_comps.find(gen); it != _sstable_comps.end()) {
+                    snap_log.debug("Prioritizing unlinked sstable gen={}", gen);
+                    to_backup = it;
+                } else {
+                    snap_log.trace("Unlinked sstable gen={} was not found", gen);
+                }
+            }
+            auto ent = _sstable_comps.extract(to_backup);
             co_await backup_sstable(ent.key(), ent.mapped());
         }
 
@@ -184,6 +227,7 @@ future<> backup_task_impl::do_backup() {
     }
 
     co_await _uploads.close();
+    co_await _subscriptions.stop();
     if (_ex) {
         co_await coroutine::return_exception_ptr(std::move(_ex));
     }

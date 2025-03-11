@@ -16,12 +16,14 @@
 
 #include <seastar/core/gate.hh>
 #include <seastar/core/semaphore.hh>
+#include <seastar/core/shard_id.hh>
+#include <seastar/core/sharded.hh>
 
 #include "utils/s3/client_fwd.hh"
 #include "utils/small_vector.hh"
 #include "tasks/task_manager.hh"
 #include "sstables/component_type.hh"
-#include "sstables/generation_type.hh"
+#include "sstables/sstables_manager_subscription.hh"
 
 namespace db {
 class snapshot_ctl;
@@ -34,6 +36,7 @@ class backup_task_impl : public tasks::task_manager::task::impl {
     sstring _bucket;
     sstring _prefix;
     std::filesystem::path _snapshot_dir;
+    table_id _table_id;
     bool _remove_on_uploaded;
     s3::upload_progress _progress = {};
 
@@ -52,6 +55,9 @@ class backup_task_impl : public tasks::task_manager::task::impl {
     // the concurrency level of S3 uploads
     constexpr static size_t max_concurrency = 32 << 10;
     semaphore _concurrency_sem{max_concurrency};
+    shard_id _backup_shard;
+    sharded<foreign_ptr<shared_ptr<sstables::manager_signal_connection_type>>> _subscriptions;
+    std::vector<sstables::generation_type> _unlinked_sstables;
 
     future<> do_backup();
     future<> upload_component(sstring name);
@@ -59,6 +65,7 @@ class backup_task_impl : public tasks::task_manager::task::impl {
     // Leaves a background task, covered by _uploads gate
     future<> backup_file(const comp_desc& desc);
     future<> backup_sstable(sstables::generation_type gen, const comps_vector& comps);
+    void on_unlink(sstables::generation_type gen);
 
 protected:
     virtual future<> run() override;
@@ -71,6 +78,7 @@ public:
                      sstring prefix,
                      sstring ks,
                      std::filesystem::path snapshot_dir,
+                     table_id tid,
                      bool move_files) noexcept;
 
     virtual std::string type() const override;
