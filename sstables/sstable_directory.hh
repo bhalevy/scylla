@@ -60,6 +60,10 @@ public:
     future<semaphore_units<>> get_units(size_t count) noexcept {
         return seastar::get_units(_sem, count);
     }
+
+    future<semaphore_units<>> get_units(size_t count, abort_source& abort) noexcept {
+        return seastar::get_units(_sem, count, abort);
+    }
 };
 
 // Handles a directory containing SSTables. It could be an auxiliary directory (like upload),
