@@ -17,6 +17,8 @@
 
 #include <seastar/core/gate.hh>
 #include <seastar/core/semaphore.hh>
+#include <seastar/core/shard_id.hh>
+#include <seastar/core/sharded.hh>
 
 #include "utils/s3/client_fwd.hh"
 #include "utils/small_vector.hh"
@@ -31,6 +33,7 @@ namespace replica {
 
 namespace sstables {
 class sstables_manager;
+class storage_manager;
 }
 
 namespace db {
@@ -40,14 +43,14 @@ namespace snapshot {
 
 class backup_task_impl : public tasks::task_manager::task::impl {
     snapshot_ctl& _snap_ctl;
-    shared_ptr<s3::client> _client;
+    sharded<sstables::storage_manager>& _sstm;
+    sstring _endpoint;
     sstring _bucket;
     sstring _prefix;
     std::filesystem::path _snapshot_dir;
     table_id _table_id;
     bool _remove_on_uploaded;
     tasks::task_manager::task::progress _total_progress;
-    s3::upload_progress _progress;
 
     std::exception_ptr _ex;
     std::vector<sstring> _files;
@@ -61,32 +64,50 @@ class backup_task_impl : public tasks::task_manager::task::impl {
     class worker : sstables::sstables_manager_event_handler {
         sstables::sstables_manager& _manager;
         backup_task_impl& _task;
+        shared_ptr<s3::client> _client;
+        gate _uploads;
+        abort_source _as;
+        std::exception_ptr _ex;
+        future<> _done_fut = make_ready_future();
+        s3::upload_progress _progress;
 
     public:
         worker(const replica::database& db, table_id t, backup_task_impl& task);
+
+        void start_uploading();
+        // Returns when all uploads are done.
+        // Throws exception if an error occured.
+        future<> done();
+        future<> stop();
+        void abort();
 
         sstables::sstables_manager& manager() const noexcept {
             return _manager;
         }
 
+        size_t get_progress() const noexcept {
+            return _progress.uploaded;
+        }
+
     private:
         virtual future<> deleted_sstable(sstables::generation_type gen) const override;
+        future<> uploads_worker();
+        struct upload_permit {
+            gate::holder gh;
+            semaphore_units<> units;
+        };
+        future<> backup_file(sstring name, upload_permit permit);
+        future<> upload_component(sstring name);
     };
     sharded<worker> _sharded_worker;
 
     future<> do_backup();
-    future<> upload_component(sstring name);
     future<> process_snapshot_dir();
-    future<> uploads_worker();
-    struct upload_permit {
-        gate::holder gh;
-        semaphore_units<> units;
-    };
-    future<> backup_file(sstring name, upload_permit permit);
     // Returns a disengaged optional when done
     std::optional<std::string> dequeue();
     void dequeue_sstable();
     void on_sstable_deletion(sstables::generation_type gen);
+    future<std::optional<size_t>> get_total_uploaded() const;
 
 protected:
     virtual future<> run() override;
@@ -94,7 +115,8 @@ protected:
 public:
     backup_task_impl(tasks::task_manager::module_ptr module,
                      snapshot_ctl& ctl,
-                     shared_ptr<s3::client> cln,
+                     sharded<sstables::storage_manager>& sstm,
+                     sstring endpoint,
                      sstring bucket,
                      sstring prefix,
                      sstring ks,
