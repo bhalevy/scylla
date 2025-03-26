@@ -31,7 +31,8 @@ namespace db::snapshot {
 
 backup_task_impl::backup_task_impl(tasks::task_manager::module_ptr module,
                                    snapshot_ctl& ctl,
-                                   shared_ptr<s3::client> client,
+                                   sharded<sstables::storage_manager>& sstm,
+                                   sstring endpoint,
                                    sstring bucket,
                                    sstring prefix,
                                    sstring ks,
@@ -40,13 +41,14 @@ backup_task_impl::backup_task_impl(tasks::task_manager::module_ptr module,
                                    bool move_files) noexcept
     : tasks::task_manager::task::impl(module, tasks::task_id::create_random_id(), 0, "node", ks, "", "", tasks::task_id::create_null_id())
     , _snap_ctl(ctl)
-    , _client(std::move(client))
+    , _sstm(sstm)
+    , _endpoint(std::move(endpoint))
     , _bucket(std::move(bucket))
     , _prefix(std::move(prefix))
     , _snapshot_dir(std::move(snapshot_dir))
     , _table_id(tid)
     , _remove_on_uploaded(move_files) {
-    _status.progress_units = "bytes ('total' may grow along the way)";
+    _status.progress_units = "bytes";
 }
 
 std::string backup_task_impl::type() const {
@@ -62,19 +64,24 @@ tasks::is_abortable backup_task_impl::is_abortable() const noexcept {
 }
 
 future<tasks::task_manager::task::progress> backup_task_impl::get_progress() const {
-    co_return tasks::task_manager::task::progress {
-        .completed = _progress.uploaded,
-        .total = _progress.total,
-    };
+    auto ret = _progress;
+
+    if (_sharded_sstables_manager.local_is_initialized()) {
+        ret.completed = co_await _sharded_sstables_manager.map_reduce0([](const auto& m) {
+            return m.progress.uploaded;
+        }, size_t(0), std::plus<size_t>());
+    }
+
+    co_return ret;
 }
 
 tasks::is_user_task backup_task_impl::is_user_task() const noexcept {
     return tasks::is_user_task::yes;
 }
 
-future<> backup_task_impl::upload_component(sstring name) {
-    auto component_name = _snapshot_dir / name;
-    auto destination = fmt::format("/{}/{}/{}", _bucket, _prefix, name);
+future<> backup_task_impl::sstables_manager_for_table::upload_component(sstring name) {
+    auto component_name = _task._snapshot_dir / name;
+    auto destination = fmt::format("/{}/{}/{}", _task._bucket, _task._prefix, name);
     snap_log.trace("Upload {} to {}", component_name.native(), destination);
 
     // Start uploading in the background. The caller waits for these fibers
@@ -83,16 +90,16 @@ future<> backup_task_impl::upload_component(sstring name) {
     //  - s3::client::claim_memory semaphore
     //  - http::client::max_connections limitation
     try {
-        co_await _client->upload_file(component_name, destination, _progress, &_as);
+        co_await _client->upload_file(component_name, destination, progress, &_abort);
     } catch (const abort_requested_exception&) {
         snap_log.info("Upload aborted per requested: {}", component_name.native());
-        throw;
+        co_return;
     } catch (...) {
         snap_log.error("Error uploading {}: {}", component_name.native(), std::current_exception());
         throw;
     }
 
-    if (!_remove_on_uploaded) {
+    if (!_task._remove_on_uploaded) {
         co_return;
     }
 
@@ -107,6 +114,8 @@ future<> backup_task_impl::upload_component(sstring name) {
         // issues or system constraints that should be investigated.
         snap_log.warn("Failed to remove {}: {}", component_name, std::current_exception());
     }
+
+    co_return;
 }
 
 future<> backup_task_impl::process_snapshot_dir() {
@@ -118,6 +127,9 @@ future<> backup_task_impl::process_snapshot_dir() {
             const auto& name = component_ent->name;
             auto file_path = _snapshot_dir / name;
             try {
+                auto st = co_await file_stat(file_path.native());
+                _progress.total += st.size;
+
                 auto desc = sstables::parse_path(file_path, "", "");
                 _sstable_comps[desc.generation].emplace_back(name);
                 _sstables_in_snapshot.insert(desc.generation);
@@ -127,18 +139,17 @@ future<> backup_task_impl::process_snapshot_dir() {
                     // If the sstable is already unlinked after the snapshot was taken
                     // track its generation in the unlinked_sstables list
                     // so it can be prioritized for backup
-                    auto st = co_await file_stat(file_path.native());
                     if (st.number_of_links == 1) {
                         snap_log.trace("do_backup: sstable with gen={} is already unlinked", desc.generation);
                         _unlinked_sstables.push_back(desc.generation);
                     }
                 }
             } catch (const sstables::malformed_sstable_exception&) {
-                _non_sstable_files.emplace_back(name);
+                _queue.emplace_back(name);
             }
         }
         snap_log.debug("backup_task: found {} SSTables consisting of {} component files, and {} non-sstable files",
-            _sstable_comps.size(), _num_sstable_comps, _non_sstable_files.size());
+            _sstable_comps.size(), _num_sstable_comps, _queue.size());
     } catch (...) {
         _ex = std::current_exception();
         snap_log.error("backup_task: listing {} failed: {}", _snapshot_dir.native(), _ex);
@@ -150,39 +161,69 @@ future<> backup_task_impl::process_snapshot_dir() {
     }
 }
 
-future<> backup_task_impl::backup_file(const sstring& name) {
-    _as.check();
-
-    auto gh = _uploads.hold();
-    auto units = co_await _sharded_sstables_manager.local().manager.dir_semaphore().get_units(1);
-
-    // okay to drop future since uploads is always closed before exiting the function
-    std::ignore = upload_component(name).handle_exception([this] (std::exception_ptr e) {
+future<> backup_task_impl::sstables_manager_for_table::backup_file(sstring name, semaphore_units<> units) {
+    try {
+        auto gh = _async_gate.hold();
+        co_await upload_component(std::move(name));
+    } catch (const abort_requested_exception&) {
+        // Ignore
+    } catch (...) {
+        snap_log.debug("backup_file {} failed: {}", name, std::current_exception());
         // keep the first exception
         if (!_ex) {
-            _ex = std::move(e);
+            _ex = std::current_exception();
         }
-    }).finally([gh = std::move(gh), units = std::move(units)] {});
-};
-
-future<> backup_task_impl::backup_sstable(sstables::generation_type gen, const comps_vector& comps) {
-    snap_log.debug("Backing up SSTable generation {}", gen);
-    for (auto it = comps.begin(); it != comps.end() && !_ex; ++it) {
-        // Pre-upload break point. For testing abort in actual s3 client usage.
-        co_await utils::get_local_injector().inject("backup_task_pre_upload", utils::wait_for_message(std::chrono::minutes(2)));
-
-        const auto& name = *it;
-        co_await backup_file(name);
-
-        co_await utils::get_local_injector().inject("backup_task_pause", utils::wait_for_message(std::chrono::minutes(2)));
     }
 };
 
-backup_task_impl::sstables_manager_for_table::sstables_manager_for_table(const replica::database& db, table_id t,
+backup_task_impl::sstables_manager_for_table::sstables_manager_for_table(const replica::database& db, table_id t, backup_task_impl& task,
         std::function<future<>(sstables::generation_type gen, sstables::manager_event_type event)> callback)
-    : manager(db.get_sstables_manager(*db.find_schema(t)))
-    , sub(manager.subscribe(callback))
+    : _manager(db.get_sstables_manager(*db.find_schema(t)))
+    , _sub(_manager.subscribe(callback))
+    , _task(task)
+    , _client(task._sstm.local().get_endpoint_client(task._endpoint))
 {
+    _done_fut = uploads_worker();
+}
+
+future<> backup_task_impl::sstables_manager_for_table::done() {
+    return std::exchange(_done_fut, make_ready_future());
+}
+
+future<> backup_task_impl::sstables_manager_for_table::stop() {
+    return done().handle_exception([] (std::exception_ptr ex) {
+        on_internal_error(snap_log, format("backup_task_impl::sstables_manager_for_table failue wasn't processed: {}", ex));
+    });
+}
+
+void backup_task_impl::sstables_manager_for_table::abort() {
+    _abort.request_abort();
+}
+
+future<> backup_task_impl::sstables_manager_for_table::uploads_worker() {
+    auto gh = _async_gate.hold();
+    while (!_abort.abort_requested() && !_ex) {
+        // Pre-upload break point. For testing abort in actual s3 client usage.
+        co_await utils::get_local_injector().inject("backup_task_pre_upload", utils::wait_for_message(std::chrono::minutes(2)));
+
+        auto units = co_await _manager.dir_semaphore().get_units(1, _abort);
+        auto name_opt = co_await smp::submit_to(_task._backup_shard, [this] () {
+            return _task.dequeue();
+        });
+        // done?
+        if (!name_opt) {
+            break;
+        }
+        // okay to drop future since async_gate is always closed before stopping
+        std::ignore = backup_file(std::move(*name_opt), std::move(units));
+
+        co_await utils::get_local_injector().inject("backup_task_pause", utils::wait_for_message(std::chrono::minutes(2)));
+    }
+    gh.release();
+    co_await _async_gate.close();
+    if (_ex) {
+        co_await coroutine::return_exception_ptr(std::move(_ex));
+    }
 }
 
 void backup_task_impl::on_unlink(sstables::generation_type gen) {
@@ -190,6 +231,43 @@ void backup_task_impl::on_unlink(sstables::generation_type gen) {
     // Otherwise, it was already uploaded.
     if (_sstable_comps.contains(gen)) {
         _unlinked_sstables.push_back(gen);
+    }
+}
+
+std::optional<std::string> backup_task_impl::dequeue() {
+    if (_queue.empty()) {
+        dequeue_sstable();
+    }
+    if (_queue.empty()) {
+        return std::nullopt;
+    }
+    auto ret = _queue.back();
+    _queue.pop_back();
+    return ret;
+}
+
+void backup_task_impl::dequeue_sstable() {
+    auto to_backup = _sstable_comps.begin();
+    if (to_backup == _sstable_comps.end()) {
+        return;
+    }
+    // Prioritize unlinked sstables to free-up their disk space earlier.
+    // This is particularly important when running backup at high utilization levels (e.g. over 90%)
+    while (!_unlinked_sstables.empty()) {
+        auto gen = _unlinked_sstables.back();
+        _unlinked_sstables.pop_back();
+        if (auto it = _sstable_comps.find(gen); it != _sstable_comps.end()) {
+            snap_log.debug("Prioritizing unlinked sstable gen={}", gen);
+            to_backup = it;
+            break;
+        } else {
+            snap_log.trace("Unlinked sstable gen={} was not found", gen);
+        }
+    }
+    auto ent = _sstable_comps.extract(to_backup);
+    snap_log.debug("Backing up SSTable generation {}", ent.key());
+    for (auto& name : ent.mapped()) {
+        _queue.emplace_back(std::move(name));
     }
 }
 
@@ -201,7 +279,8 @@ future<> backup_task_impl::do_backup() {
     co_await process_snapshot_dir();
 
     _backup_shard = this_shard_id();
-    co_await _sharded_sstables_manager.start(std::ref(_snap_ctl.db()), _table_id, [&] (sstables::generation_type gen, sstables::manager_event_type event) -> future<> {
+    co_await _sharded_sstables_manager.start(std::ref(_snap_ctl.db()), _table_id, std::ref(*this),
+            [this] (sstables::generation_type gen, sstables::manager_event_type event) -> future<> {
         switch (event) {
         case sstables::manager_event_type::add:
             break;
@@ -223,33 +302,27 @@ future<> backup_task_impl::do_backup() {
         return make_ready_future();
     });
 
-    try {
-        while (!_sstable_comps.empty() && !_ex) {
-            auto to_backup = _sstable_comps.begin();
-            // Prioritize unlinked sstables to free-up their disk space earlier.
-            // This is particularly important when running backup at high utilization levels (e.g. over 90%)
-            if (!_unlinked_sstables.empty()) {
-                auto gen = _unlinked_sstables.back();
-                _unlinked_sstables.pop_back();
-                if (auto it = _sstable_comps.find(gen); it != _sstable_comps.end()) {
-                    snap_log.debug("Prioritizing unlinked sstable gen={}", gen);
-                    to_backup = it;
-                } else {
-                    snap_log.trace("Unlinked sstable gen={} was not found", gen);
-                }
-            }
-            auto ent = _sstable_comps.extract(to_backup);
-            co_await backup_sstable(ent.key(), ent.mapped());
-        }
+    _abort_sub = _as.subscribe([this] () noexcept {
+        // Safe to ignore future since we're waiting on done
+        std::ignore = _sharded_sstables_manager.invoke_on_all([] (sstables_manager_for_table& m) {
+            m.abort();
+        });
+    });
 
-        for (auto it = _non_sstable_files.begin(); it != _non_sstable_files.end() && !_ex; ++it) {
-            co_await backup_file(*it);
-        }
+    try {
+        co_await _sharded_sstables_manager.invoke_on_all([] (sstables_manager_for_table& m) {
+            return m.done();
+        });
     } catch (...) {
         _ex = std::current_exception();
     }
 
-    co_await _uploads.close();
+    _progress.completed = co_await _sharded_sstables_manager.map_reduce0([](const auto& m) {
+        return m.progress.uploaded;
+    }, size_t(0), std::plus<size_t>());
+
+    _abort_sub.reset();
+
     co_await _sharded_sstables_manager.stop();
     if (_ex) {
         co_await coroutine::return_exception_ptr(std::move(_ex));
