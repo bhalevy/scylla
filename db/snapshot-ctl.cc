@@ -26,7 +26,7 @@ logging::logger snap_log("snapshots");
 
 namespace db {
 
-snapshot_ctl::snapshot_ctl(sharded<replica::database>& db, tasks::task_manager& tm, sstables::storage_manager& sstm, config cfg)
+snapshot_ctl::snapshot_ctl(sharded<replica::database>& db, tasks::task_manager& tm, sharded<sstables::storage_manager>& sstm, config cfg)
     : _config(std::move(cfg))
     , _db(db)
     , _task_manager_module(make_shared<snapshot::task_manager_module>(tm))
@@ -145,7 +145,6 @@ future<tasks::task_id> snapshot_ctl::start_backup(sstring endpoint, sstring buck
     }
 
     co_await coroutine::switch_to(_config.backup_sched_group);
-    auto cln = _storage_manager.get_endpoint_client(endpoint);
     snap_log.info("Backup sstables from {}({}) to {}", keyspace, snapshot_name, endpoint);
     auto global_table = co_await get_table_on_all_shards(_db, keyspace, table);
     auto& storage_options = global_table->get_storage_options();
@@ -175,7 +174,7 @@ future<tasks::task_id> snapshot_ctl::start_backup(sstring endpoint, sstring buck
                 sstables::snapshots_dir /
                 std::string_view(snapshot_name));
     auto task = co_await _task_manager_module->make_and_start_task<::db::snapshot::backup_task_impl>(
-        {}, *this, std::move(cln), std::move(bucket), std::move(prefix), keyspace, dir, global_table->schema()->id(), move_files);
+        {}, *this, _storage_manager, endpoint, std::move(bucket), std::move(prefix), keyspace, dir, global_table->schema()->id(), move_files);
     co_return task->id();
 }
 

@@ -31,7 +31,8 @@ namespace db::snapshot {
 
 backup_task_impl::backup_task_impl(tasks::task_manager::module_ptr module,
                                    snapshot_ctl& ctl,
-                                   shared_ptr<s3::client> client,
+                                   sharded<sstables::storage_manager>& sstm,
+                                   sstring endpoint,
                                    sstring bucket,
                                    sstring prefix,
                                    sstring ks,
@@ -40,7 +41,8 @@ backup_task_impl::backup_task_impl(tasks::task_manager::module_ptr module,
                                    bool move_files) noexcept
     : tasks::task_manager::task::impl(module, tasks::task_id::create_random_id(), 0, "node", ks, "", "", tasks::task_id::create_null_id())
     , _snap_ctl(ctl)
-    , _client(std::move(client))
+    , _sstm(sstm)
+    , _endpoint(std::move(endpoint))
     , _bucket(std::move(bucket))
     , _prefix(std::move(prefix))
     , _snapshot_dir(std::move(snapshot_dir))
@@ -63,17 +65,30 @@ tasks::is_abortable backup_task_impl::is_abortable() const noexcept {
 
 future<tasks::task_manager::task::progress> backup_task_impl::get_progress() const {
     auto ret = _total_progress;
-    ret.completed = _progress.uploaded;
+    // _total_progress.completed before _sharded_worker is stopped
+    // so we don't need to update it
+    if (auto uploaded_opt = co_await get_total_uploaded()) {
+        ret.completed = *uploaded_opt;
+    }
     co_return ret;
+}
+
+future<std::optional<size_t>> backup_task_impl::get_total_uploaded() const {
+    if (!_sharded_worker.local_is_initialized()) {
+        co_return std::nullopt;
+    }
+    co_return co_await _sharded_worker.map_reduce0([](const auto& m) {
+        return m.get_progress();
+    }, size_t(0), std::plus<size_t>());
 }
 
 tasks::is_user_task backup_task_impl::is_user_task() const noexcept {
     return tasks::is_user_task::yes;
 }
 
-future<> backup_task_impl::upload_component(sstring name) {
-    auto component_name = _snapshot_dir / name;
-    auto destination = fmt::format("/{}/{}/{}", _bucket, _prefix, name);
+future<> backup_task_impl::worker::upload_component(sstring name) {
+    auto component_name = _task._snapshot_dir / name;
+    auto destination = fmt::format("/{}/{}/{}", _task._bucket, _task._prefix, name);
     snap_log.trace("Upload {} to {}", component_name.native(), destination);
 
     // Start uploading in the background. The caller waits for these fibers
@@ -91,7 +106,7 @@ future<> backup_task_impl::upload_component(sstring name) {
         throw;
     }
 
-    if (!_remove_on_uploaded) {
+    if (!_task._remove_on_uploaded) {
         co_return;
     }
 
@@ -118,8 +133,30 @@ future<> backup_task_impl::do_backup() {
     _backup_shard = this_shard_id();
     co_await _sharded_worker.start(std::ref(_snap_ctl.db()), _table_id, std::ref(*this));
 
+    gate abort_gate;
+    auto abort_sub = _as.subscribe([&] () noexcept {
+        if (auto gh = abort_gate.try_hold()) {
+            std::ignore = _sharded_worker.invoke_on_all([] (worker& m) {
+                m.abort();
+            }).finally([gh = std::move(gh)] {});
+        }
+    });
+
+    // Errors from `start_uploading` are retrieved by `done`
+    co_await _sharded_worker.invoke_on_all([] (worker& m) {
+        return m.start_uploading();
+    });
+
     try {
-        co_await uploads_worker();
+        co_await _sharded_worker.invoke_on_all([] (worker& m) {
+            return m.done();
+        });
+
+        co_await abort_gate.close();
+        abort_sub = {};
+    
+        // Collect progress from all shards before destroying _sharded_worker
+        _total_progress.completed = *(co_await get_total_uploaded());
     } catch (...) {
         _ex = std::current_exception();
     }
@@ -173,27 +210,29 @@ future<> backup_task_impl::process_snapshot_dir() {
     }
 }
 
-future<> backup_task_impl::uploads_worker() {
+future<> backup_task_impl::worker::uploads_worker() {
     gate uploads;
 
     try {
         while (!_ex) {
             auto gh = uploads.hold();
-            auto units = co_await _sharded_worker.local().manager().dir_semaphore().get_units(1, _as);
+            auto units = co_await _manager.dir_semaphore().get_units(1, _as);
 
             // Pre-upload break point. For testing abort in actual s3 client usage.
             co_await utils::get_local_injector().inject("backup_task_pre_upload", utils::wait_for_message(std::chrono::minutes(2)));
 
-            auto name_opt = dequeue();
+            auto name_opt = co_await smp::submit_to(_task._backup_shard, [this] () {
+                return _task.dequeue();
+            });
             if (!name_opt) {
                 break;
             }
-            // okay to drop future since uploads is always closed before exiting the function
+            // okay to drop future since async_gate is always closed before stopping
             std::ignore = backup_file(std::move(*name_opt), upload_permit(std::move(gh), std::move(units)));
             co_await coroutine::maybe_yield();
             co_await utils::get_local_injector().inject("backup_task_pause", utils::wait_for_message(std::chrono::minutes(2)));
-            if (impl::_as.abort_requested()) {
-                _ex = impl::_as.abort_requested_exception_ptr();
+            if (_as.abort_requested()) {
+                _ex = _as.abort_requested_exception_ptr();
                 break;
             }
         }
@@ -208,7 +247,7 @@ future<> backup_task_impl::uploads_worker() {
     }
 }
 
-future<> backup_task_impl::backup_file(sstring name, upload_permit permit) {
+future<> backup_task_impl::worker::backup_file(sstring name, upload_permit permit) {
     try {
         co_await upload_component(name);
     } catch (...) {
@@ -267,8 +306,27 @@ void backup_task_impl::on_sstable_deletion(sstables::generation_type gen) {
 backup_task_impl::worker::worker(const replica::database& db, table_id t, backup_task_impl& task)
     : _manager(db.get_sstables_manager(*db.find_schema(t)))
     , _task(task)
+    , _client(task._sstm.local().get_endpoint_client(task._endpoint))
 {
     _manager.subscribe(*this);
+}
+
+future<> backup_task_impl::worker::done() {
+    return std::exchange(_done_fut, make_ready_future());
+}
+
+future<> backup_task_impl::worker::stop() {
+    return done().handle_exception([] (std::exception_ptr ex) {
+        on_internal_error(snap_log, format("backup_task_impl::worker failue wasn't processed: {}", ex));
+    });
+}
+
+void backup_task_impl::worker::abort() {
+    _as.request_abort();
+}
+
+void backup_task_impl::worker::start_uploading() {
+    _done_fut = uploads_worker();
 }
 
 future<> backup_task_impl::worker::deleted_sstable(sstables::generation_type gen) const {
