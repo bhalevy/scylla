@@ -202,7 +202,7 @@ auto send_message_timeout(messaging_service* ms, messaging_verb verb, locator::h
 // and causes the returned future to resolve exceptionally with `abort_requested_exception`.
 // TODO: Remove duplicated code in send_message
 template <typename MsgIn, typename... MsgOut>
-auto send_message_cancellable(messaging_service* ms, messaging_verb verb, std::optional<locator::host_id> host_id, msg_addr id, abort_source& as, MsgOut&&... msg) {
+auto send_message_abortable(messaging_service* ms, messaging_verb verb, std::optional<locator::host_id> host_id, msg_addr id, abort_source& as, MsgOut&&... msg) {
     auto rpc_handler = ms->rpc()->make_client<MsgIn(MsgOut...)>(verb);
     using futurator = futurize<std::invoke_result_t<decltype(rpc_handler), rpc_protocol::client&, MsgOut...>>;
     if (ms->is_shutting_down()) {
@@ -241,13 +241,13 @@ auto send_message_cancellable(messaging_service* ms, messaging_verb verb, std::o
 }
 
 template <typename MsgIn, typename... MsgOut>
-auto send_message_cancellable(messaging_service* ms, messaging_verb verb, msg_addr id, abort_source& as, MsgOut&&... msg) {
-    return send_message_cancellable<MsgIn, MsgOut...>(ms, verb, std::nullopt, id, as, std::forward<MsgOut>(msg)...);
+auto send_message_abortable(messaging_service* ms, messaging_verb verb, msg_addr id, abort_source& as, MsgOut&&... msg) {
+    return send_message_abortable<MsgIn, MsgOut...>(ms, verb, std::nullopt, id, as, std::forward<MsgOut>(msg)...);
 }
 
 template <typename MsgIn, typename... MsgOut>
-auto send_message_cancellable(messaging_service* ms, messaging_verb verb, locator::host_id id, abort_source& as, MsgOut&&... msg) {
-    return send_message_cancellable<MsgIn, MsgOut...>(ms, verb, std::optional{id}, ms->addr_for_host_id(id), as, std::forward<MsgOut>(msg)...);
+auto send_message_abortable(messaging_service* ms, messaging_verb verb, locator::host_id id, abort_source& as, MsgOut&&... msg) {
+    return send_message_abortable<MsgIn, MsgOut...>(ms, verb, std::optional{id}, ms->addr_for_host_id(id), as, std::forward<MsgOut>(msg)...);
 }
 
 // Send one way message for verb
