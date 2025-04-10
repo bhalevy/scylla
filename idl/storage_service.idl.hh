@@ -71,12 +71,12 @@ struct tablet_operation_repair_result {
 };
 
 verb raft_topology_cmd (raft::server_id dst_id, raft::term_t term, uint64_t cmd_index, service::raft_topology_cmd) -> service::raft_topology_cmd_result;
-verb [[cancellable]] raft_pull_snapshot (raft::server_id dst_id, service::raft_snapshot_pull_params) -> service::raft_snapshot;
-verb [[cancellable]] tablet_stream_data (raft::server_id dst_id, locator::global_tablet_id);
-verb [[cancellable]] tablet_cleanup (raft::server_id dst_id, locator::global_tablet_id);
-verb [[cancellable]] table_load_stats_v1 (raft::server_id dst_id) -> locator::load_stats_v1;
-verb [[cancellable]] table_load_stats (raft::server_id dst_id) -> locator::load_stats;
-verb [[cancellable]] tablet_repair(raft::server_id dst_id, locator::global_tablet_id) -> service::tablet_operation_repair_result;
+verb [[abortable]] raft_pull_snapshot (raft::server_id dst_id, service::raft_snapshot_pull_params) -> service::raft_snapshot;
+verb [[abortable]] tablet_stream_data (raft::server_id dst_id, locator::global_tablet_id);
+verb [[abortable]] tablet_cleanup (raft::server_id dst_id, locator::global_tablet_id);
+verb [[abortable]] table_load_stats_v1 (raft::server_id dst_id) -> locator::load_stats_v1;
+verb [[abortable]] table_load_stats (raft::server_id dst_id) -> locator::load_stats;
+verb [[abortable]] tablet_repair(raft::server_id dst_id, locator::global_tablet_id) -> service::tablet_operation_repair_result;
 verb [[]] estimate_sstable_volume(table_id table) -> uint64_t;
 verb [[]] sample_sstables(table_id table, uint64_t chunk_size, uint64_t n_chunks) -> utils::chunked_vector<temporary_buffer<char>>;
 

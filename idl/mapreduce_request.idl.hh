@@ -45,5 +45,5 @@ struct mapreduce_result {
     std::vector<bytes_opt> query_results;
 };
 
-verb [[cancellable]] mapreduce_request(query::mapreduce_request req [[ref]], std::optional<tracing::trace_info> trace_info [[ref]]) -> query::mapreduce_result;
+verb [[abortable]] mapreduce_request(query::mapreduce_request req [[ref]], std::optional<tracing::trace_info> trace_info [[ref]]) -> query::mapreduce_result;
 }
