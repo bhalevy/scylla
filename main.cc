@@ -698,7 +698,8 @@ To start the scylla server proper, simply invoke as: scylla server (or just scyl
     auto p11_modules_str = p11_modules.string<char>();
     ::p11_kit_override_system_files(NULL, NULL, p11_modules_str.c_str(), NULL, NULL);
 
-sharded<locator::shared_token_metadata> token_metadata;
+    sharded<locator::cluster_registry> cluster_registry;
+    sharded<locator::shared_token_metadata> token_metadata;
     sharded<locator::effective_replication_map_factory> erm_factory;
     sharded<service::migration_notifier> mm_notifier;
     sharded<service::endpoint_lifecycle_notifier> lifecycle_notifier;
@@ -767,7 +768,7 @@ sharded<locator::shared_token_metadata> token_metadata;
 
         return seastar::async([&app, cfg, ext, &disk_space_monitor_shard0, &cm, &sstm, &db, &qp, &bm, &proxy, &mapreduce_service, &mm, &mm_notifier, &ctx, &opts, &dirs,
                 &prometheus_server, &cf_cache_hitrate_calculator, &load_meter, &feature_service, &gossiper, &snitch,
-                &token_metadata, &erm_factory, &snapshot_ctl, &messaging, &sst_dir_semaphore, &raft_gr, &service_memory_limiter,
+                &cluster_registry, &token_metadata, &erm_factory, &snapshot_ctl, &messaging, &sst_dir_semaphore, &raft_gr, &service_memory_limiter,
                 &repair, &sst_loader, &ss, &lifecycle_notifier, &stream_manager, &task_manager, &rpc_dict_training_worker] {
           try {
               if (opts.contains("relabel-config-file") && !opts["relabel-config-file"].as<sstring>().empty()) {
@@ -1011,6 +1012,13 @@ sharded<locator::shared_token_metadata> token_metadata;
             }
 
             checkpoint(stop_signal, "starting tokens manager");
+            cluster_registry.start().get();
+            // Do not stop cluster_registry until we stop token_metadata
+            //
+            // auto stop_cluster_registry = defer_verbose_shutdown("cluster registry", [&] () noexcept {
+            //     cluster_registry.stop().get();
+            // });
+
             locator::token_metadata::config tm_cfg;
             tm_cfg.topo_cfg.this_endpoint = broadcast_addr;
             tm_cfg.topo_cfg.this_cql_address = broadcast_rpc_addr;
@@ -1028,7 +1036,7 @@ sharded<locator::shared_token_metadata> token_metadata;
                 //
                 tm_cfg.topo_cfg.disable_proximity_sorting = true;
             }
-            token_metadata.start([] () noexcept { return db::schema_tables::hold_merge_lock(); }, tm_cfg).get();
+            token_metadata.start(std::ref(cluster_registry), [] () noexcept { return db::schema_tables::hold_merge_lock(); }, tm_cfg).get();
             token_metadata.invoke_on_all([&] (auto& stm) {
                 stm.set_stall_detector_threshold(
                         std::chrono::duration_cast<std::chrono::steady_clock::duration>(

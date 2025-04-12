@@ -23,6 +23,7 @@
 #include <seastar/util/bool_class.hh>
 
 #include "locator/types.hh"
+#include "locator/cluster.hh"
 #include "inet_address_vectors.hh"
 
 using namespace seastar;
@@ -59,7 +60,7 @@ public:
 private:
     const locator::topology* _topology;
     locator::host_id _host_id;
-    endpoint_dc_rack _dc_rack;
+    location _dc_rack;
     state _state;
     shard_id _shard_count = 0;
     bool _excluded = false;
@@ -71,7 +72,7 @@ private:
 public:
     node(const locator::topology* topology,
          locator::host_id id,
-         endpoint_dc_rack dc_rack,
+         location dc_rack,
          state state,
          shard_id shard_count = 0,
          this_node is_this_node = this_node::no,
@@ -92,16 +93,16 @@ public:
         return _host_id;
     }
 
-    const endpoint_dc_rack& dc_rack() const noexcept {
+    const location& dc_rack() const noexcept {
         return _dc_rack;
     }
 
     const sstring& dc() const noexcept {
-        return _dc_rack.dc;
+        return _dc_rack.dc->name();
     }
 
     const sstring& rack() const noexcept {
-        return _dc_rack.rack;
+        return _dc_rack.rack->name();
     }
 
     // Is this "localhost"?
@@ -166,7 +167,7 @@ public:
 private:
     static node_holder make(const locator::topology* topology,
                             locator::host_id id,
-                            endpoint_dc_rack dc_rack,
+                            location dc_rack,
                             state state,
                             shard_id shard_count = 0,
                             node::this_node is_this_node = this_node::no,
@@ -193,8 +194,8 @@ public:
         bool operator==(const config&) const = default;
     };
     struct shallow_copy{};
-    topology(shallow_copy, config cfg);
-    topology(config cfg);
+    topology(shallow_copy, cluster_registry& cluster_registry, config cfg);
+    topology(cluster_registry& cluster_registry, config cfg);
     topology(topology&&) noexcept;
 
     topology& operator=(topology&&) noexcept;
@@ -211,13 +212,19 @@ public:
         return _this_node;
     }
 
+    cluster_registry& get_cluster_registry() const noexcept {
+        return _cluster_registry;
+    }
+
     // Adds a node with given host_id, endpoint, and DC/rack.
-    const node& add_node(host_id id, const endpoint_dc_rack& dr, node::state state,
+    // Must be called on shard 0
+    const node& add_node(host_id id, endpoint_dc_rack dr, node::state state,
                          shard_id shard_count = 0);
 
     // Optionally updates node's current host_id, endpoint, or DC/rack.
     // Note: the host_id may be updated from null to non-null after a new node gets a new, random host_id,
     // or a peer node host_id may be updated when the node is replaced with another node using the same ip address.
+    // Must be called on shard 0
     void update_node(node& node,
                             std::optional<host_id> opt_id,
                             std::optional<endpoint_dc_rack> opt_dr,
@@ -226,6 +233,7 @@ public:
 
     // Removes a node using its host_id
     // Returns true iff the node was found and removed.
+    // Must be called on shard 0
     bool remove_node(host_id id);
 
     // Looks up a node by its host_id.
@@ -291,12 +299,12 @@ public:
     }
 
     // Get dc/rack location of this node
-    const endpoint_dc_rack& get_location() const noexcept {
-        return _this_node ? _this_node->dc_rack() : _cfg.local_dc_rack;
+    const location& get_location() const noexcept {
+        return _this_node ? _this_node->dc_rack() : _this_node_location;
     }
     // Get dc/rack location of a node identified by host_id
     // The specified node must exist.
-    const endpoint_dc_rack& get_location(host_id id) const {
+    const location& get_location(host_id id) const {
         if (auto node = find_node(id)) {
             return node->dc_rack();
         }
@@ -305,27 +313,27 @@ public:
 
     // Get datacenter of this node
     const sstring& get_datacenter() const noexcept {
-        return get_location().dc;
+        return get_location().dc->name();
     }
     // Get datacenter of a node identified by host_id
     // The specified node must exist.
     const sstring& get_datacenter(host_id id) const {
-        return get_location(id).dc;
+        return get_location(id).dc->name();
     }
 
     // Get rack of this node
     const sstring& get_rack() const noexcept {
-        return get_location().rack;
+        return get_location().rack->name();
     }
     // Get rack of a node identified by host_id
     // The specified node must exist.
     const sstring& get_rack(host_id id) const {
-        return get_location(id).rack;
+        return get_location(id).rack->name();
     }
 
     auto get_local_dc_filter() const noexcept {
-        return [ this, local_dc = get_datacenter() ] (auto ep) {
-            return get_datacenter(ep) == local_dc;
+        return [ this, loc = get_location() ] (auto ep) {
+            return get_location(ep).dc == loc.dc;
         };
     };
 
@@ -358,7 +366,7 @@ public:
      * 2. Nodes in the same RACK
      * 3. Nodes in the same DC
      */
-    static int distance(const locator::host_id& address, const endpoint_dc_rack& loc, const locator::host_id& address1, const endpoint_dc_rack& loc1) noexcept;
+    static int distance(const locator::host_id& address, const location& loc, const locator::host_id& address1, const location& loc1) noexcept;
 
     // Executes a function for each node in a state other than "none" and "left".
     void for_each_node(std::function<void(const node&)> func) const;
@@ -403,10 +411,12 @@ private:
     }
 
     void seed_random_engine(random_engine_type::result_type);
-    const endpoint_dc_rack& get_location_slow(host_id id) const;
+    const location& get_location_slow(host_id id) const;
 
     unsigned _shard;
+    cluster_registry& _cluster_registry;
     config _cfg;
+    location _this_node_location;
     const node* _this_node = nullptr;
     std::vector<node_holder> _nodes;
     std::unordered_map<host_id, std::reference_wrapper<const node>> _nodes_by_host_id;

@@ -59,6 +59,7 @@ int main(int ac, char ** av) {
             const gms::inet_address listen = gms::inet_address(config["listen-address"].as<std::string>());
 
             sharded<abort_source> abort_sources;
+            sharded<locator::cluster_registry> cluster_registry;
             sharded<locator::shared_token_metadata> token_metadata;
             sharded<utils::walltime_compressor_tracker> compressor_tracker;
             sharded<gms::feature_service> feature_service;
@@ -69,13 +70,16 @@ int main(int ac, char ** av) {
             abort_sources.start().get();
             auto stop_abort_source = defer([&] { abort_sources.stop().get(); });
 
+            cluster_registry.start().get();
+            auto stop_cluster_registry = deferred_stop(cluster_registry);
+
             locator::token_metadata::config tm_cfg;
             auto my_address = gms::inet_address("localhost");
             tm_cfg.topo_cfg.this_endpoint = my_address;
             tm_cfg.topo_cfg.this_cql_address = my_address;
-            token_metadata.start([] () noexcept { return db::schema_tables::hold_merge_lock(); }, tm_cfg).get();
+            token_metadata.start(std::ref(cluster_registry), [] () noexcept { return db::schema_tables::hold_merge_lock(); }, tm_cfg).get();
             auto stop_token_mgr = defer([&] { token_metadata.stop().get(); });
-            locator::shared_token_metadata tm({}, {});
+            locator::shared_token_metadata tm(cluster_registry.local(), {}, {});
             sharded<qos::service_level_controller> sl_controller;
             scheduling_group default_scheduling_group = create_scheduling_group("sl_default_sg", 1.0).get();
             sharded<abort_source> as;

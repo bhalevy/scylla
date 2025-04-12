@@ -39,8 +39,8 @@ SEASTAR_THREAD_TEST_CASE(test_add_node) {
         .this_host_id = id1,
         .local_dc_rack = endpoint_dc_rack::default_location,
     };
-
-    auto topo = topology(cfg);
+    locator::cluster_registry cr;
+    auto topo = topology(cr, cfg);
 
     set_abort_on_internal_error(false);
     auto reset_on_internal_abort = seastar::defer([] {
@@ -74,8 +74,8 @@ SEASTAR_THREAD_TEST_CASE(test_moving) {
         .this_host_id = id1,
         .local_dc_rack = endpoint_dc_rack::default_location,
     };
-
-    auto topo = topology(cfg);
+    locator::cluster_registry cr;
+    auto topo = topology(cr, cfg);
 
     topo.add_or_update_endpoint(id1, endpoint_dc_rack::default_location, node::state::normal);
 
@@ -102,8 +102,8 @@ SEASTAR_THREAD_TEST_CASE(test_update_node) {
         .this_host_id = id1,
         .local_dc_rack = endpoint_dc_rack::default_location,
     };
-
-    auto topo = topology(cfg);
+    locator::cluster_registry cr;
+    auto topo = topology(cr, cfg);
 
     set_abort_on_internal_error(false);
     auto reset_on_internal_abort = seastar::defer([] {
@@ -126,12 +126,12 @@ SEASTAR_THREAD_TEST_CASE(test_update_node) {
     auto dc_rack1 = endpoint_dc_rack{"DC1", "RACK1"};
     topo.update_node(*node, std::nullopt, dc_rack1, std::nullopt);
 
-    BOOST_REQUIRE(topo.get_location(id1) == dc_rack1);
+    BOOST_REQUIRE(topo.get_location(id1).get_dc_rack() == dc_rack1);
 
     auto dc_rack2 = endpoint_dc_rack{"DC2", "RACK2"};
     topo.update_node(*node, std::nullopt, dc_rack2, std::nullopt);
 
-    BOOST_REQUIRE(topo.get_location(id1) == dc_rack2);
+    BOOST_REQUIRE(topo.get_location(id1).get_dc_rack() == dc_rack2);
 
     BOOST_REQUIRE_NE(node->get_state(), locator::node::state::being_decommissioned);
     topo.update_node(*node, std::nullopt, std::nullopt, locator::node::state::being_decommissioned);
@@ -144,7 +144,7 @@ SEASTAR_THREAD_TEST_CASE(test_update_node) {
     topo.update_node(*node, std::nullopt, dc_rack3, locator::node::state::being_decommissioned);
 
     BOOST_REQUIRE_EQUAL(topo.find_node(id1), node);
-    BOOST_REQUIRE(topo.get_location(id1) == dc_rack3);
+    BOOST_REQUIRE(topo.get_location(id1).get_dc_rack() == dc_rack3);
     BOOST_REQUIRE_EQUAL(node->get_state(), locator::node::state::being_decommissioned);
 }
 
@@ -170,8 +170,8 @@ SEASTAR_THREAD_TEST_CASE(test_remove_endpoint) {
         .this_host_id = id1,
         .local_dc_rack = dc_rack1
     };
-
-    auto topo = topology(cfg);
+    locator::cluster_registry cr;
+    auto topo = topology(cr, cfg);
 
     topo.add_or_update_endpoint(id1, dc_rack1, node::state::normal);
     topo.add_node(id2, dc_rack2, node::state::normal);
@@ -206,7 +206,8 @@ SEASTAR_THREAD_TEST_CASE(test_load_sketch) {
     unsigned node3_shard_count = 3;
 
     semaphore sem(1);
-    shared_token_metadata stm([&sem] () noexcept { return get_units(sem, 1); }, locator::token_metadata::config{
+    locator::cluster_registry cr;
+    shared_token_metadata stm(cr, [&sem] () noexcept { return get_units(sem, 1); }, locator::token_metadata::config{
         topology::config{
             .this_endpoint = ip1,
             .this_host_id = host1,
@@ -323,8 +324,8 @@ SEASTAR_THREAD_TEST_CASE(test_left_node_is_kept_outside_dc) {
         .this_endpoint = ep1,
         .local_dc_rack = dc_rack1
     };
-
-    auto topo = topology(cfg);
+    locator::cluster_registry cr;
+    auto topo = topology(cr, cfg);
 
     set_abort_on_internal_error(false);
     auto reset_on_internal_abort = seastar::defer([] {

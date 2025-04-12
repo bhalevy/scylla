@@ -183,25 +183,27 @@ int main(int ac, char ** av) {
 
     distributed<replica::database> db;
     sharded<auth::service> auth_service;
-    locator::shared_token_metadata tm({}, {});
+    sharded<locator::cluster_registry> cluster_registry;
+    sharded<locator::shared_token_metadata> token_metadata;
     distributed<qos::service_level_controller> sl_controller;
 
-    return app.run_deprecated(ac, av, [&app, &auth_service, &tm, &sl_controller] {
-        return seastar::async([&app, &auth_service, &tm, &sl_controller] {
+    return app.run_deprecated(ac, av, [&app, &auth_service, &cluster_registry, &token_metadata, &sl_controller] {
+        return seastar::async([&app, &auth_service, &cluster_registry, &token_metadata, &sl_controller] {
             auto config = app.configuration();
             bool stay_alive = config["stay-alive"].as<bool>();
             const gms::inet_address listen = gms::inet_address(config["listen-address"].as<std::string>());
             auto my_address = listen != gms::inet_address("0.0.0.0") ? listen : gms::inet_address("localhost");
+            cluster_registry.start().get();
+            auto stop_cr = deferred_stop(cluster_registry);
             locator::token_metadata::config tm_cfg;
             tm_cfg.topo_cfg.this_endpoint = my_address;
-            sharded<locator::shared_token_metadata> token_metadata;
-            token_metadata.start([] () noexcept { return db::schema_tables::hold_merge_lock(); }, tm_cfg).get();
+            token_metadata.start(std::ref(cluster_registry), [] () noexcept { return db::schema_tables::hold_merge_lock(); }, tm_cfg).get();
             auto stop_tm = deferred_stop(token_metadata);
             auto default_scheduling_group = create_scheduling_group("sl_default_sg", 1.0).get();
             sharded<abort_source> as;
             as.start().get();
             auto stop_as = defer([&as] { as.stop().get(); });
-            sl_controller.start(std::ref(auth_service), std::ref(tm), std::ref(as), qos::service_level_options{.shares = 1000}, default_scheduling_group).get();
+            sl_controller.start(std::ref(auth_service), std::ref(token_metadata), std::ref(as), qos::service_level_options{.shares = 1000}, default_scheduling_group).get();
             seastar::sharded<utils::walltime_compressor_tracker> compressor_tracker;
             compressor_tracker.start([] { return utils::walltime_compressor_tracker::config{}; }).get();
             auto stop_compressor_tracker = deferred_stop(compressor_tracker);

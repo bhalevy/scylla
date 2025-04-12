@@ -791,7 +791,8 @@ SEASTAR_TEST_CASE(test_get_shard) {
         const auto shard_count = 2;
 
         semaphore sem(1);
-        shared_token_metadata stm([&sem] () noexcept { return get_units(sem, 1); }, locator::token_metadata::config{
+        cluster_registry cr;
+        shared_token_metadata stm(cr, [&sem] () noexcept { return get_units(sem, 1); }, locator::token_metadata::config{
                 locator::topology::config{
                         .this_endpoint = ip1,
                         .this_host_id = h1,
@@ -1047,7 +1048,8 @@ SEASTAR_TEST_CASE(test_sharder) {
 
         auto table1 = table_id(utils::UUID_gen::get_time_UUID());
 
-        token_metadata tokm(token_metadata::config{ .topo_cfg{ .this_host_id = h1, .local_dc_rack = locator::endpoint_dc_rack::default_location } });
+        cluster_registry cr;
+        token_metadata tokm(cr, token_metadata::config{ .topo_cfg{ .this_host_id = h1, .local_dc_rack = locator::endpoint_dc_rack::default_location } });
         tokm.get_topology().add_or_update_endpoint(h1);
 
         std::vector<tablet_id> tablet_ids;
@@ -1262,7 +1264,8 @@ SEASTAR_TEST_CASE(test_intranode_sharding) {
 
         auto table1 = table_id(utils::UUID_gen::get_time_UUID());
 
-        token_metadata tokm(token_metadata::config{ .topo_cfg{ .this_host_id = h1, .local_dc_rack = locator::endpoint_dc_rack::default_location } });
+        cluster_registry cr;
+        token_metadata tokm(cr, token_metadata::config{ .topo_cfg{ .this_host_id = h1, .local_dc_rack = locator::endpoint_dc_rack::default_location } });
         tokm.get_topology().add_or_update_endpoint(h1);
 
         auto leaving_replica = tablet_replica{h1, 5};
@@ -3539,7 +3542,8 @@ static void execute_tablet_for_new_rf_test(calculate_tablet_replicas_for_new_rf_
     tm_cfg.topo_cfg.this_endpoint = test_config.ring_points[0].host;
     tm_cfg.topo_cfg.local_dc_rack = { snitch.local()->get_datacenter(), snitch.local()->get_rack() };
     tm_cfg.topo_cfg.this_host_id = test_config.ring_points[0].id;
-    locator::shared_token_metadata stm([] () noexcept { return db::schema_tables::hold_merge_lock(); }, tm_cfg);
+    cluster_registry cr;
+    locator::shared_token_metadata stm(cr, [] () noexcept { return db::schema_tables::hold_merge_lock(); }, tm_cfg);
 
     // Initialize the token_metadata
     stm.mutate_token_metadata([&] (token_metadata& tm) -> future<> {

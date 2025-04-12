@@ -20,7 +20,8 @@ target_sources(scylla_locator
     gce_snitch.cc
     tablets.cc
     topology.cc
-    util.cc)
+    util.cc
+    cluster.cc)
 target_include_directories(scylla_locator
   PUBLIC
     ${CMAKE_SOURCE_DIR})

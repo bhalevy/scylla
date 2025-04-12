@@ -1634,7 +1634,8 @@ future<> repair_service::bootstrap_with_repair(locator::token_metadata_ptr tmptr
         auto& db = get_db().local();
         auto ks_erms = db.get_non_local_strategy_keyspaces_erms();
         auto& topology = tmptr->get_topology();
-        auto myloc = topology.get_location();
+        const auto& loc = topology.get_location();
+        auto myloc = locator::endpoint_dc_rack{loc.dc->name(), loc.rack->name()};
         auto myid = tmptr->get_my_id();
         auto reason = streaming::stream_reason::bootstrap;
         // Calculate number of ranges to sync data
@@ -2240,14 +2241,14 @@ future<> repair_service::replace_with_repair(std::unordered_map<sstring, locator
     auto cloned_tm = co_await tmptr->clone_async();
     auto op = sstring("replace_with_repair");
     auto& topology = tmptr->get_topology();
-    auto myloc = topology.get_location();
+    auto& myloc = topology.get_location();
     auto reason = streaming::stream_reason::replace;
     // update a cloned version of tmptr
     // no need to set the original version
     auto cloned_tmptr = make_token_metadata_ptr(std::move(cloned_tm));
-    cloned_tmptr->update_topology(tmptr->get_my_id(), myloc, locator::node::state::replacing);
+    cloned_tmptr->update_topology(tmptr->get_my_id(), myloc.get_dc_rack(), locator::node::state::replacing);
     co_await cloned_tmptr->update_normal_tokens(replacing_tokens, tmptr->get_my_id());
-    auto source_dc = utils::optional_param(myloc.dc);
+    auto source_dc = utils::optional_param(myloc.dc->name());
     rlogger.info("{}: this-node={} ignore_nodes={} source_dc={}", op, *topology.this_node(), ignore_nodes, source_dc);
     co_return co_await do_rebuild_replace_with_repair(std::move(ks_erms), std::move(cloned_tmptr), std::move(op), std::move(source_dc), reason, std::move(ignore_nodes), replaced_node);
 }

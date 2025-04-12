@@ -1823,7 +1823,7 @@ get_view_natural_endpoint(
         replica::cf_stats& cf_stats) {
     auto& topology = base_erm->get_token_metadata_ptr()->get_topology();
     auto& my_location = topology.get_location(me);
-    auto& my_datacenter = my_location.dc;
+    auto& my_datacenter = my_location.dc->name();
     auto* network_topology = dynamic_cast<const locator::network_topology_strategy*>(&replication_strategy);
     auto rack_aware_pairing = use_tablets_rack_aware_view_pairing && network_topology;
     bool simple_rack_aware_pairing = false;
@@ -1919,6 +1919,7 @@ get_view_natural_endpoint(
         std::unordered_map<sstring, std::vector<indexed_replica>> base_racks, view_racks;
 
         // First, index all replicas by rack
+        // FIXME: use native datacenter/rack pointers rather than their names
         auto index_replica_set = [] (std::unordered_map<sstring, std::vector<indexed_replica>>& racks, const node_vector& replicas) {
             size_t idx = 0;
             for (const auto& r: replicas) {
@@ -1929,12 +1930,12 @@ get_view_natural_endpoint(
         index_replica_set(view_racks, view_endpoints);
 
         // Try optimistically pairing `me` first
-        const auto& my_base_replicas = base_racks[my_location.rack];
+        const auto& my_base_replicas = base_racks[my_location.rack->name()];
         auto base_it = std::ranges::find(my_base_replicas, me, [] (const indexed_replica& ir) { return ir.node.get().host_id(); });
         if (base_it == my_base_replicas.end()) {
             return std::nullopt;
         }
-        const auto& my_view_replicas = view_racks[my_location.rack];
+        const auto& my_view_replicas = view_racks[my_location.rack->name()];
         size_t idx = base_it - my_base_replicas.begin();
         if (idx < my_view_replicas.size()) {
             return my_view_replicas[idx].node.get().host_id();

@@ -91,10 +91,10 @@ private:
 
     struct shallow_copy {};
 public:
-    token_metadata_impl(shallow_copy, const token_metadata_impl& o) noexcept
-        : _topology(topology::shallow_copy{}, topology::config{})
+    token_metadata_impl(shallow_copy, cluster_registry& cr, const token_metadata_impl& o) noexcept
+        : _topology(topology::shallow_copy{}, cr, topology::config{})
     {}
-    token_metadata_impl(token_metadata::config cfg) noexcept : _topology(std::move(cfg.topo_cfg)) {};
+    token_metadata_impl(cluster_registry& cr, token_metadata::config cfg) noexcept : _topology(cr, std::move(cfg.topo_cfg)) {};
     token_metadata_impl(const token_metadata_impl&) = delete; // it's too huge for direct copy, use clone_async()
     token_metadata_impl(token_metadata_impl&&) noexcept = default;
     const std::vector<token>& sorted_tokens() const;
@@ -339,7 +339,7 @@ future<std::unique_ptr<token_metadata_impl>> token_metadata_impl::clone_async() 
 }
 
 future<std::unique_ptr<token_metadata_impl>> token_metadata_impl::clone_only_token_map(bool clone_sorted_tokens) const noexcept {
-    auto ret = std::make_unique<token_metadata_impl>(shallow_copy{}, *this);
+    auto ret = std::make_unique<token_metadata_impl>(shallow_copy{}, _topology.get_cluster_registry(), *this);
     ret->_token_to_endpoint_map.reserve(_token_to_endpoint_map.size());
     for (const auto& p : _token_to_endpoint_map) {
         ret->_token_to_endpoint_map.emplace(p);
@@ -750,9 +750,8 @@ std::unordered_map<sstring, std::unordered_map<sstring, std::unordered_set<host_
 token_metadata_impl::get_datacenter_racks_token_owners() const {
     std::unordered_map<sstring, std::unordered_map<sstring, std::unordered_set<host_id>>> dc_racks_token_owners;
     _topology.for_each_node([&] (const node& n) {
-        const auto& dc_rack = n.dc_rack();
         if (is_normal_token_owner(n.host_id())) {
-            dc_racks_token_owners[dc_rack.dc][dc_rack.rack].insert(n.host_id());
+            dc_racks_token_owners[n.dc()][n.rack()].insert(n.host_id());
         }
     });
     return dc_racks_token_owners;
@@ -773,9 +772,8 @@ std::unordered_map<sstring, std::unordered_map<sstring, std::unordered_set<std::
 token_metadata_impl::get_datacenter_racks_token_owners_nodes() const {
     std::unordered_map<sstring, std::unordered_map<sstring, std::unordered_set<std::reference_wrapper<const node>>>> dc_racks_token_owners;
     _topology.for_each_node([&] (const node& n) {
-        const auto& dc_rack = n.dc_rack();
         if (is_normal_token_owner(n.host_id())) {
-            dc_racks_token_owners[dc_rack.dc][dc_rack.rack].insert(std::cref(n));
+            dc_racks_token_owners[n.dc()][n.rack()].insert(std::cref(n));
         }
     });
     return dc_racks_token_owners;
@@ -834,8 +832,8 @@ token_metadata::token_metadata(std::unique_ptr<token_metadata_impl> impl)
 {
 }
 
-token_metadata::token_metadata(config cfg)
-        : _impl(std::make_unique<token_metadata_impl>(cfg))
+token_metadata::token_metadata(cluster_registry& cr, config cfg)
+        : _impl(std::make_unique<token_metadata_impl>(cr, cfg))
 {
 }
 

@@ -104,7 +104,7 @@ public:
 
                 if (tm.get_topology().has_node(hostid)) {
                     // Not all entries in gossiper are present in the topology
-                    sstring dc = tm.get_topology().get_location(hostid).dc;
+                    sstring dc = tm.get_topology().get_location(hostid).dc->name();
                     set_cell(cr, "dc", dc);
                 }
 

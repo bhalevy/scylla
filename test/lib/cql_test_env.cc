@@ -153,6 +153,7 @@ private:
     sharded<tasks::task_manager> _task_manager;
     sharded<netw::messaging_service> _ms;
     sharded<service::storage_service> _ss;
+    sharded<locator::cluster_registry> _cluster_registry;
     sharded<locator::shared_token_metadata> _token_metadata;
     sharded<locator::effective_replication_map_factory> _erm_factory;
     sharded<sstables::directory_semaphore> _sst_dir_semaphore;
@@ -561,11 +562,14 @@ private:
             auto stop_snitch = defer_verbose_shutdown("snitch", [this] { _snitch.stop().get(); });
             _snitch.invoke_on_all(&locator::snitch_ptr::start).get();
 
+            _cluster_registry.start().get();
+            auto stop_cluster_registry = defer_verbose_shutdown("cluster registry", [this] { _cluster_registry.stop().get(); });
+
             locator::token_metadata::config tm_cfg;
             tm_cfg.topo_cfg.this_endpoint = my_address;
             tm_cfg.topo_cfg.this_cql_address = my_address;
             tm_cfg.topo_cfg.local_dc_rack = { _snitch.local()->get_datacenter(), _snitch.local()->get_rack() };
-            _token_metadata.start([] () noexcept { return db::schema_tables::hold_merge_lock(); }, tm_cfg).get();
+            _token_metadata.start(std::ref(_cluster_registry), [] () noexcept { return db::schema_tables::hold_merge_lock(); }, tm_cfg).get();
             auto stop_token_metadata = defer_verbose_shutdown("token metadata", [this] { _token_metadata.stop().get(); });
 
             _erm_factory.start().get();

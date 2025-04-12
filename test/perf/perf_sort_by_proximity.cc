@@ -29,6 +29,7 @@ struct sort_by_proximity_topology {
     static constexpr size_t NODES_PER_RACK = 3;
     static constexpr size_t NODES = DCS * RACKS_PER_DC * NODES_PER_RACK;
     semaphore sem{1};
+    locator::cluster_registry cr;
     std::optional<locator::shared_token_metadata> stm;
     std::unordered_map<size_t, std::unordered_map<size_t, host_id_vector_replica_set>> nodes;
     std::vector<host_id_vector_replica_set> replica_sets;
@@ -42,7 +43,7 @@ struct sort_by_proximity_topology {
         tm_cfg.topo_cfg.this_host_id = locator::host_id{utils::UUID(0, 1)};
         tm_cfg.topo_cfg.local_dc_rack = locator::endpoint_dc_rack::default_location;
 
-        stm.emplace([this] () noexcept { return get_units(sem, 1); }, tm_cfg);
+        stm.emplace(cr, [this] () noexcept { return get_units(sem, 1); }, tm_cfg);
 
         unsigned i = 1;
         stm->mutate_token_metadata_for_test([&] (locator::token_metadata& tm) {

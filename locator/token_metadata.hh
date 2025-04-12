@@ -178,7 +178,7 @@ public:
     using version_t = service::topology::version_t;
     using version_tracker_t = version_tracker;
 
-    token_metadata(config cfg);
+    token_metadata(cluster_registry& cr, config cfg);
     explicit token_metadata(std::unique_ptr<token_metadata_impl> impl);
     token_metadata(token_metadata&&) noexcept; // Can't use "= default;" - hits some static_assert in unique_ptr
     token_metadata& operator=(token_metadata&&) noexcept;
@@ -377,6 +377,7 @@ mutable_token_metadata_ptr make_token_metadata_ptr(Args... args) {
 }
 
 class shared_token_metadata {
+    cluster_registry& _cluster_registry;
     mutable_token_metadata_ptr _shared;
     token_metadata_lock_func _lock_func;
     std::chrono::steady_clock::duration _stall_detector_threshold = std::chrono::seconds(2);
@@ -407,8 +408,9 @@ private:
 public:
     // used to construct the shared object as a sharded<> instance
     // lock_func returns semaphore_units<>
-    explicit shared_token_metadata(token_metadata_lock_func lock_func, token_metadata::config cfg)
-        : _shared(make_token_metadata_ptr(std::move(cfg)))
+    explicit shared_token_metadata(cluster_registry& cluster_registry, token_metadata_lock_func lock_func, token_metadata::config cfg)
+        : _cluster_registry(cluster_registry)
+        , _shared(make_token_metadata_ptr(std::ref(_cluster_registry), std::move(cfg)))
         , _lock_func(std::move(lock_func))
     {
         _shared->set_version_tracker(new_tracker(_shared->get_version()));

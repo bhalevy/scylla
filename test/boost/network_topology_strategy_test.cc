@@ -279,7 +279,8 @@ void simple_test() {
     locator::token_metadata::config tm_cfg;
     tm_cfg.topo_cfg.this_endpoint = my_address;
     tm_cfg.topo_cfg.local_dc_rack = { snitch.local()->get_datacenter(), snitch.local()->get_rack() };
-    locator::shared_token_metadata stm([] () noexcept { return db::schema_tables::hold_merge_lock(); }, tm_cfg);
+    locator::cluster_registry cr;
+    locator::shared_token_metadata stm(cr, [] () noexcept { return db::schema_tables::hold_merge_lock(); }, tm_cfg);
 
     std::vector<ring_point> ring_points = {
         { 1.0,  inet_address("192.100.10.1") },
@@ -361,7 +362,8 @@ void heavy_origin_test() {
     auto stop_snitch = defer([&snitch] { snitch.stop().get(); });
     snitch.invoke_on_all(&snitch_ptr::start).get();
 
-    locator::shared_token_metadata stm([] () noexcept { return db::schema_tables::hold_merge_lock(); },
+    locator::cluster_registry cr;
+    locator::shared_token_metadata stm(cr, [] () noexcept { return db::schema_tables::hold_merge_lock(); },
      locator::token_metadata::config{locator::topology::config{ .local_dc_rack = locator::endpoint_dc_rack::default_location }});
 
     std::vector<int> dc_racks = {2, 4, 8};
@@ -475,7 +477,8 @@ SEASTAR_THREAD_TEST_CASE(NetworkTopologyStrategy_tablets_test) {
         testlog.debug("node_count_per_rack={}", node_count_per_rack);
 
         // Initialize the token_metadata
-        locator::shared_token_metadata stm([] () noexcept { return db::schema_tables::hold_merge_lock(); }, tm_cfg);
+        locator::cluster_registry cr;
+        locator::shared_token_metadata stm(cr, [] () noexcept { return db::schema_tables::hold_merge_lock(); }, tm_cfg);
         stm.mutate_token_metadata([&] (token_metadata& tm) -> future<> {
             auto& topo = tm.get_topology();
             for (const auto& [ring_point, endpoint, id] : ring_points) {
@@ -566,7 +569,8 @@ static void test_random_balancing(sharded<snitch_ptr>& snitch, gms::inet_address
             }), ", "));
 
     // Initialize the token_metadata
-    locator::shared_token_metadata stm([] () noexcept { return db::schema_tables::hold_merge_lock(); }, tm_cfg);
+    locator::cluster_registry cr;
+    locator::shared_token_metadata stm(cr, [] () noexcept { return db::schema_tables::hold_merge_lock(); }, tm_cfg);
     stm.mutate_token_metadata([&] (token_metadata& tm) -> future<> {
         auto& topo = tm.get_topology();
         for (const auto& [ring_point, endpoint, id] : ring_points) {
@@ -757,7 +761,7 @@ static locator::host_id_set calculate_natural_endpoints(
         }
 
         host_id ep = *tm.get_endpoint(next);
-        sstring dc = topo.get_location(ep).dc;
+        sstring dc = topo.get_location(ep).dc->name();
 
         auto& seen_racks_dc_set = seen_racks[dc];
         auto& racks_dc_map = racks.at(dc);
@@ -778,7 +782,7 @@ static locator::host_id_set calculate_natural_endpoints(
             dc_replicas_dc_set.insert(ep);
             replicas.push_back(ep);
         } else {
-            sstring rack = topo.get_location(ep).rack;
+            sstring rack = topo.get_location(ep).rack->name();
             // is this a new rack? - we prefer to replicate on different racks
             if (seen_racks_dc_set.contains(rack)) {
                 skipped_dc_endpoints_set.push_back(ep);
@@ -894,9 +898,10 @@ SEASTAR_THREAD_TEST_CASE(testCalculateEndpoints) {
     tm_cfg.topo_cfg.this_host_id = nodes[0];
     tm_cfg.topo_cfg.local_dc_rack = locator::endpoint_dc_rack::default_location;
 
+    locator::cluster_registry cr;
     for (size_t run = 0; run < RUNS; ++run) {
         semaphore sem(1);
-        shared_token_metadata stm([&sem] () noexcept { return get_units(sem, 1); }, tm_cfg);
+        shared_token_metadata stm(cr, [&sem] () noexcept { return get_units(sem, 1); }, tm_cfg);
 
         std::unordered_set<dht::token> random_tokens;
         while (random_tokens.size() < nodes.size() * VNODES) {
@@ -980,10 +985,10 @@ void topology::test_compare_endpoints(const locator::host_id& address, const loc
         }
     }
     auto res = compare_endpoints(*this, address, a1, a2);
-    testlog.debug("compare_endpoint: address={} [{}/{}] a1={} [{}/{}] a2={} [{}/{}]: res={} expected={} expected_value={}",
-            address, loc.dc, loc.rack,
-            a1, loc1.dc, loc1.rack,
-            a2, loc2.dc, loc2.rack,
+    testlog.debug("compare_endpoint: address={} [{}] a1={} [{}] a2={} [{}]: res={} expected={} expected_value={}",
+            address, loc,
+            a1, loc1,
+            a2, loc2,
             res, bool(expected), expected.value_or(std::partial_ordering::unordered));
     if (expected) {
         BOOST_REQUIRE_EQUAL(res, *expected);
@@ -1042,7 +1047,8 @@ SEASTAR_THREAD_TEST_CASE(test_topology_compare_endpoints) {
     });
 
     semaphore sem(1);
-    shared_token_metadata stm([&sem] () noexcept { return get_units(sem, 1); }, tm_cfg);
+    cluster_registry cr;
+    shared_token_metadata stm(cr, [&sem] () noexcept { return get_units(sem, 1); }, tm_cfg);
     stm.mutate_token_metadata([&] (token_metadata& tm) {
         auto& topo = tm.get_topology();
         generate_topology(topo, datacenters, nodes);
@@ -1086,7 +1092,8 @@ SEASTAR_THREAD_TEST_CASE(test_topology_sort_by_proximity) {
     tm_cfg.topo_cfg.this_host_id = nodes[0];
     tm_cfg.topo_cfg.local_dc_rack = locator::endpoint_dc_rack::default_location;
     semaphore sem(1);
-    shared_token_metadata stm([&sem] () noexcept { return get_units(sem, 1); }, tm_cfg);
+    cluster_registry cr;
+    shared_token_metadata stm(cr, [&sem] () noexcept { return get_units(sem, 1); }, tm_cfg);
     stm.mutate_token_metadata([&] (token_metadata& tm) -> future<> {
         generate_topology(tm.get_topology(), datacenters, nodes);
         return make_ready_future();
@@ -1115,7 +1122,8 @@ SEASTAR_THREAD_TEST_CASE(test_topology_tracks_local_node) {
     auto ip1_dc_rack_v2 = endpoint_dc_rack{ "dc1", "rack_ip1_v2" };
 
     semaphore sem(1);
-    shared_token_metadata stm([&sem] () noexcept { return get_units(sem, 1); }, locator::token_metadata::config{
+    cluster_registry cr;
+    shared_token_metadata stm(cr, [&sem] () noexcept { return get_units(sem, 1); }, locator::token_metadata::config{
         topology::config{
             .this_endpoint = ip1,
             .this_host_id = host1,
@@ -1125,7 +1133,7 @@ SEASTAR_THREAD_TEST_CASE(test_topology_tracks_local_node) {
 
     // get_location() should work before any node is added
 
-    BOOST_REQUIRE(stm.get()->get_topology().get_location() == ip1_dc_rack);
+    BOOST_REQUIRE(stm.get()->get_topology().get_location().get_dc_rack() == ip1_dc_rack);
 
     stm.mutate_token_metadata([&] (token_metadata& tm) {
         // Need to move to non left or none state in order to be indexed by ip
@@ -1138,14 +1146,14 @@ SEASTAR_THREAD_TEST_CASE(test_topology_tracks_local_node) {
     BOOST_REQUIRE(n1);
     BOOST_REQUIRE(bool(n1->is_this_node()));
     BOOST_REQUIRE_EQUAL(n1->host_id(), host1);
-    BOOST_REQUIRE(n1->dc_rack() == ip1_dc_rack);
-    BOOST_REQUIRE(stm.get()->get_topology().get_location() == ip1_dc_rack);
+    BOOST_REQUIRE(n1->dc_rack().get_dc_rack() == ip1_dc_rack);
+    BOOST_REQUIRE(stm.get()->get_topology().get_location().get_dc_rack() == ip1_dc_rack);
 
     const node* n2 = stm.get()->get_topology().find_node(host2);
     BOOST_REQUIRE(n2);
     BOOST_REQUIRE(!bool(n2->is_this_node()));
     BOOST_REQUIRE_EQUAL(n2->host_id(), host2);
-    BOOST_REQUIRE(n2->dc_rack() == endpoint_dc_rack::default_location);
+    BOOST_REQUIRE(n2->dc_rack().get_dc_rack() == endpoint_dc_rack::default_location);
 
     // Local node cannot be removed
 
@@ -1179,14 +1187,14 @@ SEASTAR_THREAD_TEST_CASE(test_topology_tracks_local_node) {
     BOOST_REQUIRE(n1);
     BOOST_REQUIRE(bool(n1->is_this_node()));
     BOOST_REQUIRE_EQUAL(n1->host_id(), host1);
-    BOOST_REQUIRE(n1->dc_rack() == ip1_dc_rack);
-    BOOST_REQUIRE(stm.get()->get_topology().get_location() == ip1_dc_rack);
+    BOOST_REQUIRE(n1->dc_rack().get_dc_rack() == ip1_dc_rack);
+    BOOST_REQUIRE(stm.get()->get_topology().get_location().get_dc_rack() == ip1_dc_rack);
 
     n2 = stm.get()->get_topology().find_node(host2);
     BOOST_REQUIRE(n2);
     BOOST_REQUIRE(!bool(n2->is_this_node()));
     BOOST_REQUIRE_EQUAL(n2->host_id(), host2);
-    BOOST_REQUIRE(n2->dc_rack() == endpoint_dc_rack::default_location);
+    BOOST_REQUIRE(n2->dc_rack().get_dc_rack() == endpoint_dc_rack::default_location);
 
     // get_location() should pick up endpoint_dc_rack from node info
 
@@ -1199,8 +1207,8 @@ SEASTAR_THREAD_TEST_CASE(test_topology_tracks_local_node) {
     BOOST_REQUIRE(n1);
     BOOST_REQUIRE(bool(n1->is_this_node()));
     BOOST_REQUIRE_EQUAL(n1->host_id(), host1);
-    BOOST_REQUIRE(n1->dc_rack() == ip1_dc_rack_v2);
-    BOOST_REQUIRE(stm.get()->get_topology().get_location() == ip1_dc_rack_v2);
+    BOOST_REQUIRE(n1->dc_rack().get_dc_rack() == ip1_dc_rack_v2);
+    BOOST_REQUIRE(stm.get()->get_topology().get_location().get_dc_rack() == ip1_dc_rack_v2);
 }
 
 SEASTAR_THREAD_TEST_CASE(tablets_simple_rack_aware_view_pairing_test) {
@@ -1248,7 +1256,8 @@ SEASTAR_THREAD_TEST_CASE(tablets_simple_rack_aware_view_pairing_test) {
     testlog.debug("node_count_per_rack={}", node_count_per_rack);
 
     // Initialize the token_metadata
-    locator::shared_token_metadata stm([] () noexcept { return db::schema_tables::hold_merge_lock(); }, tm_cfg);
+    cluster_registry cr;
+    locator::shared_token_metadata stm(cr, [] () noexcept { return db::schema_tables::hold_merge_lock(); }, tm_cfg);
     stm.mutate_token_metadata([&] (token_metadata& tm) -> future<> {
         auto& topo = tm.get_topology();
         for (const auto& [ring_point, endpoint, id] : ring_points) {
@@ -1400,7 +1409,8 @@ void test_complex_rack_aware_view_pairing_test(bool more_or_less) {
     testlog.debug("node_count_per_rack={}", node_count_per_rack);
 
     // Initialize the token_metadata
-    locator::shared_token_metadata stm([] () noexcept { return db::schema_tables::hold_merge_lock(); }, tm_cfg);
+    cluster_registry cr;
+    locator::shared_token_metadata stm(cr, [] () noexcept { return db::schema_tables::hold_merge_lock(); }, tm_cfg);
     stm.mutate_token_metadata([&] (token_metadata& tm) -> future<> {
         auto& topo = tm.get_topology();
         for (const auto& [ring_point, endpoint, id] : ring_points) {
@@ -1510,9 +1520,9 @@ void test_complex_rack_aware_view_pairing_test(bool more_or_less) {
         BOOST_REQUIRE_EQUAL(base_location.dc, view_location.dc);
 
         if (base_location.rack == view_location.rack) {
-            same_rack_pairs[base_location.dc]++;
+            same_rack_pairs[base_location.dc->name()]++;
         } else {
-            cross_rack_pairs[base_location.dc]++;
+            cross_rack_pairs[base_location.dc->name()]++;
         }
     }
     for (const auto& [dc, rf_opt] : options) {

@@ -727,8 +727,9 @@ future<> storage_service::topology_state_load(state_change_hint hint) {
     auto saved_tmpr = get_token_metadata_ptr();
     {
         auto tmlock = co_await get_token_metadata_lock();
-        auto tmptr = make_token_metadata_ptr(token_metadata::config {
-            get_token_metadata().get_topology().get_config()
+        const auto& topology = get_token_metadata().get_topology();
+        auto tmptr = make_token_metadata_ptr(std::ref(topology.get_cluster_registry()), token_metadata::config {
+            topology.get_config()
         });
         tmptr->invalidate_cached_rings();
 
@@ -1528,9 +1529,9 @@ future<> storage_service::join_topology(sharded<service::storage_proxy>& proxy,
         ri = co_await prepare_replacement_info(initial_contact_nodes, loaded_peer_features);
 
         const auto& my_location = tmptr->get_topology().get_location();
-        if (my_location != ri->dc_rack) {
-            auto msg = fmt::format("Cannot replace node {}/{} with a node on a different data center or rack. Current location={}/{}, new location={}/{}",
-                    ri->host_id, ri->address, ri->dc_rack.dc, ri->dc_rack.rack, my_location.dc, my_location.rack);
+        if (my_location.get_dc_rack() != ri->dc_rack) {
+            auto msg = fmt::format("Cannot replace node {}/{} with a node on a different data center or rack. Current location={}/{}, new location={}",
+                    ri->host_id, ri->address, ri->dc_rack.dc, ri->dc_rack.rack, my_location);
             slogger.error("{}", msg);
             throw std::runtime_error(msg);
         }
@@ -6615,16 +6616,16 @@ future<> storage_service::move_tablet(table_id table, dht::token token, locator:
         auto dst_dc_rack = get_token_metadata().get_topology().get_location(dst.host);
         if (src_dc_rack.dc != dst_dc_rack.dc) {
             if (force) {
-                slogger.warn("Moving tablet {} between DCs ({} and {})", gid, src_dc_rack.dc, dst_dc_rack.dc);
+                slogger.warn("Moving tablet {} between DCs ({} and {})", gid, src_dc_rack.dc->name(), dst_dc_rack.dc->name());
             } else {
-                throw std::runtime_error(fmt::format("Attempted to move tablet {} between DCs ({} and {})", gid, src_dc_rack.dc, dst_dc_rack.dc));
+                throw std::runtime_error(fmt::format("Attempted to move tablet {} between DCs ({} and {})", gid, src_dc_rack.dc->name(), dst_dc_rack.dc->name()));
             }
         }
-        if (src_dc_rack.rack != dst_dc_rack.rack && increases_replicas_per_rack(get_token_metadata().get_topology(), tinfo, dst_dc_rack.rack)) {
+        if (src_dc_rack.rack != dst_dc_rack.rack && increases_replicas_per_rack(get_token_metadata().get_topology(), tinfo, dst_dc_rack.rack->name())) {
             if (force) {
-                slogger.warn("Moving tablet {} between racks ({} and {}) which reduces availability", gid, src_dc_rack.rack, dst_dc_rack.rack);
+                slogger.warn("Moving tablet {} between racks ({} and {}) which reduces availability", gid, src_dc_rack.rack->name(), dst_dc_rack.rack->name());
             } else {
-                throw std::runtime_error(fmt::format("Attempted to move tablet {} between racks ({} and {}) which would reduce availability", gid, src_dc_rack.rack, dst_dc_rack.rack));
+                throw std::runtime_error(fmt::format("Attempted to move tablet {} between racks ({} and {}) which would reduce availability", gid, src_dc_rack.rack->name(), dst_dc_rack.rack->name()));
             }
         }
 

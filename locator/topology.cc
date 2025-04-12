@@ -55,7 +55,7 @@ thread_local const endpoint_dc_rack endpoint_dc_rack::default_location = {
     .rack = locator::production_snitch_base::default_rack,
 };
 
-node::node(const locator::topology* topology, locator::host_id id, endpoint_dc_rack dc_rack, state state, shard_id shard_count, this_node is_this_node, node::idx_type idx)
+node::node(const locator::topology* topology, locator::host_id id, location dc_rack, state state, shard_id shard_count, this_node is_this_node, node::idx_type idx)
     : _topology(topology)
     , _host_id(id)
     , _dc_rack(std::move(dc_rack))
@@ -65,7 +65,7 @@ node::node(const locator::topology* topology, locator::host_id id, endpoint_dc_r
     , _idx(idx)
 {}
 
-node_holder node::make(const locator::topology* topology, locator::host_id id, endpoint_dc_rack dc_rack, state state, shard_id shard_count, node::this_node is_this_node, node::idx_type idx) {
+node_holder node::make(const locator::topology* topology, locator::host_id id, location dc_rack, state state, shard_id shard_count, node::this_node is_this_node, node::idx_type idx) {
     return std::make_unique<node>(topology, std::move(id), std::move(dc_rack), std::move(state), shard_count, is_this_node, idx);
 }
 
@@ -98,17 +98,21 @@ future<> topology::clear_gently() noexcept {
     co_await utils::clear_gently(_nodes);
 }
 
-topology::topology(shallow_copy, config cfg)
+topology::topology(shallow_copy, cluster_registry& cluster_registry, config cfg)
         : _shard(this_shard_id())
+        , _cluster_registry(cluster_registry)
         , _cfg(cfg)
+        , _this_node_location(_cluster_registry.find_or_add_location_on_shard0(_cfg.local_dc_rack))
         , _sort_by_proximity(true)
 {
     // constructor for shallow copying of token_metadata_impl
 }
 
-topology::topology(config cfg)
+topology::topology(cluster_registry& cluster_registry, config cfg)
         : _shard(this_shard_id())
+        , _cluster_registry(cluster_registry)
         , _cfg(cfg)
+        , _this_node_location(_cluster_registry.find_or_add_location_on_shard0(_cfg.local_dc_rack))
         , _sort_by_proximity(!cfg.disable_proximity_sorting)
         , _random_engine(std::random_device{}())
 {
@@ -119,7 +123,9 @@ topology::topology(config cfg)
 
 topology::topology(topology&& o) noexcept
     : _shard(o._shard)
+    , _cluster_registry(o._cluster_registry)
     , _cfg(std::move(o._cfg))
+    , _this_node_location(std::exchange(o._this_node_location, {}))
     , _this_node(std::exchange(o._this_node, nullptr))
     , _nodes(std::move(o._nodes))
     , _nodes_by_host_id(std::move(o._nodes_by_host_id))
@@ -172,7 +178,7 @@ void topology::set_host_id_cfg(host_id this_host_id) {
 }
 
 future<topology> topology::clone_gently() const {
-    topology ret(topology::shallow_copy{}, _cfg);
+    topology ret(topology::shallow_copy{}, _cluster_registry, _cfg);
     tlogger.debug("topology[{}]: clone_gently to {} from shard {}", fmt::ptr(this), fmt::ptr(&ret), _shard);
     for (const auto& nptr : _nodes) {
         if (nptr) {
@@ -185,11 +191,13 @@ future<topology> topology::clone_gently() const {
     co_return ret;
 }
 
-const node& topology::add_node(host_id id, const endpoint_dc_rack& dr, node::state state, shard_id shard_count) {
+const node& topology::add_node(host_id id, endpoint_dc_rack dr, node::state state, shard_id shard_count) {
+    SCYLLA_ASSERT(this_shard_id() == 0);
     if (dr.dc.empty() || dr.rack.empty()) {
         on_internal_error(tlogger, "Node must have valid dc and rack");
     }
-    return add_node(node::make(this, id, dr, state, shard_count));
+    auto dc_rack = _cluster_registry.find_or_add_location_on_shard0(dr);
+    return add_node(node::make(this, id, dc_rack, state, shard_count));
 }
 
 bool topology::is_configured_this_node(const node& n) const {
@@ -221,8 +229,8 @@ const node& topology::add_node(node_holder nptr) {
             }
             locator::node& n = *_nodes.back();
             n._is_this_node = node::this_node::yes;
-            if (n._dc_rack == endpoint_dc_rack::default_location) {
-                n._dc_rack = _cfg.local_dc_rack;
+            if (endpoint_dc_rack(n.dc(), n.rack()) == endpoint_dc_rack::default_location) {
+                n._dc_rack = _cluster_registry.find_or_add_location_on_shard0(_cfg.local_dc_rack);
             }
         }
 
@@ -237,6 +245,7 @@ const node& topology::add_node(node_holder nptr) {
 }
 
 void topology::update_node(node& node, std::optional<host_id> opt_id, std::optional<endpoint_dc_rack> opt_dr, std::optional<node::state> opt_st, std::optional<shard_id> opt_shard_count) {
+    SCYLLA_ASSERT(this_shard_id() == 0);
     tlogger.debug("topology[{}]: update_node: {}: to: host_id={} dc={} rack={} state={} shard_count={}, at {}", fmt::ptr(this), node_printer(&node),
         opt_id ? format("{}", *opt_id) : "unchanged",
         opt_dr ? format("{}", opt_dr->dc) : "unchanged",
@@ -262,6 +271,7 @@ void topology::update_node(node& node, std::optional<host_id> opt_id, std::optio
             opt_id.reset();
         }
     }
+    std::optional<location> opt_dc_rack;
     if (opt_dr) {
         if (opt_dr->dc.empty() || opt_dr->dc == production_snitch_base::default_dc) {
             opt_dr->dc = node.dc();
@@ -269,10 +279,11 @@ void topology::update_node(node& node, std::optional<host_id> opt_id, std::optio
         if (opt_dr->rack.empty() || opt_dr->rack == production_snitch_base::default_rack) {
             opt_dr->rack = node.rack();
         }
-        if (*opt_dr != node.dc_rack()) {
+        opt_dc_rack.emplace(_cluster_registry.find_or_add_location_on_shard0(*opt_dr));
+        if (*opt_dc_rack != node.dc_rack()) {
             changed = true;
         } else {
-            opt_dr.reset();
+            opt_dc_rack.reset();
         }
     }
     if (opt_st) {
@@ -292,8 +303,8 @@ void topology::update_node(node& node, std::optional<host_id> opt_id, std::optio
         if (opt_id) {
             node._host_id = *opt_id;
         }
-        if (opt_dr) {
-            node._dc_rack = std::move(*opt_dr);
+        if (opt_dc_rack) {
+            node._dc_rack = std::move(*opt_dc_rack);
         }
         if (opt_st) {
             node.set_state(*opt_st);
@@ -308,6 +319,7 @@ void topology::update_node(node& node, std::optional<host_id> opt_id, std::optio
 }
 
 bool topology::remove_node(host_id id) {
+    SCYLLA_ASSERT(this_shard_id() == 0);
     auto node = find_node(id);
     tlogger.debug("topology[{}]: remove_node: host_id={}: {}", fmt::ptr(this), id, node_printer(node));
     if (node) {
@@ -477,7 +489,7 @@ bool topology::has_node(host_id id) const noexcept {
     return bool(node);
 }
 
-const endpoint_dc_rack& topology::get_location_slow(host_id id) const {
+const location& topology::get_location_slow(host_id id) const {
     // We should do the following check after lookup in nodes.
     // In tests, there may be no config for local node, so fall back to get_location()
     // only if no mapping is found. Otherwise, get_location() will return empty location
@@ -522,7 +534,7 @@ void topology::do_sort_by_proximity(locator::host_id address, host_id_vector_rep
     *dst = prev->id;
 }
 
-int topology::distance(const locator::host_id& address, const endpoint_dc_rack& loc, const locator::host_id& a1, const endpoint_dc_rack& loc1) noexcept {
+int topology::distance(const locator::host_id& address, const location& loc, const locator::host_id& a1, const location& loc1) noexcept {
     // The farthest nodes from a given node are:
     // 1. Nodes in other DCs then the reference node
     // 2. Nodes in the other RACKs in the same DC as the reference node

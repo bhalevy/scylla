@@ -238,6 +238,7 @@ std::vector<schema_ptr> do_load_schemas(const db::config& cfg, std::string_view 
     feature_service.enable(feature_service.supported_feature_set()).get();
     feature_service.views_with_tablets.enable();
 
+    sharded<locator::cluster_registry> cluster_registry;
     sharded<locator::shared_token_metadata> token_metadata;
 
     auto my_address = gms::inet_address("localhost");
@@ -246,7 +247,7 @@ std::vector<schema_ptr> do_load_schemas(const db::config& cfg, std::string_view 
     tm_cfg.topo_cfg.this_cql_address = my_address;
     tm_cfg.topo_cfg.local_dc_rack = locator::endpoint_dc_rack::default_location;
 
-    token_metadata.start([] () noexcept { return db::schema_tables::hold_merge_lock(); }, tm_cfg).get();
+    token_metadata.start(std::ref(cluster_registry), [] () noexcept { return db::schema_tables::hold_merge_lock(); }, tm_cfg).get();
     auto stop_token_metadata = deferred_stop(token_metadata);
 
     data_dictionary_impl dd_impl;

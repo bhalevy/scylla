@@ -77,7 +77,7 @@ network_topology_strategy::network_topology_strategy(replication_strategy_params
     rslogger.debug("Configured datacenter replicas are: {}", _dc_rep_factor);
 }
 
-using endpoint_dc_rack_set = std::unordered_set<endpoint_dc_rack>;
+using endpoint_dc_rack_set = std::unordered_set<location>;
 
 class natural_endpoints_tracker {
     /**
@@ -112,7 +112,7 @@ class natural_endpoints_tracker {
          * Attempts to add an endpoint to the replicas for this datacenter, adding to the endpoints set if successful.
          * Returns true if the endpoint was added, and this datacenter does not require further replicas.
          */
-        bool add_endpoint_and_check_if_done(const host_id& ep, const endpoint_dc_rack& location) {
+        bool add_endpoint_and_check_if_done(const host_id& ep, const location& location) {
             if (done()) {
                 return false;
             }
@@ -222,7 +222,7 @@ public:
 
     bool add_endpoint_and_check_if_done(host_id ep) {
         auto& loc = _tp.get_location(ep);
-        auto i = _dcs.find(loc.dc);
+        auto i = _dcs.find(loc.dc->name());
         if (i != _dcs.end() && i->second.add_endpoint_and_check_if_done(ep, loc)) {
             --_dcs_to_fill;
         }
