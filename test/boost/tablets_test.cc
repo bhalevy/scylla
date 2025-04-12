@@ -3582,7 +3582,7 @@ static void execute_tablet_for_new_rf_test(calculate_tablet_replicas_for_new_rf_
         if (node == nullptr) {
             return std::nullopt;
         }
-        return node->dc_rack().dc;
+        return node->dc();
     };
 
     stm.mutate_token_metadata([&] (token_metadata& tm) {

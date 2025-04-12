@@ -264,10 +264,10 @@ void topology::update_node(node& node, std::optional<host_id> opt_id, std::optio
     }
     if (opt_dr) {
         if (opt_dr->dc.empty() || opt_dr->dc == production_snitch_base::default_dc) {
-            opt_dr->dc = node.dc_rack().dc;
+            opt_dr->dc = node.dc();
         }
         if (opt_dr->rack.empty() || opt_dr->rack == production_snitch_base::default_rack) {
-            opt_dr->rack = node.dc_rack().rack;
+            opt_dr->rack = node.rack();
         }
         if (*opt_dr != node.dc_rack()) {
             changed = true;
@@ -343,8 +343,8 @@ void topology::index_node(const node& node) {
     // replica indexes.
     // But we don't consider those nodes as members of the cluster so don't update dc registry.
     if (!node.left() && !node.is_none()) {
-        const auto& dc = node.dc_rack().dc;
-        const auto& rack = node.dc_rack().rack;
+        const auto& dc = node.dc();
+        const auto& rack = node.rack();
         const auto& endpoint = node.host_id();
         _dc_nodes[dc].emplace(std::cref(node));
         _dc_rack_nodes[dc][rack].emplace(std::cref(node));
@@ -361,8 +361,8 @@ void topology::index_node(const node& node) {
 void topology::unindex_node(const node& node) {
     tlogger.trace("topology[{}]: unindex_node: {}, at {}", fmt::ptr(this), node_printer(&node), lazy_backtrace());
 
-    const auto& dc = node.dc_rack().dc;
-    const auto& rack = node.dc_rack().rack;
+    const auto& dc = node.dc();
+    const auto& rack = node.rack();
     if (_dc_nodes.contains(dc)) {
         bool found = _dc_nodes.at(dc).erase(std::cref(node));
         if (found) {

@@ -740,7 +740,7 @@ token_metadata_impl::get_datacenter_token_owners() const {
     std::unordered_map<sstring, std::unordered_set<host_id>> datacenter_token_owners;
     _topology.for_each_node([&] (const node& n) {
         if (is_normal_token_owner(n.host_id())) {
-            datacenter_token_owners[n.dc_rack().dc].insert(n.host_id());
+            datacenter_token_owners[n.dc()].insert(n.host_id());
         }
     });
     return datacenter_token_owners;
@@ -763,7 +763,7 @@ token_metadata_impl::get_datacenter_token_owners_nodes() const {
     std::unordered_map<sstring, std::unordered_set<std::reference_wrapper<const node>>> datacenter_token_owners;
     _topology.for_each_node([&] (const node& n) {
         if (is_normal_token_owner(n.host_id())) {
-            datacenter_token_owners[n.dc_rack().dc].insert(std::cref(n));
+            datacenter_token_owners[n.dc()].insert(std::cref(n));
         }
     });
     return datacenter_token_owners;

@@ -34,7 +34,7 @@ bool host_filter::can_hint_for(const locator::topology& topo, endpoint_id ep) co
         return true;
     case enabled_kind::enabled_selectively: {
         auto node = topo.find_node(ep);
-        return node && _dcs.contains(node->dc_rack().dc);
+        return node && _dcs.contains(node->dc());
     }
     case enabled_kind::disabled_for_all:
         return false;

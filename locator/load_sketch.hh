@@ -94,7 +94,7 @@ private:
                 }
                 if (!_nodes.contains(replica.host)) {
                     auto node = topo.find_node(replica.host);
-                    if (only_dc && node->dc_rack().dc != *only_dc) {
+                    if (only_dc && node->dc() != *only_dc) {
                         continue;
                     }
                     _nodes.emplace(replica.host, node_load{node->get_shard_count()});

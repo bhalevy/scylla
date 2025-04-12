@@ -132,7 +132,7 @@ void endpoints_check(
     std::unordered_map<sstring, std::unordered_set<locator::host_id>> replicas_per_dc;
     for (auto ep : endpoints) {
         const auto* node = topo.find_node(ep);
-        auto dc = node->dc_rack().dc;
+        auto dc = node->dc();
 
         auto inserted = replicas_per_dc[dc].insert(node->host_id()).second;
         // replicas might never be placed on the same node
@@ -216,7 +216,7 @@ void check_tablets_balance(const tablet_map& tmap,
     for (tablet_id tb : tmap.tablet_ids()) {
         for (const auto& r : tmap.get_tablet_info(tb).replicas) {
             const auto& node = topo.get_node(r.host);
-            load_map[node.dc_rack().dc][node.dc_rack().rack][r.host][r.shard]++;
+            load_map[node.dc()][node.rack()][r.host][r.shard]++;
         }
     }
     testlog.debug("load_map={}", load_map);

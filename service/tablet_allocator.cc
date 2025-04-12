@@ -432,11 +432,11 @@ class load_balancer {
         }
 
         const sstring& dc() const {
-            return node->dc_rack().dc;
+            return node->dc();
         }
 
         const sstring& rack() const {
-            return node->dc_rack().rack;
+            return node->rack();
         }
 
         locator::node::state state() const {
@@ -1213,7 +1213,7 @@ public:
         std::unordered_map<sstring, unsigned> shards_per_dc;
         _tm->for_each_token_owner([&] (const node& n) {
             if (n.is_normal()) {
-                shards_per_dc[n.dc_rack().dc] += n.get_shard_count();
+                shards_per_dc[n.dc()] += n.get_shard_count();
             }
         });
 
@@ -2810,7 +2810,7 @@ public:
         };
 
         _tm->for_each_token_owner([&] (const locator::node& node) {
-            if (node.dc_rack().dc != dc) {
+            if (node.dc() != dc) {
                 return;
             }
             bool is_drained = node.get_state() == locator::node::state::being_decommissioned
@@ -2857,7 +2857,7 @@ public:
                         on_internal_error(lblogger, format("Replica {} of tablet {} not found in topology",
                                                            r, global_tablet_id{table, tid}));
                     }
-                    if (node->left() && node->dc_rack().dc == dc) {
+                    if (node->left() && node->dc() == dc) {
                         ensure_node(r.host);
                         nodes_to_drain.insert(r.host);
                         nodes[r.host].drained = true;

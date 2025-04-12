@@ -5406,8 +5406,8 @@ storage_service::describe_ring_for_table(const sstring& keyspace_name, const sst
             dht::endpoint_details details;
             const auto& node = topology.get_node(r.host);
             const auto ip = _address_map.get(r.host);
-            details._datacenter = node.dc_rack().dc;
-            details._rack = node.dc_rack().rack;
+            details._datacenter = node.dc();
+            details._rack = node.rack();
             details._host = ip;
             tr._rpc_endpoints.push_back(_gossiper.get_rpc_address(r.host));
             tr._endpoints.push_back(fmt::to_string(details._host));

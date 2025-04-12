@@ -332,8 +332,8 @@ future<tablet_replica_set> network_topology_strategy::reallocate_tablets(schema_
     replicas = cur_tablets.get_tablet_info(tb).replicas;
     for (const auto& tr : replicas) {
         const auto& node = tm->get_topology().get_node(tr.host);
-        replicas_per_dc_rack[node.dc_rack().dc][node.dc_rack().rack].insert(tr.host);
-        ++nodes_per_dc[node.dc_rack().dc];
+        replicas_per_dc_rack[node.dc()][node.rack()].insert(tr.host);
+        ++nodes_per_dc[node.dc()];
     }
 
     // #22688 - take all dcs in topology into account when determining migration.
@@ -453,7 +453,7 @@ future<tablet_replica_set> network_topology_strategy::add_tablets_in_dc(schema_p
         auto host_id = nodes.back().host;
         auto replica = tablet_replica{host_id, load.next_shard(host_id)};
         const auto& node = tm->get_topology().get_node(host_id);
-        auto inserted = replicas_per_rack[node.dc_rack().rack].insert(host_id).second;
+        auto inserted = replicas_per_rack[node.rack()].insert(host_id).second;
         // Sanity check that a node is not used more than once
         if (!inserted) {
             on_internal_error(tablet_logger,
@@ -462,7 +462,7 @@ future<tablet_replica_set> network_topology_strategy::add_tablets_in_dc(schema_p
         }
         nodes.pop_back();
         tablet_logger.trace("allocate_replica {}.{} tablet_id={}: allocated tablet replica={} dc={} rack={}: nodes remaining in rack={}",
-                s->ks_name(), s->cf_name(), tb.id, replica, node.dc_rack().dc, node.dc_rack().rack, nodes.size());
+                s->ks_name(), s->cf_name(), tb.id, replica, node.dc(), node.rack(), nodes.size());
         if (nodes.empty()) {
             candidate = candidate_racks.erase(candidate);
         } else {
@@ -510,7 +510,7 @@ tablet_replica_set network_topology_strategy::drop_tablets_in_dc(schema_ptr s, c
     filtered.reserve(cur_replicas.size() - (dc_node_count - dc_rf));
     size_t nodes_in_dc = 0;
     for (const auto& tr : cur_replicas) {
-        if (topo.get_node(tr.host).dc_rack().dc != dc || ++nodes_in_dc <= dc_rf) {
+        if (topo.get_node(tr.host).dc() != dc || ++nodes_in_dc <= dc_rf) {
             filtered.emplace_back(tr);
         } else {
             load.unload(tr.host, tr.shard);
