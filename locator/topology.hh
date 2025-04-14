@@ -216,6 +216,9 @@ public:
         return _cluster_registry;
     }
 
+    // should be called for deep copy
+    future<> init();
+
     // Adds a node with given host_id, endpoint, and DC/rack.
     // Must be called on shard 0
     const node& add_node(host_id id, endpoint_dc_rack dr, node::state state,

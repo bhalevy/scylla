@@ -112,13 +112,11 @@ topology::topology(cluster_registry& cluster_registry, config cfg)
         : _shard(this_shard_id())
         , _cluster_registry(cluster_registry)
         , _cfg(cfg)
-        , _this_node_location(_cluster_registry.find_or_add_location_on_shard0(_cfg.local_dc_rack))
         , _sort_by_proximity(!cfg.disable_proximity_sorting)
         , _random_engine(std::random_device{}())
 {
     tlogger.trace("topology[{}]: constructing using config: endpoint={} id={} dc={} rack={}", fmt::ptr(this),
             cfg.this_endpoint, cfg.this_host_id, cfg.local_dc_rack.dc, cfg.local_dc_rack.rack);
-    add_node(cfg.this_host_id, cfg.local_dc_rack, node::state::none);
 }
 
 topology::topology(topology&& o) noexcept
@@ -153,6 +151,13 @@ topology& topology::operator=(topology&& o) noexcept {
         new (this) topology(std::move(o));
     }
     return *this;
+}
+
+future<> topology::init() {
+    tlogger.trace("topology[{}]: init: endpoint={} id={} dc={} rack={}", fmt::ptr(this),
+            _cfg.this_endpoint, _cfg.this_host_id, _cfg.local_dc_rack.dc, _cfg.local_dc_rack.rack);
+    _this_node_location = co_await _cluster_registry.find_or_add_location(_cfg.local_dc_rack);
+    add_node(_cfg.this_host_id, _cfg.local_dc_rack, node::state::none);
 }
 
 void topology::set_host_id_cfg(host_id this_host_id) {
