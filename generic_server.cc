@@ -333,7 +333,12 @@ server::listen(socket_address addr, std::shared_ptr<seastar::tls::credentials_bu
         throw std::runtime_error(format("{} error while listening on {} -> {}", _server_name, addr, std::current_exception()));
     }
     _listeners.emplace_back(std::move(ss));
-    _listeners_stopped = when_all(std::move(_listeners_stopped), do_accepts(_listeners.size() - 1, keepalive, addr)).discard_result();
+    _listeners_stopped = when_all(std::move(_listeners_stopped), do_accepts(_listeners.size() - 1, keepalive, addr)).discard_result()
+            // Ignore shutdown-induced errors
+            .handle_exception_type([] (const gate_closed_exception&) {})
+            .handle_exception([this] (std::exception_ptr ex) {
+                _logger.warn("Listen failed: {}", ex);
+            });
 }
 
 future<> server::do_accepts(int which, bool keepalive, socket_address server_addr) {
