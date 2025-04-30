@@ -1255,7 +1255,7 @@ keyspace::create_replication_strategy(const locator::shared_token_metadata& stm)
 
     locator::replication_strategy_params params(_metadata->strategy_options(), _metadata->initial_tablets());
     _replication_strategy =
-            abstract_replication_strategy::create_replication_strategy(_metadata->strategy_name(), params);
+            abstract_replication_strategy::create_replication_strategy(_metadata->strategy_name(), params, stm.get()->get_topology());
     rslogger.debug("replication strategy for keyspace {} is {}, opts={}",
             _metadata->name(), _metadata->strategy_name(), _metadata->strategy_options());
     if (!_replication_strategy->is_per_table()) {
