@@ -45,11 +45,6 @@ network_topology_strategy::network_topology_strategy(replication_strategy_params
                                       replication_strategy_type::network_topology) {
     auto opts = _config_options;
 
-    logger.info("options={{{}}} topology={}", fmt::join(opts | std::views::transform([] (auto& x) {
-                        return fmt::format("{}:{}", x.first, x.second);
-                    }),
-                    ","), bool(topo));
-
     process_tablet_options(*this, opts, params);
 
     size_t rep_factor = 0;
@@ -58,6 +53,10 @@ network_topology_strategy::network_topology_strategy(replication_strategy_params
         dcs_opt = &topo->get_datacenter_racks();
         rslogger.info("dc racks: {}", fmt::join(std::views::transform(*dcs_opt, [] (const auto& x) { return fmt::format("{}: {}", x.first, fmt::join(x.second | std::views::keys, ",")); }), ", "));
     }
+
+    logger.info("options={{{}}} dcs={}", fmt::join(opts | std::views::transform([] (auto& x) {
+        return fmt::format("{}:{}", x.first, x.second);
+    }), ","), dcs_opt ? fmt::format("{}", fmt::join(*dcs_opt | std::views::keys, ",")) : "<null>");
 
     for (auto& config_pair : opts) {
         auto& key = config_pair.first;
