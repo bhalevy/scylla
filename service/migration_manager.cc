@@ -580,11 +580,11 @@ future<> migration_notifier::drop_aggregate(const db::functions::function_name& 
     });
 }
 
-void migration_notifier::before_create_column_family(const keyspace_metadata& ksm,
+void migration_notifier::before_create_column_family(const replica::database& db, const keyspace_metadata& ksm,
         const schema& schema, std::vector<mutation>& mutations, api::timestamp_type timestamp) {
-    _listeners.thread_for_each([&ksm, &schema, &mutations, timestamp] (migration_listener* listener) {
+    _listeners.thread_for_each([&db, &ksm, &schema, &mutations, timestamp] (migration_listener* listener) {
         // allow exceptions. so a listener can effectively kill a create-table
-        listener->on_before_create_column_family(ksm, schema, mutations, timestamp);
+        listener->on_before_create_column_family(db, ksm, schema, mutations, timestamp);
     });
 }
 
@@ -652,7 +652,7 @@ static future<std::vector<mutation>> do_prepare_new_column_family_announcement(s
 
     return seastar::async([&db, &ksm, cfm, timestamp] {
         auto mutations = db::schema_tables::make_create_table_mutations(cfm, timestamp);
-        db.get_notifier().before_create_column_family(ksm, *cfm, mutations, timestamp);
+        db.get_notifier().before_create_column_family(db, ksm, *cfm, mutations, timestamp);
         return mutations;
     }).then([&sp, &ksm](std::vector<mutation> mutations) {
         return include_keyspace(sp, ksm, std::move(mutations));
@@ -847,7 +847,7 @@ future<std::vector<mutation>> prepare_new_view_announcement(storage_proxy& sp, v
             // call. But a view is also a column family, and we need to call
             // the on_before_create_column_family listener - notably, to
             // create tablets for the new view table.
-            db.get_notifier().before_create_column_family(*keyspace, *view, mutations, ts);
+            db.get_notifier().before_create_column_family(db, *keyspace, *view, mutations, ts);
             return include_keyspace(sp, *keyspace, std::move(mutations)).get();
         });
     } catch (const replica::no_such_keyspace& e) {

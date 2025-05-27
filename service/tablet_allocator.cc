@@ -3145,7 +3145,7 @@ public:
         _use_tablet_aware_balancing = use_tablet_aware_balancing;
     }
 
-    void on_before_create_column_family(const keyspace_metadata& ksm, const schema& s, std::vector<mutation>& muts, api::timestamp_type ts) override {
+    void on_before_create_column_family(const replica::database& db, const keyspace_metadata& ksm, const schema& s, std::vector<mutation>& muts, api::timestamp_type ts) override {
         locator::replication_strategy_params params(ksm.strategy_options(), ksm.initial_tablets());
         auto rs = abstract_replication_strategy::create_replication_strategy(ksm.strategy_name(), params);
         if (auto&& tablet_rs = rs->maybe_as_tablet_aware()) {

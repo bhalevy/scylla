@@ -1633,7 +1633,8 @@ static future<executor::request_return_type> create_table_on_shard0(service::cli
             // other things *tablets* will not be created for the new view.
             // These callbacks need to be called in a Seastar thread.
             co_await seastar::async([&sp, &ksm, &view, &schema_mutations, ts] {
-                return sp.local_db().get_notifier().before_create_column_family(*ksm, *view, schema_mutations, ts);
+                auto& db = sp.local_db();
+                return db.get_notifier().before_create_column_family(db, *ksm, *view, schema_mutations, ts);
             });
         }
         // If a role is allowed to create a table, we must give it permissions to

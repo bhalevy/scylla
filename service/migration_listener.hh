@@ -32,6 +32,9 @@ class function_name;
 namespace locator {
 class tablet_metadata_change_hint;
 }
+namespace replica {
+    class database;
+}
 
 #include "timestamp.hh"
 
@@ -80,7 +83,7 @@ public:
     // of the column family's keyspace. The reason for this is that we sometimes create a keyspace
     // and its column families together. Therefore, listeners can't load the keyspace from the
     // database. Instead, they should use the `ksm` parameter if needed.
-    virtual void on_before_create_column_family(const keyspace_metadata& ksm, const schema&, std::vector<mutation>&, api::timestamp_type) {}
+    virtual void on_before_create_column_family(const replica::database& db, const keyspace_metadata& ksm, const schema&, std::vector<mutation>&, api::timestamp_type) {}
     virtual void on_before_update_column_family(const schema& new_schema, const schema& old_schema, std::vector<mutation>&, api::timestamp_type) {}
     virtual void on_before_drop_column_family(const schema&, std::vector<mutation>&, api::timestamp_type) {}
     virtual void on_before_drop_keyspace(const sstring& keyspace_name, std::vector<mutation>&, api::timestamp_type) {}
@@ -146,7 +149,7 @@ public:
     future<> drop_function(const db::functions::function_name& fun_name, const std::vector<data_type>& arg_types);
     future<> drop_aggregate(const db::functions::function_name& fun_name, const std::vector<data_type>& arg_types);
 
-    void before_create_column_family(const keyspace_metadata& ksm, const schema&, std::vector<mutation>&, api::timestamp_type);
+    void before_create_column_family(const replica::database& db, const keyspace_metadata& ksm, const schema&, std::vector<mutation>&, api::timestamp_type);
     void before_update_column_family(const schema& new_schema, const schema& old_schema, std::vector<mutation>&, api::timestamp_type);
     void before_drop_column_family(const schema&, std::vector<mutation>&, api::timestamp_type);
     void before_drop_keyspace(const sstring& keyspace_name, std::vector<mutation>&, api::timestamp_type);

@@ -1880,7 +1880,7 @@ static void make_update_indices_mutations(
     for (auto&& name : diff.entries_only_on_right) {
         auto view = add_index(name);
         auto ksm = db.find_keyspace(new_table->ks_name()).metadata();
-        db.get_notifier().before_create_column_family(*ksm, *view, mutations, timestamp);
+        db.get_notifier().before_create_column_family(db, *ksm, *view, mutations, timestamp);
     }
 
     mutations.emplace_back(std::move(indices_mutation));
