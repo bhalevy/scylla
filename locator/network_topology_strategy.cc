@@ -56,6 +56,7 @@ network_topology_strategy::network_topology_strategy(replication_strategy_params
     const std::unordered_map<sstring, std::unordered_map<sstring, std::unordered_set<host_id>>>* dcs_opt = nullptr;
     if (topo) {
         dcs_opt = &topo->get_datacenter_racks();
+        rslogger.info("dc racks: {}", fmt::join(std::views::transform(*dcs_opt, [] (const auto& x) { return fmt::format("{}: {}", x.first, fmt::join(x.second | std::views::keys, ",")); }), ", "));
     }
 
     for (auto& config_pair : opts) {
@@ -83,6 +84,7 @@ network_topology_strategy::network_topology_strategy(replication_strategy_params
         if (dcs_opt && !dcs_opt->empty()) {
             auto dc = dcs_opt->find(key);
             if (dc == dcs_opt->end()) {
+                on_fatal_internal_error(rslogger, fmt::format("Unrecognized datacenter name '{}': available dcs={}", key, fmt::join(*dcs_opt | std::views::keys, ",")));
                 throw exceptions::configuration_exception(format("Unrecognized datacenter name '{}'", key));
             }
             std::unordered_set<sstring> racks;

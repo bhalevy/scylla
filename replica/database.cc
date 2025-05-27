@@ -1253,11 +1253,13 @@ future<>
 keyspace::create_replication_strategy(const locator::shared_token_metadata& stm) {
     using namespace locator;
 
+    rslogger.info("replication strategy for keyspace {} is {}, topo={} opts={}",
+        _metadata->name(), _metadata->strategy_name(),
+        fmt::ptr(&stm.get()->get_topology()),
+        _metadata->strategy_options());
     locator::replication_strategy_params params(_metadata->strategy_options(), _metadata->initial_tablets());
     _replication_strategy =
             abstract_replication_strategy::create_replication_strategy(_metadata->strategy_name(), params, stm.get()->get_topology());
-    rslogger.debug("replication strategy for keyspace {} is {}, opts={}",
-            _metadata->name(), _metadata->strategy_name(), _metadata->strategy_options());
     if (!_replication_strategy->is_per_table()) {
         auto erm = co_await _erm_factory.create_effective_replication_map(_replication_strategy, stm.get());
         update_effective_replication_map(std::move(erm));
