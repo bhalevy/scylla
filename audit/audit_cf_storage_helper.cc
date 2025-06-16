@@ -58,7 +58,7 @@ audit_cf_storage_helper::audit_cf_storage_helper(cql3::query_processor& qp, serv
 }
 
 service::query_state audit_cf_storage_helper::make_query_state() const {
-    return service::query_state(service::client_state::for_internal_calls(), make_service_permit(_qp.start_operation()));
+    return service::query_state(service::client_state::for_internal_calls(), make_service_permit(_qp.start_operation(), "audit_cf_storage_helper"));
 }
 
 future<> audit_cf_storage_helper::migrate_audit_table(service::group0_guard group0_guard) {

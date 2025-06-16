@@ -479,7 +479,7 @@ private:
             db::consistency_level,
             int32_t page_size = -1) const;
 
-    service::query_state query_state_for_internal_call();
+    service::query_state query_state_for_internal_call(sstring desc);
 
     future<::shared_ptr<cql_transport::messages::result_message>>
     process_authorized_statement(const ::shared_ptr<cql_statement> statement, service::query_state& query_state, const query_options& options, std::optional<service::group0_guard> guard);

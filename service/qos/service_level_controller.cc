@@ -799,7 +799,7 @@ future<> service_level_controller::migrate_to_v2(size_t nodes_count, db::system_
     const auto t = 5min;
     const timeout_config tc{t, t, t, t, t, t, t};
     service::client_state cs(::service::client_state::internal_tag{}, tc);
-    service::query_state qs(cs, make_service_permit(qp.start_operation()));
+    service::query_state qs(cs, make_service_permit(qp.start_operation(), "service_level_controller::migrate_to_v2"));
     
     // `system_distributed` keyspace has RF=3 and we need to scan it with CL=ALL
     // To support migration on cluster with 1 or 2 nodes, set appropriate CL

@@ -2509,7 +2509,7 @@ static service::query_state view_builder_query_state(cql3::query_processor& qp) 
     const auto t = 10s;
     static timeout_config tc{ t, t, t, t, t, t, t };
     static thread_local service::client_state cs(service::client_state::internal_tag{}, tc);
-    return service::query_state(cs, make_service_permit(qp.start_operation()));
+    return service::query_state(cs, make_service_permit(qp.start_operation(), "view_builder_query_state"));
 };
 
 static future<> announce_with_raft(

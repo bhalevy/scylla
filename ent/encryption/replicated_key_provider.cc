@@ -165,7 +165,7 @@ static const timeout_config rkp_db_timeout_config {
 
 static service::query_state rkp_db_query_state(cql3::query_processor& qp) {
     static thread_local service::client_state cs(service::client_state::internal_tag{}, rkp_db_timeout_config);
-    return service::query_state(cs, make_service_permit(qp.start_operation()));
+    return service::query_state(cs, make_service_permit(qp.start_operation(), "replicated_key_provider::query"));
 }
 
 template<typename... Args>

@@ -72,7 +72,7 @@ redis_server::connection::~connection() {
 thread_local redis_server::connection::execution_stage_type redis_server::connection::_process_request_stage {"redis_transport", &connection::process_request_one};
 
 future<redis_server::result> redis_server::connection::process_request_internal() {
-    auto permit = make_service_permit(_server._query_processor.local().proxy().start_write());
+    auto permit = make_service_permit(_server._query_processor.local().proxy().start_write(), "redis_server::connection::process_request_internal");
     return _process_request_stage(this, _parser.get_request(), seastar::ref(_options), std::move(permit));
 }
 

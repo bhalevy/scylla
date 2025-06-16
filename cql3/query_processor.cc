@@ -27,11 +27,15 @@
 #include "cql3/untyped_result_set.hh"
 #include "db/config.hh"
 #include "data_dictionary/data_dictionary.hh"
+#include "utils/UUID.hh"
+#include "utils/UUID_gen.hh"
 #include "utils/hashers.hh"
 #include "utils/error_injection.hh"
 #include "service/migration_manager.hh"
 #include "utils/labels.hh"
 #include "utils/phased_barrier.hh"
+
+static thread_local std::unordered_set<void*> pending_permits;
 
 namespace cql3 {
 
@@ -65,8 +69,8 @@ bool query_processor::topology_global_queue_empty() {
     return remote().first.get().ss.topology_global_queue_empty();
 }
 
-service::query_state query_processor::query_state_for_internal_call() {
-    return {service::client_state::for_internal_calls(), make_service_permit(start_operation())};
+service::query_state query_processor::query_state_for_internal_call(sstring desc) {
+    return {service::client_state::for_internal_calls(), make_service_permit(start_operation(), std::move(desc))};
 }
 
 query_processor::query_processor(service::storage_proxy& proxy, data_dictionary::database db, service::migration_notifier& mn, query_processor::memory_config mcfg, cql_config& cql_cfg, utils::loading_cache_config auth_prep_cache_cfg, lang::manager& langm)
@@ -526,6 +530,7 @@ future<> query_processor::stop_remote() {
 
 future<> query_processor::stop() {
     co_await _mnotifier.unregister_listener(_migration_subscriber.get());
+    log.info("closing {} pending_operations: {}", _pending_operations.operations_in_progress(), pending_permits);
     co_await _pending_operations.close();
     co_await _authorized_prepared_cache.stop();
     co_await _prepared_cache.stop();
@@ -872,7 +877,8 @@ future<> query_processor::for_each_cql_result(
 future<::shared_ptr<untyped_result_set>>
 query_processor::execute_paged_internal(internal_query_state& state) {
     state.p->statement->validate(*this, service::client_state::for_internal_calls());
-    auto qs = query_state_for_internal_call();
+    auto id = utils::UUID_gen::get_time_UUID();
+    auto qs = query_state_for_internal_call("query_processor::execute_paged_internal");
     ::shared_ptr<cql_transport::messages::result_message> msg =
       co_await state.p->statement->execute(*this, qs, *state.opts, std::nullopt);
 
@@ -915,7 +921,7 @@ query_processor::execute_internal(
         db::consistency_level cl,
         const data_value_list& values,
         cache_internal cache) {
-    auto qs = query_state_for_internal_call();
+    auto qs = query_state_for_internal_call("query_processor::execute_internal");
     co_return co_await execute_internal(query_string, cl, qs, values, cache);
 }
 
@@ -930,16 +936,21 @@ query_processor::execute_internal(
     if (log.is_enabled(logging::log_level::trace)) {
         log.trace("execute_internal: {}\"{}\" ({})", cache ? "(cached) " : "", query_string, fmt::join(values, ", "));
     }
+    auto id = utils::UUID_gen::get_time_UUID();
+    log.info("execute_internal[{}]: {}\"{}\" ({})", id, cache ? "(cached) " : "", query_string, fmt::join(values, ", "));
+    ::shared_ptr<untyped_result_set> ret;
     if (cache) {
         auto p = prepare_internal(query_string);
-        return execute_with_params(std::move(p), cl, query_state, values);
+        ret = co_await execute_with_params(std::move(p), cl, query_state, values);
     } else {
         // For internal queries, we want the default dialect, not the user provided one
         auto p = parse_statement(query_string, dialect{})->prepare(_db, _cql_stats);
         p->statement->raw_cql_statement = query_string;
         auto checked_weak_ptr = p->checked_weak_from_this();
-        return execute_with_params(std::move(checked_weak_ptr), cl, query_state, values).finally([p = std::move(p)] {});
+        ret = co_await execute_with_params(std::move(checked_weak_ptr), cl, query_state, values).finally([p = std::move(p)] {});
     }
+    log.info("execute_internal[{}] done", id);
+    co_return ret;
 }
 
 future<std::vector<mutation>> query_processor::get_mutations_internal(
@@ -1213,4 +1224,17 @@ void query_processor::reset_cache() {
     _authorized_prepared_cache.reset();
 }
 
+}
+
+service_permit::service_permit(seastar::semaphore_units<>&& u, utils::phased_barrier::operation op, sstring desc)
+    : _permit(seastar::make_lw_shared<data>(std::move(u), std::move(op), std::move(desc))) {
+    cql3::log.info("service_permit[{}]: acquired permit for {}", fmt::ptr(_permit.get()), _permit->desc);
+    pending_permits.insert(_permit.get());
+}
+
+service_permit::~service_permit() {
+    if (_permit && _permit.use_count() == 1) {
+        cql3::log.info("service_permit[{}]: releasing permit for {}", fmt::ptr(_permit.get()), _permit->desc);
+        pending_permits.erase(_permit.get());
+    }
 }

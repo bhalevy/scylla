@@ -71,7 +71,7 @@ public:
     virtual std::unique_ptr<backend_session_state_base> allocate_session_state() const override;
 
 private:
-    service::query_state make_query_state() const;
+    service::query_state make_query_state(sstring desc) const;
 
     // Valid only after start() sets _qp_anchor
     gms::inet_address my_address() const noexcept;

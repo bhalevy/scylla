@@ -158,7 +158,7 @@ db_clock::duration db::batchlog_manager::get_batch_log_timeout() const {
 future<> db::batchlog_manager::replay_all_failed_batches(post_replay_cleanup cleanup) {
     typedef db_clock::rep clock_type;
 
-    auto permit = make_service_permit(_qp.start_operation());
+    auto permit = make_service_permit(_qp.start_operation(), "replay_all_failed_batches");
 
     // rate limit is in bytes per second. Uses Double.MAX_VALUE if disabled (set to 0 in cassandra.yaml).
     // max rate is scaled by the number of nodes in the cluster (same as for HHOM - see CASSANDRA-5272).

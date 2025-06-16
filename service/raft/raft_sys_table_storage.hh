@@ -88,7 +88,7 @@ private:
     future<> update_snapshot_and_truncate_log_tail(const raft::snapshot_descriptor &snap, size_t preserve_log_entries);
 
     future<> execute_with_linearization_point(std::function<future<>()> f);
-    service::query_state make_query_state() const;
+    service::query_state make_query_state(sstring desc) const;
 };
 
 } // end of namespace service

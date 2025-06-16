@@ -443,7 +443,7 @@ future<query::mapreduce_result> mapreduce_service::execute_on_this_shard(
     auto query_state = make_lw_shared<service::query_state>(
         client_state::for_internal_calls(),
         tr_state,
-        make_service_permit(_proxy.start_write())
+        make_service_permit(_proxy.start_write(), "mapreduce_service::execute_on_this_shard") // Permit for the query.
     );
     auto query_options = make_lw_shared<cql3::query_options>(
         cql3::default_cql_config,

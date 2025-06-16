@@ -210,14 +210,14 @@ trace_keyspace_helper::trace_keyspace_helper(tracing& tr)
     });
 }
 
-service::query_state trace_keyspace_helper::make_query_state() const {
-    return service::query_state(tracing_client_state(), make_service_permit(_qp_anchor->start_operation()));
+service::query_state trace_keyspace_helper::make_query_state(sstring desc) const {
+    return service::query_state(tracing_client_state(), make_service_permit(_qp_anchor->start_operation(), std::move(desc)));
 }
 
 future<> trace_keyspace_helper::start(cql3::query_processor& qp, service::migration_manager& mm) {
     _qp_anchor = &qp;
     _mm_anchor = &mm;
-    auto qs = make_query_state();
+    auto qs = make_query_state("trace_keyspace_helper::start");
     co_await table_helper::setup_keyspace(qp, mm, KEYSPACE_NAME, "org.apache.cassandra.locator.SimpleStrategy", "2", qs, { &_sessions, &_sessions_time_idx, &_events, &_slow_query_log, &_slow_query_log_time_idx });
 }
 
@@ -400,7 +400,7 @@ future<> trace_keyspace_helper::apply_events_mutation(cql3::query_processor& qp,
         co_return;
     }
 
-    auto qs = make_query_state();
+    auto qs = make_query_state("trace_keyspace_helper::apply_events_mutation");
     co_await _events.cache_table_info(qp, mm, qs);
     tlogger.trace("{}: storing {} events records: parent_id {} span_id {}", records->session_id, events_records.size(), records->parent_id, records->my_span_id);
 
@@ -443,7 +443,7 @@ future<> trace_keyspace_helper::flush_one_session_mutations(lw_shared_ptr<one_se
     service::migration_manager& mm = *_mm_anchor;
     co_await apply_events_mutation(qp, mm, records, events_records);
     if (session_record_is_ready) {
-        auto qs = make_query_state();
+        auto qs = make_query_state("trace_keyspace_helper::flush_one_session_mutations");
         // if session is finished - store a session and a session time index entries
         tlogger.trace("{}: going to store a session event", records->session_id);
         co_await _sessions.insert(qp, mm, qs, make_session_mutation_data, my_address(), std::ref(*records));

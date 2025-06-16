@@ -239,7 +239,7 @@ public:
     future<> update_connections_scheduling_group();
     future<> update_connections_service_level_params();
     future<std::vector<connection_service_level_params>> get_connections_service_level_params();
-    service_permit make_service_permit(semaphore_units<>&& units = semaphore_units<>()) const;
+    service_permit make_service_permit(sstring desc, semaphore_units<>&& units = semaphore_units<>()) const;
 private:
     class fmt_visitor;
     friend class connection;
@@ -363,7 +363,7 @@ private:
 
         void write_response(foreign_ptr<std::unique_ptr<cql_server::response>>&& response, service_permit permit, cql_compression compression);
         void write_response(foreign_ptr<std::unique_ptr<cql_server::response>>&& response) {
-            write_response(std::move(response), _server.make_service_permit(), cql_compression::none);
+            write_response(std::move(response), _server.make_service_permit("write_response"), cql_compression::none);
         }
 
         friend event_notifier;

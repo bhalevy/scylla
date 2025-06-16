@@ -189,7 +189,19 @@ service::query_state qos_query_state(cql3::query_processor& qp, qos::query_conte
     const auto t = 10s;
     static timeout_config tc{ t, t, t, t, t, t, t };
     static thread_local service::client_state cs(service::client_state::internal_tag{}, tc);
-    auto permit = make_service_permit(qp.start_operation());
+    sstring desc;
+    switch (ctx) {
+    case qos::query_context::group0:
+        desc = "qos_query_state_group0";
+        break;
+    case qos::query_context::user:
+        desc = "qos_query_state_user";
+        break;
+    case qos::query_context::unspecified:
+        desc = "qos_query_state_unspecified";
+        break;
+    }
+    auto permit = make_service_permit(qp.start_operation(), std::move(desc));
     if (ctx != qos::query_context::group0) {
         return service::query_state(cs, std::move(permit));
     } else {

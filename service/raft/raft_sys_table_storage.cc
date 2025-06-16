@@ -45,8 +45,8 @@ raft_sys_table_storage::raft_sys_table_storage(cql3::query_processor& qp, raft::
     _store_entry_stmt = dynamic_pointer_cast<cql3::statements::modification_statement>(cql_stmt);
 }
 
-service::query_state raft_sys_table_storage::make_query_state() const {
-    return service::query_state(service::client_state::for_internal_calls(), make_service_permit(_qp.start_operation()));
+service::query_state raft_sys_table_storage::make_query_state(sstring desc) const {
+    return service::query_state(service::client_state::for_internal_calls(), make_service_permit(_qp.start_operation(), std::move(desc)));
 }
 
 future<> raft_sys_table_storage::store_term_and_vote(raft::term_t term, raft::server_id vote) {
@@ -259,7 +259,7 @@ future<size_t> raft_sys_table_storage::do_store_log_entries_one_batch(const std:
         cql3::attributes::none(),
         _qp.get_cql_stats());
 
-    auto qs = make_query_state();
+    auto qs = make_query_state("raft_sys_table_storage::do_store_log_entries_one_batch");
     co_await batch.execute(_qp, qs, batch_options, std::nullopt);
 
     if (idx != entries_size) {

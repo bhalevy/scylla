@@ -115,7 +115,7 @@ future<> create_legacy_metadata_table_if_missing(
 #endif
     static const timeout_config tc{t, t, t, t, t, t, t};
     static thread_local ::service::client_state cs(::service::client_state::internal_tag{}, tc);
-    return ::service::query_state(cs, make_service_permit(qp.start_operation()));
+    return ::service::query_state(cs, make_service_permit(qp.start_operation(), "auth::internal_distributed_query_state"));
 }
 
 static future<> announce_mutations_with_guard(

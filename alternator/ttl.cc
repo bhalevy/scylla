@@ -516,7 +516,7 @@ struct scan_ranges_context {
         , column_name(column_name)
         , member(member)
         , internal_client_state(service::client_state::internal_tag())
-        , permit(make_service_permit(proxy.start_write()))
+        , permit(make_service_permit(proxy.start_write(), "alternator::scan_ranges_context"))
     {
         // FIXME: don't read the entire items - read only parts of it.
         // We must read the key columns (to be able to delete) and also
