@@ -308,4 +308,9 @@ auto send_message_oneway_timeout(messaging_service* ms, messaging_verb verb, loc
     return send_message_timeout<rpc::no_wait_type>(ms, std::move(verb), std::move(id), timeout, std::forward<MsgOut>(msg)...);
 }
 
+template <typename Timeout, typename... MsgOut>
+auto send_message_oneway_timeout_cancellable(messaging_service* ms, messaging_verb verb, locator::host_id id, Timeout timeout, abort_source& as, MsgOut&&... msg) {
+    return send_message_timeout_cancellable<rpc::no_wait_type>(ms, std::move(verb), std::move(id), timeout, as, std::forward<MsgOut>(msg)...);
+}
+
 } // namespace netw

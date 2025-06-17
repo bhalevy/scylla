@@ -1314,7 +1314,8 @@ sharded<locator::shared_token_metadata> token_metadata;
             };
             proxy.start(std::ref(db), spcfg, std::ref(node_backlog),
                     scheduling_group_key_create(storage_proxy_stats_cfg).get(),
-                    std::ref(feature_service), std::ref(token_metadata), std::ref(erm_factory)).get();
+                    std::ref(feature_service), std::ref(token_metadata), std::ref(erm_factory),
+                    std::ref(stop_signal.as_sharded_abort_source())).get();
             // Stop storage proxy only after the query processor is stopped above.
             api::set_server_storage_proxy(ctx, proxy).get();
             auto stop_sp_api = defer_verbose_shutdown("storage proxy API", [&ctx] {

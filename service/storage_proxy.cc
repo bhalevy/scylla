@@ -240,6 +240,7 @@ class storage_proxy::remote {
     raft_group0_client& _group0_client;
     topology_state_machine& _topology_state_machine;
     abort_source _group0_as;
+    abort_source& _abort;    // Aborted in stop()
 
     seastar::named_gate _truncate_gate;
 
@@ -250,8 +251,9 @@ class storage_proxy::remote {
 
 public:
     remote(storage_proxy& sp, netw::messaging_service& ms, gms::gossiper& g, migration_manager& mm, sharded<db::system_keyspace>& sys_ks,
-                raft_group0_client& group0_client, topology_state_machine& tsm)
+                raft_group0_client& group0_client, topology_state_machine& tsm, abort_source& abort)
         : _sp(sp), _ms(ms), _gossiper(g), _mm(mm), _sys_ks(sys_ks), _group0_client(group0_client), _topology_state_machine(tsm)
+        , _abort(abort)
         , _truncate_gate("storage_proxy::remote::truncate_gate")
         , _connection_dropped(std::bind_front(&remote::connection_dropped, this))
         , _condrop_registration(_ms.when_connection_drops(_connection_dropped))
@@ -280,6 +282,9 @@ public:
     // Must call before destroying the `remote` object.
     future<> stop() {
         _group0_as.request_abort();
+        // Abort mutation RPCs.
+        // They are awaited in storage_proxy::stop() under _pending_writes_phaser
+        _abort.request_abort();
         co_await _truncate_gate.close();
         co_await ser::storage_proxy_rpc_verbs::unregister(&_ms);
         _stopped = true;
@@ -322,7 +327,7 @@ public:
             fencing_token fence) {
         inet_address_vector_replica_set forward_ips;
         return ser::storage_proxy_rpc_verbs::send_mutation(
-                &_ms, std::move(addr), timeout,
+                &_ms, std::move(addr), timeout, _abort,
                 m, get_forward_ips_if_needed(forward), reply_to_ip, shard,
                 response_id, trace_info, rate_limit_info, fence, forward, reply_to);
     }
@@ -334,7 +339,7 @@ public:
             fencing_token fence) {
         tracing::trace(tr_state, "Sending a hint to /{}", addr);
         return ser::storage_proxy_rpc_verbs::send_hint_mutation(
-                &_ms, std::move(addr), timeout,
+                &_ms, std::move(addr), timeout, _abort,
                 m, get_forward_ips_if_needed(forward), reply_to_ip, shard,
                 response_id, tracing::make_trace_info(tr_state), fence, forward, reply_to);
     }
@@ -344,7 +349,7 @@ public:
             std::vector<frozen_mutation> fms, db::consistency_level cl, fencing_token fence) {
         tracing::trace(tr_state, "Enqueuing counter update to {}", addr);
         auto&& opt_exception = co_await ser::storage_proxy_rpc_verbs::send_counter_mutation(
-            &_ms, std::move(addr), timeout,
+            &_ms, std::move(addr), timeout, _abort,
             std::move(fms), cl, tracing::make_trace_info(tr_state), fence);
         if (opt_exception.has_value() && *opt_exception) {
             co_await coroutine::return_exception_ptr((*opt_exception).into_exception_ptr());
@@ -375,7 +380,7 @@ public:
             const query::read_command& cmd, const dht::partition_range& pr,
             fencing_token fence) {
         tracing::trace(tr_state, "read_mutation_data: sending a message to /{}", addr);
-        auto&& [result, hit_rate, opt_exception] = co_await ser::storage_proxy_rpc_verbs::send_read_mutation_data(&_ms, addr, timeout, cmd, pr, fence);
+        auto&& [result, hit_rate, opt_exception] = co_await ser::storage_proxy_rpc_verbs::send_read_mutation_data(&_ms, addr, timeout, _abort, cmd, pr, fence);
         if (opt_exception.has_value() && *opt_exception) {
             co_await coroutine::return_exception_ptr((*opt_exception).into_exception_ptr());
         }
@@ -392,7 +397,7 @@ public:
             fencing_token fence) {
         tracing::trace(tr_state, "read_data: sending a message to /{}", addr);
         auto&& [result, hit_rate, opt_exception] =
-            co_await ser::storage_proxy_rpc_verbs::send_read_data(&_ms, addr, timeout, cmd, pr, digest_algo, rate_limit_info, fence);
+            co_await ser::storage_proxy_rpc_verbs::send_read_data(&_ms, addr, timeout, _abort, cmd, pr, digest_algo, rate_limit_info, fence);
         if (opt_exception.has_value() && *opt_exception) {
             co_await coroutine::return_exception_ptr((*opt_exception).into_exception_ptr());
         }
@@ -409,7 +414,7 @@ public:
             fencing_token fence) {
         tracing::trace(tr_state, "read_digest: sending a message to /{}", addr);
         auto&& [d, t, hit_rate, opt_exception, opt_last_pos] =
-            co_await ser::storage_proxy_rpc_verbs::send_read_digest(&_ms, addr, timeout, cmd, pr, digest_algo, rate_limit_info, fence);
+            co_await ser::storage_proxy_rpc_verbs::send_read_digest(&_ms, addr, timeout, _abort, cmd, pr, digest_algo, rate_limit_info, fence);
         if (opt_exception.has_value() && *opt_exception) {
             co_await coroutine::return_exception_ptr((*opt_exception).into_exception_ptr());
         }
@@ -421,7 +426,7 @@ public:
     future<> send_truncate(
             locator::host_id addr, storage_proxy::clock_type::time_point timeout,
             sstring ks_name, sstring cf_name) {
-        return ser::storage_proxy_rpc_verbs::send_truncate(&_ms, std::move(addr), timeout, std::move(ks_name), std::move(cf_name));
+        return ser::storage_proxy_rpc_verbs::send_truncate(&_ms, std::move(addr), timeout, _abort, std::move(ks_name), std::move(cf_name));
     }
 
     future<service::paxos::prepare_response> send_paxos_prepare(
@@ -429,14 +434,14 @@ public:
             const query::read_command& cmd, const partition_key& key, utils::UUID ballot, bool only_digest, query::digest_algorithm da) {
         tracing::trace(tr_state, "prepare_ballot: sending prepare {} to {}", ballot, addr);
         return ser::storage_proxy_rpc_verbs::send_paxos_prepare(
-                &_ms, addr, timeout, cmd, key, ballot, only_digest, da, tracing::make_trace_info(tr_state));
+                &_ms, addr, timeout, _abort, cmd, key, ballot, only_digest, da, tracing::make_trace_info(tr_state));
     }
 
     future<bool> send_paxos_accept(
             locator::host_id addr, storage_proxy::clock_type::time_point timeout, tracing::trace_state_ptr tr_state,
             const service::paxos::proposal& proposal) {
         tracing::trace(tr_state, "accept_proposal: send accept {} to {}", proposal, addr);
-        return ser::storage_proxy_rpc_verbs::send_paxos_accept(&_ms, std::move(addr), timeout, proposal, tracing::make_trace_info(tr_state));
+        return ser::storage_proxy_rpc_verbs::send_paxos_accept(&_ms, std::move(addr), timeout, _abort, proposal, tracing::make_trace_info(tr_state));
     }
 
     future<> send_paxos_learn(
@@ -444,13 +449,13 @@ public:
             const service::paxos::proposal& decision, const host_id_vector_replica_set& forward,
             gms::inet_address reply_to_ip, locator::host_id reply_to, unsigned shard, uint64_t response_id) {
         return ser::storage_proxy_rpc_verbs::send_paxos_learn(
-                &_ms, addr, timeout, decision, {}, reply_to_ip, shard, response_id, trace_info, forward, reply_to);
+                &_ms, addr, timeout, _abort, decision, {}, reply_to_ip, shard, response_id, trace_info, forward, reply_to);
     }
 
     future<> send_paxos_prune(
             locator::host_id addr, storage_proxy::clock_type::time_point timeout, tracing::trace_state_ptr tr_state,
             table_schema_version schema_id, const partition_key& key, utils::UUID ballot) {
-        return ser::storage_proxy_rpc_verbs::send_paxos_prune(&_ms, addr, timeout, schema_id, key, ballot, tracing::make_trace_info(tr_state));
+        return ser::storage_proxy_rpc_verbs::send_paxos_prune(&_ms, addr, timeout, _abort, schema_id, key, ballot, tracing::make_trace_info(tr_state));
     }
 
     future<> truncate_with_tablets(sstring ks_name, sstring cf_name, std::chrono::milliseconds timeout_in_ms) {
@@ -3092,7 +3097,8 @@ storage_proxy::~storage_proxy() {
 }
 
 storage_proxy::storage_proxy(distributed<replica::database>& db, storage_proxy::config cfg, db::view::node_update_backlog& max_view_update_backlog,
-        scheduling_group_key stats_key, gms::feature_service& feat, const locator::shared_token_metadata& stm, locator::effective_replication_map_factory& erm_factory)
+        scheduling_group_key stats_key, gms::feature_service& feat, const locator::shared_token_metadata& stm, locator::effective_replication_map_factory& erm_factory,
+        abort_source& abort)
     : _db(db)
     , _shared_token_metadata(stm)
     , _erm_factory(erm_factory)
@@ -3108,6 +3114,7 @@ storage_proxy::storage_proxy(distributed<replica::database>& db, storage_proxy::
     , _hints_for_views_manager(*this, _db.local().get_config().view_hints_directory(), {}, _db.local().get_config().max_hint_window_in_ms(), _hints_resource_manager, _db)
     , _stats_key(stats_key)
     , _features(feat)
+    , _abort(abort)
     , _background_write_throttle_threahsold(cfg.available_memory / 10)
     , _mutate_stage{"storage_proxy_mutate", &storage_proxy::do_mutate}
     , _max_view_update_backlog(max_view_update_backlog)
@@ -6725,7 +6732,7 @@ future<> storage_proxy::truncate_blocking(sstring keyspace, sstring cfname, std:
 
 void storage_proxy::start_remote(netw::messaging_service& ms, gms::gossiper& g, migration_manager& mm, sharded<db::system_keyspace>& sys_ks,
         raft_group0_client& group0_client, topology_state_machine& tsm) {
-    _remote = std::make_unique<struct remote>(*this, ms, g, mm, sys_ks, group0_client, tsm);
+    _remote = std::make_unique<struct remote>(*this, ms, g, mm, sys_ks, group0_client, tsm, _abort);
 }
 
 future<> storage_proxy::stop_remote() {

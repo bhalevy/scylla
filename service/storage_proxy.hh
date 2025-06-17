@@ -277,6 +277,7 @@ private:
     scheduling_group_key _stats_key;
     storage_proxy_stats::global_stats _global_stats;
     gms::feature_service& _features;
+    abort_source& _abort;
 
     class remote;
     std::unique_ptr<remote> _remote;
@@ -481,7 +482,7 @@ private:
 public:
     storage_proxy(distributed<replica::database>& db, config cfg, db::view::node_update_backlog& max_view_update_backlog,
             scheduling_group_key stats_key, gms::feature_service& feat, const locator::shared_token_metadata& stm,
-            locator::effective_replication_map_factory& erm_factory);
+            locator::effective_replication_map_factory& erm_factory, abort_source& abort);
     ~storage_proxy();
 
     const distributed<replica::database>& get_db() const {
