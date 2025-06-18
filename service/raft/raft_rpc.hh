@@ -39,23 +39,23 @@ private:
     enum class one_way_kind { request, reply };
 
     template <one_way_kind rpc_kind, typename Verb, typename Msg> void
-    one_way_rpc(seastar::compat::source_location loc, raft::server_id id, Verb&& verb, Msg&& msg);
+    one_way_rpc(seastar::compat::source_location loc, raft::server_id id, seastar::abort_source* as_ptr, Verb&& verb, Msg&& msg);
 
     template <typename Verb, typename... Args> auto
-    two_way_rpc(seastar::compat::source_location loc, raft::server_id id, Verb&& verb, Args&&... args);
+    two_way_rpc(seastar::compat::source_location loc, raft::server_id id, seastar::abort_source& as, Verb&& verb, Args&&... args);
 
 public:
     future<raft::snapshot_reply> send_snapshot(raft::server_id server_id, const raft::install_snapshot& snap, seastar::abort_source& as) override;
-    future<> send_append_entries(raft::server_id id, const raft::append_request& append_request) override;
-    void send_append_entries_reply(raft::server_id id, const raft::append_reply& reply) override;
-    void send_vote_request(raft::server_id id, const raft::vote_request& vote_request) override;
-    void send_vote_reply(raft::server_id id, const raft::vote_reply& vote_reply) override;
-    void send_timeout_now(raft::server_id id, const raft::timeout_now& timeout_now) override;
-    void send_read_quorum(raft::server_id id, const raft::read_quorum& check_quorum) override;
-    void send_read_quorum_reply(raft::server_id id, const raft::read_quorum_reply& check_quorum_reply) override;
-    future<raft::read_barrier_reply> execute_read_barrier_on_leader(raft::server_id id) override;
-    future<raft::add_entry_reply> send_add_entry(raft::server_id id, const raft::command& cmd) override;
-    future<raft::add_entry_reply> send_modify_config(raft::server_id id,
+    future<> send_append_entries(raft::server_id id, seastar::abort_source& as, const raft::append_request& append_request) override;
+    void send_append_entries_reply(raft::server_id id, const raft::append_reply& reply, seastar::abort_source* as_opt = nullptr) override;
+    void send_vote_request(raft::server_id id, seastar::abort_source& as, const raft::vote_request& vote_request) override;
+    void send_vote_reply(raft::server_id id, seastar::abort_source& as, const raft::vote_reply& vote_reply) override;
+    void send_timeout_now(raft::server_id id, seastar::abort_source& as, const raft::timeout_now& timeout_now) override;
+    void send_read_quorum(raft::server_id id, seastar::abort_source& as, const raft::read_quorum& check_quorum) override;
+    void send_read_quorum_reply(raft::server_id id, seastar::abort_source& as, const raft::read_quorum_reply& check_quorum_reply) override;
+    future<raft::read_barrier_reply> execute_read_barrier_on_leader(raft::server_id id, seastar::abort_source& as) override;
+    future<raft::add_entry_reply> send_add_entry(raft::server_id id, seastar::abort_source& as, const raft::command& cmd) override;
+    future<raft::add_entry_reply> send_modify_config(raft::server_id id, seastar::abort_source& as,
         const std::vector<raft::config_member>& add,
         const std::vector<raft::server_id>& del) override;
 

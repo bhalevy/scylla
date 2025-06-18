@@ -7,6 +7,7 @@
  */
 #include "server.hh"
 
+#include "seastar/core/abort_source.hh"
 #include "utils/assert.hh"
 #include "utils/error_injection.hh"
 #include <boost/range/adaptor/transformed.hpp>
@@ -60,7 +61,7 @@ class server_impl : public rpc_server, public server {
 public:
     explicit server_impl(server_id uuid, std::unique_ptr<rpc> rpc,
         std::unique_ptr<state_machine> state_machine, std::unique_ptr<persistence> persistence,
-        seastar::shared_ptr<failure_detector> failure_detector, server::configuration config);
+        seastar::shared_ptr<failure_detector> failure_detector, server::configuration config, abort_source& as);
 
     server_impl(server_impl&&) = delete;
 
@@ -117,6 +118,7 @@ private:
     // id of this server
     server_id _id;
     server::configuration _config;
+    abort_source& _abort;
     std::optional<promise<>> _stepdown_promise;
     std::optional<shared_promise<>> _leader_promise;
     std::optional<awaited_conf_change> _non_joint_conf_commit_promise;
@@ -342,10 +344,10 @@ private:
 
 server_impl::server_impl(server_id uuid, std::unique_ptr<rpc> rpc,
         std::unique_ptr<state_machine> state_machine, std::unique_ptr<persistence> persistence,
-        seastar::shared_ptr<failure_detector> failure_detector, server::configuration config) :
+        seastar::shared_ptr<failure_detector> failure_detector, server::configuration config, abort_source& as) :
                     _rpc(std::move(rpc)), _state_machine(std::move(state_machine)),
                     _persistence(std::move(persistence)), _failure_detector(failure_detector),
-                    _id(uuid), _config(config), _do_on_leader_gate("raft::server_impl::do_on_leader_gate")
+                    _id(uuid), _config(config), _abort(as), _do_on_leader_gate("raft::server_impl::do_on_leader_gate")
 {
     set_rpc_server(_rpc.get());
     if (_config.snapshot_threshold_log_size > _config.max_log_size) {
@@ -768,7 +770,9 @@ future<> server_impl::add_entry(command command, wait_type type, seastar::abort_
             } else {
                 logger.trace("[{}] forwarding the entry to {}", id(), leader);
                 try {
-                    co_return co_await _rpc->send_add_entry(leader, command);
+                    abort_source local_abort_source;
+                    abort_source& rpc_as = as ? *as : local_abort_source;
+                    co_return co_await _rpc->send_add_entry(leader, rpc_as, command);
                 } catch (const transport_error& e) {
                     logger.trace("[{}] send_add_entry on {} resulted in {}; "
                                  "rethrow as commit_status_unknown", _id, leader, e);
@@ -884,7 +888,9 @@ future<> server_impl::modify_config(std::vector<config_member> add, std::vector<
             } else {
                 logger.trace("[{}] forwarding the entry to {}", id(), leader);
                 try {
-                    co_return co_await _rpc->send_modify_config(leader, add, del);
+                    abort_source local_abort_source;
+                    auto& rpc_as = as ? *as : local_abort_source;
+                    co_return co_await _rpc->send_modify_config(leader, rpc_as, add, del);
                 } catch (const transport_error& e) {
                     logger.trace("[{}] send_modify_config on {} resulted in {}; "
                                  "rethrow as commit_status_unknown", _id, leader, e);
@@ -1023,7 +1029,7 @@ void server_impl::send_message(server_id id, Message m) {
         using T = std::decay_t<decltype(m)>;
         if constexpr (std::is_same_v<T, append_reply>) {
             _stats.append_entries_reply_sent++;
-            _rpc->send_append_entries_reply(id, m);
+            _rpc->send_append_entries_reply(id, m, &_abort);
         } else if constexpr (std::is_same_v<T, append_request>) {
             _stats.append_entries_sent++;
              _append_request_status[id].count++;
@@ -1033,7 +1039,7 @@ void server_impl::send_message(server_id id, Message m) {
                 auto m = std::move(cm);
                 auto id = cid;
                 try {
-                    co_await server->_rpc->send_append_entries(id, m);
+                    co_await server->_rpc->send_append_entries(id, _abort, m);
                 } catch(...) {
                     logger.debug("[{}] io_fiber failed to send a message to {}: {}", server->_id, id, std::current_exception());
                 }
@@ -1044,19 +1050,19 @@ void server_impl::send_message(server_id id, Message m) {
             });
         } else if constexpr (std::is_same_v<T, vote_request>) {
             _stats.vote_request_sent++;
-            _rpc->send_vote_request(id, m);
+            _rpc->send_vote_request(id, _abort, m);
         } else if constexpr (std::is_same_v<T, vote_reply>) {
             _stats.vote_request_reply_sent++;
-            _rpc->send_vote_reply(id, m);
+            _rpc->send_vote_reply(id, _abort, m);
         } else if constexpr (std::is_same_v<T, timeout_now>) {
             _stats.timeout_now_sent++;
-            _rpc->send_timeout_now(id, m);
+            _rpc->send_timeout_now(id, _abort, m);
         } else if constexpr (std::is_same_v<T, struct read_quorum>) {
             _stats.read_quorum_sent++;
-            _rpc->send_read_quorum(id, std::move(m));
+            _rpc->send_read_quorum(id, _abort, std::move(m));
         } else if constexpr (std::is_same_v<T, struct read_quorum_reply>) {
             _stats.read_quorum_reply_sent++;
-            _rpc->send_read_quorum_reply(id, std::move(m));
+            _rpc->send_read_quorum_reply(id, _abort, std::move(m));
         } else if constexpr (std::is_same_v<T, install_snapshot>) {
             _stats.install_snapshot_sent++;
             // Send in the background.
@@ -1280,8 +1286,8 @@ void server_impl::send_snapshot(server_id dst, install_snapshot&& snp) {
     uint64_t id = _next_snapshot_transfer_id++;
     // Use `yield()` to ensure that `_rpc->send_snapshot` is called after we emplace `f` in `_snapshot_transfers`.
     // This also catches any exceptions from `_rpc->send_snapshot` into `f`.
-    future<> f = yield().then([this, &as, dst, id, snp = std::move(snp)] () mutable {
-        return _rpc->send_snapshot(dst, std::move(snp), as).then_wrapped([this, dst, id] (future<snapshot_reply> f) {
+    future<> f = yield().then([this, dst, id, snp = std::move(snp)] () mutable {
+        return _rpc->send_snapshot(dst, std::move(snp), _abort).then_wrapped([this, dst, id] (future<snapshot_reply> f) {
             if (_aborted_snapshot_transfers.erase(id)) {
                 // The transfer was aborted
                 f.ignore_ready_future();
@@ -1521,9 +1527,11 @@ future<read_barrier_reply> server_impl::execute_read_barrier(server_id from, sea
 
 future<read_barrier_reply> server_impl::get_read_idx(server_id leader, seastar::abort_source* as) {
     if (_id == leader) {
-        return execute_read_barrier(_id, as);
+        co_return co_await execute_read_barrier(_id, as);
     } else {
-        return _rpc->execute_read_barrier_on_leader(leader);
+        abort_source local_abort_source;
+        auto& rpc_as = as ? *as : local_abort_source;
+        co_return co_await _rpc->execute_read_barrier_on_leader(leader, rpc_as);
     }
 }
 
@@ -1916,10 +1924,10 @@ size_t server_impl::max_command_size() const {
 
 std::unique_ptr<server> create_server(server_id uuid, std::unique_ptr<rpc> rpc,
     std::unique_ptr<state_machine> state_machine, std::unique_ptr<persistence> persistence,
-    seastar::shared_ptr<failure_detector> failure_detector, server::configuration config) {
+    seastar::shared_ptr<failure_detector> failure_detector, server::configuration config, abort_source& as) {
     SCYLLA_ASSERT(uuid != raft::server_id{utils::UUID(0, 0)});
     return std::make_unique<raft::server_impl>(uuid, std::move(rpc), std::move(state_machine),
-        std::move(persistence), failure_detector, config);
+        std::move(persistence), failure_detector, config, as);
 }
 
 std::ostream& operator<<(std::ostream& os, const server_impl& s) {

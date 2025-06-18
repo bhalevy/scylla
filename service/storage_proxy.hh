@@ -501,6 +501,10 @@ public:
         return _db.local();
     }
 
+    abort_source& get_abort_source() const noexcept {
+        return _abort;
+    }
+
     void set_cdc_service(cdc::cdc_service* cdc) {
         _cdc = cdc;
     }

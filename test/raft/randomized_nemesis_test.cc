@@ -752,7 +752,7 @@ public:
             }
         });
     }
-    virtual future<raft::add_entry_reply> send_modify_config(raft::server_id dst,
+    virtual future<raft::add_entry_reply> send_modify_config(raft::server_id dst, abort_source&,
                 const std::vector<raft::config_member>& add,
                 const std::vector<raft::server_id>& del) override {
         co_return co_await with_gate([&] () -> future<raft::add_entry_reply> {
@@ -778,7 +778,7 @@ public:
             }
         });
     }
-    virtual future<raft::read_barrier_reply> execute_read_barrier_on_leader(raft::server_id dst) override {
+    virtual future<raft::read_barrier_reply> execute_read_barrier_on_leader(raft::server_id dst, seastar::abort_source&) override {
         co_return co_await with_gate([&] () -> future<raft::read_barrier_reply> {
             auto id = new_reply_id();
             promise<raft::read_barrier_reply> p;
@@ -838,32 +838,32 @@ public:
         });
     }
 
-    virtual future<> send_append_entries(raft::server_id dst, const raft::append_request& m) override {
+    virtual future<> send_append_entries(raft::server_id dst, seastar::abort_source&, const raft::append_request& m) override {
         _send(dst, m);
         co_return;
     }
 
-    virtual void send_append_entries_reply(raft::server_id dst, const raft::append_reply& m) override {
+    virtual void send_append_entries_reply(raft::server_id dst, const raft::append_reply& m, seastar::abort_source* as_opt = nullptr) override {
         _send(dst, m);
     }
 
-    virtual void send_vote_request(raft::server_id dst, const raft::vote_request& m) override {
+    virtual void send_vote_request(raft::server_id dst, seastar::abort_source&, const raft::vote_request& m) override {
         _send(dst, m);
     }
 
-    virtual void send_vote_reply(raft::server_id dst, const raft::vote_reply& m) override {
+    virtual void send_vote_reply(raft::server_id dst, seastar::abort_source&, const raft::vote_reply& m) override {
         _send(dst, m);
     }
 
-    virtual void send_timeout_now(raft::server_id dst, const raft::timeout_now& m) override {
+    virtual void send_timeout_now(raft::server_id dst, seastar::abort_source&, const raft::timeout_now& m) override {
         _send(dst, m);
     }
 
-    virtual void send_read_quorum(raft::server_id dst, const raft::read_quorum& m) override {
+    virtual void send_read_quorum(raft::server_id dst, seastar::abort_source&, const raft::read_quorum& m) override {
         _send(dst, m);
     }
 
-    virtual void send_read_quorum_reply(raft::server_id dst, const raft::read_quorum_reply& m) override {
+    virtual void send_read_quorum_reply(raft::server_id dst, seastar::abort_source&, const raft::read_quorum_reply& m) override {
         _send(dst, m);
     }
 

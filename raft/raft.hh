@@ -603,43 +603,43 @@ public:
     // Send provided append_request to the supplied server, does
     // not wait for reply. The returned future resolves when
     // message is sent. It does not mean it was received.
-    virtual future<> send_append_entries(server_id id, const append_request& append_request) = 0;
+    virtual future<> send_append_entries(server_id id, seastar::abort_source& as, const append_request& append_request) = 0;
 
     // Send a reply to an append_request.
-    virtual void send_append_entries_reply(server_id id, const append_reply& reply) = 0;
+    virtual void send_append_entries_reply(server_id id, const append_reply& reply, seastar::abort_source* as_opt = nullptr) = 0;
 
     // Send a vote request.
-    virtual void send_vote_request(server_id id, const vote_request& vote_request) = 0;
+    virtual void send_vote_request(server_id id, seastar::abort_source& as, const vote_request& vote_request) = 0;
 
     // Sends a reply to a vote request.
-    virtual void send_vote_reply(server_id id, const vote_reply& vote_reply) = 0;
+    virtual void send_vote_reply(server_id id, seastar::abort_source& as, const vote_reply& vote_reply) = 0;
 
     // Send a request to start leader election.
-    virtual void send_timeout_now(server_id, const timeout_now& timeout_now) = 0;
+    virtual void send_timeout_now(server_id, seastar::abort_source& as, const timeout_now& timeout_now) = 0;
 
     // Send a read barrier request.
-    virtual void send_read_quorum(server_id id, const read_quorum& read_quorum) = 0;
+    virtual void send_read_quorum(server_id id, seastar::abort_source& as, const read_quorum& read_quorum) = 0;
 
     // Send a reply to read barrier request.
-    virtual void send_read_quorum_reply(server_id id, const read_quorum_reply& read_quorum_reply) = 0;
+    virtual void send_read_quorum_reply(server_id id, seastar::abort_source& as, const read_quorum_reply& read_quorum_reply) = 0;
 
     // Forward a read barrier request to the leader.
     // Should throw a raft::transport_error if the target host is unreachable.
     // In this case, the call will be retried after some time,
     // possibly with a different server_id if the leader has changed by then.
-    virtual future<read_barrier_reply> execute_read_barrier_on_leader(server_id id) = 0;
+    virtual future<read_barrier_reply> execute_read_barrier_on_leader(server_id id, seastar::abort_source& as) = 0;
 
     // Two-way RPC for adding an entry on the leader
     // @param id the leader
     // @param cmd raft::command to be added to the leader's log
     // @retval either term and index of the committed entry or
     // not_a_leader exception.
-    virtual future<add_entry_reply> send_add_entry(server_id id, const command& cmd) = 0;
+    virtual future<add_entry_reply> send_add_entry(server_id id, seastar::abort_source& as, const command& cmd) = 0;
 
     // Send a configuration change request to the leader. Block until the
     // leader replies.
     // Should throw a raft::transport_error if the target host is unreachable.
-    virtual future<add_entry_reply> send_modify_config(server_id id,
+    virtual future<add_entry_reply> send_modify_config(server_id id, seastar::abort_source& as,
         const std::vector<config_member>& add,
         const std::vector<server_id>& del) = 0;
 

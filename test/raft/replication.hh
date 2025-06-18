@@ -625,7 +625,7 @@ public:
         co_return co_await _net[id]->_client->apply_snapshot(_id, std::move(s));
     }
 
-    future<> send_append_entries(raft::server_id id, const raft::append_request& append_request) override {
+    future<> send_append_entries(raft::server_id id, seastar::abort_source& as, const raft::append_request& append_request) override {
         if (!_net.count(id)) {
             return make_exception_future(std::runtime_error("trying to send a message to an unknown node"));
         }
@@ -635,7 +635,7 @@ public:
         if (!drop_packet()) {
             if (_delays) {
                 return with_gate(_gate, [&, this] () mutable -> future<> {
-                    return seastar::sleep(get_delay(id) + rand_extra_delay()).then(
+                    return seastar::sleep_abortable(get_delay(id) + rand_extra_delay(), as).then(
                             [this, id = std::move(id), append_request = std::move(append_request)] {
                         if ((*_connected)(id, _id)) {
                             _net[id]->_client->append_entries(_id, append_request);
@@ -648,7 +648,7 @@ public:
         }
         return make_ready_future<>();
     }
-    void send_append_entries_reply(raft::server_id id, const raft::append_reply& reply) override {
+    void send_append_entries_reply(raft::server_id id, const raft::append_reply& reply, seastar::abort_source* as_opt = nullptr) override {
         if (!_net.count(id)) {
             return;
         }
@@ -658,7 +658,9 @@ public:
         if (!drop_packet()) {
             if (_delays) {
                 (void)with_gate(_gate, [&, this] () mutable -> future<> {
-                    return seastar::sleep(get_delay(id) + rand_extra_delay()).then(
+                    auto f = as_opt ? seastar::sleep_abortable(get_delay(id) + rand_extra_delay(), *as_opt)
+                        : seastar::sleep(get_delay(id) + rand_extra_delay());
+                    return std::move(f).then(
                             [this, id = std::move(id), reply = std::move(reply)] {
                         if ((*_connected)(id, _id)) {
                             _net[id]->_client->append_entries_reply(rpc::_id, std::move(reply));
@@ -670,7 +672,7 @@ public:
             }
         }
     }
-    void send_vote_request(raft::server_id id, const raft::vote_request& vote_request) override {
+    void send_vote_request(raft::server_id id, seastar::abort_source& as, const raft::vote_request& vote_request) override {
         if (!_net.count(id)) {
             return;
         }
@@ -679,7 +681,7 @@ public:
         }
         if (_delays) {
             (void)with_gate(_gate, [&, this] () mutable -> future<> {
-                return seastar::sleep(get_delay(id) + rand_extra_delay()).then(
+                return seastar::sleep_abortable(get_delay(id) + rand_extra_delay(), as).then(
                         [this, id = std::move(id), vote_request = std::move(vote_request)] {
                     if ((*_connected)(id, _id)) {
                         _net[id]->_client->request_vote(rpc::_id, std::move(vote_request));
@@ -690,7 +692,7 @@ public:
             _net[id]->_client->request_vote(rpc::_id, std::move(vote_request));
         }
     }
-    void send_vote_reply(raft::server_id id, const raft::vote_reply& vote_reply) override {
+    void send_vote_reply(raft::server_id id, seastar::abort_source& as, const raft::vote_reply& vote_reply) override {
         if (!_net.count(id)) {
             return;
         }
@@ -699,7 +701,7 @@ public:
         }
         if (_delays) {
             (void)with_gate(_gate, [&, this] () mutable -> future<> {
-                return seastar::sleep(get_delay(id) + rand_extra_delay()).then([=, this] {
+                return seastar::sleep_abortable(get_delay(id) + rand_extra_delay(), as).then([=, this] {
                     if ((*_connected)(id, _id)) {
                         _net[id]->_client->request_vote_reply(rpc::_id, vote_reply);
                     }
@@ -709,7 +711,7 @@ public:
             _net[id]->_client->request_vote_reply(rpc::_id, vote_reply);
         }
     }
-    void send_timeout_now(raft::server_id id, const raft::timeout_now& timeout_now) override {
+    void send_timeout_now(raft::server_id id, seastar::abort_source&, const raft::timeout_now& timeout_now) override {
         if (!_net.count(id)) {
             return;
         }
@@ -722,7 +724,7 @@ public:
         tlogger.debug("[{}] rpc aborting", _id);
         return _gate.close();
     }
-    void send_read_quorum(raft::server_id id, const raft::read_quorum& read_quorum) override {
+    void send_read_quorum(raft::server_id id, seastar::abort_source&, const raft::read_quorum& read_quorum) override {
         if (!_net.count(id)) {
             return;
         }
@@ -733,7 +735,7 @@ public:
             _net[id]->_client->read_quorum_request(_id, read_quorum);
         }
     }
-    void send_read_quorum_reply(raft::server_id id, const raft::read_quorum_reply& reply) override {
+    void send_read_quorum_reply(raft::server_id id, seastar::abort_source&, const raft::read_quorum_reply& reply) override {
         if (!_net.count(id)) {
             return;
         }
@@ -744,7 +746,7 @@ public:
             _net[id]->_client->read_quorum_reply(_id, std::move(reply));
         }
     }
-    future<raft::read_barrier_reply> execute_read_barrier_on_leader(raft::server_id id) override {
+    future<raft::read_barrier_reply> execute_read_barrier_on_leader(raft::server_id id, seastar::abort_source&) override {
         if (!_net.count(id)) {
             return make_exception_future<raft::read_barrier_reply>(std::runtime_error("trying to send a message to an unknown node"));
         }
@@ -761,11 +763,11 @@ public:
             throw std::runtime_error("cannot send since nodes are disconnected");
         }
     }
-    future<raft::add_entry_reply> send_add_entry(raft::server_id id, const raft::command& cmd) override {
+    future<raft::add_entry_reply> send_add_entry(raft::server_id id, seastar::abort_source&, const raft::command& cmd) override {
         check_known_and_connected(id);
         return _net[id]->_client->execute_add_entry(_id, cmd, nullptr);
     }
-    future<raft::add_entry_reply> send_modify_config(raft::server_id id,
+    future<raft::add_entry_reply> send_modify_config(raft::server_id id, seastar::abort_source&,
         const std::vector<raft::config_member>& add,
         const std::vector<raft::server_id>& del) override {
         check_known_and_connected(id);
