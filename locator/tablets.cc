@@ -335,17 +335,18 @@ void tablet_metadata::drop_tablet_map(table_id id) {
 }
 
 future<> tablet_metadata::clear_gently() {
+    tablet_logger.debug("tablet_metadata::clear_gently {}", fmt::ptr(this));
+    std::vector<std::vector<tablet_map_ptr>> maps_per_shard;
+    maps_per_shard.resize(smp::count);
     for (auto&& [id, map] : _tablets) {
-        const auto shard = map.get_owner_shard();
-        co_await smp::submit_to(shard, [map = std::move(map)] () mutable {
-            auto map_ptr = map.release();
-            // Others copies exist, we simply drop ours, no need to clear anything.
-            if (map_ptr.use_count() > 1) {
-                return make_ready_future<>();
-            }
-            return const_cast<tablet_map&>(*map_ptr).clear_gently().finally([map_ptr = std::move(map_ptr)] { });
-        });
+        maps_per_shard[map.get_owner_shard()].emplace_back(std::move(map));
     }
+    co_await smp::invoke_on_all([&maps_per_shard] -> future<> {
+        for (auto& map_ptr : maps_per_shard[this_shard_id()]) {
+            auto map = map_ptr.release();
+            co_await utils::clear_gently(map);
+        }
+    });
     _tablets.clear();
     co_return;
 }
