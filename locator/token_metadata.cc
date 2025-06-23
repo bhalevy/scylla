@@ -847,11 +847,20 @@ token_metadata::token_metadata(shared_token_metadata& stm, config cfg)
 {
 }
 
-token_metadata::~token_metadata() = default;
+token_metadata::~token_metadata() {
+    clear_and_dispose_impl();
+}
 
 token_metadata::token_metadata(token_metadata&&) noexcept = default;
 
-token_metadata& token_metadata::token_metadata::operator=(token_metadata&&) noexcept = default;
+token_metadata& token_metadata::token_metadata::operator=(token_metadata&& o) noexcept {
+    if (this != &o) {
+        clear_and_dispose_impl();
+        _shared_token_metadata = std::exchange(o._shared_token_metadata, nullptr);
+        _impl = std::exchange(o._impl, nullptr);
+    }
+    return *this;
+}
 
 void token_metadata::set_shared_token_metadata(shared_token_metadata& stm) {
     _shared_token_metadata = &stm;
