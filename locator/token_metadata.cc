@@ -839,7 +839,12 @@ token_metadata::token_metadata(config cfg)
 {
 }
 
-token_metadata::~token_metadata() = default;
+token_metadata::~token_metadata() {
+    if (_impl) {
+        tlogger.debug("~token_metadata[{}]: need clear_gently, at {}", fmt::ptr(this), current_backtrace());
+        seastar::internal::run_in_background(clear_gently());
+    }
+}
 
 token_metadata::token_metadata(token_metadata&&) noexcept = default;
 
@@ -1028,7 +1033,9 @@ token_metadata::clone_after_all_left() const noexcept {
 }
 
 future<> token_metadata::clear_gently() noexcept {
-    return _impl->clear_gently();
+    if (auto impl = std::move(_impl)) {
+        co_await impl->clear_gently();
+    }
 }
 
 dht::token_range_vector
