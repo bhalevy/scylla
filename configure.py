@@ -1216,6 +1216,7 @@ scylla_core = (['message/messaging_service.cc',
                 'node_ops/task_manager_module.cc',
                 'reader_concurrency_semaphore_group.cc',
                 'utils/disk_space_monitor.cc',
+                'utils/background_disposer.cc',
                 ] + [Antlr3Grammar('cql3/Cql.g')] \
                   + scylla_raft_core
                )
@@ -1496,6 +1497,7 @@ for t in sorted(perf_tests):
 deps['test/boost/combined_tests'] += [
     'test/boost/aggregate_fcts_test.cc',
     'test/boost/auth_test.cc',
+    'test/boost/background_disposer_test.cc',
     'test/boost/batchlog_manager_test.cc',
     'test/boost/cache_algorithm_test.cc',
     'test/boost/castas_fcts_test.cc',

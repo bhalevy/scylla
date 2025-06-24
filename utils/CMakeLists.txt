@@ -11,6 +11,7 @@ target_sources(utils
     arch/powerpc/crc32-vpmsum/crc32.S
     array-search.cc
     ascii.cc
+    background_disposer.cc
     base64.cc
     big_decimal.cc
     bloom_calculations.cc
