@@ -23,6 +23,7 @@
 #include <seastar/core/shared_ptr.hh>
 #include <seastar/core/semaphore.hh>
 #include <seastar/core/sharded.hh>
+#include <seastar/core/scheduling.hh>
 #include "utils/phased_barrier.hh"
 #include "utils/background_disposer.hh"
 #include "service/topology_state_machine.hh"
@@ -410,10 +411,11 @@ private:
 public:
     // used to construct the shared object as a sharded<> instance
     // lock_func returns semaphore_units<>
-    explicit shared_token_metadata(token_metadata_lock_func lock_func, token_metadata::config cfg)
+    explicit shared_token_metadata(token_metadata_lock_func lock_func, token_metadata::config cfg, seastar::scheduling_group clear_and_dispose_scheduling_group = default_scheduling_group())
         : _shared(make_lw_shared<token_metadata>(*this, cfg))
         , _lock_func(std::move(lock_func))
         , _versions_barrier("shared_token_metadata::versions_barrier")
+        , _background_disposer(clear_and_dispose_scheduling_group)
     {
         _shared->set_version_tracker(new_tracker(_shared->get_version()));
     }
