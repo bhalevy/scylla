@@ -24,6 +24,7 @@
 #include <seastar/core/semaphore.hh>
 #include <seastar/core/sharded.hh>
 #include "utils/phased_barrier.hh"
+#include "utils/background_disposer.hh"
 #include "service/topology_state_machine.hh"
 
 #include "locator/types.hh"
@@ -358,6 +359,9 @@ private:
     void set_version_tracker(version_tracker_t tracker);
 
     void set_shared_token_metadata(shared_token_metadata& stm);
+
+    // Clears and disposes the token metadata impl in the background, if present.
+    void clear_and_dispose_impl() noexcept;
 };
 
 struct topology_change_info {
@@ -400,6 +404,7 @@ class shared_token_metadata : public peering_sharded_service<shared_token_metada
             boost::intrusive::member_hook<version_tracker, version_tracker::link_type, &version_tracker::_link>,
             boost::intrusive::constant_time_size<false>>;
     version_tracker_list_type _trackers;
+    utils::background_disposer _background_disposer;
 private:
     version_tracker new_tracker(token_metadata::version_t);
 public:
@@ -415,6 +420,8 @@ public:
 
     shared_token_metadata(const shared_token_metadata& x) = delete;
     shared_token_metadata(shared_token_metadata&& x) = default;
+
+    future<> stop() noexcept;
 
     mutable_token_metadata_ptr make_token_metadata_ptr() {
         return make_lw_shared<token_metadata>(*this, token_metadata::config{_shared->get_topology().get_config()});
@@ -473,6 +480,8 @@ public:
     //
     // Must be called on shard 0.
     static future<> mutate_on_all_shards(sharded<shared_token_metadata>& stm, seastar::noncopyable_function<future<> (token_metadata&)> func);
+
+    void clear_and_dispose(std::unique_ptr<token_metadata_impl> impl) noexcept;
 
 private:
     // for testing only, unsafe to be called without awaiting get_lock() first

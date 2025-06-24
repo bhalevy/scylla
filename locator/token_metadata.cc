@@ -38,7 +38,7 @@ static void remove_by_value(C& container, V value) {
     }
 }
 
-class token_metadata_impl final {
+class token_metadata_impl final : public utils::background_disposer::basic_item {
 private:
     /**
      * Maintains token to endpoint map of every node in the cluster.
@@ -209,7 +209,7 @@ public:
      * Destroy the token_metadata members using continuations
      * to prevent reactor stalls.
      */
-    future<> clear_gently() noexcept;
+    virtual future<> clear_gently() noexcept override;
 
 public:
     dht::token_range_vector get_primary_ranges_for(std::unordered_set<token> tokens) const;
@@ -1035,8 +1035,19 @@ token_metadata::clone_after_all_left() const noexcept {
     co_return token_metadata(co_await _impl->clone_after_all_left());
 }
 
+void token_metadata::clear_and_dispose_impl() noexcept {
+    if (!_shared_token_metadata) {
+        return;
+    }
+    if (auto impl = std::exchange(_impl, nullptr)) {
+        _shared_token_metadata->clear_and_dispose(std::move(impl));
+        _shared_token_metadata = nullptr;
+    }
+}
+
 future<> token_metadata::clear_gently() noexcept {
-    return _impl->clear_gently();
+    clear_and_dispose_impl();
+    return make_ready_future();
 }
 
 dht::token_range_vector
@@ -1149,6 +1160,14 @@ version_tracker shared_token_metadata::new_tracker(token_metadata::version_t ver
     auto tracker = version_tracker(_versions_barrier.start(), version);
     _trackers.push_front(tracker);
     return tracker;
+}
+
+future<> shared_token_metadata::stop() noexcept {
+    co_await _background_disposer.stop();
+}
+
+void shared_token_metadata::clear_and_dispose(std::unique_ptr<token_metadata_impl> impl) noexcept {
+    _background_disposer.dispose(std::move(impl));
 }
 
 void shared_token_metadata::set(mutable_token_metadata_ptr tmptr) noexcept {
