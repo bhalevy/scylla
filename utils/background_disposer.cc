@@ -7,9 +7,11 @@
  */
 
 #include <seastar/core/coroutine.hh>
+#include <seastar/coroutine/switch_to.hh>
 
 #include "utils/background_disposer.hh"
 #include "seastar/core/on_internal_error.hh"
+#include "seastar/core/scheduling.hh"
 #include "seastar/core/shard_id.hh"
 #include "utils/assert.hh"
 #include "utils/log.hh"
@@ -30,8 +32,8 @@ background_disposer::basic_item::~basic_item() {
     }
 }
 
-background_disposer::background_disposer() {
-    _done = disposer();
+background_disposer::background_disposer(std::optional<scheduling_group> sg_opt) {
+    _done = disposer(sg_opt);
 }
 
 background_disposer::background_disposer(background_disposer&& o) {
@@ -65,6 +67,7 @@ void background_disposer::dispose(std::unique_ptr<basic_item> item) noexcept {
     }
     logger.debug("dispose: queuing item={} for disposal", fmt::ptr(item.get()));
     try {
+        item->_sg = current_scheduling_group();
         _items.push_back(std::move(item));
         _cond.signal();
     } catch (...) {
@@ -73,12 +76,18 @@ void background_disposer::dispose(std::unique_ptr<basic_item> item) noexcept {
     }
 }
 
-future<> background_disposer::disposer() noexcept {
+future<> background_disposer::disposer(std::optional<scheduling_group> sg_opt) noexcept {
+    if (sg_opt) {
+        co_await coroutine::switch_to(*sg_opt);
+    }
     logger.debug("disposer: starting");
     while (!(_items.empty() && _stopped)) {
         if (!_items.empty()) {
             auto& item = _items.front();
             logger.debug("disposer: clearing item={}", fmt::ptr(item.get()));
+            if (!sg_opt) {
+                co_await coroutine::switch_to(item->_sg);
+            }
             co_await item->clear_gently();
             logger.debug("disposer: destroying item={}", fmt::ptr(item.get()));
             _items.pop_front();

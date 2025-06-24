@@ -567,7 +567,7 @@ private:
             tm_cfg.topo_cfg.this_endpoint = my_address;
             tm_cfg.topo_cfg.this_cql_address = my_address;
             tm_cfg.topo_cfg.local_dc_rack = { _snitch.local()->get_datacenter(), _snitch.local()->get_rack() };
-            _token_metadata.start([] () noexcept { return db::schema_tables::hold_merge_lock(); }, tm_cfg).get();
+            _token_metadata.start([] () noexcept { return db::schema_tables::hold_merge_lock(); }, tm_cfg, scheduling_groups.streaming_scheduling_group).get();
             auto stop_token_metadata = defer_verbose_shutdown("token metadata", [this] { _token_metadata.stop().get(); });
 
             _erm_factory.start().get();

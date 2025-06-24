@@ -1039,7 +1039,7 @@ sharded<locator::shared_token_metadata> token_metadata;
                 //
                 tm_cfg.topo_cfg.disable_proximity_sorting = true;
             }
-            token_metadata.start([] () noexcept { return db::schema_tables::hold_merge_lock(); }, tm_cfg).get();
+            token_metadata.start([] () noexcept { return db::schema_tables::hold_merge_lock(); }, tm_cfg, maintenance_scheduling_group).get();
             token_metadata.invoke_on_all([&] (auto& stm) {
                 stm.set_stall_detector_threshold(
                         std::chrono::duration_cast<std::chrono::steady_clock::duration>(
