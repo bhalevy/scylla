@@ -10,10 +10,12 @@
 
 #include <list>
 #include <memory>
+#include <optional>
 
 #include <seastar/core/future.hh>
 #include <seastar/core/condition-variable.hh>
 #include <seastar/core/shard_id.hh>
+#include <seastar/core/scheduling.hh>
 
 using namespace seastar;
 
@@ -25,6 +27,7 @@ public:
         friend class background_disposer;
 
         unsigned _shard = this_shard_id();
+        scheduling_group _sg;
     public:
         basic_item() = default;
         basic_item(basic_item&&);
@@ -39,7 +42,7 @@ private:
     condition_variable _cond;
     std::list<std::unique_ptr<basic_item>> _items;
 public:
-    background_disposer();
+    background_disposer(std::optional<scheduling_group> sg_opt = std::nullopt);
     background_disposer(background_disposer&&);
     background_disposer(const background_disposer&) = delete;
     ~background_disposer();
@@ -49,7 +52,7 @@ public:
     void dispose(std::unique_ptr<basic_item> item) noexcept;
 
 private:
-    future<> disposer() noexcept;
+    future<> disposer(std::optional<scheduling_group> sg_opt) noexcept;
 };
 
 } // namespace utils
