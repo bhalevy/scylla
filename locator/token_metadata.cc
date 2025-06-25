@@ -213,6 +213,10 @@ public:
      */
     virtual future<> clear_gently() noexcept override;
 
+    void release_version() {
+        _version_tracker = {};
+    }
+
 public:
     dht::token_range_vector get_primary_ranges_for(std::unordered_set<token> tokens) const;
 
@@ -1042,6 +1046,7 @@ void token_metadata::clear_and_dispose_impl() noexcept {
         return;
     }
     if (auto impl = std::exchange(_impl, nullptr)) {
+        impl->release_version();
         _shared_token_metadata->clear_and_dispose(std::move(impl));
         _shared_token_metadata = nullptr;
     }
