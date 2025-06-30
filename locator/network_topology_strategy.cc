@@ -27,6 +27,7 @@
 #include "utils/assert.hh"
 #include "utils/class_registrator.hh"
 #include "utils/hash.hh"
+#include "utils/overloaded_functor.hh"
 
 namespace std {
 template<>
@@ -55,7 +56,14 @@ network_topology_strategy::network_topology_strategy(replication_strategy_params
     std::unordered_set<sstring> racks;
 
     logger.info("options={{{}}} dcs={}", fmt::join(opts | std::views::transform([] (auto& x) {
-        return fmt::format("{}:{}", x.first, x.second);
+        return std::visit(overloaded_functor{
+            [&] (const sstring& s) {
+                return fmt::format("'{}':'{}'", x.first, s);
+            },
+            [&] (const rack_list& racks) {
+                return fmt::format("'{}':[{}]", x.first, fmt::join(racks | std::views::transform([] (auto& s) { return fmt::format("'{}'", s); }), ","));
+            }
+        }, x.second);
     }), ","), fmt::format("{}", fmt::join(dcs | std::views::keys, ",")));
 
     for (auto& config_pair : opts) {
@@ -90,7 +98,7 @@ network_topology_strategy::network_topology_strategy(replication_strategy_params
 
         replication_factor_data rf = parse_replication_factor(val, racks);
         if (topo->get_config().force_rack_valid_keyspaces && rf.count() && !rf.is_rack_based()) {
-            on_fatal_internal_error(rslogger, format("Invalid replication factor option: {}: must be a comma-separated list of rack names, or 0", val));
+            on_fatal_internal_error(rslogger, seastar::format("Invalid replication factor option: {}: must be a comma-separated list of rack names, or 0", val));
         }
         rep_factor += rf.count();
         _dc_rep_factor.emplace(key, std::move(rf));
@@ -304,6 +312,10 @@ void network_topology_strategy::validate_options(const gms::feature_service& fs,
     auto dcs = topology.get_datacenter_racks();
     validate_tablet_options(*this, fs, _config_options);
     for (auto& c : _config_options) {
+        if (c.first == sstring("class")) {
+            on_internal_error(rslogger, fmt::format("'class' tag should be dropped by now."
+                                                    "_config_options:{}", _config_options));
+        }
         if (c.first == sstring("replication_factor")) {
             on_internal_error(rslogger, fmt::format("'replication_factor' tag should be unrolled into a list of DC:RF by now."
                                                     "_config_options:{}", _config_options));
