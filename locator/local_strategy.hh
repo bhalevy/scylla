@@ -20,7 +20,7 @@ namespace locator {
 using inet_address = gms::inet_address;
 using token = dht::token;
 
-class local_strategy : public abstract_replication_strategy {
+class local_strategy : public abstract_replication_strategy, public local_replication_strategy {
 public:
     local_strategy(replication_strategy_params params);
     virtual ~local_strategy() {};
@@ -35,6 +35,8 @@ public:
     }
 
     [[nodiscard]] sstring sanity_check_read_replicas(const effective_replication_map& erm, const host_id_vector_replica_set& read_replicas) const override;
+
+    virtual effective_replication_map_ptr make_replication_map(table_id, token_metadata_ptr) const override;
 };
 
 }
