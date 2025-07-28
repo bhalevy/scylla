@@ -1496,8 +1496,8 @@ future<> storage_service::start_sys_dist_ks() const {
 
 future<> storage_service::join_topology(sharded<service::storage_proxy>& proxy,
         std::unordered_set<gms::inet_address> initial_contact_nodes,
-        std::unordered_map<locator::host_id, gms::loaded_endpoint_state> loaded_endpoints,
-        std::unordered_map<locator::host_id, sstring> loaded_peer_features,
+        utils::unordered_map<locator::host_id, gms::loaded_endpoint_state> loaded_endpoints,
+        utils::unordered_map<locator::host_id, sstring> loaded_peer_features,
         std::chrono::milliseconds delay,
         start_hint_manager start_hm,
         gms::generation_type new_generation) {
@@ -2267,12 +2267,12 @@ future<> storage_service::bootstrap(std::unordered_set<token>& bootstrap_tokens,
     });
 }
 
-future<std::unordered_map<dht::token_range, inet_address_vector_replica_set>>
+future<utils::unordered_map<dht::token_range, inet_address_vector_replica_set>>
 storage_service::get_range_to_address_map(locator::effective_replication_map_ptr erm) const {
     co_return (co_await locator::get_range_to_address_map(erm, erm->get_token_metadata_ptr()->sorted_tokens())) |
         std::views::transform([&] (auto tid) { return std::make_pair(tid.first,
                 tid.second | std::views::transform([&] (auto id) { return _address_map.get(id); }) | std::ranges::to<inet_address_vector_replica_set>()); }) |
-        std::ranges::to<std::unordered_map>();
+        std::ranges::to<utils::unordered_map<dht::token_range, inet_address_vector_replica_set>>();
 }
 
 future<> storage_service::handle_state_bootstrap(inet_address endpoint, locator::host_id host_id, gms::permit_id pid) {
@@ -2410,7 +2410,7 @@ future<> storage_service::handle_state_normal(inet_address endpoint, locator::ho
     // token_to_endpoint_map is used to track the current token owners for the purpose of removing replaced endpoints.
     // when any token is replaced by a new owner, we track the existing owner in `candidates_for_removal`
     // and eventually, if any candidate for removal ends up owning no tokens, it is removed from token_metadata.
-    std::unordered_map<token, locator::host_id> token_to_endpoint_map = get_token_metadata().get_token_to_endpoint();
+    utils::unordered_map<token, locator::host_id> token_to_endpoint_map = get_token_metadata().get_token_to_endpoint();
     std::unordered_set<locator::host_id> candidates_for_removal;
 
     // Here we convert endpoint tokens from gossiper to owned_tokens, which will be assigned as a new
@@ -2920,7 +2920,7 @@ future<> storage_service::join_cluster(sharded<service::storage_proxy>& proxy,
 
     set_mode(mode::STARTING);
 
-    std::unordered_map<locator::host_id, gms::loaded_endpoint_state> loaded_endpoints = co_await _sys_ks.local().load_endpoint_state();
+    utils::unordered_map<locator::host_id, gms::loaded_endpoint_state> loaded_endpoints = co_await _sys_ks.local().load_endpoint_state();
 
     // Seeds are now only used as the initial contact point nodes. If the
     // loaded_endpoints are empty which means this node is a completely new
@@ -3116,10 +3116,10 @@ future<> storage_service::replicate_to_all_cores(mutable_token_metadata_ptr tmpt
 
     std::vector<mutable_token_metadata_ptr> pending_token_metadata_ptr;
     pending_token_metadata_ptr.resize(smp::count);
-    std::vector<std::unordered_map<sstring, locator::keyspace_effective_replication_map_ptr>> pending_effective_replication_maps;
+    std::vector<utils::unordered_map<sstring, locator::keyspace_effective_replication_map_ptr>> pending_effective_replication_maps;
     pending_effective_replication_maps.resize(smp::count);
-    std::vector<std::unordered_map<table_id, locator::effective_replication_map_ptr>> pending_table_erms;
-    std::vector<std::unordered_map<table_id, locator::effective_replication_map_ptr>> pending_view_erms;
+    std::vector<utils::unordered_map<table_id, locator::effective_replication_map_ptr>> pending_table_erms;
+    std::vector<utils::unordered_map<table_id, locator::effective_replication_map_ptr>> pending_view_erms;
     pending_table_erms.resize(smp::count);
     pending_view_erms.resize(smp::count);
 
@@ -3313,7 +3313,7 @@ future<> storage_service::wait_for_group0_stop() {
     }
 }
 
-future<> storage_service::check_for_endpoint_collision(std::unordered_set<gms::inet_address> initial_contact_nodes, const std::unordered_map<locator::host_id, sstring>& loaded_peer_features) {
+future<> storage_service::check_for_endpoint_collision(std::unordered_set<gms::inet_address> initial_contact_nodes, const utils::unordered_map<locator::host_id, sstring>& loaded_peer_features) {
     slogger.debug("Starting shadow gossip round to check for endpoint collision");
 
     return seastar::async([this, initial_contact_nodes, loaded_peer_features] {
@@ -3376,7 +3376,7 @@ future<> storage_service::remove_endpoint(inet_address endpoint, gms::permit_id 
 }
 
 future<storage_service::replacement_info>
-storage_service::prepare_replacement_info(std::unordered_set<gms::inet_address> initial_contact_nodes, const std::unordered_map<locator::host_id, sstring>& loaded_peer_features) {
+storage_service::prepare_replacement_info(std::unordered_set<gms::inet_address> initial_contact_nodes, const utils::unordered_map<locator::host_id, sstring>& loaded_peer_features) {
     locator::host_id replace_host_id;
     gms::inet_address replace_address;
 
@@ -3627,9 +3627,9 @@ sstring storage_service::get_schema_version() {
 
 static constexpr auto UNREACHABLE = "UNREACHABLE";
 
-future<std::unordered_map<sstring, std::vector<sstring>>> storage_service::describe_schema_versions() {
+future<utils::unordered_map<sstring, std::vector<sstring>>> storage_service::describe_schema_versions() {
     auto live_hosts = _gossiper.get_live_members();
-    std::unordered_map<sstring, std::vector<sstring>> results;
+    utils::unordered_map<sstring, std::vector<sstring>> results;
     netw::messaging_service& ms = _messaging.local();
     return map_reduce(std::move(live_hosts), [&ms, as = abort_source()] (auto host) mutable {
         auto f0 = ser::migration_manager_rpc_verbs::send_schema_check(&ms, host, as);
@@ -3958,7 +3958,7 @@ void storage_service::run_bootstrap_ops(std::unordered_set<token>& bootstrap_tok
         ctl.sync_nodes.insert(my_host_id());
 
         // Step 2: Wait until no pending node operations
-        std::unordered_map<locator::host_id, std::list<node_ops_id>> pending_ops;
+        utils::unordered_map<locator::host_id, std::list<node_ops_id>> pending_ops;
         auto req = node_ops_cmd_request(node_ops_cmd::query_pending_ops, uuid);
         parallel_for_each(ctl.sync_nodes, [this, req, uuid, &pending_ops] (const locator::host_id& node) {
             return ser::node_ops_rpc_verbs::send_node_ops_cmd(&_messaging.local(), node, req).then([uuid, node, &pending_ops] (node_ops_cmd_response resp) {
@@ -4894,7 +4894,7 @@ future<utils::chunked_vector<temporary_buffer<char>>> storage_service::do_sample
     slogger.debug("do_sample_sstables(): called with table_id={} chunk_size={} n_chunks={}", t, chunk_size, n_chunks);
     auto& db = _db.local();
     auto& ms = _messaging.local();
-    std::unordered_map<locator::host_id, uint64_t> estimated_sizes;
+    utils::unordered_map<locator::host_id, uint64_t> estimated_sizes;
     co_await coroutine::parallel_for_each(
         db.get_token_metadata().get_host_ids(),
         [&] (auto h) -> future<> {
@@ -4906,7 +4906,7 @@ future<utils::chunked_vector<temporary_buffer<char>>> storage_service::do_sample
     );
     const auto total_size = std::ranges::fold_left(estimated_sizes | std::ranges::views::values, uint64_t(0), std::plus());
     slogger.debug("do_sample_sstables(): estimate_sstable_volume returned {}, total={}", estimated_sizes, total_size);
-    std::unordered_map<locator::host_id, uint64_t> chunks_per_host;
+    utils::unordered_map<locator::host_id, uint64_t> chunks_per_host;
     {
         uint64_t partial_sum = 0;
         uint64_t covered_samples = 0;
@@ -5173,7 +5173,7 @@ storage_service::get_changed_ranges_for_leaving(const locator::vnode_effective_r
 
     slogger.debug("Node {} ranges [{}]", endpoint, ranges);
 
-    std::unordered_map<dht::token_range, host_id_vector_replica_set> current_replica_endpoints;
+    utils::unordered_map<dht::token_range, host_id_vector_replica_set> current_replica_endpoints;
 
     // Find (for each range) all nodes that store replicas for these ranges as well
     for (auto& r : ranges) {
@@ -5242,7 +5242,7 @@ future<> storage_service::unbootstrap() {
     if (is_repair_based_node_ops_enabled(streaming::stream_reason::decommission)) {
         co_await _repair.local().decommission_with_repair(get_token_metadata_ptr());
     } else {
-        std::unordered_map<sstring, std::unordered_multimap<dht::token_range, locator::host_id>> ranges_to_stream;
+        utils::unordered_map<sstring, std::unordered_multimap<dht::token_range, locator::host_id>> ranges_to_stream;
 
         auto ks_erms = _db.local().get_non_local_strategy_keyspaces_erms();
         for (const auto& [keyspace_name, erm] : ks_erms) {
@@ -5286,7 +5286,7 @@ future<> storage_service::removenode_add_ranges(lw_shared_ptr<dht::range_streame
             }
         }
         std::unordered_multimap<locator::host_id, dht::token_range> source_ranges = co_await get_new_source_ranges(erm, my_new_ranges);
-        std::unordered_map<locator::host_id, dht::token_range_vector> ranges_per_endpoint;
+        utils::unordered_map<locator::host_id, dht::token_range_vector> ranges_per_endpoint;
         for (auto& x : source_ranges) {
             ranges_per_endpoint[x.first].emplace_back(x.second);
         }
@@ -5366,7 +5366,7 @@ future<> storage_service::leave_ring() {
 }
 
 future<>
-storage_service::stream_ranges(std::unordered_map<sstring, std::unordered_multimap<dht::token_range, locator::host_id>> ranges_to_stream_by_keyspace) {
+storage_service::stream_ranges(utils::unordered_map<sstring, std::unordered_multimap<dht::token_range, locator::host_id>> ranges_to_stream_by_keyspace) {
     auto streamer = dht::range_streamer(_db, _stream_manager, get_token_metadata_ptr(), _abort_source, get_token_metadata_ptr()->get_my_id(), _snitch.local()->get_location(), "Unbootstrap", streaming::stream_reason::decommission, null_topology_guard);
     for (auto& entry : ranges_to_stream_by_keyspace) {
         const auto& keyspace = entry.first;
@@ -5376,7 +5376,7 @@ storage_service::stream_ranges(std::unordered_map<sstring, std::unordered_multim
             continue;
         }
 
-        std::unordered_map<locator::host_id, dht::token_range_vector> ranges_per_endpoint;
+        utils::unordered_map<locator::host_id, dht::token_range_vector> ranges_per_endpoint;
         for (auto& end_point_entry : ranges_with_endpoints) {
             dht::token_range r = end_point_entry.first;
             locator::host_id endpoint = end_point_entry.second;
@@ -5424,7 +5424,7 @@ future<> storage_service::shutdown_protocol_servers() {
 future<std::unordered_multimap<locator::host_id, dht::token_range>>
 storage_service::get_new_source_ranges(const locator::vnode_effective_replication_map* erm, const dht::token_range_vector& ranges) const {
     auto my_address = my_host_id();
-    std::unordered_map<dht::token_range, host_id_vector_replica_set> range_addresses = co_await erm->get_range_host_ids();
+    utils::unordered_map<dht::token_range, host_id_vector_replica_set> range_addresses = co_await erm->get_range_host_ids();
     std::unordered_multimap<locator::host_id, dht::token_range> source_ranges;
 
     // find alive sources for our new ranges
@@ -6438,7 +6438,7 @@ future<> storage_service::stream_tablet(locator::global_tablet_id tablet) {
             streamer->add_source_filter(std::make_unique<dht::range_streamer::failure_detector_source_filter>(
                     _gossiper.get_unreachable_members()));
 
-            std::unordered_map<locator::host_id, dht::token_range_vector> ranges_per_endpoint;
+            utils::unordered_map<locator::host_id, dht::token_range_vector> ranges_per_endpoint;
             for (auto r: read_from) {
                 ranges_per_endpoint[r.host].emplace_back(range);
             }
@@ -6521,7 +6521,7 @@ future<> storage_service::cleanup_tablet(locator::global_tablet_id tablet) {
 }
 
 static bool increases_replicas_per_rack(const locator::topology& topology, const locator::tablet_info& tinfo, sstring dst_rack) {
-    std::unordered_map<sstring, size_t> m;
+    utils::unordered_map<sstring, size_t> m;
     for (auto& replica: tinfo.replicas) {
         m[topology.get_rack(replica.host)]++;
     }
@@ -6558,7 +6558,7 @@ replica::tablet_mutation_builder storage_service::tablet_mutation_builder_for_ba
 
 // Repair the tablets contain the tokens and wait for the repair to finish
 // This is used to run a manual repair requested by user from the restful API.
-future<std::unordered_map<sstring, sstring>> storage_service::add_repair_tablet_request(table_id table, std::variant<utils::chunked_vector<dht::token>, all_tokens_tag> tokens_variant,
+future<utils::unordered_map<sstring, sstring>> storage_service::add_repair_tablet_request(table_id table, std::variant<utils::chunked_vector<dht::token>, all_tokens_tag> tokens_variant,
         std::unordered_set<locator::host_id> hosts_filter, std::unordered_set<sstring> dcs_filter, bool await_completion) {
     auto holder = _async_gate.hold();
 
@@ -6580,7 +6580,7 @@ future<std::unordered_map<sstring, sstring>> storage_service::add_repair_tablet_
     }
 
     auto repair_task_info = locator::tablet_task_info::make_user_repair_request(hosts_filter, dcs_filter);
-    auto res = std::unordered_map<sstring, sstring>{{sstring("tablet_task_id"), repair_task_info.tablet_task_id.to_sstring()}};
+    auto res = utils::unordered_map<sstring, sstring>{{sstring("tablet_task_id"), repair_task_info.tablet_task_id.to_sstring()}};
 
     auto start = std::chrono::steady_clock::now();
     slogger.info("Starting tablet repair by API request table_id={} tokens={} all_tokens={} tablet_task_id={} hosts_filter={} dcs_filter={}",
@@ -7878,7 +7878,7 @@ future<bool> storage_service::is_cleanup_allowed(sstring keyspace) {
 }
 
 bool storage_service::is_repair_based_node_ops_enabled(streaming::stream_reason reason) {
-    static const std::unordered_map<sstring, streaming::stream_reason> reason_map{
+    static const utils::unordered_map<sstring, streaming::stream_reason> reason_map{
         {"replace", streaming::stream_reason::replace},
         {"bootstrap", streaming::stream_reason::bootstrap},
         {"decommission", streaming::stream_reason::decommission},

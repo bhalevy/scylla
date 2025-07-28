@@ -313,10 +313,10 @@ vnode_effective_replication_map::get_primary_ranges_within_dc(locator::host_id e
     });
 }
 
-future<std::unordered_map<dht::token_range, host_id_vector_replica_set>>
+future<utils::unordered_map<dht::token_range, host_id_vector_replica_set>>
 vnode_effective_replication_map::get_range_host_ids() const {
     const token_metadata& tm = *_tmptr;
-    std::unordered_map<dht::token_range, host_id_vector_replica_set> ret;
+    utils::unordered_map<dht::token_range, host_id_vector_replica_set> ret;
     for (auto& t : tm.sorted_tokens()) {
         dht::token_range_vector ranges = tm.get_primary_ranges_for(t);
         for (auto& r : ranges) {
@@ -327,9 +327,9 @@ vnode_effective_replication_map::get_range_host_ids() const {
     co_return ret;
 }
 
-future<std::unordered_map<dht::token_range, host_id_vector_replica_set>>
+future<utils::unordered_map<dht::token_range, host_id_vector_replica_set>>
 abstract_replication_strategy::get_range_host_ids(const token_metadata& tm) const {
-    std::unordered_map<dht::token_range, host_id_vector_replica_set> ret;
+    utils::unordered_map<dht::token_range, host_id_vector_replica_set> ret;
     for (auto& t : tm.sorted_tokens()) {
         dht::token_range_vector ranges = tm.get_primary_ranges_for(t);
         auto eps = co_await calculate_natural_endpoints(t, tm);

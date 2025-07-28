@@ -1250,10 +1250,10 @@ public:
 
 // different mutation for each destination (for read repairs)
 class per_destination_mutation : public mutation_holder {
-    std::unordered_map<locator::host_id, lw_shared_ptr<const frozen_mutation>> _mutations;
+    utils::unordered_map<locator::host_id, lw_shared_ptr<const frozen_mutation>> _mutations;
     dht::token _token;
 public:
-    per_destination_mutation(const std::unordered_map<locator::host_id, std::optional<mutation>>& mutations) {
+    per_destination_mutation(const utils::unordered_map<locator::host_id, std::optional<mutation>>& mutations) {
         for (auto&& m : mutations) {
             lw_shared_ptr<const frozen_mutation> fm;
             if (m.second) {
@@ -1940,7 +1940,7 @@ class datacenter_sync_write_response_handler : public abstract_write_response_ha
         size_t total_endpoints;
         size_t failures;
     };
-    std::unordered_map<sstring, dc_info> _dc_responses;
+    utils::unordered_map<sstring, dc_info> _dc_responses;
     bool waited_for(locator::host_id from) override {
         auto& topology = _effective_replication_map_ptr->get_topology();
         sstring data_center = topology.get_datacenter(from);
@@ -3085,7 +3085,7 @@ struct batchlog_replay_mutation {
 };
 
 struct read_repair_mutation {
-    std::unordered_map<locator::host_id, std::optional<mutation>> value;
+    utils::unordered_map<locator::host_id, std::optional<mutation>> value;
     locator::effective_replication_map_ptr ermp;
 };
 
@@ -3711,7 +3711,7 @@ future<> storage_proxy::mutate_counters(Range&& mutations, db::consistency_level
 
 
     // Choose a leader for each mutation
-    std::unordered_map<locator::host_id, utils::chunked_vector<frozen_mutation_and_schema>> leaders;
+    utils::unordered_map<locator::host_id, utils::chunked_vector<frozen_mutation_and_schema>> leaders;
 
     // The interface doesn't preclude multiple keyspaces (and thus effective_replication_maps),
     // so we need a container for them. std::set<> will result in the fewest allocations if there is just one.
@@ -3891,7 +3891,7 @@ future<> storage_proxy::replicate_counter_from_leader(mutation m, db::consistenc
 }
 
 /*
- * Range template parameter can either be range of 'mutation' or a range of 'std::unordered_map<locator::host_id, mutation>'.
+ * Range template parameter can either be range of 'mutation' or a range of 'utils::unordered_map<locator::host_id, mutation>'.
  * create_write_response_handler() has specialization for both types. The one for the former uses keyspace to figure out
  * endpoints to send mutation to, the one for the late uses endpoints that are used as keys for the map.
  */
@@ -3952,7 +3952,7 @@ storage_proxy::mutate_atomically(utils::chunked_vector<mutation> mutations, db::
 
 static host_id_vector_replica_set endpoint_filter(
         const noncopyable_function<bool(const locator::host_id&)>& is_alive, locator::host_id my_address,
-        const sstring& local_rack, const std::unordered_map<sstring, std::unordered_set<locator::host_id>>& endpoints) {
+        const sstring& local_rack, const utils::unordered_map<sstring, std::unordered_set<locator::host_id>>& endpoints) {
     // special case for single-node data centers
     if (endpoints.size() == 1 && endpoints.begin()->second.size() == 1) {
         return endpoints.begin()->second | std::ranges::to<host_id_vector_replica_set>();
@@ -4058,7 +4058,7 @@ storage_proxy::mutate_atomically_result(utils::chunked_vector<mutation> mutation
                             auto local_addr = _p.my_host_id(*_ermp);
                             auto& topology = _ermp->get_topology();
                             auto local_dc = topology.get_datacenter();
-                            std::unordered_map<sstring, std::unordered_set<locator::host_id>> local_token_owners;
+                            utils::unordered_map<sstring, std::unordered_set<locator::host_id>> local_token_owners;
                             auto local_token_nodes  = _ermp->get_token_metadata().get_datacenter_racks_token_owners_nodes().at(local_dc);
                             for (const auto& e : local_token_nodes) {
                                 local_token_owners.emplace(e.first, e.second |
@@ -4313,7 +4313,7 @@ future<> storage_proxy::send_batchlog_replay_to_all_replicas(utils::chunked_vect
 void storage_proxy::send_to_live_endpoints(storage_proxy::response_id_type response_id, clock_type::time_point timeout)
 {
     // extra-datacenter replicas, grouped by dc
-    std::unordered_map<sstring, host_id_vector_replica_set> dc_groups;
+    utils::unordered_map<sstring, host_id_vector_replica_set> dc_groups;
     std::vector<std::pair<const sstring, host_id_vector_replica_set>> local;
     local.reserve(3);
 
@@ -6066,7 +6066,7 @@ storage_proxy::query_partition_key_range_concurrent(storage_proxy::clock_type::t
 
     for (;;) {
         std::vector<::shared_ptr<abstract_read_executor>> exec;
-        std::unordered_map<abstract_read_executor*, std::vector<dht::token_range>> ranges_per_exec;
+        utils::unordered_map<abstract_read_executor*, std::vector<dht::token_range>> ranges_per_exec;
         dht::partition_range_vector ranges = ranges_to_vnodes(concurrency_factor);
         dht::partition_range_vector::iterator i = ranges.begin();
 

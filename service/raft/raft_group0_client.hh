@@ -26,6 +26,7 @@
 #include "gc_clock.hh"
 #include "service/raft/group0_state_machine.hh"
 #include "service/maintenance_mode.hh"
+#include "utils/unordered_map.hh"
 
 class mutation;
 
@@ -99,7 +100,7 @@ class raft_group0_client {
     seastar::rwlock _upgrade_lock;
     seastar::condition_variable _upgraded;
 
-    std::unordered_map<utils::UUID, std::optional<service::broadcast_tables::query_result>> _results;
+    utils::unordered_map<utils::UUID, std::optional<service::broadcast_tables::query_result>> _results;
 
     maintenance_mode_enabled _maintenance_mode;
 

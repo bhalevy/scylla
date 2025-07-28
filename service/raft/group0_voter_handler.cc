@@ -15,6 +15,7 @@
 #include "gms/feature_service.hh"
 #include "gms/gossiper.hh"
 #include "raft_group0.hh"
+#include "utils/unordered_map.hh"
 
 namespace service {
 
@@ -228,7 +229,7 @@ class datacenter_info {
         existing_alive_voters_remaining = 0;
         owns_alive_leader = false;
 
-        std::unordered_map<std::string_view, node_ids_t> nodes_by_rack;
+        utils::unordered_map<std::string_view, node_ids_t> nodes_by_rack;
         for (const auto& id : dc_nodes) {
             const auto& node = all_nodes.at(id);
             nodes_by_rack[node.rack].emplace_back(id);
@@ -394,7 +395,7 @@ class calculator_impl {
     static datacenters_store_t create_datacenters_list(const group0_voter_calculator::nodes_list_t& nodes, size_t& largest_dc_size) {
         largest_dc_size = 0;
 
-        std::unordered_map<std::string_view, node_ids_t> nodes_by_dc;
+        utils::unordered_map<std::string_view, node_ids_t> nodes_by_dc;
         for (const auto& [id, node] : nodes) {
             nodes_by_dc[node.datacenter].emplace_back(id);
         }

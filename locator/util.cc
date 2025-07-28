@@ -13,11 +13,11 @@
 
 namespace locator {
 
-static future<std::unordered_map<dht::token_range, host_id_vector_replica_set>>
+static future<utils::unordered_map<dht::token_range, host_id_vector_replica_set>>
 construct_range_to_endpoint_map(
         locator::effective_replication_map_ptr erm,
         const dht::token_range_vector& ranges) {
-    std::unordered_map<dht::token_range, host_id_vector_replica_set> res;
+    utils::unordered_map<dht::token_range, host_id_vector_replica_set> res;
     res.reserve(ranges.size());
     for (auto r : ranges) {
         res[r] = erm->get_natural_replicas(
@@ -48,7 +48,7 @@ get_all_ranges(const utils::chunked_vector<token>& sorted_tokens) {
 }
 
 // Caller is responsible to hold token_metadata valid until the returned future is resolved
-future<std::unordered_map<dht::token_range, host_id_vector_replica_set>>
+future<utils::unordered_map<dht::token_range, host_id_vector_replica_set>>
 get_range_to_address_map(locator::effective_replication_map_ptr erm,
         const utils::chunked_vector<token>& sorted_tokens) {
     co_return co_await construct_range_to_endpoint_map(erm, co_await get_all_ranges(sorted_tokens));
@@ -68,12 +68,12 @@ get_tokens_in_local_dc(const locator::token_metadata& tm) {
     co_return filtered_tokens;
 }
 
-static future<std::unordered_map<dht::token_range, host_id_vector_replica_set>>
+static future<utils::unordered_map<dht::token_range, host_id_vector_replica_set>>
 get_range_to_address_map_in_local_dc(
         locator::effective_replication_map_ptr erm) {
     auto tmptr = erm->get_token_metadata_ptr();
     auto orig_map = co_await get_range_to_address_map(erm, co_await get_tokens_in_local_dc(*tmptr));
-    std::unordered_map<dht::token_range, host_id_vector_replica_set> filtered_map;
+    utils::unordered_map<dht::token_range, host_id_vector_replica_set> filtered_map;
     filtered_map.reserve(orig_map.size());
     auto local_dc_filter = tmptr->get_topology().get_local_dc_filter();
     for (auto entry : orig_map) {
@@ -86,12 +86,12 @@ get_range_to_address_map_in_local_dc(
     co_return filtered_map;
 }
 
-// static future<std::unordered_map<dht::token_range, inet_address_vector_replica_set>>
+// static future<utils::unordered_map<dht::token_range, inet_address_vector_replica_set>>
 // get_range_to_address_map(const replica::database& db, const sstring& keyspace) {
 //     return get_range_to_address_map(db.find_keyspace(keyspace).get_keyspace_effective_replication_map());
 // }
 
-future<std::unordered_map<dht::token_range, host_id_vector_replica_set>>
+future<utils::unordered_map<dht::token_range, host_id_vector_replica_set>>
 get_range_to_address_map(locator::effective_replication_map_ptr erm) {
     return get_range_to_address_map(erm, erm->get_token_metadata_ptr()->sorted_tokens());
 }
@@ -101,7 +101,7 @@ describe_ring(const replica::database& db, const gms::gossiper& gossiper, const 
     utils::chunked_vector<dht::token_range_endpoints> ranges;
 
     auto erm = db.find_keyspace(keyspace).get_keyspace_effective_replication_map();
-    std::unordered_map<dht::token_range, host_id_vector_replica_set> range_to_address_map = co_await (
+    utils::unordered_map<dht::token_range, host_id_vector_replica_set> range_to_address_map = co_await (
             include_only_local_dc
                     ? get_range_to_address_map_in_local_dc(erm)
                     : get_range_to_address_map(erm)

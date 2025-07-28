@@ -32,6 +32,7 @@
 #include "service/topology_mutation.hh"
 #include "utils/assert.hh"
 #include "utils/error_injection.hh"
+#include "utils/unordered_map.hh"
 
 #include <seastar/core/smp.hh>
 #include <seastar/core/sleep.hh>
@@ -1501,7 +1502,7 @@ static future<bool> wait_for_peers_to_enter_synchronize_state(
 }
 
 // Returning nullopt means we finished early (`can_finish_early` returned true).
-static future<std::optional<std::unordered_map<locator::host_id, table_schema_version>>>
+static future<std::optional<utils::unordered_map<locator::host_id, table_schema_version>>>
 collect_schema_versions_from_group0_members(
         netw::messaging_service& ms, const group0_members& members0,
         const noncopyable_function<future<bool>()>& can_finish_early,
@@ -1509,7 +1510,7 @@ collect_schema_versions_from_group0_members(
     static constexpr auto rpc_timeout = std::chrono::seconds{5};
     static constexpr auto max_concurrency = 10;
 
-    std::unordered_map<locator::host_id, table_schema_version> versions;
+    utils::unordered_map<locator::host_id, table_schema_version> versions;
     for (sleep_with_exponential_backoff sleep;; co_await sleep(as)) {
 
         // We fetch the config on each iteration; some nodes may leave.

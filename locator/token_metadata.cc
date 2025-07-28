@@ -47,15 +47,15 @@ private:
      * multiple tokens.  Hence, the BiMultiValMap collection.
      */
     // FIXME: have to be BiMultiValMap
-    std::unordered_map<token, host_id> _token_to_endpoint_map;
+    utils::unordered_map<token, host_id> _token_to_endpoint_map;
 
     // Track the unique set of nodes in _token_to_endpoint_map
     std::unordered_set<host_id> _normal_token_owners;
 
-    std::unordered_map<token, host_id> _bootstrap_tokens;
+    utils::unordered_map<token, host_id> _bootstrap_tokens;
     std::unordered_set<host_id> _leaving_endpoints;
     // The map between the existing node to be replaced and the replacing node
-    std::unordered_map<host_id, host_id> _replacing_endpoints;
+    utils::unordered_map<host_id, host_id> _replacing_endpoints;
 
     std::optional<topology_change_info> _topology_change_info;
 
@@ -104,7 +104,7 @@ public:
     size_t first_token_index(const token& start) const;
     std::optional<host_id> get_endpoint(const token& token) const;
     std::vector<token> get_tokens(const host_id& addr) const;
-    const std::unordered_map<token, host_id>& get_token_to_endpoint() const {
+    const utils::unordered_map<token, host_id>& get_token_to_endpoint() const {
         return _token_to_endpoint_map;
     }
 
@@ -112,7 +112,7 @@ public:
         return _leaving_endpoints;
     }
 
-    const std::unordered_map<token, host_id>& get_bootstrap_tokens() const {
+    const utils::unordered_map<token, host_id>& get_bootstrap_tokens() const {
         return _bootstrap_tokens;
     }
 
@@ -240,14 +240,14 @@ public:
      * Bootstrapping tokens are not taken into account. */
     size_t count_normal_token_owners() const;
 
-    std::unordered_map<sstring, std::unordered_set<host_id>> get_datacenter_token_owners() const;
+    utils::unordered_map<sstring, std::unordered_set<host_id>> get_datacenter_token_owners() const;
 
-    std::unordered_map<sstring, std::unordered_map<sstring, std::unordered_set<host_id>>>
+    utils::unordered_map<sstring, utils::unordered_map<sstring, std::unordered_set<host_id>>>
     get_datacenter_racks_token_owners() const;
 
-    std::unordered_map<sstring, std::unordered_set<std::reference_wrapper<const node>>> get_datacenter_token_owners_nodes() const;
+    utils::unordered_map<sstring, std::unordered_set<std::reference_wrapper<const node>>> get_datacenter_token_owners_nodes() const;
 
-    std::unordered_map<sstring, std::unordered_map<sstring, std::unordered_set<std::reference_wrapper<const node>>>>
+    utils::unordered_map<sstring, utils::unordered_map<sstring, std::unordered_set<std::reference_wrapper<const node>>>>
     get_datacenter_racks_token_owners_nodes() const;
 private:
     future<> update_normal_token_owners();
@@ -679,7 +679,7 @@ future<> token_metadata_impl::update_topology_change_info(dc_rack_fn& get_dc_rac
     auto target_token_metadata = co_await clone_only_token_map(false);
     {
         // construct new_normal_tokens based on _bootstrap_tokens and _replacing_endpoints
-        std::unordered_map<host_id, std::unordered_set<token>> new_normal_tokens;
+        utils::unordered_map<host_id, std::unordered_set<token>> new_normal_tokens;
         if (!_replacing_endpoints.empty()) {
             for (const auto& [token, inet_address]: _token_to_endpoint_map) {
                 const auto it = _replacing_endpoints.find(inet_address);
@@ -735,9 +735,9 @@ void token_metadata_impl::for_each_token_owner(std::function<void(const node&)> 
     });
 }
 
-std::unordered_map<sstring, std::unordered_set<host_id>>
+utils::unordered_map<sstring, std::unordered_set<host_id>>
 token_metadata_impl::get_datacenter_token_owners() const {
-    std::unordered_map<sstring, std::unordered_set<host_id>> datacenter_token_owners;
+    utils::unordered_map<sstring, std::unordered_set<host_id>> datacenter_token_owners;
     _topology.for_each_node([&] (const node& n) {
         if (is_normal_token_owner(n.host_id())) {
             datacenter_token_owners[n.dc_rack().dc].insert(n.host_id());
@@ -746,9 +746,9 @@ token_metadata_impl::get_datacenter_token_owners() const {
     return datacenter_token_owners;
 }
 
-std::unordered_map<sstring, std::unordered_map<sstring, std::unordered_set<host_id>>>
+utils::unordered_map<sstring, utils::unordered_map<sstring, std::unordered_set<host_id>>>
 token_metadata_impl::get_datacenter_racks_token_owners() const {
-    std::unordered_map<sstring, std::unordered_map<sstring, std::unordered_set<host_id>>> dc_racks_token_owners;
+    utils::unordered_map<sstring, utils::unordered_map<sstring, std::unordered_set<host_id>>> dc_racks_token_owners;
     _topology.for_each_node([&] (const node& n) {
         const auto& dc_rack = n.dc_rack();
         if (is_normal_token_owner(n.host_id())) {
@@ -758,9 +758,9 @@ token_metadata_impl::get_datacenter_racks_token_owners() const {
     return dc_racks_token_owners;
 }
 
-std::unordered_map<sstring, std::unordered_set<std::reference_wrapper<const node>>>
+utils::unordered_map<sstring, std::unordered_set<std::reference_wrapper<const node>>>
 token_metadata_impl::get_datacenter_token_owners_nodes() const {
-    std::unordered_map<sstring, std::unordered_set<std::reference_wrapper<const node>>> datacenter_token_owners;
+    utils::unordered_map<sstring, std::unordered_set<std::reference_wrapper<const node>>> datacenter_token_owners;
     _topology.for_each_node([&] (const node& n) {
         if (is_normal_token_owner(n.host_id())) {
             datacenter_token_owners[n.dc_rack().dc].insert(std::cref(n));
@@ -769,9 +769,9 @@ token_metadata_impl::get_datacenter_token_owners_nodes() const {
     return datacenter_token_owners;
 }
 
-std::unordered_map<sstring, std::unordered_map<sstring, std::unordered_set<std::reference_wrapper<const node>>>>
+utils::unordered_map<sstring, utils::unordered_map<sstring, std::unordered_set<std::reference_wrapper<const node>>>>
 token_metadata_impl::get_datacenter_racks_token_owners_nodes() const {
-    std::unordered_map<sstring, std::unordered_map<sstring, std::unordered_set<std::reference_wrapper<const node>>>> dc_racks_token_owners;
+    utils::unordered_map<sstring, utils::unordered_map<sstring, std::unordered_set<std::reference_wrapper<const node>>>> dc_racks_token_owners;
     _topology.for_each_node([&] (const node& n) {
         const auto& dc_rack = n.dc_rack();
         if (is_normal_token_owner(n.host_id())) {
@@ -889,7 +889,7 @@ token_metadata::get_tokens(const host_id& addr) const {
     return _impl->get_tokens(addr);
 }
 
-const std::unordered_map<token, host_id>&
+const utils::unordered_map<token, host_id>&
 token_metadata::get_token_to_endpoint() const {
     return _impl->get_token_to_endpoint();
 }
@@ -899,7 +899,7 @@ token_metadata::get_leaving_endpoints() const {
     return _impl->get_leaving_endpoints();
 }
 
-const std::unordered_map<token, host_id>&
+const utils::unordered_map<token, host_id>&
 token_metadata::get_bootstrap_tokens() const {
     return _impl->get_bootstrap_tokens();
 }
@@ -1120,20 +1120,20 @@ token_metadata::count_normal_token_owners() const {
     return _impl->count_normal_token_owners();
 }
 
-std::unordered_map<sstring, std::unordered_set<host_id>> token_metadata::get_datacenter_token_owners() const {
+utils::unordered_map<sstring, std::unordered_set<host_id>> token_metadata::get_datacenter_token_owners() const {
     return _impl->get_datacenter_token_owners();
 }
 
-std::unordered_map<sstring, std::unordered_map<sstring, std::unordered_set<host_id>>>
+utils::unordered_map<sstring, utils::unordered_map<sstring, std::unordered_set<host_id>>>
 token_metadata::get_datacenter_racks_token_owners() const {
     return _impl->get_datacenter_racks_token_owners();
 }
 
-std::unordered_map<sstring, std::unordered_set<std::reference_wrapper<const node>>> token_metadata::get_datacenter_token_owners_nodes() const {
+utils::unordered_map<sstring, std::unordered_set<std::reference_wrapper<const node>>> token_metadata::get_datacenter_token_owners_nodes() const {
     return _impl->get_datacenter_token_owners_nodes();
 }
 
-std::unordered_map<sstring, std::unordered_map<sstring, std::unordered_set<std::reference_wrapper<const node>>>>
+utils::unordered_map<sstring, utils::unordered_map<sstring, std::unordered_set<std::reference_wrapper<const node>>>>
 token_metadata::get_datacenter_racks_token_owners_nodes() const {
     return _impl->get_datacenter_racks_token_owners_nodes();
 }

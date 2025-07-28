@@ -740,17 +740,12 @@ static locator::host_id_set calculate_natural_endpoints(
     // all token owners in each DC, so we can check when we have exhausted all
     // the token-owning members of a DC
     //
-    const std::unordered_map<sstring,
-                       std::unordered_set<locator::host_id>>
-        all_endpoints = tm.get_datacenter_token_owners();
+    auto all_endpoints = tm.get_datacenter_token_owners();
     //
     // all racks (with non-token owners filtered out) in a DC so we can check
     // when we have exhausted all racks in a DC
     //
-    const std::unordered_map<sstring,
-                       std::unordered_map<sstring,
-                                          std::unordered_set<host_id>>>
-        racks = tm.get_datacenter_racks_token_owners();
+    auto racks = tm.get_datacenter_racks_token_owners();
 
     // not aware of any cluster members
     SCYLLA_ASSERT(!all_endpoints.empty() && !racks.empty());

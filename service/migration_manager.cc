@@ -1141,7 +1141,7 @@ future<schema_ptr> migration_manager::get_schema_for_write(table_schema_version 
 }
 
 future<> migration_manager::sync_schema(const replica::database& db, const std::vector<locator::host_id>& nodes) {
-    using schema_and_hosts = std::unordered_map<table_schema_version, std::vector<locator::host_id>>;
+    using schema_and_hosts = utils::unordered_map<table_schema_version, std::vector<locator::host_id>>;
     schema_and_hosts schema_map;
     co_await coroutine::parallel_for_each(nodes, [this, &schema_map, &db] (const locator::host_id& node) -> future<> {
         const auto& my_version = db.get_version();

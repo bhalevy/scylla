@@ -165,7 +165,7 @@ class natural_endpoints_tracker {
 
     const token_metadata& _tm;
     const topology& _tp;
-    std::unordered_map<sstring, size_t> _dc_rep_factor;
+    utils::unordered_map<sstring, size_t> _dc_rep_factor;
 
     //
     // We want to preserve insertion order so that the first added endpoint
@@ -179,20 +179,20 @@ class natural_endpoints_tracker {
     // all token owners in each DC, so we can check when we have exhausted all
     // the token-owning members of a DC
     //
-    std::unordered_map<sstring, std::unordered_set<locator::host_id>> _token_owners;
+    utils::unordered_map<sstring, std::unordered_set<locator::host_id>> _token_owners;
 
     //
     // all racks (with non-token owners filtered out) in a DC so we can check
     // when we have exhausted all racks in a DC
     //
-    std::unordered_map<sstring, std::unordered_map<sstring, std::unordered_set<locator::host_id>>> _racks;
+    utils::unordered_map<sstring, utils::unordered_map<sstring, std::unordered_set<locator::host_id>>> _racks;
 
-    std::unordered_map<std::string_view, data_center_endpoints> _dcs;
+    utils::unordered_map<std::string_view, data_center_endpoints> _dcs;
 
     size_t _dcs_to_fill;
 
 public:
-    natural_endpoints_tracker(const token_metadata& tm, const std::unordered_map<sstring, size_t>& dc_rep_factor)
+    natural_endpoints_tracker(const token_metadata& tm, const utils::unordered_map<sstring, size_t>& dc_rep_factor)
         : _tm(tm)
         , _tp(_tm.get_topology())
         , _dc_rep_factor(dc_rep_factor)
@@ -237,7 +237,7 @@ public:
         return _replicas;
     }
 
-    static void check_enough_endpoints(const token_metadata& tm, const std::unordered_map<sstring, size_t>& dc_rf) {
+    static void check_enough_endpoints(const token_metadata& tm, const utils::unordered_map<sstring, size_t>& dc_rf) {
         auto dc_endpoints = tm.get_datacenter_token_owners();
         auto endpoints_in = [&dc_endpoints](sstring dc) {
             auto i = dc_endpoints.find(dc);
@@ -325,9 +325,9 @@ future<tablet_map> network_topology_strategy::reallocate_tablets(schema_ptr s, t
 future<tablet_replica_set> network_topology_strategy::reallocate_tablets(schema_ptr s, token_metadata_ptr tm, load_sketch& load, const tablet_map& cur_tablets, tablet_id tb) const {
     tablet_replica_set replicas;
     // Current number of replicas per dc
-    std::unordered_map<sstring, size_t> nodes_per_dc;
+    utils::unordered_map<sstring, size_t> nodes_per_dc;
     // Current replicas per dc/rack
-    std::unordered_map<sstring, std::map<sstring, std::unordered_set<locator::host_id>>> replicas_per_dc_rack;
+    utils::unordered_map<sstring, std::map<sstring, std::unordered_set<locator::host_id>>> replicas_per_dc_rack;
 
     replicas = cur_tablets.get_tablet_info(tb).replicas;
     for (const auto& tr : replicas) {

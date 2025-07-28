@@ -18,6 +18,7 @@
 #include "service/direct_failure_detector/failure_detector.hh"
 #include "service/raft/group0_fwd.hh"
 #include "utils/updateable_value.hh"
+#include "utils/unordered_map.hh"
 
 namespace db {
 class system_keyspace;
@@ -107,7 +108,7 @@ private:
     netw::messaging_service& _ms;
     // Raft servers along with the corresponding timers to tick each instance.
     // Currently ticking every 100ms.
-    std::unordered_map<raft::group_id, raft_server_for_group> _servers;
+    utils::unordered_map<raft::group_id, raft_server_for_group> _servers;
 
     direct_failure_detector::failure_detector& _direct_fd;
     // Listens to notifications from direct failure detector.

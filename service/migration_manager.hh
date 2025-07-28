@@ -23,6 +23,7 @@
 #include "service/raft/raft_group_registry.hh"
 #include "service/raft/raft_group0_client.hh"
 #include "db/timeout_clock.hh"
+#include "utils/unordered_map.hh"
 
 #include <vector>
 
@@ -55,7 +56,7 @@ class migration_manager : public seastar::async_sharded_service<migration_manage
 private:
     migration_notifier& _notifier;
 
-    std::unordered_map<locator::host_id, serialized_action> _schema_pulls;
+    utils::unordered_map<locator::host_id, serialized_action> _schema_pulls;
     serialized_action _group0_barrier;
     std::vector<gms::feature::listener_registration> _feature_listeners;
     seastar::named_gate _background_tasks;

@@ -39,6 +39,7 @@
 #include "dht/token_range_endpoints.hh"
 #include "service/storage_service.hh"
 #include "service/cas_shard.hh"
+#include "utils/unordered_map.hh"
 
 class reconcilable_result;
 class frozen_mutation_and_schema;
@@ -91,9 +92,9 @@ struct hint_wrapper;
 struct batchlog_replay_mutation;
 struct read_repair_mutation;
 
-using replicas_per_token_range = std::unordered_map<dht::token_range, std::vector<locator::host_id>>;
+using replicas_per_token_range = utils::unordered_map<dht::token_range, std::vector<locator::host_id>>;
 using mutations_per_partition_key_map =
-        std::unordered_map<partition_key, std::unordered_map<locator::host_id, std::optional<mutation>>, partition_key::hashing, partition_key::equality>;
+        utils::unordered_map<partition_key, utils::unordered_map<locator::host_id, std::optional<mutation>>, partition_key::hashing, partition_key::equality>;
 
 struct query_partition_key_range_concurrent_result {
     std::vector<foreign_ptr<lw_shared_ptr<query::result>>> result;
@@ -196,7 +197,7 @@ private:
         response_id_type release();
     };
     using unique_response_handler_vector = utils::small_vector<unique_response_handler, 1>;
-    using response_handlers_map = std::unordered_map<response_id_type, ::shared_ptr<abstract_write_response_handler>>;
+    using response_handlers_map = utils::unordered_map<response_id_type, ::shared_ptr<abstract_write_response_handler>>;
 
 public:
     static const sstring COORDINATOR_STATS_CATEGORY;
@@ -297,7 +298,7 @@ private:
             db::allow_per_partition_rate_limit,
             lw_shared_ptr<cdc::operation_result_tracker>> _mutate_stage;
     db::view::node_update_backlog& _max_view_update_backlog;
-    std::unordered_map<locator::host_id, view_update_backlog_timestamped> _view_update_backlogs;
+    utils::unordered_map<locator::host_id, view_update_backlog_timestamped> _view_update_backlogs;
 
     //NOTICE(sarna): This opaque pointer is here just to avoid moving write handler class definitions from .cc to .hh. It's slow path.
     class cancellable_write_handlers_list;

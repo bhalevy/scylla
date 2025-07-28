@@ -49,6 +49,7 @@
 #include "utils/user_provided_param.hh"
 #include "utils/sequenced_set.hh"
 #include "service/topology_coordinator.hh"
+#include "utils/unordered_map.hh"
 
 class node_ops_cmd_request;
 class node_ops_cmd_response;
@@ -162,7 +163,7 @@ private:
         shared_future<service::tablet_operation_result> done;
     };
 
-    using tablet_op_registry = std::unordered_map<locator::global_tablet_id, tablet_operation>;
+    using tablet_op_registry = utils::unordered_map<locator::global_tablet_id, tablet_operation>;
 
     abort_source& _abort_source;
     gms::feature_service& _feature_service;
@@ -191,7 +192,7 @@ private:
     utils::sequenced_set<table_id> _tablet_split_candidates;
     future<> _tablet_split_monitor = make_ready_future<>();
 
-    std::unordered_map<node_ops_id, node_ops_meta_data> _node_ops;
+    utils::unordered_map<node_ops_id, node_ops_meta_data> _node_ops;
     std::list<std::optional<node_ops_id>> _node_ops_abort_queue;
     seastar::condition_variable _node_ops_abort_cond;
     named_semaphore _node_ops_abort_sem{1, named_semaphore_exception_factory{"node_ops_abort_sem"}};
@@ -410,10 +411,10 @@ private:
         locator::endpoint_dc_rack dc_rack;
         locator::host_id host_id;
         gms::inet_address address;
-        std::unordered_map<locator::host_id, gms::loaded_endpoint_state> ignore_nodes;
+        utils::unordered_map<locator::host_id, gms::loaded_endpoint_state> ignore_nodes;
     };
     future<replacement_info> prepare_replacement_info(std::unordered_set<gms::inet_address> initial_contact_nodes,
-            const std::unordered_map<locator::host_id, sstring>& loaded_peer_features);
+            const utils::unordered_map<locator::host_id, sstring>& loaded_peer_features);
 
     void run_replace_ops(std::unordered_set<token>& bootstrap_tokens, replacement_info replace_info);
     void run_bootstrap_ops(std::unordered_set<token>& bootstrap_tokens);
@@ -423,7 +424,7 @@ private:
 public:
 
     future<> check_for_endpoint_collision(std::unordered_set<gms::inet_address> initial_contact_nodes,
-            const std::unordered_map<locator::host_id, sstring>& loaded_peer_features);
+            const utils::unordered_map<locator::host_id, sstring>& loaded_peer_features);
 
     future<> join_cluster(sharded<service::storage_proxy>& proxy,
             start_hint_manager start_hm, gms::generation_type new_generation);
@@ -449,8 +450,8 @@ private:
     future<> start_sys_dist_ks() const;
     future<> join_topology(sharded<service::storage_proxy>& proxy,
             std::unordered_set<gms::inet_address> initial_contact_nodes,
-            std::unordered_map<locator::host_id, gms::loaded_endpoint_state> loaded_endpoints,
-            std::unordered_map<locator::host_id, sstring> loaded_peer_features,
+            utils::unordered_map<locator::host_id, gms::loaded_endpoint_state> loaded_endpoints,
+            utils::unordered_map<locator::host_id, sstring> loaded_peer_features,
             std::chrono::milliseconds,
             start_hint_manager start_hm,
             gms::generation_type new_generation);
@@ -467,7 +468,7 @@ private:
     future<> bootstrap(std::unordered_set<token>& bootstrap_tokens, std::optional<cdc::generation_id>& cdc_gen_id, const std::optional<replacement_info>& replacement_info);
 
 public:
-    future<std::unordered_map<dht::token_range, inet_address_vector_replica_set>> get_range_to_address_map(locator::effective_replication_map_ptr erm) const;
+    future<utils::unordered_map<dht::token_range, inet_address_vector_replica_set>> get_range_to_address_map(locator::effective_replication_map_ptr erm) const;
 
     /**
      * The same as {@code describeRing(String)} but converts TokenRange to the String for JMX compatibility
@@ -652,7 +653,7 @@ public:
 
     sstring get_schema_version();
 
-    future<std::unordered_map<sstring, std::vector<sstring>>> describe_schema_versions();
+    future<utils::unordered_map<sstring, std::vector<sstring>>> describe_schema_versions();
 
 
     /**
@@ -779,7 +780,7 @@ private:
      * @param rangesToStreamByKeyspace keyspaces and data ranges with endpoints included for each
      * @return async Future for whether stream was success
      */
-    future<> stream_ranges(std::unordered_map<sstring, std::unordered_multimap<dht::token_range, locator::host_id>> ranges_to_stream_by_keyspace);
+    future<> stream_ranges(utils::unordered_map<sstring, std::unordered_multimap<dht::token_range, locator::host_id>> ranges_to_stream_by_keyspace);
 
 public:
     int32_t get_exception_count();
@@ -887,7 +888,7 @@ private:
     std::optional<shared_future<>> _bootstrap_result;
     std::optional<shared_future<>> _decommission_result;
     std::optional<shared_future<>> _rebuild_result;
-    std::unordered_map<raft::server_id, std::optional<shared_future<>>> _remove_result;
+    utils::unordered_map<raft::server_id, std::optional<shared_future<>>> _remove_result;
     tablet_op_registry _tablet_ops;
     // This tracks active topology cmd rpc. There can be only one active
     // cmd running and by inspecting this structure it can be checked which
@@ -976,7 +977,7 @@ private:
     future<bool> exec_tablet_update(service::group0_guard guard, utils::chunked_vector<canonical_mutation> updates, sstring reason);
 public:
     struct all_tokens_tag {};
-    future<std::unordered_map<sstring, sstring>> add_repair_tablet_request(table_id table, std::variant<utils::chunked_vector<dht::token>, all_tokens_tag> tokens_variant, std::unordered_set<locator::host_id> hosts_filter, std::unordered_set<sstring> dcs_filter, bool await_completion);
+    future<utils::unordered_map<sstring, sstring>> add_repair_tablet_request(table_id table, std::variant<utils::chunked_vector<dht::token>, all_tokens_tag> tokens_variant, std::unordered_set<locator::host_id> hosts_filter, std::unordered_set<sstring> dcs_filter, bool await_completion);
     future<> del_repair_tablet_request(table_id table, locator::tablet_task_id);
     future<> move_tablet(table_id, dht::token, locator::tablet_replica src, locator::tablet_replica dst, loosen_constraints force = loosen_constraints::no);
     future<> add_tablet_replica(table_id, dht::token, locator::tablet_replica dst, loosen_constraints force = loosen_constraints::no);
@@ -1019,7 +1020,7 @@ private:
         std::vector<std::pair<gms::inet_address, locator::host_id>> joined;
     };
 
-    using host_id_to_ip_map_t = std::unordered_map<locator::host_id, gms::inet_address>;
+    using host_id_to_ip_map_t = utils::unordered_map<locator::host_id, gms::inet_address>;
     future<host_id_to_ip_map_t> get_host_id_to_ip_map();
     future<> raft_topology_update_ip(locator::host_id id, gms::inet_address ip, const host_id_to_ip_map_t& map, nodes_to_notify_after_sync* nodes_to_notify);
     // Synchronizes the local node state (token_metadata, system.peers/system.local tables,

@@ -19,6 +19,7 @@
 
 #include <chrono>
 #include "locator/host_id.hh"
+#include "utils/unordered_map.hh"
 
 namespace bi = boost::intrusive;
 
@@ -121,7 +122,7 @@ class address_map_t : public peering_sharded_service<address_map_t<Clock>> {
         const locator::host_id& _entry_id;
     };
 
-    using map_type = std::unordered_map<locator::host_id, timestamped_entry>;
+    using map_type = utils::unordered_map<locator::host_id, timestamped_entry>;
     using map_iterator = typename map_type::iterator;
 
     using expiring_list_type = typename expiring_entry_ptr::list_type;

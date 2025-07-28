@@ -16,6 +16,7 @@
 
 #include <boost/intrusive/list.hpp>
 #include <unordered_set>
+#include "utils/unordered_map.hh"
 
 namespace service {
 
@@ -105,7 +106,7 @@ public:
 };
 
 class session_manager {
-    std::unordered_map<session_id, std::unique_ptr<session>> _sessions;
+    utils::unordered_map<session_id, std::unique_ptr<session>> _sessions;
     session::list_type _closing_sessions;
     seastar::semaphore _session_drain_sem{1};
 public:

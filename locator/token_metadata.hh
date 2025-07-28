@@ -30,6 +30,7 @@
 #include "locator/types.hh"
 #include "locator/topology.hh"
 #include "locator/token_metadata_fwd.hh"
+#include "utils/unordered_map.hh"
 
 struct sort_by_proximity_topology;
 
@@ -199,9 +200,9 @@ public:
     size_t first_token_index(const token& start) const;
     std::optional<host_id> get_endpoint(const token& token) const;
     std::vector<token> get_tokens(const host_id& addr) const;
-    const std::unordered_map<token, host_id>& get_token_to_endpoint() const;
+    const utils::unordered_map<token, host_id>& get_token_to_endpoint() const;
     const std::unordered_set<host_id>& get_leaving_endpoints() const;
-    const std::unordered_map<token, host_id>& get_bootstrap_tokens() const;
+    const utils::unordered_map<token, host_id>& get_bootstrap_tokens() const;
 
     /**
      * Update or add a node for a given host_id.
@@ -323,20 +324,20 @@ public:
 
     // Returns the map: DC -> host_id of token owners in that DC.
     // If there are no token owners in a DC, it is not present in the result.
-    std::unordered_map<sstring, std::unordered_set<host_id>> get_datacenter_token_owners() const;
+    utils::unordered_map<sstring, std::unordered_set<host_id>> get_datacenter_token_owners() const;
 
     // Returns the map: DC -> (map: rack -> host_id of token owners in that rack).
     // If there are no token owners in a DC/rack, it is not present in the result.
-    std::unordered_map<sstring, std::unordered_map<sstring, std::unordered_set<host_id>>>
+    utils::unordered_map<sstring, utils::unordered_map<sstring, std::unordered_set<host_id>>>
     get_datacenter_racks_token_owners() const;
 
     // Returns the map: DC -> token owners in that DC.
     // If there are no token owners in a DC, it is not present in the result.
-    std::unordered_map<sstring, std::unordered_set<std::reference_wrapper<const node>>> get_datacenter_token_owners_nodes() const;
+    utils::unordered_map<sstring, std::unordered_set<std::reference_wrapper<const node>>> get_datacenter_token_owners_nodes() const;
 
     // Returns the map: DC -> (map: rack -> token owners in that rack).
     // If there are no token owners in a DC/rack, it is not present in the result.
-    std::unordered_map<sstring, std::unordered_map<sstring, std::unordered_set<std::reference_wrapper<const node>>>>
+    utils::unordered_map<sstring, utils::unordered_map<sstring, std::unordered_set<std::reference_wrapper<const node>>>>
     get_datacenter_racks_token_owners_nodes() const;
 
     // Updates the read_new flag, switching read requests from

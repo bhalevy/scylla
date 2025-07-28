@@ -8,6 +8,7 @@
 #include "db/config.hh"
 #include "db/system_keyspace.hh"
 #include "service/raft/group0_state_machine_merger.hh"
+#include "utils/unordered_map.hh"
 
 namespace service {
 
@@ -91,7 +92,7 @@ std::pair<group0_command, mutation> group0_state_machine_merger::merge() {
     auto& cmd = _cmd_to_merge.back(); // use metadata from the last merged command
     slogger.trace("merge new_state_id: {}", cmd.new_state_id);
     using mutation_set_type = std::unordered_set<mutation, mutation_hash_by_key, mutation_equals_by_key>;
-    std::unordered_map<table_id, mutation_set_type> mutations;
+    utils::unordered_map<table_id, mutation_set_type> mutations;
 
     if (_cmd_to_merge.size() > 1) {
         // skip merging if there is only one command

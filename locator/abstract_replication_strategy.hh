@@ -19,6 +19,7 @@
 #include "utils/sequenced_set.hh"
 #include "utils/simple_hashers.hh"
 #include "tablets.hh"
+#include "utils/unordered_map.hh"
 
 // forward declaration since replica/database.hh includes this file
 namespace replica {
@@ -53,7 +54,7 @@ struct replication_strategy_params {
     explicit replication_strategy_params(const replication_strategy_config_options& o, std::optional<unsigned> it) noexcept : options(o), initial_tablets(it) {}
 };
 
-using replication_map = std::unordered_map<token, host_id_vector_replica_set>;
+using replication_map = utils::unordered_map<token, host_id_vector_replica_set>;
 
 using host_id_set = utils::basic_sequenced_set<locator::host_id, host_id_vector_replica_set>;
 
@@ -156,7 +157,7 @@ public:
     future<dht::token_range_vector> get_ranges(locator::host_id ep, const token_metadata& tm) const;
 
     // Caller must ensure that token_metadata will not change throughout the call.
-    future<std::unordered_map<dht::token_range, host_id_vector_replica_set>> get_range_host_ids(const token_metadata& tm) const;
+    future<utils::unordered_map<dht::token_range, host_id_vector_replica_set>> get_range_host_ids(const token_metadata& tm) const;
 
     future<dht::token_range_vector> get_pending_address_ranges(const token_metadata_ptr tmptr, std::unordered_set<token> pending_tokens, locator::host_id pending_address, locator::endpoint_dc_rack dr) const;
 };
@@ -473,7 +474,7 @@ public:
     // Note: must be called after token_metadata has been initialized.
     future<dht::token_range_vector> get_primary_ranges_within_dc(locator::host_id ep) const;
 
-    future<std::unordered_map<dht::token_range, host_id_vector_replica_set>>
+    future<utils::unordered_map<dht::token_range, host_id_vector_replica_set>>
     get_range_host_ids() const;
 
     // Returns a set of dirty endpoint. An endpoint is dirty if it may have a data
@@ -596,7 +597,7 @@ struct hash<locator::keyspace_effective_replication_map::factory_key> {
 namespace locator {
 
 class effective_replication_map_factory : public peering_sharded_service<effective_replication_map_factory> {
-    std::unordered_map<keyspace_effective_replication_map::factory_key, keyspace_effective_replication_map*> _effective_replication_maps;
+    utils::unordered_map<keyspace_effective_replication_map::factory_key, keyspace_effective_replication_map*> _effective_replication_maps;
     future<> _background_work = make_ready_future<>();
     bool _stopped = false;
 

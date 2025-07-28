@@ -69,7 +69,7 @@ private:
             sstring dc, size_t dc_node_count, size_t dc_rf) const;
 
     // map: data centers -> replication factor
-    std::unordered_map<sstring, size_t> _dc_rep_factor;
+    utils::unordered_map<sstring, size_t> _dc_rep_factor;
 
     std::vector<sstring> _datacenteres;
     size_t _rep_factor;
