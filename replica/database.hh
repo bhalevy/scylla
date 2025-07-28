@@ -1412,7 +1412,7 @@ public:
         return _replication_strategy;
     }
 
-    locator::vnode_effective_replication_map_ptr get_vnode_effective_replication_map() const;
+    locator::vnode_effective_replication_map_ptr get_keyspace_effective_replication_map() const;
 
     bool uses_tablets() const {
         return _replication_strategy->uses_tablets();
