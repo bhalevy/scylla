@@ -858,7 +858,7 @@ future<keyspace_change> database::prepare_update_keyspace(const keyspace& ks, lw
     auto strategy = keyspace::create_replication_strategy(metadata);
     locator::keyspace_effective_replication_map_ptr erm = nullptr;
     if (!strategy->is_per_table()) {
-        erm = co_await ks.create_effective_replication_map(strategy,
+        erm = co_await ks.create_keyspace_effective_replication_map(strategy,
             get_shared_token_metadata());
     }
     co_return keyspace_change{
@@ -1387,7 +1387,7 @@ keyspace::create_replication_strategy(lw_shared_ptr<keyspace_metadata> metadata)
     return abstract_replication_strategy::create_replication_strategy(metadata->strategy_name(), params);
 }
 
-future<locator::keyspace_effective_replication_map_ptr> keyspace::create_effective_replication_map(locator::replication_strategy_ptr strategy, const locator::shared_token_metadata& stm) const {
+future<locator::keyspace_effective_replication_map_ptr> keyspace::create_keyspace_effective_replication_map(locator::replication_strategy_ptr strategy, const locator::shared_token_metadata& stm) const {
     co_return co_await _erm_factory.create_keyspace_effective_replication_map(strategy, stm.get());
 }
 

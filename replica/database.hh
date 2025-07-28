@@ -1395,7 +1395,7 @@ public:
 
     static locator::replication_strategy_ptr create_replication_strategy(
             lw_shared_ptr<keyspace_metadata> metadata);
-    future<locator::keyspace_effective_replication_map_ptr> create_effective_replication_map(
+    future<locator::keyspace_effective_replication_map_ptr> create_keyspace_effective_replication_map(
             locator::replication_strategy_ptr strategy,
             const locator::shared_token_metadata& stm) const;
     void update_effective_replication_map(locator::keyspace_effective_replication_map_ptr erm);
