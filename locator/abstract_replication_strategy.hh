@@ -428,7 +428,7 @@ inline mutable_keyspace_erm_ptr make_effective_replication_map(replication_strat
 }
 
 // Apply the replication strategy over the current configuration and the given token_metadata.
-future<mutable_keyspace_erm_ptr> calculate_effective_replication_map(replication_strategy_ptr rs, token_metadata_ptr tmptr);
+future<mutable_keyspace_erm_ptr> calculate_vnode_effective_replication_map(replication_strategy_ptr rs, token_metadata_ptr tmptr);
 
 // Class to hold a coherent view of a keyspace
 // effective replication map on all shards
