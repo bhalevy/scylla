@@ -1018,12 +1018,12 @@ public:
 
     virtual ~tablet_effective_replication_map() = default;
 
-    virtual host_id_vector_replica_set get_replicas(const token& search_token) const override {
-        return to_host_set(get_replicas_for_write(search_token));
+    virtual host_id_vector_replica_set get_replicas(search_token search_token) const override {
+        return to_host_set(get_replicas_for_write(search_token.token));
     }
 
-    virtual host_id_vector_replica_set get_natural_replicas(const token& search_token) const override {
-        return to_host_set(get_replicas_for_write(search_token));
+    virtual host_id_vector_replica_set get_natural_replicas(search_token search_token) const override {
+        return to_host_set(get_replicas_for_write(search_token.token));
     }
 
     virtual future<dht::token_range_vector> get_ranges(host_id ep) const override {
@@ -1047,8 +1047,8 @@ public:
         return get_pending_helper(search_token);
     }
 
-    virtual host_id_vector_replica_set get_replicas_for_reading(const token& search_token) const override {
-        return get_for_reading_helper(search_token);
+    virtual host_id_vector_replica_set get_replicas_for_reading(search_token search_token) const override {
+        return get_for_reading_helper(search_token.token);
     }
 
     std::optional<tablet_routing_info> check_locality(const token& search_token) const override {

@@ -101,10 +101,10 @@ host_id_vector_topology_change vnode_effective_replication_map::get_pending_repl
     return *pending_endpoints | std::ranges::to<host_id_vector_topology_change>();
 }
 
-host_id_vector_replica_set vnode_effective_replication_map::get_replicas_for_reading(const token& token) const {
-    const auto* endpoints = find_token(_read_endpoints, token);
+host_id_vector_replica_set vnode_effective_replication_map::get_replicas_for_reading(search_token search_token) const {
+    const auto* endpoints = find_token(_read_endpoints, search_token.token);
     if (endpoints == nullptr) {
-        return get_natural_replicas(token);
+        return get_natural_replicas(search_token);
     }
     return *endpoints | std::ranges::to<host_id_vector_replica_set>();
 }
@@ -313,7 +313,7 @@ vnode_effective_replication_map::get_range_host_ids() const {
     for (auto& t : tm.sorted_tokens()) {
         dht::token_range_vector ranges = tm.get_primary_ranges_for(t);
         for (auto& r : ranges) {
-            ret.emplace(r, do_get_replicas(t, true));
+            ret.emplace(r, do_get_replicas({t, true}));
         }
         co_await coroutine::maybe_yield();
     }
@@ -469,26 +469,26 @@ future<mutable_static_effective_replication_map_ptr> vnode_effective_replication
         std::move(pending_endpoints), std::move(read_endpoints), std::move(dirty_endpoints), _replication_factor);
 }
 
-host_id_vector_replica_set vnode_effective_replication_map::do_get_replicas(const token& tok,
-    bool is_vnode) const
+host_id_vector_replica_set vnode_effective_replication_map::do_get_replicas(search_token search_token) const
 {
+    const auto& tok = search_token.token;
     const token& key_token = _rs->natural_endpoints_depend_on_token()
-        ? (is_vnode ? tok : _tmptr->first_token(tok))
+        ? (search_token.is_vnode ? tok : _tmptr->first_token(tok))
         : default_replication_map_key;
     const auto it = _replication_map.find(key_token);
     return it->second;
 }
 
-host_id_vector_replica_set vnode_effective_replication_map::get_replicas(const token& tok) const {
-    return do_get_replicas(tok, false);
+host_id_vector_replica_set vnode_effective_replication_map::get_replicas(search_token tok) const {
+    return do_get_replicas(tok);
 }
 
-host_id_vector_replica_set vnode_effective_replication_map::get_natural_replicas(const token& search_token) const {
+host_id_vector_replica_set vnode_effective_replication_map::get_natural_replicas(search_token search_token) const {
     return get_replicas(search_token);
 }
 
-stop_iteration vnode_effective_replication_map::for_each_natural_endpoint_until(const token& vnode_tok, const noncopyable_function<stop_iteration(const host_id&)>& func) const {
-    for (const auto& ep : do_get_replicas(vnode_tok, true)) {
+stop_iteration vnode_effective_replication_map::for_each_natural_endpoint_until(search_token vnode_tok, const noncopyable_function<stop_iteration(const host_id&)>& func) const {
+    for (const auto& ep : do_get_replicas(vnode_tok)) {
         if (func(ep) == stop_iteration::yes) {
             return stop_iteration::yes;
         }
