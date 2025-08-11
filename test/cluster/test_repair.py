@@ -12,8 +12,10 @@ import asyncio
 from cassandra.cluster import ConsistencyLevel
 from cassandra.query import SimpleStatement
 
+from test.pylib.manager_client import ManagerClient
 from test.pylib.util import wait_for_cql_and_get_hosts
 from test.cluster.conftest import skip_mode
+from test.cluster.util import new_test_keyspace
 
 
 logger = logging.getLogger(__name__)
@@ -232,3 +234,16 @@ async def test_keyspace_drop_during_data_sync_repair(manager):
     cql.execute("CREATE TABLE ks.tbl (pk int, ck int, PRIMARY KEY (pk, ck)) WITH tombstone_gc = {'mode': 'repair'}")
 
     await manager.server_add(config=cfg)
+
+@pytest.mark.asyncio
+async def test_vnode_keyspace_describe_ring(manager: ManagerClient):
+    cfg = {
+        'tablets_mode_for_new_keyspaces': 'disabled',
+    }
+    servers = await manager.servers_add(3, config=cfg)
+
+    cql = manager.get_cql()
+
+    async with new_test_keyspace(manager, "WITH replication = {'class': 'NetworkTopologyStrategy', 'replication_factor': 2}") as ks:
+        res = await manager.api.describe_ring(servers[0].ip_addr, ks)
+        print(f"{res=}")

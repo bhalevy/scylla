@@ -520,7 +520,7 @@ class ScyllaRESTAPIClient:
         params = None
         if (table):
             params = {"table": table}
-        await self.client.get(f'/storage_service/describe_ring/{keyspace}', host=node_ip, params=params)
+        return await self.client.get_json(f'/storage_service/describe_ring/{keyspace}', host=node_ip, params=params)
 
 class ScyllaMetrics:
     def __init__(self, lines: list[str]):
