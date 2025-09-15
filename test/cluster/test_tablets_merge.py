@@ -440,6 +440,36 @@ async def test_tablet_split_merge_with_many_tables(manager: ManagerClient, racks
 
     await check_logs("after merge completion")
 
+# Reproduces #24818
+@pytest.mark.asyncio
+async def test_tablet_repair_with_many_tables(manager: ManagerClient, racks = 2):
+    cmdline = ['--smp', '4', '-m', '2G', '--target-tablet-size-in-bytes', '30000', '--max-task-backlog', '200',]
+    config = {'tablet_load_stats_refresh_interval_in_seconds': 1}
+
+    servers = []
+    rf = racks
+    for rack_id in range(0, racks):
+        rack = f'rack{rack_id+1}'
+        servers.extend(await manager.servers_add(3, config=config, cmdline=cmdline, property_file={'dc': 'mydc', 'rack': rack}))
+
+    cql = manager.get_cql()
+    ks = await create_new_test_keyspace(cql, f"WITH replication = {{'class': 'NetworkTopologyStrategy', 'replication_factor': {rf}}} AND tablets = {{'enabled': 'true'}}")
+    num_tables = 1000
+    await asyncio.gather(*[cql.run_async(f"CREATE TABLE {ks}.test{i} (pk int PRIMARY KEY, c blob) WITH tablets = {{'min_per_shard_tablet_count': '1'}};") for i in range(num_tables)])
+
+    async def check_logs(when):
+        for server in servers:
+            log = await manager.server_open_log(server.server_id)
+            matches = await log.grep(r"Too long queue accumulated for (gossip|streaming)")
+            if matches:
+                pytest.fail(f"Server {server.server_id} has too long queue accumulated {when}: {matches=}")
+
+    await check_logs("after creating tables")
+
+    await asyncio.gather(*[manager.api.tablet_repair(servers[0].ip_addr, ks, f'test{i}', "all") for i in range(num_tables)])
+
+    await check_logs("after repair")
+
 # Reproduces use-after-free when migration right after merge, but concurrently to background
 # merge completion handler.
 # See: https://github.com/scylladb/scylladb/issues/24045

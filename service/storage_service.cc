@@ -11,6 +11,7 @@
 
 #include "storage_service.hh"
 #include "utils/chunked_vector.hh"
+#include <seastar/core/semaphore.hh>
 #include <seastar/core/shard_id.hh>
 #include "db/view/view_building_coordinator.hh"
 #include "utils/disk_space_monitor.hh"
@@ -6610,13 +6611,20 @@ replica::tablet_mutation_builder storage_service::tablet_mutation_builder_for_ba
 // Repair the tablets contain the tokens and wait for the repair to finish
 // This is used to run a manual repair requested by user from the restful API.
 future<std::unordered_map<sstring, sstring>> storage_service::add_repair_tablet_request(table_id table, std::variant<utils::chunked_vector<dht::token>, all_tokens_tag> tokens_variant,
-        std::unordered_set<locator::host_id> hosts_filter, std::unordered_set<sstring> dcs_filter, bool await_completion, locator::tablet_repair_incremental_mode incremental_mode) {
+        std::unordered_set<locator::host_id> hosts_filter, std::unordered_set<sstring> dcs_filter, bool await_completion, locator::tablet_repair_incremental_mode incremental_mode,
+        shard_id calling_shard) {
     auto holder = _async_gate.hold();
+
+    semaphore_units<> units;
+    if (calling_shard == this_shard_id()) {
+        slogger.info("tablet repair by API request table_id={} calling_shard={}: awaiting concurrency limiter", table, calling_shard);
+        units = co_await get_units(_repair_tablet_request_concurrency_limiter, 1);
+    }
 
     if (this_shard_id() != 0) {
         // group0 is only set on shard 0.
         co_return co_await container().invoke_on(0, [&] (auto& ss) {
-            return ss.add_repair_tablet_request(table, std::move(tokens_variant), std::move(hosts_filter), std::move(dcs_filter), await_completion, incremental_mode);
+            return ss.add_repair_tablet_request(table, std::move(tokens_variant), std::move(hosts_filter), std::move(dcs_filter), await_completion, incremental_mode, calling_shard);
         });
     }
 
