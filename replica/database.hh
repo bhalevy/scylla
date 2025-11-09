@@ -489,6 +489,7 @@ private:
     schema_ptr _schema;
     config _config;
     locator::effective_replication_map_ptr _erm;
+    compaction::owned_ranges_ptr _owned_ranges;
     lw_shared_ptr<const storage_options> _storage_opts;
     memtable_table_shared_data _memtable_shared_data;
     mutable table_stats _stats;
@@ -933,7 +934,7 @@ public:
 
     logalloc::occupancy_stats occupancy() const;
 public:
-    table(schema_ptr schema, config cfg, lw_shared_ptr<const storage_options> sopts, compaction::compaction_manager& cm, sstables::sstables_manager& sm, cell_locker_stats& cl_stats, cache_tracker& row_cache_tracker, locator::effective_replication_map_ptr erm);
+    table(schema_ptr schema, config cfg, lw_shared_ptr<const storage_options> sopts, compaction::compaction_manager& cm, sstables::sstables_manager& sm, cell_locker_stats& cl_stats, cache_tracker& row_cache_tracker, locator::effective_replication_map_ptr erm, compaction::owned_ranges_ptr owned_ranges = nullptr);
 
     table(column_family&&) = delete; // 'this' is being captured during construction
     ~table();
@@ -1831,7 +1832,7 @@ public:
     void init_schema_commitlog();
 
     using is_new_cf = bool_class<struct is_new_cf_tag>;
-    void add_column_family(keyspace& ks, schema_ptr schema, column_family::config cfg, is_new_cf is_new, locator::token_metadata_ptr not_commited_new_metadata = nullptr);
+    future<> add_column_family(keyspace& ks, schema_ptr schema, column_family::config cfg, is_new_cf is_new, locator::token_metadata_ptr not_commited_new_metadata = nullptr);
     future<> make_column_family_directory(schema_ptr schema);
     future<> add_column_family_and_make_directory(schema_ptr schema, is_new_cf is_new);
 
