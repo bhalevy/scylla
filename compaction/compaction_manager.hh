@@ -63,6 +63,8 @@ inline owned_ranges_ptr make_owned_ranges_ptr(dht::token_range_vector&& ranges) 
     return make_lw_shared<const dht::token_range_vector>(std::move(ranges));
 }
 
+future<owned_ranges_ptr> maybe_make_owned_ranges_ptr(locator::effective_replication_map_ptr erm, locator::host_id host_id);
+
 // Compaction manager provides facilities to submit and track compaction jobs on
 // behalf of existing tables.
 class compaction_manager: public peering_sharded_service<compaction_manager> {

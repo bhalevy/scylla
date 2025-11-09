@@ -1667,6 +1667,7 @@ table::try_flush_memtable_to_sstable(compaction_group& cg, lw_shared_ptr<memtabl
           try {
             sstables::sstable_writer_config cfg = get_sstables_manager().configure_writer("memtable");
             cfg.backup = incremental_backups_enabled();
+            cfg.owned_ranges = _owned_ranges;
 
             auto newtab = make_sstable();
             newtabs.push_back(newtab);
@@ -2750,10 +2751,11 @@ void storage_group::clear_sstables() {
 
 table::table(schema_ptr schema, config config, lw_shared_ptr<const storage_options> sopts, compaction::compaction_manager& compaction_manager,
         sstables::sstables_manager& sst_manager, cell_locker_stats& cl_stats, cache_tracker& row_cache_tracker,
-        locator::effective_replication_map_ptr erm)
+        locator::effective_replication_map_ptr erm, compaction::owned_ranges_ptr owned_ranges)
     : _schema(std::move(schema))
     , _config(std::move(config))
     , _erm(std::move(erm))
+    , _owned_ranges(std::move(owned_ranges))
     , _storage_opts(std::move(sopts))
     , _view_stats(format("{}_{}_view_replica_update", _schema->ks_name(), _schema->cf_name()),
                          keyspace_label(_schema->ks_name()),

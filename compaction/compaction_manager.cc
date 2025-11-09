@@ -2593,4 +2593,14 @@ compaction_backlog_tracker& compaction_manager::get_backlog_tracker(compaction_g
     return t.get_backlog_tracker();
 }
 
+future<owned_ranges_ptr> maybe_make_owned_ranges_ptr(locator::effective_replication_map_ptr erm, locator::host_id host_id) {
+    if (!erm) {
+        co_return nullptr;
+    }
+    if (erm->get_token_metadata().sorted_tokens().empty()) {
+        co_return nullptr;
+    }
+    co_return make_owned_ranges_ptr(co_await erm->get_ranges(host_id));
+}
+
 }
