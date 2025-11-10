@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include "dht/i_partitioner_fwd.hh"
 #include "sstable_writer.hh"
 #include "sstables_manager.hh"
 #include "schema/schema_fwd.hh"
