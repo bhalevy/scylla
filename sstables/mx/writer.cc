@@ -564,11 +564,16 @@ private:
     uint64_t _partition_header_length = 0;
     uint64_t _prev_row_start = 0;
     std::optional<key> _partition_key;
+    dht::token _current_token;
     utils::hashed_key _current_murmur_hash{{0, 0}};
     std::optional<key> _first_key, _last_key;
     index_sampling_state _index_sampling_state;
     bytes_ostream _tmp_bufs;
     uint64_t _num_partitions_consumed = 0;
+    dht::token_range_vector _full_range;
+    std::optional<dht::token_range_vector::const_iterator> _owned_ranges_it;
+    dht::token_range_vector::const_iterator _owned_ranges_end;
+    utils::chunked_vector<std::pair<dht::token, dht::token>> _token_ranges;
 
     const sstable_schema _sst_schema;
 
@@ -843,6 +848,15 @@ public:
       if (_index_writer) {
         prepare_summary(_sst._components->summary, estimated_partitions, _schema.min_index_interval());
       }
+
+        if (_cfg.owned_ranges && !_cfg.owned_ranges->empty()) {
+            _owned_ranges_it = _cfg.owned_ranges->begin();
+            _owned_ranges_end = _cfg.owned_ranges->end();
+        } else {
+            _full_range.emplace_back(dht::token_range::make_open_ended_both_sides());
+            _owned_ranges_it = _full_range.begin();
+            _owned_ranges_end = _full_range.end();
+        }
     }
 
     ~writer();
@@ -987,6 +1001,7 @@ void writer::consume_new_partition(const dht::decorated_key& dk) {
     _prev_row_start = _data_writer->offset();
 
     _partition_key = key::from_partition_key(_schema, dk.key());
+    _current_token = dk.token();
     maybe_add_summary_entry(dk.token(), bytes_view(*_partition_key));
 
     _current_murmur_hash = utils::make_hashed_key(bytes_view(*_partition_key));
@@ -1611,11 +1626,35 @@ stop_iteration writer::consume_end_of_partition() {
     _collector.update(std::move(_c_stats));
     _c_stats.reset();
 
+    if (_owned_ranges_it) {
+        auto cmp = dht::token_comparator{};
+        auto& it = *_owned_ranges_it;
+        if (_token_ranges.empty() || it->after(_current_token, cmp)) {
+            while (it->after(_current_token, cmp)) {
+                if (++it == _owned_ranges_end) {
+                    on_internal_error_noexcept(slogger, format("Owned ranges iterator exhausted for token={}", _current_token));
+                    _owned_ranges_it = std::nullopt;
+                    break;
+                }
+            }
+            if (_owned_ranges_it) {
+                if (it->before(_current_token, cmp)) {
+                    on_internal_error_noexcept(slogger, format("token={} is not owned by shard", _current_token));
+                    _owned_ranges_it = std::nullopt;
+                } else {
+                    _token_ranges.emplace_back(_current_token, _current_token);
+                }
+            }
+        } else {
+            _token_ranges.back().second = _current_token;
+        }
+    }
     if (!_first_key) {
         _first_key = *_partition_key;
     }
     _last_key = std::move(*_partition_key);
     _partition_key = std::nullopt;
+    _current_token = dht::token();
     return get_data_offset() < _cfg.max_sstable_size ? stop_iteration::no : stop_iteration::yes;
 }
 
@@ -1658,6 +1697,17 @@ void writer::consume_end_of_stream() {
 
     _sst.set_first_and_last_keys();
 
+    std::optional<scylla_metadata::token_ranges> disk_token_ranges;
+    if (!_token_ranges.empty()) {
+        disk_token_ranges.emplace();
+        disk_token_ranges->token_ranges.elements.reserve(_token_ranges.size());
+        for (const auto& tr : _token_ranges) {
+            disk_token_ranges->token_ranges.elements.emplace_back(disk_token_range{
+                {false /* exclusive */, {tr.first.data()}},
+                {false /* exclusive */, {tr.second.data()}}});
+        }
+    }
+
     _sst._components->statistics.contents[metadata_type::Serialization] = std::make_unique<serialization_header>(std::move(_sst_schema.header));
     seal_statistics(_sst.get_version(), _sst._components->statistics, _collector,
         _sst._schema->get_partitioner().name(), _sst._schema->bloom_filter_fp_chance(),
@@ -1695,7 +1745,7 @@ void writer::consume_end_of_stream() {
     std::optional<scylla_metadata::ext_timestamp_stats> ts_stats(scylla_metadata::ext_timestamp_stats{
         .map = _collector.get_ext_timestamp_stats()
     });
-    _sst.write_scylla_metadata(_shard, std::move(identifier), std::move(ld_stats), std::move(ts_stats));
+    _sst.write_scylla_metadata(_shard, std::move(identifier), std::move(ld_stats), std::move(ts_stats), std::move(disk_token_ranges));
     _sst.seal_sstable(_cfg.backup).get();
 }
 

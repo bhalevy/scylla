@@ -673,7 +673,8 @@ private:
     void write_scylla_metadata(shard_id shard,
                                run_identifier identifier,
                                std::optional<scylla_metadata::large_data_stats> ld_stats,
-                               std::optional<scylla_metadata::ext_timestamp_stats> ts_stats);
+                               std::optional<scylla_metadata::ext_timestamp_stats> ts_stats,
+                               std::optional<scylla_metadata::token_ranges> token_ranges);
 
     future<> read_filter(sstable_open_config cfg = {});
 
@@ -786,7 +787,7 @@ public:
 private:
     future<summary_entry&> read_summary_entry(size_t i);
 
-    bool filter_has_key(const schema& s, const dht::decorated_key& dk) { return filter_has_key(key::from_partition_key(s, dk._key)); }
+    bool filter_has_key(const schema& s, const dht::decorated_key& dk) { return filter_has_key(key::from_partition_key(s, dk.key())); }
 
     std::optional<std::pair<uint64_t, uint64_t>> get_sample_indexes_for_range(const dht::token_range& range);
     std::optional<std::pair<uint64_t, uint64_t>> get_index_pages_for_range(const dht::token_range& range);
