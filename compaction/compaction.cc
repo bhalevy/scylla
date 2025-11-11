@@ -691,7 +691,14 @@ protected:
         _new_partial_sstables.erase(writer->sst);
     }
 
-    sstables::sstable_writer_config make_sstable_writer_config(compaction_type type) {
+    owned_ranges_ptr get_owned_ranges() const noexcept {
+        if (_owned_ranges) {
+            return _owned_ranges;
+        }
+        return _table_s.owned_ranges();
+    }
+
+    sstables::sstable_writer_config make_sstable_writer_config(compaction_type type) const {
         auto s = compaction_name(type);
         std::transform(s.begin(), s.end(), s.begin(), [] (char c) {
             return std::tolower(c);
@@ -702,6 +709,7 @@ protected:
         cfg.run_identifier = _run_identifier;
         cfg.replay_position = _rp;
         cfg.sstable_level = _sstable_level;
+        cfg.owned_ranges = get_owned_ranges();
         return cfg;
     }
 

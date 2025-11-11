@@ -31,6 +31,7 @@ class compaction_group_view {
 public:
     virtual ~compaction_group_view() {}
     virtual dht::token_range token_range() const noexcept = 0;
+    virtual compaction::owned_ranges_ptr owned_ranges() const noexcept = 0;
     virtual const schema_ptr& schema() const noexcept = 0;
     // min threshold as defined by table.
     virtual unsigned min_compaction_threshold() const noexcept = 0;
