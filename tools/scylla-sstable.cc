@@ -1379,10 +1379,13 @@ const char* to_string(sstables::ext_timestamp_stats_type t) {
 class scylla_metadata_visitor {
     json_writer& _writer;
 
+    dht::token as_token(const sstables::disk_string<uint16_t>& ds) const {
+        return dht::token(dht::token::kind::key, bytes_view(ds));
+    }
 public:
     scylla_metadata_visitor(json_writer& writer) : _writer(writer) { }
 
-    void operator()(const sstables::sharding_metadata& val) const {
+    void operator()(const sstables::token_ranges_type& val) const {
         _writer.StartArray();
         for (const auto& e : val.token_ranges.elements) {
             _writer.StartObject();
@@ -1392,7 +1395,7 @@ public:
             _writer.Key("exclusive");
             _writer.Bool(e.left.exclusive);
             _writer.Key("token");
-            _writer.String(disk_string_to_string(e.left.token));
+            _writer.AsString(as_token(e.left.token));
             _writer.EndObject();
 
             _writer.Key("right");
@@ -1400,7 +1403,7 @@ public:
             _writer.Key("exclusive");
             _writer.Bool(e.right.exclusive);
             _writer.Key("token");
-            _writer.String(disk_string_to_string(e.right.token));
+            _writer.AsString(as_token(e.right.token));
             _writer.EndObject();
 
             _writer.EndObject();
