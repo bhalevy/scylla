@@ -55,6 +55,7 @@ public:
     {
     }
     dht::token_range token_range() const noexcept override { return dht::token_range::make(dht::first_token(), dht::last_token()); }
+    compaction::owned_ranges_ptr owned_ranges() const noexcept override { return nullptr; }
     const schema_ptr& schema() const noexcept override {
         return table().schema();
     }

@@ -949,6 +949,9 @@ public:
     const locator::effective_replication_map_ptr& get_effective_replication_map() const { return _erm; }
     void update_effective_replication_map(locator::effective_replication_map_ptr);
     [[gnu::always_inline]] bool uses_tablets() const;
+    const compaction::owned_ranges_ptr& owned_ranges() const noexcept {
+        return _owned_ranges;
+    }
 private:
     future<> clear_inactive_reads_for_tablet(database& db, storage_group& sg);
     future<> stop_compaction_groups(storage_group& sg);

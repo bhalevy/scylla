@@ -2554,6 +2554,10 @@ public:
         return _cg.token_range();
     }
 
+    compaction::owned_ranges_ptr owned_ranges() const noexcept override {
+        return _t.uses_tablets() ? nullptr : _t.owned_ranges();
+    }
+
     const schema_ptr& schema() const noexcept override {
         return _t.schema();
     }
