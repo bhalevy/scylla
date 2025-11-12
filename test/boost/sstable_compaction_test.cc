@@ -5884,7 +5884,7 @@ SEASTAR_TEST_CASE(compaction_optimization_to_avoid_bloom_filter_checks) {
     });
 }
 
-static future<> run_incremental_compaction_test(sstables::offstrategy offstrategy, std::function<future<>(table_for_tests&, compaction::owned_ranges_ptr)> run_compaction) {
+static future<> run_incremental_compaction_test(sstables::offstrategy offstrategy, std::function<future<>(table_for_tests&, owned_ranges_ptr)> run_compaction) {
     return test_env::do_with_async([run_compaction = std::move(run_compaction), offstrategy] (test_env& env) {
         auto builder = schema_builder("tests", "test")
                 .with_column("id", utf8_type, column_kind::partition_key)
@@ -5982,13 +5982,13 @@ static future<> run_incremental_compaction_test(sstables::offstrategy offstrateg
 }
 
 SEASTAR_TEST_CASE(cleanup_incremental_compaction_test) {
-    return run_incremental_compaction_test(sstables::offstrategy::no, [] (table_for_tests& t, compaction::owned_ranges_ptr owned_ranges) -> future<> {
+    return run_incremental_compaction_test(sstables::offstrategy::no, [] (table_for_tests& t, owned_ranges_ptr owned_ranges) -> future<> {
         return t->perform_cleanup_compaction(std::move(owned_ranges), tasks::task_info{});
     });
 }
 
 SEASTAR_TEST_CASE(offstrategy_incremental_compaction_test) {
-    return run_incremental_compaction_test(sstables::offstrategy::yes, [] (table_for_tests& t, compaction::owned_ranges_ptr owned_ranges) -> future<> {
+    return run_incremental_compaction_test(sstables::offstrategy::yes, [] (table_for_tests& t, owned_ranges_ptr owned_ranges) -> future<> {
         bool performed = co_await t->perform_offstrategy_compaction(tasks::task_info{});
         BOOST_REQUIRE(performed);
     });

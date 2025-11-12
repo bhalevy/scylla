@@ -12,6 +12,8 @@
 #include <vector>
 #include <seastar/core/sharded.hh>
 
+#include "dht/i_partitioner_fwd.hh"
+
 namespace replica {
 
 // replica/database.hh
@@ -49,3 +51,6 @@ using clustering_key_view = clustering_key_prefix_view;
 namespace replica {
 class memtable;
 }
+
+using owned_ranges_ptr = seastar::lw_shared_ptr<const dht::token_range_vector>;
+owned_ranges_ptr make_owned_ranges_ptr(dht::token_range_vector&& ranges);

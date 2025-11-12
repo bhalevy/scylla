@@ -59,10 +59,6 @@ class split_compaction_task_executor;
 class cleanup_sstables_compaction_task_executor;
 class validate_sstables_compaction_task_executor;
 
-inline owned_ranges_ptr make_owned_ranges_ptr(dht::token_range_vector&& ranges) {
-    return make_lw_shared<const dht::token_range_vector>(std::move(ranges));
-}
-
 // Compaction manager provides facilities to submit and track compaction jobs on
 // behalf of existing tables.
 class compaction_manager: public peering_sharded_service<compaction_manager> {

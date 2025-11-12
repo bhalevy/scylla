@@ -48,7 +48,7 @@ namespace compaction {
 // This function assumes that the list of SSTables can be fairly big so it is careful to
 // manipulate it in a do_for_each loop (which yields) instead of using standard accumulators.
 future<sstables::sstable_directory::sstable_open_info_vector>
-collect_all_shared_sstables(sharded<sstables::sstable_directory>& dir, sharded<replica::database>& db, sstring ks_name, sstring table_name, compaction::owned_ranges_ptr owned_ranges_ptr) {
+collect_all_shared_sstables(sharded<sstables::sstable_directory>& dir, sharded<replica::database>& db, sstring ks_name, sstring table_name, owned_ranges_ptr owned_ranges_ptr) {
     auto info_vec = sstables::sstable_directory::sstable_open_info_vector();
 
     // We want to make sure that each distributed object reshards about the same amount of data.
@@ -132,7 +132,7 @@ distribute_reshard_jobs(sstables::sstable_directory::sstable_open_info_vector so
 // A creator function must be passed that will create an SSTable object in the correct shard,
 // and an I/O priority must be specified.
 future<> reshard(sstables::sstable_directory& dir, sstables::sstable_directory::sstable_open_info_vector shared_info, replica::table& table,
-                           compaction::compaction_sstable_creator_fn creator, compaction::owned_ranges_ptr owned_ranges_ptr, tasks::task_info parent_info)
+                           compaction::compaction_sstable_creator_fn creator, owned_ranges_ptr owned_ranges_ptr, tasks::task_info parent_info)
 {
     // Resharding doesn't like empty sstable sets, so bail early. There is nothing
     // to reshard in this shard.
@@ -902,7 +902,7 @@ future<> table_resharding_compaction_task_impl::run() {
         tasks::task_info parent_info{_status.id, _status.shard};
         auto& compaction_module = _db.local().get_compaction_manager().get_task_manager_module();
         // make shard-local copy of owned_ranges
-        compaction::owned_ranges_ptr local_owned_ranges_ptr;
+        owned_ranges_ptr local_owned_ranges_ptr;
         if (_owned_ranges_ptr) {
             local_owned_ranges_ptr = make_lw_shared<const dht::token_range_vector>(*_owned_ranges_ptr);
         }
@@ -925,7 +925,7 @@ shard_resharding_compaction_task_impl::shard_resharding_compaction_task_impl(tas
         sharded<sstables::sstable_directory>& dir,
         replica::database& db,
         compaction_sstable_creator_fn creator,
-        compaction::owned_ranges_ptr local_owned_ranges_ptr,
+        owned_ranges_ptr local_owned_ranges_ptr,
         std::vector<replica::reshard_shard_descriptor>& destinations) noexcept
     : resharding_compaction_task_impl(module, tasks::task_id::create_random_id(), 0, "shard", std::move(keyspace), std::move(table), "", parent_id)
     , _dir(dir)
