@@ -439,7 +439,7 @@ public:
 
     // When use_sstable_identifier is true and the sstable identifier is available,
     // use it to name the sstable in the snapshot, rather than the sstable generation.
-    future<> snapshot(const sstring& dir, bool use_sstable_identifier = false) const;
+    future<generation_type> snapshot(const sstring& dir, bool use_sstable_identifier = false) const;
 
     // Delete the sstable by unlinking all sstable files
     // Ignores all errors.
