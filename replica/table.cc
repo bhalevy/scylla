@@ -3279,7 +3279,7 @@ future<> table::write_schema_as_cql(const global_table_ptr& table_shards, sstrin
 }
 
 // Runs the orchestration code on an arbitrary shard to balance the load.
-future<> table::snapshot_on_all_shards(sharded<database>& sharded_db, const global_table_ptr& table_shards, sstring name) {
+future<> table::snapshot_on_all_shards(sharded<database>& sharded_db, const global_table_ptr& table_shards, sstring name, db::snapshot_options opts) {
     auto* so = std::get_if<storage_options::local>(&table_shards->get_storage_options().value);
     if (so == nullptr) {
         throw std::runtime_error("Snapshotting non-local tables is not implemented");
