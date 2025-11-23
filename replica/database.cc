@@ -2939,7 +2939,7 @@ future<> database::truncate_table_on_all_shards(sharded<database>& sharded_db, s
         auto truncated_at = truncated_at_opt.value_or(db_clock::now());
         auto name = snapshot_name_opt.value_or(
             format("{:d}-{}", truncated_at.time_since_epoch().count(), cf.schema()->cf_name()));
-        auto opts = db::snapshot_options{}; // FIXME: use_sstable_identifier
+        auto opts = db::snapshot_options{.use_sstable_identifier = true};
         co_await table::snapshot_on_all_shards(sharded_db, table_shards, name, opts);
     }
 
