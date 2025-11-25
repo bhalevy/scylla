@@ -630,6 +630,10 @@ private:
     bool _unlinked{false};
 
     components_digests _components_digests;
+
+    // The mutate semaphore is used to serialize operations like rewrite_statistics
+    // with linking or moving the sstable between directories.
+    mutable named_semaphore _mutate_sem{1, named_semaphore_exception_factory{"sstable mutate"}};
 public:
     bool has_component(component_type f) const;
     sstables_manager& manager() { return _manager; }
@@ -719,6 +723,7 @@ private:
     void write_statistics();
     // Rewrite statistics component by creating a temporary Statistics and
     // renaming it into place of existing one.
+    // This function must run inside a seastar thread since it calls `write`
     void rewrite_statistics();
     // Validate metadata that's used to optimize reads when user specifies
     // a clustering key range. If this specific metadata is incorrect, then
