@@ -587,10 +587,10 @@ async def create_cluster(topology, rf_rack_valid_keyspaces, manager, logger, obj
 
     return servers,host_ids
 
-def create_dataset(manager, ks, cf, topology, logger, dcs_num=None):
+def create_dataset(manager, ks, cf, topology, logger, dcs_num=None, num_keys=256):
     cql = manager.get_cql()
     logger.info(f'Create keyspace, rf={topology.rf}')
-    keys = range(256)
+    keys = range(num_keys)
     replication_opts = {'class': 'NetworkTopologyStrategy'}
     if dcs_num is not None:
         for dc in range(dcs_num):
