@@ -575,7 +575,13 @@ std::optional<tablet_replica> maybe_get_primary_replica(tablet_id id, const tabl
     tablet_replica_set replica_set_copy = replica_set;
     std::ranges::sort(replica_set_copy, tablet_replica_comparator(topo));
     const auto replicas = replica_set_copy | std::views::filter(std::move(filter)) | std::ranges::to<tablet_replica_set>();
-    return !replicas.empty() ? std::make_optional(replicas.at(size_t(id) % replicas.size())) : std::nullopt;
+    if (replicas.empty()) {
+        tablet_logger.debug("No replicas in scope for tablet {}", id);
+        return std::nullopt;
+    }
+    auto primary = replicas.at((size_t(id) + size_t(id) / replicas.size()) % replicas.size());
+    tablet_logger.debug("Primary replica of tablet {} is {}: replicas in scope: {}", id, primary, fmt::join(replicas, ","));
+    return primary;
 }
 
 tablet_replica tablet_map::get_primary_replica(tablet_id id, const locator::topology& topo) const {
