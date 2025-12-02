@@ -565,6 +565,9 @@ class topo:
         self.racks = racks
         self.dcs = dcs
 
+    def __repr__(self):
+        return f'topo(rf={self.rf}, nodes={self.nodes}, racks={self.racks}, dcs={self.dcs})'
+
 async def create_cluster(topology, rf_rack_valid_keyspaces, manager, logger, object_storage=None):
     logger.info(f'Start cluster with {topology.nodes} nodes in {topology.dcs} DCs, {topology.racks} racks, rf_rack_valid_keyspaces: {rf_rack_valid_keyspaces}')
 
@@ -577,9 +580,17 @@ async def create_cluster(topology, rf_rack_valid_keyspaces, manager, logger, obj
     servers = []
     host_ids = {}
 
+    cur_dc = 0
+    cur_rack = 0
     for s in range(topology.nodes):
-        dc = f'dc{s % topology.dcs}'
-        rack = f'rack{s % topology.racks}'
+        dc = f"dc{cur_dc}"
+        rack = f"rack{cur_rack}"
+        cur_dc += 1
+        if cur_dc >= topology.dcs:
+            cur_dc = 0
+            cur_rack += 1
+            if cur_rack >= topology.racks:
+                cur_rack = 0
         s = await manager.server_add(config=cfg, cmdline=cmd, property_file={'dc': dc, 'rack': rack})
         logger.info(f'Created node {s.ip_addr} in {dc}.{rack}')
         servers.append(s)
@@ -587,7 +598,7 @@ async def create_cluster(topology, rf_rack_valid_keyspaces, manager, logger, obj
 
     return servers,host_ids
 
-def create_dataset(manager, ks, cf, topology, logger, dcs_num=None, num_keys=256):
+async def create_dataset(manager, ks, cf, topology, logger, dcs_num=None, num_keys=256, min_tablet_count=None):
     cql = manager.get_cql()
     logger.info(f'Create keyspace, rf={topology.rf}')
     keys = range(num_keys)
@@ -603,17 +614,19 @@ def create_dataset(manager, ks, cf, topology, logger, dcs_num=None, num_keys=256
 
     cql.execute((f"CREATE KEYSPACE {ks} WITH REPLICATION = {replication_opts};"))
 
-    schema = f"CREATE TABLE {ks}.{cf} ( pk int primary key, value text );"
+    schema = f"CREATE TABLE {ks}.{cf} ( pk text primary key, value int )"
+    if min_tablet_count:
+        schema += f"WITH tablets = {{'min_tablet_count': {min_tablet_count}}}"
+    schema += ';'
     cql.execute(schema)
-    for k in keys:
-        cql.execute(f"INSERT INTO {ks}.{cf} ( pk, value ) VALUES ({k}, '{k}');")
+    await asyncio.gather(*(cql.run_async(f"INSERT INTO {ks}.{cf} ( pk, value ) VALUES ('{k}', {k});") for k in keys))
 
     return schema, keys, replication_opts
 
 async def take_snapshot(ks, servers, manager, logger):
     logger.info(f'Take snapshot and collect sstables lists')
     snap_name = unique_name('backup_')
-    sstables = []
+    sstables = dict()
     for s in servers:
         await manager.api.flush_keyspace(s.ip_addr, ks)
         await manager.api.take_snapshot(s.ip_addr, ks, snap_name)
@@ -621,7 +634,7 @@ async def take_snapshot(ks, servers, manager, logger):
         cf_dir = os.listdir(f'{workdir}/data/{ks}')[0]
         tocs = [ f.name for f in os.scandir(f'{workdir}/data/{ks}/{cf_dir}/snapshots/{snap_name}') if f.is_file() and f.name.endswith('TOC.txt') ]
         logger.info(f'Collected sstables from {s.ip_addr}:{cf_dir}/snapshots/{snap_name}: {tocs}')
-        sstables += tocs
+        sstables[s] = tocs
 
     return snap_name,sstables
 
@@ -638,34 +651,100 @@ def compute_scope(topology, servers):
 
     return scope,r_servers
 
-async def check_data_is_back(manager, logger, cql, ks, cf, keys, servers, topology, r_servers, host_ids, scope):
+async def check_data_is_back(manager, logger, cql, ks, cf, keys, servers, topology, host_ids, scope, primary_replica_only, log_marks):
     logger.info(f'Check the data is back')
 
-    await check_mutation_replicas(cql, manager, servers, keys, topology, logger, ks, cf)
+    await check_mutation_replicas(cql, manager, servers, keys, topology, logger, ks, cf, scope, primary_replica_only)
+
+    host_ids_per_dc = defaultdict(list)
+    host_ids_per_dc_rack = dict()
+    servers_by_host_id = dict()
+    for s in servers:
+        host = host_ids[s.server_id]
+        host_ids_per_dc[s.datacenter].append(host)
+        host_ids_per_dc_rack.setdefault(s.datacenter, defaultdict(list))[s.rack].append(host)
+        servers_by_host_id[host] = s
 
     logger.info(f'Validate streaming directions')
-    for i, s in enumerate(r_servers):
-        log = await manager.server_open_log(s.server_id)
-        res = await log.grep(r'INFO.*sstables_loader - load_and_stream:.*target_node=([0-9a-z-]+),.*num_bytes_sent=([0-9]+)')
-        streamed_to = set([ str(host_ids[s.server_id]) ] + [ r[1].group(1) for r in res ])
-        scope_nodes = set([ str(host_ids[s.server_id]) ])
-        # See comment near merge_tocs() above for explanation of servers list filtering below
-        if scope == 'rack':
-            rf = get_replication(cql, ks)[s.datacenter]
-            if type(rf) is list:
-                scope_nodes.update([ str(host_ids[s.server_id]) for s in servers[i::topology.racks] if s.rack in rf])
-            else:
-                scope_nodes.update([ str(host_ids[s.server_id]) for s in servers[i::topology.racks] ])
-        elif scope == 'dc':
-            scope_nodes.update([ str(host_ids[s.server_id]) for s in servers[i::topology.dcs] ])
-        logger.info(f'{s.ip_addr} streamed to {streamed_to}, expected {scope_nodes}')
-        assert streamed_to == scope_nodes
+    streamed_to = defaultdict(int)
+    for s in servers:
+        log, mark = log_marks[s.server_id]
+        res = await log.grep(r'sstables_loader - load_and_stream:.*target_node=(?P<target_host_id>[0-9a-f-]+)', from_mark=mark)
+        for r in res:
+            target_host_id = r[1].group('target_host_id')
+            if scope == 'all':
+                assert target_host_id in servers_by_host_id.keys()
+            elif scope == 'dc':
+                assert servers_by_host_id[target_host_id].datacenter == s.datacenter
+            elif scope == 'rack':
+                assert servers_by_host_id[target_host_id].datacenter == s.datacenter
+                assert servers_by_host_id[target_host_id].rack == s.rack
+            elif scope == 'node':
+                assert target_host_id == str(host_ids[s.server_id])
+            streamed_to[target_host_id] += 1
 
-async def do_restore(ks, cf, s, toc_names, scope, prefix, object_storage, manager, logger, primary_replica_only = False):
+    # validate balance only when rf == #racks
+    if topology.rf < topology.racks:
+        return
+
+    if scope == 'all':
+        assert set(streamed_to.keys()) == set(host_ids.values())
+    elif scope == 'dc':
+        for dc, hosts in host_ids_per_dc.items():
+            streamed_to_in_dc = set([h for h in streamed_to if servers_by_host_id[h].datacenter == dc])
+            assert streamed_to_in_dc == set(hosts)
+    elif scope == 'rack':
+        for dc, racks in host_ids_per_dc_rack.items():
+            for rack, hosts in racks.items():
+                streamed_to_in_rack = set([h for h in streamed_to if servers_by_host_id[h].datacenter == dc and servers_by_host_id[h].rack == rack])
+                assert streamed_to_in_rack == set(hosts)
+
+async def do_restore_server(ks, cf, s, toc_names, scope, prefix, object_storage, manager, logger, primary_replica_only):
     logger.info(f'Restore {s.ip_addr} with {toc_names}, scope={scope}')
     tid = await manager.api.restore(s.ip_addr, ks, cf, object_storage.address, object_storage.bucket_name, prefix, toc_names, scope, primary_replica_only=primary_replica_only)
     status = await manager.api.wait_task(s.ip_addr, tid)
     assert (status is not None) and (status['state'] == 'done')
+
+async def do_restore(ks, cf, servers, sstables, scope, prefix, object_storage, manager, logger, primary_replica_only = False):
+    logger.info(f'Restoring {servers=} with {sstables=} scope={scope}')
+    sstables_per_server = defaultdict(list)
+    if scope == 'all' or scope == 'dc':
+        sstables_per_dc = defaultdict(list)
+        for s, sstables in sstables.items():
+            sstables_per_dc[s.datacenter].extend(sstables)
+        servers_per_dc = defaultdict(list)
+        for s in servers:
+            servers_per_dc[s.datacenter].append(s)
+        for dc, sstables in sstables_per_dc.items():
+            batch_size = (len(sstables) + len(servers_per_dc[dc]) - 1) // len(servers_per_dc[dc])
+            assert batch_size * len(servers_per_dc[dc]) >= len(sstables)
+            i = 0
+            for s in servers_per_dc[dc]:
+                sstables_per_server[s] = sstables[i * batch_size:(i+1) * batch_size]
+                i += 1
+    elif scope == 'rack' or scope == 'node':
+        servers_per_dc_rack = dict()
+        sstables_per_dc_rack = dict()
+        for s, sstables in sstables.items():
+            servers_per_dc_rack.setdefault(s.datacenter, defaultdict(list))[s.rack].append(s)
+            sstables_per_dc_rack.setdefault(s.datacenter, defaultdict(list))[s.rack].extend(sstables)
+        for dc, racks in sstables_per_dc_rack.items():
+            for rack, sstables in racks.items():
+                if scope == 'rack':
+                    batch_size = (len(sstables) + len(servers_per_dc_rack[dc][rack]) - 1) // len(servers_per_dc_rack[dc][rack])
+                    assert batch_size * len(servers_per_dc_rack[dc][rack]) >= len(sstables)
+                    i = 0
+                    for s in servers_per_dc_rack[dc][rack]:
+                        sstables_per_server[s] = sstables[i * batch_size:(i+1) * batch_size]
+                        i += 1
+                else:   # scope == 'node'
+                    for s in servers_per_dc_rack[dc][rack]:
+                        sstables_per_server[s] = sstables
+    else:
+        raise f"do_restore: {scope=} not supported"
+    await asyncio.gather(*(do_restore_server(ks, cf, s, sstables, scope, prefix, object_storage, manager, logger, primary_replica_only) for s, sstables in sstables_per_server.items()))
+    if primary_replica_only:
+        await manager.api.tablet_repair(servers[0].ip_addr, ks, cf, 'all')
 
 async def do_backup(s, snap_name, prefix, ks, cf, object_storage, manager, logger):
     logger.info(f'Backup to {snap_name}')
@@ -677,36 +756,37 @@ async def do_backup(s, snap_name, prefix, ks, cf, object_storage, manager, logge
 async def collect_mutations(cql, server, manager, ks, cf):
     host = await wait_for_cql_and_get_hosts(cql, [server], time.time() + 30)
     await read_barrier(manager.api, server.ip_addr)  # scylladb/scylladb#18199
-    ret = {}
+    ret = defaultdict(list)
     for frag in await cql.run_async(f"SELECT * FROM MUTATION_FRAGMENTS({ks}.{cf})", host=host[0]):
-        if not frag.pk in ret:
-            ret[frag.pk] = []
         ret[frag.pk].append({'mutation_source': frag.mutation_source, 'partition_region': frag.partition_region, 'node': server.ip_addr})
     return ret
 
-async def check_mutation_replicas(cql, manager, servers, keys, topology, logger, ks, cf, expected_replicas = None):
+async def check_mutation_replicas(cql, manager, servers, keys, topology, logger, ks, cf, scope, primary_replica_only, expected_replicas = None):
     '''Check that each mutation is replicated to the expected number of replicas'''
     if expected_replicas is None:
         expected_replicas = topology.rf * topology.dcs
 
+    mutations = defaultdict(list)
     by_node = await asyncio.gather(*(collect_mutations(cql, s, manager, ks, cf) for s in servers))
-    mutations = {}
     for node_frags in by_node:
-        for pk in node_frags:
-            if not pk in mutations:
-                mutations[pk] = []
-            mutations[pk].append(node_frags[pk])
+        for pk, frags in node_frags.items():
+            mutations[pk].append(frags)
 
     for k in random.sample(keys, 17):
-        if not k in mutations:
-            logger.info(f'{k} not found in mutations')
+        if not str(k) in mutations:
             logger.info(f'Mutations: {mutations}')
-            assert False, "Key not found in mutations"
+            assert False, f"Key '{k}' not found in mutations. {topology=} {scope=} {primary_replica_only=}"
 
-        if len(mutations[k]) != expected_replicas:
-            logger.info(f'{k} is replicated {len(mutations[k])} times only, expect {expected_replicas}')
+        if len(mutations[str(k)]) != expected_replicas:
             logger.info(f'Mutations: {mutations}')
-            assert False, "Key not replicated enough"
+            assert False, f"'{k}' is replicated {len(mutations[str(k)])} times, expected {expected_replicas}"
+
+async def mark_all_logs(manager, servers):
+    log_marks = dict()
+    for s in servers:
+        log = await manager.server_open_log(s.server_id)
+        log_marks[s.server_id] = (log, await log.mark())
+    return log_marks
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("topology_rf_validity", [
@@ -731,23 +811,28 @@ async def test_restore_with_streaming_scopes(manager: ManagerClient, object_stor
     ks = 'ks'
     cf = 'cf'
 
-    schema, keys, replication_opts = create_dataset(manager, ks, cf, topology, logger)
+    schema, keys, replication_opts = await create_dataset(manager, ks, cf, topology, logger, num_keys=10000, min_tablet_count=512)
+
+    await check_mutation_replicas(cql, manager, servers, keys, topology, logger, ks, cf, scope=None, primary_replica_only=False, expected_replicas = None)
 
     snap_name, sstables = await take_snapshot(ks, servers, manager, logger)
     prefix = f'{cf}/{snap_name}'
 
     await asyncio.gather(*(do_backup(s, snap_name, prefix, ks, cf, object_storage, manager, logger) for s in servers))
 
-    logger.info(f'Re-initialize keyspace')
-    cql.execute(f'DROP KEYSPACE {ks}')
-    cql.execute((f"CREATE KEYSPACE {ks} WITH REPLICATION = {replication_opts};"))
-    cql.execute(schema)
+    for scope in ['all', 'dc', 'rack', 'node']:
+        pros = [False] if scope == 'node' else [False, True]
+        for pro in pros:
+            logger.info(f'Re-initialize keyspace')
+            cql.execute(f'DROP KEYSPACE {ks}')
+            cql.execute((f"CREATE KEYSPACE {ks} WITH REPLICATION = {replication_opts};"))
+            cql.execute(schema)
 
-    scope,r_servers = compute_scope(topology, servers)
+            log_marks = await mark_all_logs(manager, servers)
 
-    await asyncio.gather(*(do_restore(ks, cf, s, sstables, scope, prefix, object_storage, manager, logger) for s in r_servers))
+            await do_restore(ks, cf, servers, sstables, scope, prefix, object_storage, manager, logger, primary_replica_only=pro)
 
-    await check_data_is_back(manager, logger, cql, ks, cf, keys, servers, topology, r_servers, host_ids, scope)
+            await check_data_is_back(manager, logger, cql, ks, cf, keys, servers, topology, host_ids, scope, primary_replica_only=pro, log_marks=log_marks)
 
 @pytest.mark.asyncio
 async def test_restore_with_non_existing_sstable(manager: ManagerClient, object_storage):
@@ -882,7 +967,7 @@ async def test_restore_primary_replica_same_rack_scope_rack(manager: ManagerClie
     await manager.api.disable_tablet_balancing(servers[0].ip_addr)
     cql = manager.get_cql()
 
-    schema, keys, replication_opts = create_dataset(manager, ks, cf, topology, logger)
+    schema, keys, replication_opts = await create_dataset(manager, ks, cf, topology, logger)
 
     snap_name, sstables = await take_snapshot(ks, servers, manager, logger)
     prefix = f'{cf}/{snap_name}'
@@ -898,7 +983,7 @@ async def test_restore_primary_replica_same_rack_scope_rack(manager: ManagerClie
 
     await asyncio.gather(*(do_restore(ks, cf, s, sstables, scope, prefix, object_storage, manager, logger, primary_replica_only=True) for s in r_servers))
 
-    await check_mutation_replicas(cql, manager, servers, keys, topology, logger, ks, cf, expected_replicas=2)
+    await check_mutation_replicas(cql, manager, servers, keys, topology, logger, ks, cf, scope, primary_replica_only=True, expected_replicas=2)
 
     logger.info(f'Validate streaming directions')
     for i, s in enumerate(r_servers):
@@ -933,7 +1018,7 @@ async def test_restore_primary_replica_different_rack_scope_dc(manager: ManagerC
     await manager.api.disable_tablet_balancing(servers[0].ip_addr)
     cql = manager.get_cql()
 
-    schema, keys, replication_opts = create_dataset(manager, ks, cf, topology, logger)
+    schema, keys, replication_opts = await create_dataset(manager, ks, cf, topology, logger)
 
     snap_name, sstables = await take_snapshot(ks, servers, manager, logger)
     prefix = f'{cf}/{snap_name}'
@@ -949,7 +1034,7 @@ async def test_restore_primary_replica_different_rack_scope_dc(manager: ManagerC
 
     await asyncio.gather(*(do_restore(ks, cf, s, sstables, scope, prefix, object_storage, manager, logger, primary_replica_only=True) for s in r_servers))
 
-    await check_mutation_replicas(cql, manager, servers, keys, topology, logger, ks, cf, expected_replicas=1)
+    await check_mutation_replicas(cql, manager, servers, keys, topology, logger, ks, cf, scope, primary_replica_only=True, expected_replicas=1)
 
     logger.info(f'Validate streaming directions')
     for i, s in enumerate(r_servers):
@@ -976,7 +1061,7 @@ async def test_restore_primary_replica_same_dc_scope_dc(manager: ManagerClient, 
     await manager.api.disable_tablet_balancing(servers[0].ip_addr)
     cql = manager.get_cql()
 
-    schema, keys, replication_opts = create_dataset(manager, ks, cf, topology, logger)
+    schema, keys, replication_opts = await create_dataset(manager, ks, cf, topology, logger)
 
     snap_name, sstables = await take_snapshot(ks, servers, manager, logger)
     prefix = f'{cf}/{snap_name}'
@@ -992,7 +1077,7 @@ async def test_restore_primary_replica_same_dc_scope_dc(manager: ManagerClient, 
 
     await asyncio.gather(*(do_restore(ks, cf, s, sstables, scope, prefix, object_storage, manager, logger, primary_replica_only=True) for s in r_servers))
 
-    await check_mutation_replicas(cql, manager, servers, keys, topology, logger, ks, cf, expected_replicas=2)
+    await check_mutation_replicas(cql, manager, servers, keys, topology, logger, ks, cf, scope, primary_replica_only=True, expected_replicas=2)
 
     logger.info(f'Validate streaming directions')
     for i, s in enumerate(r_servers):
@@ -1027,7 +1112,7 @@ async def test_restore_primary_replica_different_dc_scope_all(manager: ManagerCl
     await manager.api.disable_tablet_balancing(servers[0].ip_addr)
     cql = manager.get_cql()
 
-    schema, keys, replication_opts = create_dataset(manager, ks, cf, topology, logger, dcs_num=2)
+    schema, keys, replication_opts = await create_dataset(manager, ks, cf, topology, logger, dcs_num=2)
 
     snap_name, sstables = await take_snapshot(ks, servers, manager, logger)
     prefix = f'{cf}/{snap_name}'
@@ -1043,7 +1128,7 @@ async def test_restore_primary_replica_different_dc_scope_all(manager: ManagerCl
 
     await asyncio.gather(*(do_restore(ks, cf, s, sstables, scope, prefix, object_storage, manager, logger, primary_replica_only=True) for s in r_servers))
 
-    await check_mutation_replicas(cql, manager, servers, keys, topology, logger, ks, cf, expected_replicas=1)
+    await check_mutation_replicas(cql, manager, servers, keys, topology, logger, ks, cf, scope, primary_replica_only=True, expected_replicas=1)
 
     logger.info(f'Validate streaming directions')
     for i, s in enumerate(r_servers):
