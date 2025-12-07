@@ -922,6 +922,10 @@ compaction_group_ptr& storage_group::select_compaction_group(locator::tablet_ran
     return _main_cg;
 }
 
+size_t storage_group::compaction_group_count() const noexcept {
+    return 1 /* _main_cg */ + _merging_groups.size() + _split_ready_groups.size();
+}
+
 void storage_group::for_each_compaction_group(std::function<void(const compaction_group_ptr&)> action) const {
     action(_main_cg);
     for (auto& cg : _merging_groups) {
@@ -934,6 +938,7 @@ void storage_group::for_each_compaction_group(std::function<void(const compactio
 
 utils::small_vector<compaction_group_ptr, 3> storage_group::compaction_groups() {
     utils::small_vector<compaction_group_ptr, 3> cgs;
+    cgs.reserve(compaction_group_count());
     for_each_compaction_group([&cgs] (const compaction_group_ptr& cg) {
         cgs.push_back(cg);
     });
@@ -942,6 +947,7 @@ utils::small_vector<compaction_group_ptr, 3> storage_group::compaction_groups() 
 
 utils::small_vector<const_compaction_group_ptr, 3> storage_group::compaction_groups() const {
     utils::small_vector<const_compaction_group_ptr, 3> cgs;
+    cgs.reserve(compaction_group_count());
     for_each_compaction_group([&cgs] (const compaction_group_ptr& cg) {
         cgs.push_back(cg);
     });
@@ -1262,6 +1268,14 @@ future<> table::parallel_foreach_compaction_group(std::function<future<>(compact
             }
         });
     });
+}
+
+size_t table::compaction_group_count() const noexcept {
+    size_t count = 0;
+    _sg_manager->for_each_storage_group([&] (size_t, storage_group& sg) {
+        count += sg.compaction_group_count();
+    });
+    return count;
 }
 
 void table::for_each_compaction_group(std::function<void(compaction_group&)> action) {
@@ -2340,7 +2354,7 @@ void table::set_compaction_strategy(compaction::compaction_strategy_type strateg
         }
     };
     std::vector<compaction_group_strategy_updater> cg_sstable_set_updaters;
-
+    cg_sstable_set_updaters.reserve(compaction_group_count());
     for_each_compaction_group([&] (compaction_group& cg) {
         compaction_group_strategy_updater updater(*this, cg, new_cs);
         updater.prepare(new_cs);
