@@ -3492,6 +3492,11 @@ sstable::unlink(storage::sync_dir sync) noexcept {
     // Serialize with other calls to unlink or potentially ongoing mutations.
     auto lock = co_await get_units(_mutate_sem, 1);
 
+    if (_unlinked) {
+        // On retry, just wipe again and do not repeat the side effects.
+        co_return co_await _storage->wipe(*this, sync);
+    }
+
     _unlinked = true;
     _on_delete(*this);
 
