@@ -3201,6 +3201,8 @@ db::replay_position table::highest_flushed_replay_position() const {
 
 struct manifest_json : public json::json_base {
     json::json_element<sstring> name;
+    json::json_element<time_t> created_at;
+    json::json_element<time_t> expires_at;
     json::json_chunked_list<sstring> files;
 
     manifest_json() {
@@ -3209,24 +3211,34 @@ struct manifest_json : public json::json_base {
     manifest_json(manifest_json&& e) {
         register_params();
         name = e.name;
+        created_at = e.created_at;
+        expires_at = e.expires_at;
         files = std::move(e.files);
     }
     manifest_json& operator=(manifest_json&& e) {
         name = e.name;
+        created_at = e.created_at;
+        expires_at = e.expires_at;
         files = std::move(e.files);
         return *this;
     }
 private:
     void register_params() {
         add(&name, "name");
+        add(&created_at, "created_at");
+        add(&expires_at, "expires_at");
         add(&files, "files");
     }
 };
 
 future<>
-table::seal_snapshot(sstring jsondir, std::vector<snapshot_file_set> file_sets, sstring name) {
+table::seal_snapshot(sstring jsondir, std::vector<snapshot_file_set> file_sets, sstring name, db::snapshot_options opts) {
     manifest_json manifest;
     manifest.name = std::move(name);
+    manifest.created_at = opts.created_at.time_since_epoch().count();
+    if (opts.expires_at) {
+        manifest.expires_at = opts.expires_at->time_since_epoch().count();
+    }
     for (const auto& fsp : file_sets) {
         for (auto& rf : *fsp) {
             manifest.files.push(std::move(rf));
@@ -3312,7 +3324,7 @@ future<> table::snapshot_on_all_shards(sharded<database>& sharded_db, const glob
         });
         co_await io_check(sync_directory, jsondir);
 
-        co_await t.finalize_snapshot(table_shards, std::move(jsondir), std::move(file_sets), std::move(name));
+        co_await t.finalize_snapshot(table_shards, std::move(jsondir), std::move(file_sets), std::move(name), std::move(opts));
     });
 }
 
@@ -3333,7 +3345,7 @@ future<table::snapshot_file_set> table::take_snapshot(sstring jsondir) {
     co_return make_foreign(std::move(table_names));
 }
 
-future<> table::finalize_snapshot(const global_table_ptr& table_shards, sstring jsondir, std::vector<snapshot_file_set> file_sets, sstring name) {
+future<> table::finalize_snapshot(const global_table_ptr& table_shards, sstring jsondir, std::vector<snapshot_file_set> file_sets, sstring name, db::snapshot_options opts) {
     std::exception_ptr ex;
 
     tlogger.debug("snapshot {}: writing schema.cql", jsondir);
@@ -3342,7 +3354,7 @@ future<> table::finalize_snapshot(const global_table_ptr& table_shards, sstring 
         ex = std::move(ptr);
     });
     tlogger.debug("snapshot {}: seal_snapshot", jsondir);
-    co_await seal_snapshot(jsondir, std::move(file_sets), std::move(name)).handle_exception([&] (std::exception_ptr ptr) {
+    co_await seal_snapshot(jsondir, std::move(file_sets), std::move(name), std::move(opts)).handle_exception([&] (std::exception_ptr ptr) {
         tlogger.error("Failed to seal snapshot in {}: {}.", jsondir, ptr);
         ex = std::move(ptr);
     });

@@ -657,7 +657,7 @@ static std::set<sstring> collect_sstables(const std::set<sstring>& all_files, co
 }
 
 // Validate that the manifest.json lists exactly the SSTables present in the snapshot directory
-static future<> validate_manifest(const fs::path& snapshot_dir, const std::set<sstring>& in_snapshot_dir) {
+static future<> validate_manifest(const fs::path& snapshot_dir, const std::set<sstring>& in_snapshot_dir, gc_clock::time_point min_time) {
     sstring suffix = "-Data.db";
     auto sstables_in_snapshot = collect_sstables(in_snapshot_dir, suffix);
 
@@ -669,6 +669,20 @@ static future<> validate_manifest(const fs::path& snapshot_dir, const std::set<s
     auto& snapshot_name = manifest_json["name"];
     BOOST_REQUIRE(snapshot_name.IsString());
     BOOST_REQUIRE_EQUAL(snapshot_dir.filename(), snapshot_name.GetString());
+
+    BOOST_REQUIRE(manifest_json.HasMember("created_at"));
+    auto& created_at = manifest_json["created_at"];
+    BOOST_REQUIRE(created_at.IsNumber());
+    time_t created_at_seconds = created_at.GetInt64();
+    BOOST_REQUIRE_GE(created_at_seconds, min_time.time_since_epoch().count());
+    BOOST_REQUIRE_LT(created_at_seconds, min_time.time_since_epoch().count() + 60);
+
+    if (manifest_json.HasMember("expires_at")) {
+        BOOST_REQUIRE(created_at_seconds > 0);
+        auto& expires_at = manifest_json["expires_at"];
+        BOOST_REQUIRE(expires_at.IsNumber());
+        BOOST_REQUIRE_GE(expires_at.GetInt64(), created_at_seconds);
+    }
 
     auto& manifest_files = manifest_json["files"];
     BOOST_REQUIRE(manifest_files.IsArray());
@@ -683,6 +697,7 @@ static future<> validate_manifest(const fs::path& snapshot_dir, const std::set<s
 
 static future<> snapshot_works(const std::string& table_name) {
     return do_with_some_data({"cf"}, [table_name] (cql_test_env& e) {
+        auto min_time = gc_clock::now();
         take_snapshot(e, "ks", table_name).get();
 
         auto& cf = e.local_db().find_column_family("ks", table_name);
@@ -700,7 +715,7 @@ static future<> snapshot_works(const std::string& table_name) {
         // all files were copied and manifest was generated
         BOOST_REQUIRE_EQUAL(in_table_dir, in_snapshot_dir);
 
-        validate_manifest(snapshot_dir, in_snapshot_dir).get();
+        validate_manifest(snapshot_dir, in_snapshot_dir, min_time).get();
 
         return make_ready_future<>();
     }, true);
