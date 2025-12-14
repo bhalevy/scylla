@@ -24,7 +24,7 @@ Scylla uses the following directory structure to store all its SSTables, for exa
     │   │   ├── mc-2-big-TOC.txt
     │   │   ├── snapshots
     │   │   │   └── 1550133010687-cf
-    │   │   │       ├── manifest.json
+    │   │   │       ├── scylla-manifest.json
     │   │   │       ├── ...
     │   │   │       └── mc-1-big-TOC.txt
     │   │   ├── staging
@@ -35,7 +35,7 @@ Scylla uses the following directory structure to store all its SSTables, for exa
     │       │   └── 1550132311207-cf
     │       │       ├── ...
     │       │       ├── ks-cf-ka-3-TOC.txt
-    │       │       └── manifest.json
+    │       │       └── scylla-manifest.json
     │       ├── staging
     │       ├── quarantine
     │       └── upload

@@ -105,7 +105,7 @@ Each of the snapshots is a **hardlink** to to the SSTable directory.
    la-1-big-Statistics.db
    la-1-big-Summary.db
    la-1-big-TOC.txt
-   manifest.json
+   scylla-manifest.json
 
 Additional Resources
 ^^^^^^^^^^^^^^^^^^^^

@@ -3228,7 +3228,7 @@ table::seal_snapshot(sstring jsondir, std::vector<snapshot_file_set> file_sets) 
         }
     }
     auto streamer = json::stream_object(std::move(manifest));
-    auto jsonfile = jsondir + "/manifest.json";
+    auto jsonfile = fmt::format("{}/{}", jsondir, db::snapshot::manifest_name);
 
     tlogger.debug("Storing manifest {}", jsonfile);
 
@@ -3418,7 +3418,7 @@ future<table::snapshot_details> table::get_snapshot_details(fs::path snapshot_di
         //
         // All the others should just generate an exception: there is something wrong, so don't blindly
         // add it to the size.
-        if (name != "manifest.json" && name != "schema.cql") {
+        if (!name.ends_with(db::snapshot::manifest_suffix) && name != "schema.cql") {
             details.total += size;
             if (sd.number_of_links == 1) {
                 // File exists only in the snapshot directory.

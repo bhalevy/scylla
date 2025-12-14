@@ -210,7 +210,7 @@ components stored flat under the prefix.
 ```perl
 scylla-bucket/prefix/
 │
-├── manifest.json
+├── scylla-manifest.json
 ├── schema.cql
 |
 ├── me-3gqe_1lnj_4sbpc2ezoscu9hhtor-big-Data.db

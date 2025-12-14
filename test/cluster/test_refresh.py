@@ -77,7 +77,7 @@ async def test_refresh_with_streaming_scopes(manager: ManagerClient, topology_rf
 
         snapshots_dir = os.path.join(f'{workdir}/data/{ks}', cf_dir, 'snapshots')
         snapshots_dir = os.path.join(snapshots_dir, os.listdir(snapshots_dir)[0])
-        exclude_list = ['manifest.json', 'schema.cql']
+        exclude_list = ['manifest.json', 'scylla-manifest.json', 'schema.cql']
 
         for item in os.listdir(snapshots_dir):
             src_path = os.path.join(snapshots_dir, item)

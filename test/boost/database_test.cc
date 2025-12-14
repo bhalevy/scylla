@@ -662,7 +662,7 @@ static future<> validate_manifest(const fs::path& snapshot_dir, const std::set<s
     auto sstables_in_snapshot = collect_sstables(in_snapshot_dir, suffix);
 
     std::set<sstring> sstables_in_manifest;
-    auto manifest_str = co_await util::read_entire_file_contiguous(snapshot_dir / "manifest.json");
+    auto manifest_str = co_await util::read_entire_file_contiguous(snapshot_dir / db::snapshot::manifest_name);
     auto manifest_json = rjson::parse(manifest_str);
     auto& manifest_files = manifest_json["files"];
     BOOST_REQUIRE(manifest_files.IsArray());
@@ -671,7 +671,7 @@ static future<> validate_manifest(const fs::path& snapshot_dir, const std::set<s
             sstables_in_manifest.insert(f.GetString());
         }
     }
-    testlog.debug("SSTables in manifest.json: {}", fmt::join(sstables_in_manifest, ", "));
+    testlog.debug("SSTables in {}: {}", db::snapshot::manifest_name, fmt::join(sstables_in_manifest, ", "));
     BOOST_REQUIRE_EQUAL(sstables_in_snapshot, sstables_in_manifest);
 }
 
@@ -689,7 +689,7 @@ static future<> snapshot_works(const std::string& table_name) {
 
         auto in_snapshot_dir = collect_files(snapshot_dir).get();
 
-        in_table_dir.insert("manifest.json");
+        in_table_dir.insert(sstring(db::snapshot::manifest_name));
         in_table_dir.insert("schema.cql");
         // all files were copied and manifest was generated
         BOOST_REQUIRE_EQUAL(in_table_dir, in_snapshot_dir);
@@ -722,7 +722,7 @@ SEASTAR_TEST_CASE(snapshot_skip_flush_works) {
         // Snapshot did not trigger a flush.
         BOOST_REQUIRE(in_table_dir.empty());
         auto in_snapshot_dir = collect_files(table_dir(cf) / sstables::snapshots_dir / "test").get();
-        BOOST_REQUIRE_EQUAL(in_snapshot_dir, std::set<sstring>({"manifest.json", "schema.cql"}));
+        BOOST_REQUIRE_EQUAL(in_snapshot_dir, std::set<sstring>({sstring(db::snapshot::manifest_name), "schema.cql"}));
         return make_ready_future<>();
     });
 }
@@ -1472,7 +1472,7 @@ SEASTAR_TEST_CASE(snapshot_with_quarantine_works) {
         });
 
         std::set<sstring> expected = {
-            "manifest.json",
+            sstring(db::snapshot::manifest_name)
         };
 
         // move a random sstable to quarantine
