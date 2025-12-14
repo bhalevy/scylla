@@ -16,6 +16,7 @@
 
 #include <seastar/core/sharded.hh>
 #include <seastar/core/future.hh>
+#include "gc_clock.hh"
 #include "replica/database_fwd.hh"
 #include "tasks/task_manager.hh"
 #include <seastar/core/gate.hh>

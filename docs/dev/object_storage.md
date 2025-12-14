@@ -227,6 +227,19 @@ scylla-bucket/prefix/
 ```
 See the API [documentation](#copying-sstables-on-s3-backup) for more details about the actual backup request.
 
+### The snapshot manifest
+
+Each snapshot directory contains a manifest.json file that lists the contents of the snapshot and some metadata.
+The json structure is as follows:
+```
+{
+  "name": "snapshot name",
+  "created_at": seconds_since_epoch,
+  "expires_at": seconds_since_epoch | null,
+  "files": [ "me-3gqe_1lnj_4sbpc2ezoscu9hhtor-big-Data.db", "ma-1abx_k29m_9fyug3sdtjwj8krpqh-big-Data.db", ... ]
+}
+```
+
 3. `CREATE KEYSPACE` with S3/GS storage
 
 When creating a keyspace with S3/GS storage, the data is stored under the bucket passed as argument to the `CREATE KEYSPACE` statement.  

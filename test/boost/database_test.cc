@@ -664,6 +664,12 @@ static future<> validate_manifest(const fs::path& snapshot_dir, const std::set<s
     std::set<sstring> sstables_in_manifest;
     auto manifest_str = co_await util::read_entire_file_contiguous(snapshot_dir / db::snapshot::manifest_name);
     auto manifest_json = rjson::parse(manifest_str);
+
+    BOOST_REQUIRE(manifest_json.HasMember("name"));
+    auto& snapshot_name = manifest_json["name"];
+    BOOST_REQUIRE(snapshot_name.IsString());
+    BOOST_REQUIRE_EQUAL(snapshot_dir.filename(), snapshot_name.GetString());
+
     auto& manifest_files = manifest_json["files"];
     BOOST_REQUIRE(manifest_files.IsArray());
     for (auto& f : manifest_files.GetArray()) {
