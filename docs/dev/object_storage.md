@@ -234,11 +234,13 @@ The json structure is as follows:
 ```
 {
   "manifest": {
-    "version": "0.2",
+    "version": "0.2.1",
     "scope": "node"
   },
   "snapshot": {
-    "name": "snapshot name"
+    "name": "snapshot name",
+    "created_at": seconds_since_epoch,
+    "expires_at": seconds_since_epoch | null,
   },
   "files": [ "me-3gqe_1lnj_4sbpc2ezoscu9hhtor-big-Data.db", "ma-1abx_k29m_9fyug3sdtjwj8krpqh-big-Data.db", ... ]
 }
