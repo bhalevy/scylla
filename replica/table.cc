@@ -3203,6 +3203,7 @@ struct manifest_json : public json::json_base {
     json::json_element<sstring> name;
     json::json_element<time_t> created_at;
     json::json_element<time_t> expires_at;
+    json::json_element<size_t> tablet_count;
     json::json_chunked_list<sstring> files;
 
     manifest_json() {
@@ -3213,12 +3214,14 @@ struct manifest_json : public json::json_base {
         name = e.name;
         created_at = e.created_at;
         expires_at = e.expires_at;
+        tablet_count = e.tablet_count;
         files = std::move(e.files);
     }
     manifest_json& operator=(manifest_json&& e) {
         name = e.name;
         created_at = e.created_at;
         expires_at = e.expires_at;
+        tablet_count = e.tablet_count;
         files = std::move(e.files);
         return *this;
     }
@@ -3227,6 +3230,7 @@ private:
         add(&name, "name");
         add(&created_at, "created_at");
         add(&expires_at, "expires_at");
+        add(&tablet_count, "tablet_count");
         add(&files, "files");
     }
 };
@@ -3238,6 +3242,9 @@ table::seal_snapshot(sstring jsondir, std::vector<snapshot_file_set> file_sets, 
     manifest.created_at = opts.created_at.time_since_epoch().count();
     if (opts.expires_at) {
         manifest.expires_at = opts.expires_at->time_since_epoch().count();
+    }
+    if (auto tablet_count = calculate_tablet_count()) {
+        manifest.tablet_count = tablet_count;
     }
     for (const auto& fsp : file_sets) {
         for (auto& rf : *fsp) {
