@@ -657,7 +657,7 @@ static std::set<sstring> collect_sstables(const std::set<sstring>& all_files, co
 }
 
 // Validate that the manifest.json lists exactly the SSTables present in the snapshot directory
-static future<> validate_manifest(const fs::path& snapshot_dir, const std::set<sstring>& in_snapshot_dir, gc_clock::time_point min_time) {
+static future<> validate_manifest(const fs::path& snapshot_dir, const std::set<sstring>& in_snapshot_dir, gc_clock::time_point min_time, bool tablets_enabled) {
     sstring suffix = "-Data.db";
     auto sstables_in_snapshot = collect_sstables(in_snapshot_dir, suffix);
 
@@ -684,6 +684,19 @@ static future<> validate_manifest(const fs::path& snapshot_dir, const std::set<s
         BOOST_REQUIRE_GE(expires_at.GetInt64(), created_at_seconds);
     }
 
+    if (manifest_json.HasMember("tablet_count")) {
+        auto& tablet_count = manifest_json["tablet_count"];
+        if (tablets_enabled) {
+            BOOST_REQUIRE(tablet_count.IsNumber());
+            BOOST_REQUIRE_GT(tablet_count.GetInt64(), 0);
+        } else if (!tablet_count.IsNull()) {
+            BOOST_REQUIRE(tablet_count.IsNumber());
+            BOOST_REQUIRE_EQUAL(tablet_count.GetInt64(), 0);
+        }
+    } else {
+        BOOST_REQUIRE(!tablets_enabled);
+    }
+
     auto& manifest_files = manifest_json["files"];
     BOOST_REQUIRE(manifest_files.IsArray());
     for (auto& f : manifest_files.GetArray()) {
@@ -695,7 +708,9 @@ static future<> validate_manifest(const fs::path& snapshot_dir, const std::set<s
     BOOST_REQUIRE_EQUAL(sstables_in_snapshot, sstables_in_manifest);
 }
 
-static future<> snapshot_works(const std::string& table_name) {
+static future<> snapshot_works(const std::string& table_name, bool create_views, bool tablets_enabled) {
+    auto db_cfg_ptr = make_shared<db::config>();
+    db_cfg_ptr->tablets_mode_for_new_keyspaces(tablets_enabled ? db::tablets_mode_t::mode::enabled : db::tablets_mode_t::mode::disabled);
     return do_with_some_data({"cf"}, [table_name] (cql_test_env& e) {
         auto min_time = gc_clock::now();
         take_snapshot(e, "ks", table_name).get();
@@ -715,22 +730,27 @@ static future<> snapshot_works(const std::string& table_name) {
         // all files were copied and manifest was generated
         BOOST_REQUIRE_EQUAL(in_table_dir, in_snapshot_dir);
 
-        validate_manifest(snapshot_dir, in_snapshot_dir, min_time).get();
+        validate_manifest(snapshot_dir, in_snapshot_dir, min_time, cf.uses_tablets()).get();
 
         return make_ready_future<>();
-    }, true);
+    }, create_views, db_cfg_ptr);
 }
 
 SEASTAR_TEST_CASE(table_snapshot_works) {
-    return snapshot_works("cf");
+    return snapshot_works("cf", false, false);
+}
+
+SEASTAR_TEST_CASE(table_snapshot_works_with_tablets) {
+    // FIXME: do_with_some_data does not work with views and tablets yet
+    return snapshot_works("cf", false, true);
 }
 
 SEASTAR_TEST_CASE(view_snapshot_works) {
-    return snapshot_works("view_cf");
+    return snapshot_works("view_cf", true, false);
 }
 
 SEASTAR_TEST_CASE(index_snapshot_works) {
-    return snapshot_works(::secondary_index::index_table_name("index_cf"));
+    return snapshot_works(::secondary_index::index_table_name("index_cf"), true, false);
 }
 
 SEASTAR_TEST_CASE(snapshot_skip_flush_works) {
