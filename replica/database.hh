@@ -64,6 +64,7 @@
 #include "absl-flat_hash_map.hh"
 #include "utils/cross-shard-barrier.hh"
 #include "sstables/generation_type.hh"
+#include "sstables/types.hh"
 #include "db/rate_limiter.hh"
 #include "db/operation_type.hh"
 #include "locator/tablets.hh"
@@ -1033,13 +1034,22 @@ public:
     db::replay_position set_low_replay_position_mark();
     db::replay_position highest_flushed_replay_position() const;
 
+public:
+    struct sstable_snapshot_metadata {
+        utils::UUID id;
+        sstring toc_name;
+        uint64_t data_size;
+        uint64_t index_size;
+        int64_t first_token;
+        int64_t last_token;
+    };
 private:
-    using snapshot_file_set = foreign_ptr<std::unique_ptr<std::unordered_set<sstring>>>;
+    using snapshot_sstable_set = foreign_ptr<std::unique_ptr<utils::chunked_vector<sstable_snapshot_metadata>>>;
 
-    future<snapshot_file_set> take_snapshot(sstring jsondir);
+    future<snapshot_sstable_set> take_snapshot(sstring jsondir);
     // Writes the table schema and the manifest of all files in the snapshot directory.
-    future<> finalize_snapshot(const global_table_ptr& table_shards, sstring jsondir, std::vector<snapshot_file_set> file_sets, sstring name, db::snapshot_options opts);
-    future<> seal_snapshot(sstring jsondir, std::vector<snapshot_file_set> file_sets, sstring name, db::snapshot_options opts);
+    future<> finalize_snapshot(const global_table_ptr& table_shards, sstring jsondir, std::vector<snapshot_sstable_set> sstable_sets, sstring name, db::snapshot_options opts);
+    future<> seal_snapshot(sstring jsondir, std::vector<snapshot_sstable_set> sstable_sets, sstring name, db::snapshot_options opts);
 public:
     static future<> snapshot_on_all_shards(sharded<database>& sharded_db, const global_table_ptr& table_shards, sstring name, db::snapshot_options opts);
 

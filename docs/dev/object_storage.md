@@ -237,7 +237,26 @@ The json structure is as follows:
   "created_at": seconds_since_epoch,
   "expires_at": seconds_since_epoch | null,
   "tablet_count": N   # greater than 0 if the table uses tablets
-  "files": [ "me-3gqe_1lnj_4sbpc2ezoscu9hhtor-big-Data.db", "ma-1abx_k29m_9fyug3sdtjwj8krpqh-big-Data.db", ... ]
+  "sstables": [
+    {
+      "id": "67e35000-d8c6-11f0-9599-060de9f3bd1b",
+      "toc_name": "me-3gw7_0ndy_3wlq829wcsddgwha1n-big-TOC.txt",
+      "data_size": 75,
+      "index_size": 8,
+      "first_token": -8629266958227979430,
+      "last_token": 9168982884335614769,
+    },
+    {
+      "id": "67e35000-d8c6-11f0-85dc-0625e9f3bd1b",
+      "toc_name": "me-3gw7_0ndy_3wlq821a6cqlbmxrtn-big-TOC.txt",
+      "data_size": 73,
+      "index_size": 8,
+      "first_token": 221146791717891383,
+      "last_token": 7354559975791427036,
+    },
+    ...
+  ],
+  "files": [ ... ]  # non-sstable files
 }
 ```
 
