@@ -230,6 +230,7 @@ The json structure is as follows:
   "name": "snapshot name",
   "created_at": seconds_since_epoch,
   "expires_at": seconds_since_epoch | null,
+  "tablet_count": N   # greater than 0 if the table uses tablets
   "files": [ "me-3gqe_1lnj_4sbpc2ezoscu9hhtor-big-Data.db", "ma-1abx_k29m_9fyug3sdtjwj8krpqh-big-Data.db", ... ]
 }
 ```
