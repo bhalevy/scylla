@@ -3321,7 +3321,30 @@ struct manifest_json : public json::json_base {
         }
     };
 
+    struct snapshot_info : public json::json_base {
+        json::json_element<sstring> name;
+
+        snapshot_info() {
+            register_params();
+        }
+        snapshot_info(const snapshot_info& e) {
+            register_params();
+            name = e.name;
+        }
+        snapshot_info& operator=(const snapshot_info& e) {
+            if (this != &e) {
+                name = e.name;
+            }
+            return *this;
+        }
+    private:
+        void register_params() {
+            add(&name, "name");
+        }
+    };
+
     json::json_element<info> manifest;
+    json::json_element<snapshot_info> snapshot;
     json::json_chunked_list<std::string_view> files;
 
     manifest_json() {
@@ -3330,11 +3353,13 @@ struct manifest_json : public json::json_base {
     manifest_json(manifest_json&& e) {
         register_params();
         manifest = e.manifest;
+        snapshot = e.snapshot;
         files = std::move(e.files);
     }
     manifest_json& operator=(manifest_json&& e) {
         if (this != &e) {
             manifest = e.manifest;
+            snapshot = e.snapshot;
             files = std::move(e.files);
         }
         return *this;
@@ -3342,6 +3367,7 @@ struct manifest_json : public json::json_base {
 private:
     void register_params() {
         add(&manifest, "manifest");
+        add(&snapshot, "snapshot");
         add(&files, "files");
     }
 };
@@ -3356,13 +3382,17 @@ public:
 
 using snapshot_file_set = foreign_ptr<std::unique_ptr<std::unordered_set<sstring>>>;
 
-static future<> write_manifest(snapshot_writer& writer, std::vector<snapshot_file_set> file_sets) {
+static future<> write_manifest(snapshot_writer& writer, std::vector<snapshot_file_set> file_sets, sstring name) {
     manifest_json manifest;
 
     manifest_json::info info;
-    info.version = "0.1";
+    info.version = "0.2";
     info.scope = "node";
     manifest.manifest = info;
+
+    manifest_json::snapshot_info snapshot;
+    snapshot.name = name;
+    manifest.snapshot = snapshot;
 
     for (const auto& fsp : file_sets) {
         for (auto& rf : *fsp) {
@@ -3487,7 +3517,7 @@ future<> database::snapshot_table_on_all_shards(sharded<database>& sharded_db, c
             ex = std::move(ptr);
         });
         tlogger.debug("snapshot {}: seal_snapshot", name);
-        co_await write_manifest(*writer, std::move(file_sets)).handle_exception([&] (std::exception_ptr ptr) {
+        co_await write_manifest(*writer, std::move(file_sets), name).handle_exception([&] (std::exception_ptr ptr) {
             tlogger.error("Failed to seal snapshot in {}: {}.", name, ptr);
             ex = std::move(ptr);
         });
