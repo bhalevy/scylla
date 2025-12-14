@@ -35,7 +35,7 @@ namespace sstables {
 
 bool manifest_json_filter(const fs::path&, const directory_entry& entry) {
     // Filter out directories. If type of the entry is unknown - check its name.
-    if (entry.type.value_or(directory_entry_type::regular) != directory_entry_type::directory && (entry.name == "manifest.json" || entry.name == "schema.cql")) {
+    if (entry.type.value_or(directory_entry_type::regular) != directory_entry_type::directory && (entry.name.ends_with(db::snapshot::manifest_suffix) || entry.name == "schema.cql")) {
         return false;
     }
 

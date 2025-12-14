@@ -27,6 +27,7 @@
 #include "test/lib/cql_assertions.hh"
 #include "utils/lister.hh"
 #include "db/config.hh"
+#include "db/snapshot-ctl.hh"
 
 #include <fmt/core.h>
 #include <fmt/ranges.h>
@@ -172,8 +173,10 @@ SEASTAR_TEST_CASE(sstable_directory_test_table_simple_empty_directory_scan) {
         auto& dir = env.tempdir();
 
         // Write a manifest file to make sure it's ignored
-        auto manifest = dir.path() / "manifest.json";
+        auto manifest = dir.path() / db::snapshot::manifest_suffix;
         tests::touch_file(manifest.native()).get();
+        auto scylla_manifest = dir.path() / db::snapshot::manifest_name;
+        tests::touch_file(scylla_manifest.native()).get();
 
         with_sstable_directory(env, [] (sharded<sstables::sstable_directory>& sstdir) {
             distributed_loader_for_tests::process_sstable_dir(sstdir, {}).get();

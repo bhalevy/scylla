@@ -29,6 +29,9 @@ namespace db {
 
 namespace snapshot {
 
+constexpr std::string_view manifest_suffix = "manifest.json";
+constexpr std::string_view manifest_name = "scylla-manifest.json";
+
 class task_manager_module : public tasks::task_manager::module {
 public:
     task_manager_module(tasks::task_manager& tm) noexcept : tasks::task_manager::module(tm, "snapshot") {}
