@@ -3279,12 +3279,71 @@ db::replay_position table::highest_flushed_replay_position() const {
     return _highest_flushed_rp;
 }
 
+struct sstable_json : public json::json_base {
+    json::json_element<sstring> id;
+    json::json_element<sstring> toc_name;
+    json::json_element<uint64_t> data_size;
+    json::json_element<uint64_t> index_size;
+    json::json_element<int64_t> first_token;
+    json::json_element<int64_t> last_token;
+
+    sstable_json() {
+        register_params();
+    }
+    sstable_json(const sstables::sstable_snapshot_metadata& e) {
+        register_params();
+        id = fmt::to_string(e.id);
+        toc_name = e.toc_name;
+        data_size = e.data_size;
+        index_size = e.index_size;
+        first_token = e.first_token;
+        last_token = e.last_token;
+    }
+    sstable_json(const sstable_json& e) {
+        register_params();
+        id = e.id;
+        toc_name = e.toc_name;
+        data_size = e.data_size;
+        index_size = e.index_size;
+        first_token = e.first_token;
+        last_token = e.last_token;
+    }
+    sstable_json(sstable_json&& e) {
+        register_params();
+        id = e.id;
+        toc_name = std::move(e.toc_name);
+        data_size = e.data_size;
+        index_size = e.index_size;
+        first_token = e.first_token;
+        last_token = e.last_token;
+    }
+    sstable_json& operator=(sstable_json&& e) {
+        id = e.id;
+        toc_name = std::move(e.toc_name);
+        data_size = e.data_size;
+        index_size = e.index_size;
+        first_token = e.first_token;
+        last_token = e.last_token;
+        return *this;
+    }
+private:
+    void register_params() {
+        add(&id, "id");
+        add(&toc_name, "toc_name");
+        add(&data_size, "data_size");
+        add(&index_size, "index_size");
+        add(&first_token, "first_token");
+        add(&last_token, "last_token");
+    }
+};
+
 struct manifest_json : public json::json_base {
     json::json_element<sstring> name;
     json::json_element<time_t> created_at;
     json::json_element<time_t> expires_at;
     json::json_element<size_t> tablet_count;
-    json::json_chunked_list<std::string_view> files;
+    json::json_chunked_list<sstable_json> sstables;
+    json::json_chunked_list<std::string_view> files; // additional files, other than sstables
 
     manifest_json() {
         register_params();
@@ -3295,6 +3354,7 @@ struct manifest_json : public json::json_base {
         created_at = e.created_at;
         expires_at = e.expires_at;
         tablet_count = e.tablet_count;
+        sstables = std::move(e.sstables);
         files = std::move(e.files);
     }
     manifest_json& operator=(manifest_json&& e) {
@@ -3302,6 +3362,7 @@ struct manifest_json : public json::json_base {
         created_at = e.created_at;
         expires_at = e.expires_at;
         tablet_count = e.tablet_count;
+        sstables = std::move(e.sstables);
         files = std::move(e.files);
         return *this;
     }
@@ -3311,6 +3372,7 @@ private:
         add(&created_at, "created_at");
         add(&expires_at, "expires_at");
         add(&tablet_count, "tablet_count");
+        add(&sstables, "sstables");
         add(&files, "files");
     }
 };
@@ -3323,9 +3385,9 @@ public:
     virtual ~snapshot_writer() = default;
 };
 
-using snapshot_file_set = foreign_ptr<std::unique_ptr<std::unordered_set<sstring>>>;
+using snapshot_sstable_set = foreign_ptr<std::unique_ptr<utils::chunked_vector<sstables::sstable_snapshot_metadata>>>;
 
-static future<> write_manifest(snapshot_writer& writer, std::vector<snapshot_file_set> file_sets, sstring name, db::snapshot_options opts, std::optional<int64_t> tablet_count) {
+static future<> write_manifest(snapshot_writer& writer, std::vector<snapshot_sstable_set> sstable_sets, sstring name, db::snapshot_options opts, std::optional<int64_t> tablet_count) {
     manifest_json manifest;
     manifest.name = std::move(name);
     manifest.created_at = opts.created_at.time_since_epoch().count();
@@ -3335,9 +3397,9 @@ static future<> write_manifest(snapshot_writer& writer, std::vector<snapshot_fil
     if (tablet_count) {
         manifest.tablet_count = *tablet_count;
     }
-    for (const auto& fsp : file_sets) {
-        for (auto& rf : *fsp) {
-            manifest.files.push(std::string_view(rf));
+    for (const auto& fsp : sstable_sets) {
+        for (auto& md : *fsp) {
+            manifest.sstables.push(sstable_json(md));
         }
     }
     auto streamer = json::stream_object(std::move(manifest));
@@ -3440,15 +3502,15 @@ future<> database::snapshot_table_on_all_shards(sharded<database>& sharded_db, c
         auto s = t.schema();
         tlogger.debug("Taking snapshot of {}.{}: name={}", s->ks_name(), s->cf_name(), name);
 
-        std::vector<snapshot_file_set> file_sets(smp::count);
+        std::vector<snapshot_sstable_set> sstable_sets(smp::count);
         std::vector<std::optional<int64_t>> tablet_counts(smp::count);
 
         co_await writer->init();
         co_await smp::invoke_on_all([&] -> future<> {
             auto& t = *table_shards;
             auto data = co_await t.snapshot_sstables();
-            auto table_names = co_await t.get_sstables_manager().take_snapshot(std::move(data.sstables), name);
-            file_sets[this_shard_id()] = make_foreign(std::make_unique<std::unordered_set<sstring>>(std::move(table_names)));
+            auto sstables_metadata = co_await t.get_sstables_manager().take_snapshot(std::move(data.sstables), name);
+            sstable_sets[this_shard_id()] = make_foreign(std::make_unique<utils::chunked_vector<sstables::sstable_snapshot_metadata>>(std::move(sstables_metadata)));
             tablet_counts[this_shard_id()] = data.tablet_count;
         });
         co_await writer->sync();
@@ -3472,7 +3534,7 @@ future<> database::snapshot_table_on_all_shards(sharded<database>& sharded_db, c
                 min_tablet_count = std::min(*min_tablet_count, *tc);
             }
         }
-        co_await write_manifest(*writer, std::move(file_sets), name, std::move(opts), min_tablet_count).handle_exception([&] (std::exception_ptr ptr) {
+        co_await write_manifest(*writer, std::move(sstable_sets), name, std::move(opts), min_tablet_count).handle_exception([&] (std::exception_ptr ptr) {
             tlogger.error("Failed to seal snapshot in {}: {}.", name, ptr);
             ex = std::move(ptr);
         });
