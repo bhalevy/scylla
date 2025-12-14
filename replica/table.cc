@@ -3294,6 +3294,8 @@ db::replay_position table::highest_flushed_replay_position() const {
 
 struct manifest_json : public json::json_base {
     json::json_element<sstring> name;
+    json::json_element<time_t> created_at;
+    json::json_element<time_t> expires_at;
     json::json_chunked_list<std::string_view> files;
 
     manifest_json() {
@@ -3302,16 +3304,22 @@ struct manifest_json : public json::json_base {
     manifest_json(manifest_json&& e) {
         register_params();
         name = e.name;
+        created_at = e.created_at;
+        expires_at = e.expires_at;
         files = std::move(e.files);
     }
     manifest_json& operator=(manifest_json&& e) {
         name = e.name;
+        created_at = e.created_at;
+        expires_at = e.expires_at;
         files = std::move(e.files);
         return *this;
     }
 private:
     void register_params() {
         add(&name, "name");
+        add(&created_at, "created_at");
+        add(&expires_at, "expires_at");
         add(&files, "files");
     }
 };
@@ -3326,9 +3334,13 @@ public:
 
 using snapshot_file_set = foreign_ptr<std::unique_ptr<std::unordered_set<sstring>>>;
 
-static future<> write_manifest(snapshot_writer& writer, std::vector<snapshot_file_set> file_sets, sstring name) {
+static future<> write_manifest(snapshot_writer& writer, std::vector<snapshot_file_set> file_sets, sstring name, db::snapshot_options opts) {
     manifest_json manifest;
     manifest.name = std::move(name);
+    manifest.created_at = opts.created_at.time_since_epoch().count();
+    if (opts.expires_at) {
+        manifest.expires_at = opts.expires_at->time_since_epoch().count();
+    }
     for (const auto& fsp : file_sets) {
         for (auto& rf : *fsp) {
             manifest.files.push(std::string_view(rf));
@@ -3454,7 +3466,7 @@ future<> database::snapshot_table_on_all_shards(sharded<database>& sharded_db, c
             ex = std::move(ptr);
         });
         tlogger.debug("snapshot {}: seal_snapshot", name);
-        co_await write_manifest(*writer, std::move(file_sets), name).handle_exception([&] (std::exception_ptr ptr) {
+        co_await write_manifest(*writer, std::move(file_sets), name, std::move(opts)).handle_exception([&] (std::exception_ptr ptr) {
             tlogger.error("Failed to seal snapshot in {}: {}.", name, ptr);
             ex = std::move(ptr);
         });
