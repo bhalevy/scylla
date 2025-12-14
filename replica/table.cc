@@ -3199,12 +3199,71 @@ db::replay_position table::highest_flushed_replay_position() const {
     return _highest_flushed_rp;
 }
 
+struct sstable_json : public json::json_base {
+    json::json_element<sstring> id;
+    json::json_element<sstring> toc_name;
+    json::json_element<uint64_t> data_size;
+    json::json_element<uint64_t> index_size;
+    json::json_element<int64_t> first_token;
+    json::json_element<int64_t> last_token;
+
+    sstable_json() {
+        register_params();
+    }
+    sstable_json(const table::sstable_snapshot_metadata& e) {
+        register_params();
+        id = fmt::to_string(e.id);
+        toc_name = e.toc_name;
+        data_size = e.data_size;
+        index_size = e.index_size;
+        first_token = e.first_token;
+        last_token = e.last_token;
+    }
+    sstable_json(const sstable_json& e) {
+        register_params();
+        id = e.id;
+        toc_name = e.toc_name;
+        data_size = e.data_size;
+        index_size = e.index_size;
+        first_token = e.first_token;
+        last_token = e.last_token;
+    }
+    sstable_json(sstable_json&& e) {
+        register_params();
+        id = e.id;
+        toc_name = std::move(e.toc_name);
+        data_size = e.data_size;
+        index_size = e.index_size;
+        first_token = e.first_token;
+        last_token = e.last_token;
+    }
+    sstable_json& operator=(sstable_json&& e) {
+        id = e.id;
+        toc_name = std::move(e.toc_name);
+        data_size = e.data_size;
+        index_size = e.index_size;
+        first_token = e.first_token;
+        last_token = e.last_token;
+        return *this;
+    }
+private:
+    void register_params() {
+        add(&id, "id");
+        add(&toc_name, "toc_name");
+        add(&data_size, "data_size");
+        add(&index_size, "index_size");
+        add(&first_token, "first_token");
+        add(&last_token, "last_token");
+    }
+};
+
 struct manifest_json : public json::json_base {
     json::json_element<sstring> name;
     json::json_element<time_t> created_at;
     json::json_element<time_t> expires_at;
     json::json_element<size_t> tablet_count;
-    json::json_chunked_list<sstring> files;
+    json::json_chunked_list<sstable_json> sstables;
+    json::json_chunked_list<sstring> files; // additional files, other than sstables
 
     manifest_json() {
         register_params();
@@ -3215,6 +3274,7 @@ struct manifest_json : public json::json_base {
         created_at = e.created_at;
         expires_at = e.expires_at;
         tablet_count = e.tablet_count;
+        sstables = std::move(e.sstables);
         files = std::move(e.files);
     }
     manifest_json& operator=(manifest_json&& e) {
@@ -3222,6 +3282,7 @@ struct manifest_json : public json::json_base {
         created_at = e.created_at;
         expires_at = e.expires_at;
         tablet_count = e.tablet_count;
+        sstables = std::move(e.sstables);
         files = std::move(e.files);
         return *this;
     }
@@ -3231,12 +3292,13 @@ private:
         add(&created_at, "created_at");
         add(&expires_at, "expires_at");
         add(&tablet_count, "tablet_count");
+        add(&sstables, "sstables");
         add(&files, "files");
     }
 };
 
 future<>
-table::seal_snapshot(sstring jsondir, std::vector<snapshot_file_set> file_sets, sstring name, db::snapshot_options opts) {
+table::seal_snapshot(sstring jsondir, std::vector<snapshot_sstable_set> sstable_sets, sstring name, db::snapshot_options opts) {
     manifest_json manifest;
     manifest.name = std::move(name);
     manifest.created_at = opts.created_at.time_since_epoch().count();
@@ -3246,9 +3308,9 @@ table::seal_snapshot(sstring jsondir, std::vector<snapshot_file_set> file_sets, 
     if (auto tablet_count = calculate_tablet_count()) {
         manifest.tablet_count = tablet_count;
     }
-    for (const auto& fsp : file_sets) {
-        for (auto& rf : *fsp) {
-            manifest.files.push(std::move(rf));
+    for (const auto& fsp : sstable_sets) {
+        for (auto& md : *fsp) {
+            manifest.sstables.push(sstable_json(md));
         }
     }
     auto streamer = json::stream_object(std::move(manifest));
@@ -3320,39 +3382,47 @@ future<> table::snapshot_on_all_shards(sharded<database>& sharded_db, const glob
         auto s = t.schema();
         tlogger.debug("Taking snapshot of {}.{}: directory={}", s->ks_name(), s->cf_name(), jsondir);
 
-        std::vector<table::snapshot_file_set> file_sets;
-        file_sets.reserve(smp::count);
+        std::vector<snapshot_sstable_set> sstable_sets;
+        sstable_sets.reserve(smp::count);
 
         co_await io_check([&jsondir] { return recursive_touch_directory(jsondir); });
         co_await coroutine::parallel_for_each(smp::all_cpus(), [&] (unsigned shard) -> future<> {
-            file_sets.emplace_back(co_await smp::submit_to(shard, [&] {
+            sstable_sets.emplace_back(co_await smp::submit_to(shard, [&] {
                 return table_shards->take_snapshot(jsondir);
             }));
         });
         co_await io_check(sync_directory, jsondir);
 
-        co_await t.finalize_snapshot(table_shards, std::move(jsondir), std::move(file_sets), std::move(name), std::move(opts));
+        co_await t.finalize_snapshot(table_shards, std::move(jsondir), std::move(sstable_sets), std::move(name), std::move(opts));
     });
 }
 
-future<table::snapshot_file_set> table::take_snapshot(sstring jsondir) {
+future<table::snapshot_sstable_set> table::take_snapshot(sstring jsondir) {
     tlogger.trace("take_snapshot {}", jsondir);
 
     auto sstable_deletion_guard = co_await get_sstable_list_permit();
 
     auto tables = *_sstables->all() | std::ranges::to<std::vector<sstables::shared_sstable>>();
-    auto table_names = std::make_unique<std::unordered_set<sstring>>();
+    auto snapshot_sstable_set = std::make_unique<utils::chunked_vector<sstable_snapshot_metadata>>();
 
-    co_await _sstables_manager.dir_semaphore().parallel_for_each(tables, [&jsondir, &table_names] (sstables::shared_sstable sstable) {
-        table_names->insert(sstable->component_basename(sstables::component_type::Data));
+    co_await _sstables_manager.dir_semaphore().parallel_for_each(tables, [&jsondir, &snapshot_sstable_set] (sstables::shared_sstable sstable) {
+        sstable_snapshot_metadata md = {
+            .id = sstable->sstable_identifier()->uuid(),
+            .toc_name = sstable->component_basename(sstables::component_type::TOC),
+            .data_size = sstable->data_size(),
+            .index_size = sstable->index_size(),
+            .first_token = dht::token::to_int64(sstable->get_first_decorated_key().token()),
+            .last_token = dht::token::to_int64(sstable->get_last_decorated_key().token()),
+        };
+        snapshot_sstable_set->push_back(std::move(md));
         return io_check([sstable, &dir = jsondir] {
             return sstable->snapshot(dir);
         });
     });
-    co_return make_foreign(std::move(table_names));
+    co_return make_foreign(std::move(snapshot_sstable_set));
 }
 
-future<> table::finalize_snapshot(const global_table_ptr& table_shards, sstring jsondir, std::vector<snapshot_file_set> file_sets, sstring name, db::snapshot_options opts) {
+future<> table::finalize_snapshot(const global_table_ptr& table_shards, sstring jsondir, std::vector<snapshot_sstable_set> sstable_sets, sstring name, db::snapshot_options opts) {
     std::exception_ptr ex;
 
     tlogger.debug("snapshot {}: writing schema.cql", jsondir);
@@ -3361,7 +3431,7 @@ future<> table::finalize_snapshot(const global_table_ptr& table_shards, sstring 
         ex = std::move(ptr);
     });
     tlogger.debug("snapshot {}: seal_snapshot", jsondir);
-    co_await seal_snapshot(jsondir, std::move(file_sets), std::move(name), std::move(opts)).handle_exception([&] (std::exception_ptr ptr) {
+    co_await seal_snapshot(jsondir, std::move(sstable_sets), std::move(name), std::move(opts)).handle_exception([&] (std::exception_ptr ptr) {
         tlogger.error("Failed to seal snapshot in {}: {}.", jsondir, ptr);
         ex = std::move(ptr);
     });
