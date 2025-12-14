@@ -3283,6 +3283,7 @@ struct manifest_json : public json::json_base {
     json::json_element<sstring> name;
     json::json_element<time_t> created_at;
     json::json_element<time_t> expires_at;
+    json::json_element<size_t> tablet_count;
     json::json_chunked_list<std::string_view> files;
 
     manifest_json() {
@@ -3293,12 +3294,14 @@ struct manifest_json : public json::json_base {
         name = e.name;
         created_at = e.created_at;
         expires_at = e.expires_at;
+        tablet_count = e.tablet_count;
         files = std::move(e.files);
     }
     manifest_json& operator=(manifest_json&& e) {
         name = e.name;
         created_at = e.created_at;
         expires_at = e.expires_at;
+        tablet_count = e.tablet_count;
         files = std::move(e.files);
         return *this;
     }
@@ -3307,6 +3310,7 @@ private:
         add(&name, "name");
         add(&created_at, "created_at");
         add(&expires_at, "expires_at");
+        add(&tablet_count, "tablet_count");
         add(&files, "files");
     }
 };
@@ -3321,12 +3325,15 @@ public:
 
 using snapshot_file_set = foreign_ptr<std::unique_ptr<std::unordered_set<sstring>>>;
 
-static future<> write_manifest(snapshot_writer& writer, std::vector<snapshot_file_set> file_sets, sstring name, db::snapshot_options opts) {
+static future<> write_manifest(snapshot_writer& writer, std::vector<snapshot_file_set> file_sets, sstring name, db::snapshot_options opts, std::optional<int64_t> tablet_count) {
     manifest_json manifest;
     manifest.name = std::move(name);
     manifest.created_at = opts.created_at.time_since_epoch().count();
     if (opts.expires_at) {
         manifest.expires_at = opts.expires_at->time_since_epoch().count();
+    }
+    if (tablet_count) {
+        manifest.tablet_count = *tablet_count;
     }
     for (const auto& fsp : file_sets) {
         for (auto& rf : *fsp) {
@@ -3434,13 +3441,15 @@ future<> database::snapshot_table_on_all_shards(sharded<database>& sharded_db, c
         tlogger.debug("Taking snapshot of {}.{}: name={}", s->ks_name(), s->cf_name(), name);
 
         std::vector<snapshot_file_set> file_sets(smp::count);
+        std::vector<std::optional<int64_t>> tablet_counts(smp::count);
 
         co_await writer->init();
         co_await smp::invoke_on_all([&] -> future<> {
             auto& t = *table_shards;
-            auto [tables, permit] = co_await t.snapshot_sstables();
-            auto table_names = co_await t.get_sstables_manager().take_snapshot(std::move(tables), name);
+            auto data = co_await t.snapshot_sstables();
+            auto table_names = co_await t.get_sstables_manager().take_snapshot(std::move(data.sstables), name);
             file_sets[this_shard_id()] = make_foreign(std::make_unique<std::unordered_set<sstring>>(std::move(table_names)));
+            tablet_counts[this_shard_id()] = data.tablet_count;
         });
         co_await writer->sync();
 
@@ -3453,7 +3462,17 @@ future<> database::snapshot_table_on_all_shards(sharded<database>& sharded_db, c
             ex = std::move(ptr);
         });
         tlogger.debug("snapshot {}: seal_snapshot", name);
-        co_await write_manifest(*writer, std::move(file_sets), name, std::move(opts)).handle_exception([&] (std::exception_ptr ptr) {
+        std::optional<int64_t> min_tablet_count;
+        for (auto& tc : tablet_counts) {
+            if (tc) {
+                if (!min_tablet_count) {
+                    min_tablet_count = *tc;
+                    continue;
+                }
+                min_tablet_count = std::min(*min_tablet_count, *tc);
+            }
+        }
+        co_await write_manifest(*writer, std::move(file_sets), name, std::move(opts), min_tablet_count).handle_exception([&] (std::exception_ptr ptr) {
             tlogger.error("Failed to seal snapshot in {}: {}.", name, ptr);
             ex = std::move(ptr);
         });
@@ -3465,10 +3484,14 @@ future<> database::snapshot_table_on_all_shards(sharded<database>& sharded_db, c
     });
 }
 
-future<std::pair<std::vector<sstables::shared_sstable>, table::sstable_list_permit>> table::snapshot_sstables() {
+future<table::snapshot_data> table::snapshot_sstables() {
     auto permit = co_await get_sstable_list_permit();
+    std::optional<int64_t> tablet_count;
+    if (auto raw_tablet_count = calculate_tablet_count()) {
+        tablet_count = raw_tablet_count;
+    }
     auto tables = *_sstables->all() | std::ranges::to<std::vector<sstables::shared_sstable>>();
-    co_return std::make_pair(std::move(tables), std::move(permit));
+    co_return snapshot_data{std::move(permit), tablet_count, std::move(tables)};
 }
 
 future<bool> table::snapshot_exists(sstring tag) {
