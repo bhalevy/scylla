@@ -229,10 +229,14 @@ See the API [documentation](#copying-sstables-on-s3-backup) for more details abo
 
 ### The snapshot manifest
 
-Each snapshot directory contains a manifest.json file that lists the contents of the snapshot.
+Each snapshot directory contains a manifest.json file that lists the contents of the snapshot and some metadata.
 The json structure is as follows:
 ```
 {
+  "manifest": {
+    "version": "0.1",
+    "scope": "node"
+  },
   "files": [ "me-3gqe_1lnj_4sbpc2ezoscu9hhtor-big-Data.db", "ma-1abx_k29m_9fyug3sdtjwj8krpqh-big-Data.db", ... ]
 }
 ```
