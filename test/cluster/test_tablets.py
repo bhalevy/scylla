@@ -1616,3 +1616,26 @@ async def test_moving_replica_within_single_rack(manager: ManagerClient):
         dst_host=host_id2,
         dst_shard=0,
         token=tablet_token)
+
+@pytest.mark.asyncio
+async def test_system_distributed_tablets(manager: ManagerClient):
+    """
+    Verify that system_distributed_tablets keyspace and tables are automatically created.
+    """
+
+    ks = "system_distributed_tablets"
+
+    servers = [await manager.server_add(property_file={"dc": "dc1", "rack": "r1"})]
+    cql = manager.get_cql()
+    s = await cql.run_async(f"DESCRIBE KEYSPACE {ks}")
+    assert re.match(r"CREATE KEYSPACE system_distributed_tablets WITH replication = {'class': '.*NetworkTopologyStrategy', 'dc1': \['r1'\]} AND durable_writes = true AND tablets = {'enabled': true};", s[0].create_statement)
+    assert re.search(r"CREATE TABLE system_distributed_tablets\.snapshots", s[1].create_statement)
+
+    servers.append(await manager.server_add(property_file={"dc": "dc1", "rack": "r2"}))
+    s = await cql.run_async(f"DESCRIBE KEYSPACE {ks}")
+    assert re.match(r"CREATE KEYSPACE system_distributed_tablets WITH replication = {'class': '.*NetworkTopologyStrategy', 'dc1': \['r1', 'r2'\]} AND durable_writes = true AND tablets = {'enabled': true};", s[0].create_statement)
+    assert re.search(r"CREATE TABLE system_distributed_tablets\.snapshots", s[1].create_statement)
+
+    servers.extend(await manager.servers_add(2, property_file=[{"dc": "dc1", "rack": "r1"}, {"dc": "dc1", "rack": "r2"}]))
+    assert re.match(r"CREATE KEYSPACE system_distributed_tablets WITH replication = {'class': '.*NetworkTopologyStrategy', 'dc1': \['r1', 'r2'\]} AND durable_writes = true AND tablets = {'enabled': true};", s[0].create_statement)
+    assert re.search(r"CREATE TABLE system_distributed_tablets\.snapshots", s[1].create_statement)

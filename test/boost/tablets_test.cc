@@ -5342,6 +5342,10 @@ SEASTAR_THREAD_TEST_CASE(test_system_distributed_tablets_creation) {
         auto& sys_dist_tablets_ks = e.get_system_distributed_tablets_keyspace().local();
         testlog.info("sys_dist_tablets_ks.started={}", sys_dist_tablets_ks.started());
         BOOST_REQUIRE(sys_dist_tablets_ks.started());
+
+        const auto& db = e.local_db();
+        auto ks_name = db::system_distributed_tablets_keyspace::NAME;
+        BOOST_REQUIRE(db.has_schema(ks_name, db::system_distributed_tablets_keyspace::SNAPSHOTS));
     }, cfg).get();
 }
 

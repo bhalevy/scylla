@@ -28,6 +28,7 @@
 #include "service/migration_manager.hh"
 #include "locator/host_id.hh"
 
+#include <exception>
 #include <seastar/core/seastar.hh>
 #include <seastar/core/shared_ptr.hh>
 #include <seastar/core/coroutine.hh>
@@ -846,16 +847,30 @@ system_distributed_tablets_keyspace::system_distributed_tablets_keyspace(service
 }
 
 future<> system_distributed_tablets_keyspace::start() {
-    if (this_shard_id() != 0) {
-        _started = true;
-        co_return;
+    if (this_shard_id() == 0) {
+        co_await init_keyspace();
     }
-
-    co_await create_tables(ensured_tables());
+    _started = true;
 }
 
 future<> system_distributed_tablets_keyspace::stop() {
     return make_ready_future<>();
+}
+
+schema_ptr system_distributed_tablets_keyspace::snapshots() {
+    static thread_local auto schema = [] {
+        auto id = generate_legacy_id(NAME, SNAPSHOTS);
+        return schema_builder(NAME, SNAPSHOTS, std::make_optional(id))
+                .with_column("name", utf8_type, column_kind::partition_key)
+                .with_column("created_at", timestamp_type, column_kind::static_column)
+                .with_column("expires_at", timestamp_type, column_kind::static_column)
+                .with_column("datacenter", utf8_type, column_kind::clustering_key)
+                .with_column("bucket_name", utf8_type, column_kind::regular_column)
+                .with_column("prefix", utf8_type, column_kind::regular_column)
+                .with_hash_version()
+                .build();
+    }();
+    return schema;
 }
 
 // This is the set of tables which this node ensures to exist in the cluster.
@@ -870,132 +885,173 @@ future<> system_distributed_tablets_keyspace::stop() {
 // they won't be created in new clusters.
 std::vector<schema_ptr> system_distributed_tablets_keyspace::ensured_tables() {
     return {
+        snapshots(),
     };
 }
 
-future<> system_distributed_tablets_keyspace::create_tables(std::vector<schema_ptr> tables) {
-    SCYLLA_ASSERT(this_shard_id() == 0);
+future<> system_distributed_tablets_keyspace::init_keyspace() {
+    try {
+        SCYLLA_ASSERT(this_shard_id() == 0);
 
-    auto db = _sp.data_dictionary();
-    std::optional<service::group0_guard> group0_guard;
+        auto db = _sp.data_dictionary();
+        std::optional<service::group0_guard> group0_guard;
 
-    while (true) {
-        auto ks_setup = db.try_find_keyspace(NAME);
-        bool ks_rf_setup = false;
-        if (ks_setup) {
-            const auto& strategy_options = ks_setup->metadata()->strategy_options();
-            const auto& topology = _sp.local_db().get_token_metadata().get_topology();
-            const auto& dc_racks = topology.get_datacenter_racks();
-            ks_rf_setup = true;
-            for (const auto& [dc, _] : dc_racks) {
-                auto it = strategy_options.find(dc);
-                if (it == strategy_options.end() || locator::get_replication_factor(it->second) < _auto_rf) {
-                    ks_rf_setup = false;
-                    break;
+        while (true) {
+            auto ks_setup = db.try_find_keyspace(NAME);
+            bool ks_rf_setup = false;
+            if (ks_setup) {
+                const auto& strategy_options = ks_setup->metadata()->strategy_options();
+                const auto& topology = _sp.local_db().get_token_metadata().get_topology();
+                const auto& dc_racks = topology.get_datacenter_racks();
+                ks_rf_setup = true;
+                for (const auto& [dc, _] : dc_racks) {
+                    auto it = strategy_options.find(dc);
+                    if (it == strategy_options.end() || locator::get_replication_factor(it->second) < _auto_rf) {
+                        ks_rf_setup = false;
+                        break;
+                    }
                 }
             }
-        }
 
-        bool tables_setup = std::all_of(tables.begin(), tables.end(), [db] (schema_ptr t) { return db.has_schema(t->ks_name(), t->cf_name()); } );
-        if (ks_setup && ks_rf_setup && tables_setup) {
-            dlogger.info("system_distributed_tablets keyspace and tables are up-to-date. Not creating");
-            _started = true;
-            co_return;
-        }
-
-        if (!group0_guard) {
-            group0_guard = co_await _mm.start_group0_operation();
-            continue;
-        }
-        auto ts = group0_guard->write_timestamp();
-        utils::chunked_vector<mutation> mutations;
-        sstring description;
-
-        const auto& topology = _sp.local_db().get_token_metadata().get_topology();
-        const auto& dc_racks = topology.get_datacenter_racks();
-        std::map<sstring, utils::small_vector<sstring, 3>> available_racks;
-        for (const auto& [dc, racks] : dc_racks) {
-            for (const auto& [rack, _] : racks) {
-                available_racks[dc].push_back(rack);
+            if (ks_setup && ks_rf_setup) {
+                dlogger.info("system_distributed_tablets keyspace is up-to-date. Not creating");
+                co_return;
             }
-        }
 
-        lw_shared_ptr<keyspace_metadata> ksm;
-        std::map<sstring, std::set<sstring>> rf_rack_lists;
-        locator::replication_strategy_config_options config_options;
-        bool needs_alter = false;
-        if (auto ks = db.try_find_keyspace(NAME)) {
-            ksm = ks->metadata();
-            for (const auto& [name, value] : ksm->strategy_options()) {
-                if (available_racks.contains(name)) {
-                    auto rf_data = locator::replication_factor_data(value);
-                    if (!rf_data.is_rack_based()) {
-                        on_internal_error(dlogger, format("system_distributed_tablets keyspace has non-rack-based replication in dc {}", name));
-                    }
-                    for (const auto& rack : rf_data.get_rack_list()) {
-                        rf_rack_lists[name].insert(rack);
-                    }
-                    for (const auto& rack : available_racks[name]) {
-                        if (rf_rack_lists[name].size() < _auto_rf) {
+            if (!group0_guard) {
+                group0_guard = co_await _mm.start_group0_operation();
+                continue;
+            }
+            auto ts = group0_guard->write_timestamp();
+            utils::chunked_vector<mutation> mutations;
+            sstring description;
+
+            const auto& topology = _sp.local_db().get_token_metadata().get_topology();
+            const auto& dc_racks = topology.get_datacenter_racks();
+            std::map<sstring, utils::small_vector<sstring, 3>> available_racks;
+            for (const auto& [dc, racks] : dc_racks) {
+                for (const auto& [rack, _] : racks) {
+                    available_racks[dc].push_back(rack);
+                }
+            }
+
+            std::map<sstring, std::set<sstring>> rf_rack_lists;
+            locator::replication_strategy_config_options config_options;
+            bool needs_alter = false;
+            if (auto ks = db.try_find_keyspace(NAME)) {
+                _ksm = ks->metadata();
+                for (const auto& [name, value] : _ksm->strategy_options()) {
+                    if (available_racks.contains(name)) {
+                        auto rf_data = locator::replication_factor_data(value);
+                        if (!rf_data.is_rack_based()) {
+                            on_internal_error(dlogger, format("system_distributed_tablets keyspace has non-rack-based replication in dc {}", name));
+                        }
+                        for (const auto& rack : rf_data.get_rack_list()) {
                             rf_rack_lists[name].insert(rack);
-                            needs_alter = true;
+                        }
+                        for (const auto& rack : available_racks[name]) {
+                            if (rf_rack_lists[name].size() < _auto_rf) {
+                                rf_rack_lists[name].insert(rack);
+                                needs_alter = true;
+                            }
                         }
                     }
                 }
-            }
-            if (needs_alter) {
-                for (const auto& [dc, racks] : rf_rack_lists) {
-                    config_options[dc] = racks | std::ranges::to<locator::rack_list>();
+                if (needs_alter) {
+                    for (const auto& [dc, racks] : rf_rack_lists) {
+                        config_options[dc] = racks | std::ranges::to<locator::rack_list>();
+                    }
+                    _ksm->set_strategy_options(config_options);
+                    mutations = service::prepare_keyspace_update_announcement(db.real_database(), _ksm, ts);
+                    description += format("alter {} keyspace", NAME);
+                } else {
+                    dlogger.info("{} keyspace is already present. Not creating", NAME);
                 }
-                ksm->set_strategy_options(config_options);
-                mutations = service::prepare_keyspace_update_announcement(db.real_database(), ksm, ts);
-                description += format(" alter {} keyspace;", NAME);
             } else {
-                dlogger.info("{} keyspace is already present. Not creating", NAME);
-            }
-        } else {
-            for (const auto& [dc, available_dc_racks] : available_racks) {
-                auto racks = available_dc_racks | std::ranges::to<locator::rack_list>();
-                if (racks.size() > _auto_rf) {
-                    racks.resize(_auto_rf);
+                for (const auto& [dc, available_dc_racks] : available_racks) {
+                    auto racks = available_dc_racks | std::ranges::to<locator::rack_list>();
+                    if (racks.size() > _auto_rf) {
+                        racks.resize(_auto_rf);
+                    }
+                    config_options[dc] = std::move(racks);
                 }
-                config_options[dc] = std::move(racks);
+                _ksm = keyspace_metadata::new_keyspace(
+                        NAME,
+                        "org.apache.cassandra.locator.NetworkTopologyStrategy",
+                        config_options,
+                        0, std::nullopt);
+                mutations = service::prepare_new_keyspace_announcement(db.real_database(), _ksm, ts);
+                description += format("create {} keyspace", NAME);
             }
-            ksm = keyspace_metadata::new_keyspace(
-                    NAME,
-                    "org.apache.cassandra.locator.NetworkTopologyStrategy",
-                    config_options,
-                    0, std::nullopt);
-            mutations = service::prepare_new_keyspace_announcement(db.real_database(), ksm, ts);
-            description += format(" create {} keyspace;", NAME);
-        }
 
-        // Get mutations for creating and updating tables.
-        auto num_keyspace_mutations = mutations.size();
-        co_await coroutine::parallel_for_each(ensured_tables(),
-                [this, &mutations, db, ts, ksm] (auto&& table) -> future<> {
-            if (!db.has_schema(table->ks_name(), table->cf_name())) {
-                co_return co_await service::prepare_new_column_family_announcement(mutations, _sp, *ksm, std::move(table), ts);
+            if (!mutations.empty()) {
+                dlogger.info("Announcing mutations to {}", description);
+                try {
+                    co_await _mm.announce(std::move(mutations), *std::exchange(group0_guard, std::nullopt), description);
+                } catch (service::group0_concurrent_modification&) {
+                    dlogger.info("Concurrent operation is detected while initializing system_distributed_tablets keyspace, retrying.");
+                    continue;
+                }
             }
-        });
-        if (mutations.size() > num_keyspace_mutations) {
-            description += " create and update system_distributed(_everywhere) tables";
-        } else {
-            dlogger.info("All tables are present and up-to-date on start");
-        }
 
-        if (!mutations.empty()) {
-            dlogger.info("Announcing mutations to create/update system_distributed_tablets keyspace and tables: {}", description);
-            try {
-                co_await _mm.announce(std::move(mutations), *std::exchange(group0_guard, std::nullopt), description);
-            } catch (service::group0_concurrent_modification&) {
-                dlogger.info("Concurrent operation is detected while starting, retrying.");
+            co_return;
+        }
+    } catch (...) {
+        dlogger.error("Failed to create system_distributed_tablets keyspace: {}", std::current_exception());
+        throw;
+    }
+}
+
+future<> system_distributed_tablets_keyspace::init_tables() {
+    try {
+        SCYLLA_ASSERT(this_shard_id() == 0);
+
+        std::optional<service::group0_guard> group0_guard;
+
+        while (true) {
+            auto db = _sp.data_dictionary();
+            auto tables = ensured_tables();
+            bool tables_setup = std::all_of(tables.begin(), tables.end(), [db] (schema_ptr t) { return db.has_schema(t->ks_name(), t->cf_name()); } );
+            if (tables_setup) {
+                dlogger.info("system_distributed_tablets tables are up-to-date. Not creating");
+                co_return;
+            }
+
+            if (!group0_guard) {
+                group0_guard = co_await _mm.start_group0_operation();
                 continue;
             }
-        }
+            auto ts = group0_guard->write_timestamp();
+            utils::chunked_vector<mutation> mutations;
+            sstring description;
 
-        _started = true;
-        co_return;
+            co_await coroutine::parallel_for_each(tables,
+                    [this, &mutations, db, ts, &description] (auto&& table) -> future<> {
+                if (!db.has_schema(table->ks_name(), table->cf_name())) {
+                    co_return co_await service::prepare_new_column_family_announcement(mutations, _sp, keyspace_metadata(), std::move(table), ts);
+                    if (description.empty()) {
+                        description = format("create {} tables", NAME);
+                    }
+                }
+            });
+
+            if (!mutations.empty()) {
+                dlogger.info("Announcing mutations to {}", description);
+                try {
+                    co_await _mm.announce(std::move(mutations), *std::exchange(group0_guard, std::nullopt), description);
+                } catch (service::group0_concurrent_modification&) {
+                    dlogger.info("Concurrent operation is detected while initializing system_distributed_tablets tables, retrying.");
+                    continue;
+                }
+            } else {
+                dlogger.info("All system_distributed_tablets tables are present and up-to-date");
+            }
+
+            co_return;
+        }
+    } catch (...) {
+        dlogger.error("Failed to create system_distributed_tablets tables: {}", std::current_exception());
+        throw;
     }
 }
 

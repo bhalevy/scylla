@@ -941,13 +941,6 @@ private:
 
             _sys_dist_ks.start(std::ref(_qp), std::ref(_mm), std::ref(_proxy)).get();
 
-            _sys_dist_tablets_ks.start(std::ref(_mm), std::ref(_proxy)).get();
-            _sys_dist_tablets_ks.invoke_on_all(&db::system_distributed_tablets_keyspace::start).get();
-            auto stop_sys_dist_tablets_ks = defer_verbose_shutdown("system distributed tablets keyspace", [this] {
-                _sys_dist_tablets_ks.invoke_on_all(&db::system_distributed_tablets_keyspace::stop).get();
-                _sys_dist_tablets_ks.stop().get();
-            });
-
             _view_update_generator.start(std::ref(_db), std::ref(_proxy), std::ref(abort_sources)).get();
             auto stop_view_update_generator = defer_verbose_shutdown("view update generator", [this] {
                 _view_update_generator.stop().get();
@@ -1211,6 +1204,15 @@ private:
             } catch (const auth::role_already_exists&) {
                 // The default user may already exist if this `cql_test_env` is starting with previously populated data.
             }
+
+            _sys_dist_tablets_ks.start(std::ref(_mm), std::ref(_proxy)).get();
+            _sys_dist_tablets_ks.invoke_on_all(&db::system_distributed_tablets_keyspace::start).get();
+            auto stop_sys_dist_tablets_ks = defer_verbose_shutdown("system distributed tablets keyspace", [this] {
+                _sys_dist_tablets_ks.invoke_on_all(&db::system_distributed_tablets_keyspace::stop).get();
+                _sys_dist_tablets_ks.stop().get();
+            });
+
+            _sys_dist_tablets_ks.local().init_tables().get();
 
             notify_set.notify_all(configurable::system_state::started).get();
 

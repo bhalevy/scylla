@@ -1741,13 +1741,6 @@ To start the scylla server proper, simply invoke as: scylla server (or just scyl
                 sys_dist_ks.invoke_on_all(&db::system_distributed_keyspace::stop).get();
             });
 
-            checkpoint(stop_signal, "starting system distributed tablets keyspace");
-            sys_dist_tablets_ks.start(std::ref(mm), std::ref(proxy)).get();
-            sys_dist_tablets_ks.invoke_on_all(&db::system_distributed_tablets_keyspace::start).get();
-            auto stop_sys_dist_tablets_ks = defer_verbose_shutdown("system distributed tablets keyspace", [] {
-                sys_dist_tablets_ks.invoke_on_all(&db::system_distributed_tablets_keyspace::stop).get();
-            });
-
             checkpoint(stop_signal, "starting view update generator");
             view_update_generator.start(std::ref(db), std::ref(proxy), std::ref(stop_signal.as_sharded_abort_source())).get();
             auto stop_view_update_generator = defer_verbose_shutdown("view update generator", [] {
@@ -2514,6 +2507,16 @@ To start the scylla server proper, simply invoke as: scylla server (or just scyl
                     return es.invoke_on_all(&alternator::expiration_service::start);
                 }).get();
             }
+
+            checkpoint(stop_signal, "starting system distributed tablets keyspace");
+            sys_dist_tablets_ks.start(std::ref(mm), std::ref(proxy)).get();
+            sys_dist_tablets_ks.invoke_on_all(&db::system_distributed_tablets_keyspace::start).get();
+            auto stop_sys_dist_tablets_ks = defer_verbose_shutdown("system distributed tablets keyspace", [] {
+                sys_dist_tablets_ks.invoke_on_all(&db::system_distributed_tablets_keyspace::stop).get();
+                sys_dist_tablets_ks.stop().get();
+            });
+
+            sys_dist_tablets_ks.local().init_tables().get();
 
             db.invoke_on_all(&replica::database::revert_initial_system_read_concurrency_boost).get();
             notify_set.notify_all(configurable::system_state::started).get();

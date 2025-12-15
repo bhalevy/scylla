@@ -13,6 +13,7 @@
 #include "utils/UUID.hh"
 #include "cdc/generation_id.hh"
 #include "locator/host_id.hh"
+#include "data_dictionary/keyspace_metadata.hh"
 
 #include <seastar/core/future.hh>
 #include <seastar/core/sstring.hh>
@@ -127,10 +128,13 @@ class system_distributed_tablets_keyspace {
 public:
     static constexpr auto NAME = "system_distributed_tablets";
 
+    static constexpr auto SNAPSHOTS = "snapshots";
+
 private:
     service::migration_manager& _mm;
     service::storage_proxy& _sp;
     size_t _auto_rf = 3;
+    lw_shared_ptr<data_dictionary::keyspace_metadata> _ksm;
 
     bool _started = false;
 
@@ -142,11 +146,17 @@ public:
 
     bool started() const { return _started; }
 
+    // Must be called only on shard 0.
+    future<> init_tables();
+
+    schema_ptr snapshots();
+
 private:
+    const data_dictionary::keyspace_metadata& keyspace_metadata() const { return *_ksm;}
     std::vector<schema_ptr> ensured_tables();
 
     // Must be called only on shard 0.
-    future<> create_tables(std::vector<schema_ptr> tables);
+    future<> init_keyspace();
 };
 
 } // namespace db
