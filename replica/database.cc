@@ -2904,7 +2904,12 @@ future<> database::truncate_table_on_all_shards(sharded<database>& sharded_db, s
         dblog.info("truncate_compaction_disabled_wait: done");
     }, false);
 
-    const auto should_flush = with_snapshot && cf.can_flush();
+    auto can_flush = true;
+    auto should_flush = with_snapshot;
+    if (should_flush) {
+        can_flush = co_await sharded_db.map_reduce0([&] (database& db) { return table_shards->can_flush(); }, true, std::logical_and{});
+        should_flush &= can_flush;
+    }
     dblog.trace("{} {}.{} and views on all shards", should_flush ? "Flushing" : "Clearing", s->ks_name(), s->cf_name());
     std::function<future<>(replica::table&)> flush_or_clear = should_flush ?
             [] (replica::table& cf) {
