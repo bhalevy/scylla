@@ -29,6 +29,7 @@ import random
 import os
 import glob
 import shutil
+from collections import defaultdict
 
 logger = logging.getLogger(__name__)
 
@@ -1616,3 +1617,54 @@ async def test_moving_replica_within_single_rack(manager: ManagerClient):
         dst_host=host_id2,
         dst_shard=0,
         token=tablet_token)
+
+@pytest.mark.asyncio
+async def test_system_distributed_tablets(manager: ManagerClient):
+    """
+    Verify that system_distributed_tablets keyspace is created automatically
+    and that its replication options are automatically expanded as nodes in new racks join the cluster.
+    """
+
+    ks = "system_distributed_tablets"
+
+    async def verify_schema(cql, expected_replication, timeout=10, interval=1):
+        start = time.time()
+        while True:
+            rows = await cql.run_async(f"DESCRIBE KEYSPACE {ks}")
+            assert len(rows) == 1, f"Expected 1 rows in {ks} schema, got {rows}"
+            ks_schema = rows[0].create_statement
+            if re.match(rf"CREATE KEYSPACE {ks} WITH replication = {{'class': '.*NetworkTopologyStrategy', {expected_replication}}} AND durable_writes = true AND tablets = {{'enabled': true}};", ks_schema):
+                return
+            if time.time() >= start + timeout:
+                raise Exception(f"Keyspace {ks} schema did not match expected replication {expected_replication} within {timeout} seconds: {ks_schema=}")
+            await asyncio.sleep(interval)
+
+    servers = [await manager.server_add(property_file={"dc": "dc1", "rack": "r1"})]
+    cql = manager.get_cql()
+
+    await verify_schema(cql, r"'dc1': \['r1'\]")
+
+    # Test schema after restart
+    await asyncio.gather(*[manager.server_stop(s.server_id) for s in servers])
+    await asyncio.gather(*[manager.server_start(s.server_id) for s in servers])
+    cql = manager.get_cql()
+    await wait_for_cql_and_get_hosts(cql, servers, time.time() + 60)
+    await verify_schema(cql, r"'dc1': \['r1'\]", timeout=0)
+
+    # Add a node in an existing rack
+    servers.append(await manager.server_add(property_file={"dc": "dc1", "rack": "r1"}))
+    await verify_schema(cql, r"'dc1': \['r1'\]", timeout=0)
+
+    servers.extend(await manager.servers_add(2, property_file=[{"dc": "dc1", "rack": "r2"}, {"dc": "dc1", "rack": "r2"}]))
+    await verify_schema(cql, r"'dc1': \['r1', 'r2'\]")
+
+    servers.append(await manager.server_add(property_file={"dc": "dc1", "rack": "r3"}))
+    await verify_schema(cql, r"'dc1': \['r1', 'r2', 'r3'\]")
+
+    # Add a node in a 4th rack that is expected to be unused
+    servers.append(await manager.server_add(property_file={"dc": "dc1", "rack": "r4"}))
+    await verify_schema(cql, r"'dc1': \['r1', 'r2', 'r3'\]", timeout=0)
+
+    # Add a node in a new dc
+    servers.append(await manager.server_add(property_file={"dc": "dc2", "rack": "r1"}))
+    await verify_schema(cql, r"'dc1': \['r1', 'r2', 'r3'\], 'dc2': \['r1'\]")
