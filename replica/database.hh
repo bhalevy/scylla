@@ -256,7 +256,7 @@ public:
     }
 
     bool can_flush() const noexcept {
-        return may_flush() && !empty();
+        return may_flush();
     }
 
     bool empty() const noexcept {
