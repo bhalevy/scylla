@@ -2011,7 +2011,7 @@ max_purgeable memtable_list::get_max_purgeable(const dht::decorated_key& dk, is_
 }
 
 future<> memtable_list::flush() {
-    if (!may_flush()) {
+    if (!may_flush() || empty()) {
         return make_ready_future<>();
     } else if (!_flush_coalescing) {
         promise<> flushed;
