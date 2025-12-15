@@ -1621,7 +1621,7 @@ async def test_moving_replica_within_single_rack(manager: ManagerClient):
 @pytest.mark.asyncio
 async def test_system_distributed_tablets(manager: ManagerClient):
     """
-    Verify that system_distributed_tablets keyspace is created automatically
+    Verify that system_distributed_tablets keyspace and tables are created automatically
     and that its replication options are automatically expanded as nodes in new racks join the cluster.
     """
 
@@ -1629,12 +1629,20 @@ async def test_system_distributed_tablets(manager: ManagerClient):
 
     async def verify_schema(cql, expected_replication, timeout=10, interval=1):
         start = time.time()
+        expected_tables = {
+            "snapshots",
+        }
         while True:
             rows = await cql.run_async(f"DESCRIBE KEYSPACE {ks}")
-            assert len(rows) == 1, f"Expected 1 rows in {ks} schema, got {rows}"
+            assert len(rows) == 1 + len(expected_tables), f"Expected {1 + len(expected_tables)} rows in {ks} schema, got {rows}"
             ks_schema = rows[0].create_statement
             if re.match(rf"CREATE KEYSPACE {ks} WITH replication = {{'class': '.*NetworkTopologyStrategy', {expected_replication}}} AND durable_writes = true AND tablets = {{'enabled': true}};", ks_schema):
-                return
+                found_tables = set()
+                for row in rows[1:]:
+                    if m := re.search(rf"CREATE TABLE {ks}\.(\w+)", row.create_statement):
+                        found_tables.add(m.group(1))
+                if found_tables == expected_tables:
+                    return
             if time.time() >= start + timeout:
                 raise Exception(f"Keyspace {ks} schema did not match expected replication {expected_replication} within {timeout} seconds: {ks_schema=}")
             await asyncio.sleep(interval)
