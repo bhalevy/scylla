@@ -1369,6 +1369,7 @@ To start the scylla server proper, simply invoke as: scylla server (or just scyl
             });
 
             static sharded<db::system_distributed_keyspace> sys_dist_ks;
+            static sharded<db::system_distributed_tablets_keyspace> sys_dist_tablets_ks;
             static sharded<db::system_keyspace> sys_ks;
             static sharded<db::view::view_update_generator> view_update_generator;
             static sharded<db::view::view_builder> view_builder;
@@ -2506,6 +2507,14 @@ To start the scylla server proper, simply invoke as: scylla server (or just scyl
                     return es.invoke_on_all(&alternator::expiration_service::start);
                 }).get();
             }
+
+            checkpoint(stop_signal, "starting system distributed tablets keyspace");
+            sys_dist_tablets_ks.start(std::ref(mm), std::ref(proxy)).get();
+            auto stop_sys_dist_tablets_ks = defer_verbose_shutdown("system distributed tablets keyspace", [] {
+                sys_dist_tablets_ks.stop().get();
+            });
+
+            sys_dist_tablets_ks.local().create_tables().get();
 
             db.invoke_on_all(&replica::database::revert_initial_system_read_concurrency_boost).get();
             notify_set.notify_all(configurable::system_state::started).get();

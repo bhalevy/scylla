@@ -123,4 +123,26 @@ private:
     future<> create_tables(std::vector<schema_ptr> tables);
 };
 
-}
+class system_distributed_tablets_keyspace {
+public:
+    static constexpr auto NAME = "system_distributed_tablets";
+
+private:
+    service::migration_manager& _mm;
+    service::storage_proxy& _sp;
+    size_t _auto_rf = 3;
+
+public:
+    system_distributed_tablets_keyspace(service::migration_manager&, service::storage_proxy&);
+
+    // Call only on shard 0
+    future<> create_tables();
+
+private:
+    static std::vector<schema_ptr> ensured_tables();
+
+    // Must be called only on shard 0.
+    future<> create_tables(std::vector<schema_ptr> tables);
+};
+
+} // namespace db
