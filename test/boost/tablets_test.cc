@@ -5335,4 +5335,14 @@ SEASTAR_THREAD_TEST_CASE(test_tablets_describe_ring) {
     }, cfg).get();
 }
 
+
+SEASTAR_THREAD_TEST_CASE(test_system_distributed_tablets_creation) {
+    auto cfg = tablet_cql_test_config(db::tablets_mode_t::mode::enforced);
+    do_with_cql_env_thread([] (auto& e) {
+        auto& sys_dist_tablets_ks = e.get_system_distributed_tablets_keyspace().local();
+        testlog.info("sys_dist_tablets_ks.started={}", sys_dist_tablets_ks.started());
+        BOOST_REQUIRE(sys_dist_tablets_ks.started());
+    }, cfg).get();
+}
+
 BOOST_AUTO_TEST_SUITE_END()

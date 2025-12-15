@@ -30,6 +30,7 @@
 #include "schema/schema.hh"
 #include "service/tablet_allocator.hh"
 #include "vector_search/vector_store_client.hh"
+#include "db/system_distributed_keyspace.hh"
 
 namespace replica {
 class database;
@@ -188,6 +189,8 @@ public:
     virtual sharded<service::raft_group_registry>& get_raft_group_registry() = 0;
 
     virtual sharded<db::system_keyspace>& get_system_keyspace() = 0;
+
+    virtual sharded<db::system_distributed_tablets_keyspace>& get_system_distributed_tablets_keyspace() = 0;
 
     virtual sharded<service::tablet_allocator>& get_tablet_allocator() = 0;
 

@@ -161,6 +161,7 @@ private:
     sharded<db::system_keyspace> _sys_ks;
     sharded<service::tablet_allocator> _tablet_allocator;
     sharded<db::system_distributed_keyspace> _sys_dist_ks;
+    sharded<db::system_distributed_tablets_keyspace> _sys_dist_tablets_ks;
     sharded<locator::snitch_ptr> _snitch;
     sharded<compaction::compaction_manager> _cm;
     sharded<tasks::task_manager> _task_manager;
@@ -404,6 +405,10 @@ public:
 
     virtual sharded<db::system_keyspace>& get_system_keyspace() override {
         return _sys_ks;
+    }
+
+    virtual sharded<db::system_distributed_tablets_keyspace>& get_system_distributed_tablets_keyspace() override {
+        return _sys_dist_tablets_ks;
     }
 
     virtual sharded<service::tablet_allocator>& get_tablet_allocator() override {
@@ -935,6 +940,13 @@ private:
             auto compression_dict_updated_callback = [] (std::string_view) { return make_ready_future<>(); };
 
             _sys_dist_ks.start(std::ref(_qp), std::ref(_mm), std::ref(_proxy)).get();
+
+            _sys_dist_tablets_ks.start(std::ref(_mm), std::ref(_proxy)).get();
+            _sys_dist_tablets_ks.invoke_on_all(&db::system_distributed_tablets_keyspace::start).get();
+            auto stop_sys_dist_tablets_ks = defer_verbose_shutdown("system distributed tablets keyspace", [this] {
+                _sys_dist_tablets_ks.invoke_on_all(&db::system_distributed_tablets_keyspace::stop).get();
+                _sys_dist_tablets_ks.stop().get();
+            });
 
             _view_update_generator.start(std::ref(_db), std::ref(_proxy), std::ref(abort_sources)).get();
             auto stop_view_update_generator = defer_verbose_shutdown("view update generator", [this] {

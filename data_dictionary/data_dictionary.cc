@@ -283,6 +283,13 @@ keyspace_metadata::new_keyspace(const keyspace_metadata& ksm) {
     return new_keyspace(ksm.name(), ksm.strategy_name(), ksm.strategy_options(), ksm.initial_tablets(), ksm.consistency_option(), ksm.durable_writes(), ksm.get_storage_options());
 }
 
+const locator::replication_strategy_config_options& keyspace_metadata::set_strategy_options(const locator::replication_strategy_config_options& new_options) {
+    for (const auto& [key, value] : new_options) {
+        _strategy_options[key] = value;
+    }
+    return _strategy_options;
+}
+
 void keyspace_metadata::add_user_type(const user_type ut) {
     _user_types.add_type(ut);
 }
