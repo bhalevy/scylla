@@ -127,6 +127,8 @@ class system_distributed_tablets_keyspace {
 public:
     static constexpr auto NAME = "system_distributed_tablets";
 
+    static constexpr auto SNAPSHOTS = "snapshots";
+
 private:
     service::migration_manager& _mm;
     service::storage_proxy& _sp;
@@ -139,6 +141,7 @@ public:
     future<> create_tables();
 
 private:
+    static schema_ptr snapshots();
     static std::vector<schema_ptr> ensured_tables();
 
     // Must be called only on shard 0.
