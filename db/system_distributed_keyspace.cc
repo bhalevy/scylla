@@ -6,6 +6,7 @@
  * SPDX-License-Identifier: LicenseRef-ScyllaDB-Source-Available-1.0
  */
 
+#include "seastar/core/on_internal_error.hh"
 #include "utils/assert.hh"
 #include "db/system_distributed_keyspace.hh"
 
@@ -838,4 +839,158 @@ future<> system_distributed_keyspace::drop_service_level(sstring service_level_n
     return _qp.execute_internal(prepared_query, db::consistency_level::ONE, internal_distributed_query_state(), {service_level_name}, cql3::query_processor::cache_internal::no).discard_result();
 }
 
+system_distributed_tablets_keyspace::system_distributed_tablets_keyspace(service::migration_manager& mm, service::storage_proxy& sp)
+    : _mm(mm)
+    , _sp(sp)
+{
 }
+
+// This is the set of tables which this node ensures to exist in the cluster.
+// It does that by announcing the creation of these schemas on initialization
+// of the `system_distributed_tablets_keyspace` service (see `create_tables()`), unless it first
+// detects that the table already exists.
+std::vector<schema_ptr> system_distributed_tablets_keyspace::ensured_tables() {
+    return {
+    };
+}
+
+future<> system_distributed_tablets_keyspace::create_tables() {
+    SCYLLA_ASSERT(this_shard_id() == 0);
+    auto tmptr = _sp.get_token_metadata_ptr();
+    auto& topology = tmptr->get_topology();
+    if (!tmptr->is_normal_token_owner(topology.my_host_id())) {
+        dlogger.info("This node does not own tokens. Skipping creation of {} keyspace and tables", NAME);
+        co_return;
+    }
+    try {
+        auto db = _sp.data_dictionary();
+        std::optional<service::group0_guard> group0_guard;
+
+        while (true) {
+            const auto& topology = _sp.local_db().get_token_metadata().get_topology();
+            const auto& datacenters = topology.get_datacenters();
+            const auto& datacenter_racks = topology.get_datacenter_racks();
+            auto ks_setup = db.try_find_keyspace(NAME);
+            bool ks_rf_setup = true;
+            if (ks_setup) {
+                const auto& strategy_options = ks_setup->metadata()->strategy_options();
+                for (const auto& dc : datacenters) {
+                    auto it = strategy_options.find(dc);
+                    if (it == strategy_options.end() || locator::get_replication_factor(it->second) < _auto_rf) {
+                        ks_rf_setup = false;
+                        break;
+                    }
+                }
+            }
+
+            auto ensured_tables = this->ensured_tables();
+            bool tables_setup = std::all_of(ensured_tables.begin(), ensured_tables.end(), [db] (schema_ptr t) { return db.has_schema(t->ks_name(), t->cf_name()); } );
+            if (ks_setup && ks_rf_setup && tables_setup) {
+                dlogger.info("{} keyspace and tables are up-to-date. Not creating", NAME);
+                co_return;
+            }
+
+            if (!group0_guard) {
+                group0_guard = co_await _mm.start_group0_operation();
+                continue;
+            }
+            auto ts = group0_guard->write_timestamp();
+            utils::chunked_vector<mutation> mutations;
+            std::vector<sstring> actions;
+
+            std::map<sstring, utils::small_vector<sstring, 3>> available_racks;
+            for (const auto& [dc, racks] : datacenter_racks) {
+                for (const auto& [rack, _] : racks) {
+                    available_racks[dc].push_back(rack);
+                }
+            }
+
+            lw_shared_ptr<keyspace_metadata> ksm;
+            std::map<sstring, std::set<sstring>> rf_rack_lists;
+            locator::replication_strategy_config_options config_options;
+            bool needs_alter = false;
+            if (auto ks = db.try_find_keyspace(NAME)) {
+                ksm = ks->metadata();
+                for (const auto& [dc, racks] : available_racks) {
+                    if (ksm->strategy_options().contains(dc)) {
+                        auto rf_data = locator::replication_factor_data(ksm->strategy_options().at(dc));
+                        if (rf_data.count() >= _auto_rf) {
+                            continue;
+                        }
+                        if (!rf_data.is_rack_based()) {
+                            on_internal_error(dlogger, format("{} keyspace has non-rack-based replication in dc {}", NAME, dc));
+                        }
+                        for (const auto& rack : rf_data.get_rack_list()) {
+                            rf_rack_lists[dc].insert(rack);
+                        }
+                        for (const auto& rack : racks) {
+                            if (rf_rack_lists[dc].size() < _auto_rf) {
+                                needs_alter |= rf_rack_lists[dc].insert(rack).second;
+                            }
+                        }
+                    } else {
+                        rf_rack_lists[dc] = racks | std::ranges::to<std::set>();
+                        needs_alter = true;
+                    }
+                }
+                if (needs_alter) {
+                    for (const auto& [dc, racks] : rf_rack_lists) {
+                        config_options[dc] = racks | std::ranges::to<locator::rack_list>();
+                    }
+                    ksm->set_strategy_options(config_options);
+                    mutations = service::prepare_keyspace_update_announcement(db.real_database(), ksm, ts);
+                    actions.push_back("alter keyspace");
+                } else {
+                    dlogger.info("{} keyspace is present and does not require alteration", NAME);
+                }
+            } else {
+                for (const auto& [dc, available_dc_racks] : available_racks) {
+                    auto racks = available_dc_racks | std::ranges::to<locator::rack_list>();
+                    if (racks.size() > _auto_rf) {
+                        racks.resize(_auto_rf);
+                    }
+                    config_options[dc] = std::move(racks);
+                }
+                ksm = keyspace_metadata::new_keyspace(
+                        NAME,
+                        "org.apache.cassandra.locator.NetworkTopologyStrategy",
+                        config_options,
+                        0, std::nullopt);
+                mutations = service::prepare_new_keyspace_announcement(db.real_database(), ksm, ts);
+                actions.push_back("create keyspace");
+            }
+
+            // Get mutations for creating tables.
+            auto num_keyspace_mutations = mutations.size();
+            co_await coroutine::parallel_for_each(ensured_tables,
+                    [this, &mutations, db, ts, ksm] (auto&& table) -> future<> {
+                if (!db.has_schema(table->ks_name(), table->cf_name())) {
+                    co_return co_await service::prepare_new_column_family_announcement(mutations, _sp, *ksm, std::move(table), ts);
+                }
+            });
+            if (mutations.size() > num_keyspace_mutations) {
+                actions.push_back("create tables");
+            } else {
+                dlogger.info("{}: all tables are present and up-to-date", NAME);
+            }
+
+            if (!mutations.empty()) {
+                auto description = fmt::format("{}", fmt::join(actions, ","));
+                dlogger.info("Announcing mutations to create/update {} keyspace and tables: {}", NAME, description);
+                try {
+                    co_await _mm.announce(std::move(mutations), *std::exchange(group0_guard, std::nullopt), description);
+                } catch (service::group0_concurrent_modification&) {
+                    dlogger.info("Concurrent operation is detected while starting, retrying.");
+                    continue;
+                }
+            }
+
+            co_return;
+        }
+    } catch (...) {
+        dlogger.error("Failed to create or alter {} keyspace and tables: {}", NAME, std::current_exception());
+        throw;
+    }
+}
+
+} // namespace db
