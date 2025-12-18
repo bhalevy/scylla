@@ -1958,4 +1958,25 @@ SEASTAR_TEST_CASE(test_tombstone_gc_state_gc_mode) {
     return make_ready_future<>();
 }
 
+SEASTAR_TEST_CASE(test_flush_empty_table_waits_on_outstanding_flush) {
+    return do_with_some_data({"cf"}, [] (cql_test_env& e) -> future<> {
+        auto& cf = e.local_db().find_column_family("ks", "cf");
+
+        auto flushed = cf.flush();
+        if (flushed.available()) {
+            testlog.error("Table flush completed too early");
+            BOOST_REQUIRE(!flushed.available());
+        }
+
+        // Now flush again when the active memtable is empty.
+        // Expect that this waits on the ongoing flush
+        co_await cf.flush();
+        if (!flushed.available()) {
+            testlog.error("Previous table flush was expected to be completed after subsequent flush");
+            BOOST_REQUIRE(flushed.available());
+        }
+        co_await std::move(flushed);
+    });
+}
+
 BOOST_AUTO_TEST_SUITE_END()
