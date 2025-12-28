@@ -108,6 +108,7 @@ public:
         return _file.flush();
     }
     future<struct stat> stat(void) override;
+    future<struct stat> statat(std::string_view name, int flags = 0) override;
     future<> truncate(uint64_t length) override;
     future<> discard(uint64_t offset, uint64_t length) override {
         return _file.discard(offset, length);
@@ -420,6 +421,10 @@ future<struct stat> encrypted_file_impl::stat() {
     });
 }
 
+future<struct stat> encrypted_file_impl::statat(std::string_view name, int flags) {
+    throw std::runtime_error("statat is not supported on encrypted file");
+}
+
 future<uint64_t> encrypted_file_impl::size() {
     return  verify_file_length().then([this] {
         return *_file_length;
@@ -512,6 +517,17 @@ public:
             return _impl->stat();
         }
         return _f.stat().then([this](struct stat s) {
+           return calculate_file_length(_f, _key_block_size).then([s](uint64_t fs) mutable {
+               s.st_size = fs;
+               return s;
+           });
+        });
+    }
+    future<struct stat> statat(std::string_view name, int flags = 0) override {
+        if (_impl) {
+            return _impl->statat(name, flags);
+        }
+        return _f.statat(name, flags).then([this](struct stat s) {
            return calculate_file_length(_f, _key_block_size).then([s](uint64_t fs) mutable {
                s.st_size = fs;
                return s;

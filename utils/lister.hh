@@ -191,7 +191,7 @@ class directory_lister final : public abstract_lister::impl {
     lister::filter_type _filter;
     lister::show_hidden _do_show_hidden;
     file _opened;
-    std::optional<coroutine::experimental::generator<directory_entry>> _gen;
+    std::optional<list_directory_generator_type> _gen;
 
 public:
     directory_lister(fs::path dir,
@@ -210,6 +210,10 @@ public:
 
     future<std::optional<directory_entry>> get() override;
     future<> close() noexcept override;
+
+    file& directory() {
+        return _opened;
+    }
 };
 
 inline fs::path operator/(const fs::path& lhs, const char* rhs) {

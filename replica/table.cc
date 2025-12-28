@@ -3461,7 +3461,7 @@ future<bool> table::snapshot_exists(sstring tag) {
     sstring jsondir = (so->dir / sstables::snapshots_dir / tag).native();
     bool exists = false;
     try {
-        auto sd = co_await io_check(file_stat, jsondir, follow_symlink::no);
+        auto sd = co_await file_stat(jsondir, follow_symlink::no);
         if (sd.type != directory_entry_type::directory) {
             throw std::error_code(ENOTDIR, std::system_category());
         }
@@ -3506,17 +3506,16 @@ future<std::unordered_map<sstring, table::snapshot_details>> table::get_snapshot
 
 future<table::snapshot_details> table::get_snapshot_details(fs::path snapshot_dir, fs::path datadir) {
     table::snapshot_details details{};
-    std::optional<fs::path> staging_dir = snapshot_dir / sstables::staging_dir;
-    if (!co_await file_exists(staging_dir->native())) {
-        staging_dir.reset();
+    file data_directory = co_await open_checked_directory(general_disk_error_handler, datadir.native());
+    std::optional<file> staging_directory;
+    if (auto path = snapshot_dir / sstables::staging_dir; co_await file_exists(path.native())) {
+        staging_directory = co_await open_checked_directory(general_disk_error_handler, path.native());
     }
 
     auto lister = directory_lister(snapshot_dir, lister::dir_entry_types::of<directory_entry_type::regular>());
     while (auto de = co_await lister.get()) {
         const auto& name = de->name;
-        // FIXME: optimize stat calls by keeping the base directory open and use statat instead, here and below.
-        // See https://github.com/scylladb/seastar/pull/3163
-        auto sd = co_await io_check(file_stat, (snapshot_dir / name).native(), follow_symlink::no);
+        auto sd = co_await file_stat(lister.directory(), name, follow_symlink::no);
         auto size = sd.allocated_size;
 
         // The manifest and schema.sql files are the only files expected to be in this directory not belonging to the SSTable.
@@ -3536,10 +3535,10 @@ future<table::snapshot_details> table::get_snapshot_details(fs::path snapshot_di
             continue;
         }
 
-        auto exists_in_dir = [&] (fs::path path) -> future<bool> {
+        auto exists_in_dir = [&] (file& directory, std::string_view name) -> future<bool> {
           try {
             // File exists in the main SSTable directory. Snapshots are not contributing to size
-            auto psd = co_await io_check(file_stat, path.native(), follow_symlink::no);
+            auto psd = co_await file_stat(directory, name, follow_symlink::no);
             // File in main SSTable directory must be hardlinked to the file in the snapshot dir with the same name.
             if (psd.device_id != sd.device_id || psd.inode_number != sd.inode_number) {
                 dblog.warn("[{} device_id={} inode_number={} size={}] is not the same file as [{} device_id={} inode_number={} size={}]",
@@ -3556,8 +3555,8 @@ future<table::snapshot_details> table::get_snapshot_details(fs::path snapshot_di
           }
         };
         // Check staging dir first, as files might be moved from there to the datadir concurrently to this check
-        if ((!staging_dir || !co_await exists_in_dir(*staging_dir / name)) &&
-                !co_await exists_in_dir(datadir / name)) {
+        if ((!staging_directory || !co_await exists_in_dir(*staging_directory, name)) &&
+                !co_await exists_in_dir(data_directory, name)) {
             details.live += size;
         }
     }
