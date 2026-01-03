@@ -1999,6 +1999,11 @@ future<> compaction_manager::perform_cleanup(owned_ranges_ptr sorted_owned_range
     co_await try_perform_cleanup(sorted_owned_ranges, t, info);
     auto last_idle = seastar::lowres_clock::now();
 
+    while (utils::get_local_injector().enter("cleanup_error")) {
+        cmlog.warn("perform_cleanup for {} injecting cleanup_error", t);
+        co_await sleep(std::chrono::seconds(10));
+    }
+
     while (!cs.sstables_requiring_cleanup.empty()) {
         auto idle = seastar::lowres_clock::now() - last_idle;
         if (idle >= max_idle_duration) {

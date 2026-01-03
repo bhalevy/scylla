@@ -7,13 +7,19 @@ import pytest
 import time
 import asyncio
 import logging
+import os
+import glob
+import shutil
+
 from test.pylib.util import wait_for_cql_and_get_hosts, wait_for_view, wait_for_view_v1
 from test.pylib.manager_client import ManagerClient
 from test.pylib.scylla_cluster import ReplaceConfig
-from test.pylib.internal_types import ServerInfo
+from test.pylib.internal_types import HostID, ServerInfo
 from test.cluster.util import trigger_snapshot, wait_until_topology_upgrade_finishes, enter_recovery_state, reconnect_driver, \
         delete_raft_topology_state, delete_raft_data_and_upgrade_state, wait_until_upgrade_finishes, wait_for, create_new_test_keyspace
 from test.cluster.conftest import skip_mode
+from test.cluster.util import new_test_keyspace
+from test.pylib.async_cql import _wrap_future
 from cassandra import ConsistencyLevel
 from cassandra.query import SimpleStatement
 from cassandra.protocol import InvalidRequest
@@ -568,3 +574,91 @@ async def test_view_build_status_with_synchronize_wait(manager: ManagerClient):
     await manager.api.message_injection(new_server.ip_addr, 'sleep_in_synchronize')
 
     await task
+
+async def cf_dir(manager: ManagerClient, server: ServerInfo, ks: str, cf: str) -> str:
+    ks_dir = os.path.join(await manager.server_get_workdir(server.server_id), "data", ks)
+    dirs = glob.glob(os.path.join(ks_dir, f"{cf}-*"))
+    assert dirs, f"Table directory for {ks}.{cf} not found"
+    assert len(dirs) == 1, f"found too many directorys for {ks}.{cf}: {dirs}"
+    return dirs[0]
+
+@pytest.mark.asyncio
+@skip_mode('release', 'error injections are not supported in release mode')
+async def test_staging_backlog_remove_node(manager: ManagerClient):
+    cmdline = ["--logger-log-level=compaction_manager=debug:view_update_generator=debug:raft_topology=debug"]
+    config = {'tablets_mode_for_new_keyspaces': 'disabled'}
+    num_nodes = 3
+    servers = await manager.servers_add(num_nodes, cmdline=cmdline, property_file=[
+                                            {"dc": "dc1", "rack": "r1"},
+                                            {"dc": "dc1", "rack": "r2"},
+                                            {"dc": "dc1", "rack": "r3"},
+                                        ], config=config)
+    cql, _ = await manager.get_ready_cql(servers)
+
+    async with new_test_keyspace(manager, f"WITH replication = {{'class': 'NetworkTopologyStrategy', 'replication_factor': 2}} AND tablets = {{'enabled': false}}") as ks:
+        await cql.run_async(f"CREATE TABLE {ks}.tab (key int, c int, v int, PRIMARY KEY (key))")
+
+        # Populate the base table
+        rows = 1000
+        for i in range(rows):
+            await cql.run_async(f"INSERT INTO {ks}.tab (key, c, v) VALUES ({i}, {i}, 1)")
+
+        await cql.run_async(f"CREATE MATERIALIZED VIEW {ks}.mv AS SELECT * FROM {ks}.tab "
+                            "WHERE key IS NOT NULL AND c IS NOT NULL PRIMARY KEY (c, key)")
+        await wait_for_view(cql, 'mv', num_nodes)
+
+        # Flush on node1
+        error_injection_node = 1
+        await manager.api.keyspace_flush(servers[error_injection_node].ip_addr, ks, "tab")
+        await manager.api.keyspace_flush(servers[error_injection_node].ip_addr, ks, "mv")
+
+        # Delete sstables
+        await manager.server_stop_gracefully(servers[error_injection_node].server_id)
+        shutil.rmtree(await cf_dir(manager, servers[error_injection_node], ks, "tab"), ignore_errors=True)
+        shutil.rmtree(await cf_dir(manager, servers[error_injection_node], ks, "mv"), ignore_errors=True)
+        await manager.server_start(servers[error_injection_node].server_id)
+
+        # Repair the base table
+        log = await manager.server_open_log(servers[error_injection_node].server_id)
+        mark = await log.mark()
+        await manager.api.enable_injection(servers[error_injection_node].ip_addr, "view_update_generator_consume_staging_sstable", one_shot=False)
+        await manager.api.repair(servers[error_injection_node].ip_addr, ks, "tab")
+        await log.wait_for(f"Processing {ks} failed for table tab", from_mark=mark, timeout=60)
+        await log.wait_for(f"Finished user-requested repair for vnode keyspace={ks}", from_mark=mark, timeout=60)
+
+        # Restart node with staging backlog
+        mark = await log.mark()
+        await manager.server_stop(servers[error_injection_node].server_id)
+        await manager.server_start(servers[error_injection_node].server_id)
+        cql, _ = await manager.get_ready_cql(servers)
+
+        servers.append(await manager.server_add(cmdline=cmdline,
+                                                property_file={"dc": f"{servers[error_injection_node].datacenter}", "rack": f"{servers[error_injection_node].rack}"},
+                                                config=config))
+        host_ids = {s.server_id: await manager.get_host_id(s.server_id) for s in servers}
+        server_ids = {host_id: server_id for server_id, host_id in host_ids.items()}
+
+        cleanup_all_task = asyncio.create_task(manager.api.cleanup_all(servers[0].ip_addr))
+        await log.wait_for("compaction_manager - perform_cleanup: waiting for sstables to become eligible for cleanup", from_mark=mark, timeout=60)
+
+        async def get_cleanup_status() -> dict:
+            rows = await cql.run_async("SELECT host_id, datacenter, rack, cleanup_status FROM system.topology")
+            status = {}
+            for row in rows:
+                host_id = str(row.host_id)
+                if host_id not in server_ids:
+                    pytest.fail(f"{host_id=} not in {server_ids=}: {host_ids=}")
+                status[server_ids[host_id]] = row.cleanup_status
+            return status
+
+        expected_status = {s.server_id: "running" if i == error_injection_node else "clean" for i, s in enumerate(servers)}
+        started = time.time()
+        while (cleanup_status := await get_cleanup_status()) != expected_status:
+            if time.time() - started > 10:
+                raise TimeoutError(f"Timed out waiting for cleanup status to match expected: {cleanup_status} != {expected_status}")
+            await asyncio.sleep(1)
+
+        await manager.server_stop(servers[error_injection_node].server_id)
+        await manager.remove_node(servers[0].server_id, servers[error_injection_node].server_id)
+
+        await cleanup_all_task

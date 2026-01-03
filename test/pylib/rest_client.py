@@ -365,6 +365,10 @@ class ScyllaRESTAPIClient():
         """Cleanup keyspace"""
         await self.client.post(f"/storage_service/keyspace_cleanup/{ks}", host=node_ip)
 
+    async def cleanup_all(self, node_ip: str) -> None:
+        """Cleanup all vnodes keyspaces"""
+        await self.client.post(f"/storage_service/cleanup_all", host=node_ip)
+
     async def load_new_sstables(self, node_ip: str, keyspace: str, table: str, primary_replica : bool = False, scope: str = "all", load_and_stream : bool = False) -> None:
         """Load sstables from upload directory"""
         params = {"cf": table,
