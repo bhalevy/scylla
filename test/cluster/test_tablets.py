@@ -1768,3 +1768,75 @@ async def test_create_cluster_with_powof2_vnodes(manager: ManagerClient):
 
     for s, tokens in tokens.items():
         assert set(tokens) == set(calculated_new_tokens[s])
+
+@pytest.mark.asyncio
+async def test_convert_cluster_to_powof2_vnodes(manager: ManagerClient):
+    num_nodes = 3
+    tokens_per_node = 16
+
+    servers= await manager.servers_add(num_nodes, cmdline=[f"--num-tokens={tokens_per_node}"], auto_rack_dc="dc1")
+
+    async with new_test_keyspace(manager,
+        f"WITH replication = {{'class': 'NetworkTopologyStrategy', 'replication_factor': {num_nodes}}} "
+        "AND tablets = {'enabled': false}") as ks:
+
+        await manager.cql.run_async(f"CREATE TABLE {ks}.test (pk int PRIMARY KEY, ck int);")
+        stmt = manager.cql.prepare(f"INSERT INTO {ks}.test (pk, ck) VALUES (?, ?)")
+        num_keys = 1000
+        await asyncio.gather(*[manager.cql.run_async(stmt, [k, k]) for k in range(num_keys)])
+
+        async def get_tokens(servers: list[ServerInfo]) -> dict[int, list[int]]: 
+            tokens = dict()
+            num_tokens = 0
+            for s in servers:
+                cql = await manager.get_cql_exclusive(s)
+                res = await cql.run_async("SELECT tokens FROM system.local")
+                tokens[s.server_id] = sorted(list([int(i) for i in res[0].tokens]))
+                num_tokens += len(tokens[s.server_id])
+            return num_tokens, tokens
+
+        exp = 1
+        while 2**exp < num_nodes * tokens_per_node:
+            exp += 1
+        new_tokens_combined = []
+        powof2 = 2**exp
+        for i in range(powof2):
+            pfx = (i - powof2 // 2) << (64 - exp)
+            if not new_tokens_combined:
+                pfx += 1  # avoid min token
+            new_tokens_combined.append(pfx)
+        logger.debug(f"{new_tokens_combined=}")
+        calculated_new_tokens = defaultdict(list)
+        new_server_id = num_nodes + 1
+        for i, t in enumerate(new_tokens_combined):
+            calculated_new_tokens[new_server_id  + (i % num_nodes)].append(t)
+        for s, tokens in calculated_new_tokens.items():
+            calculated_new_tokens[s] = sorted(tokens)
+        logger.debug(f"{calculated_new_tokens=}")
+
+        new_servers = []
+        for i in range(1, num_nodes + 1):
+            new_server_id = num_nodes + i
+            new_tokens = calculated_new_tokens[new_server_id]
+            logger.debug(f"Adding server {new_server_id} tokens={new_tokens}")
+            cmdline = [
+                "--logger-log-level=storage_service=debug",
+                f"--initial-token={','.join([str(t) for t in new_tokens])}",
+            ]
+            new_servers.append(await manager.server_add(cmdline=cmdline, property_file={"dc": "dc1", "rack": f"rack{i}"}))
+            await manager.decommission_node(servers[i - 1].server_id)
+
+        num_tokens, tokens = await get_tokens(new_servers)
+        logger.info(f"After: {num_tokens=} {tokens=}")
+
+        for s, tokens in tokens.items():
+            assert set(tokens) == set(calculated_new_tokens[s])
+
+        data = dict()
+        res = await manager.cql.run_async(f"SELECT * FROM {ks}.test;")
+        for r in res:
+            assert r.pk >= 0 and r.pk < num_keys
+            assert r.pk == r.ck
+            assert r.pk not in data
+            data[r.pk] = r
+        assert len(data) == num_keys
