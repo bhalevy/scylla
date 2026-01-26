@@ -3,6 +3,7 @@
 #
 # SPDX-License-Identifier: LicenseRef-ScyllaDB-Source-Available-1.0
 #
+from collections import defaultdict
 import uuid
 
 from cassandra.protocol import ConfigurationException, InvalidRequest, SyntaxException
@@ -32,6 +33,7 @@ import glob
 import shutil
 
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
 
 # The glob below is designed to match the version-generation-format-component.extension format, e.g.
 # da-3gqu_1hke_4919c2kfgur9y2bm77-bti-Data.db
@@ -1717,3 +1719,52 @@ async def test_table_creation_wakes_up_balancer(manager: ManagerClient):
         # up to stats refresh period, which is 60s. So use a small timeout.
         await manager.api.message_injection(server.ip_addr, 'wait-before-topology-coordinator-goes-to-sleep')
         await log.wait_for('wait-after-topology-coordinator-gets-event: wait', from_mark=mark, timeout=5)
+
+@pytest.mark.asyncio
+async def test_create_cluster_with_powof2_vnodes(manager: ManagerClient):
+    num_nodes = 3
+    tokens_per_node = 16
+
+    async def get_tokens(servers: list[ServerInfo]) -> dict[int, list[int]]: 
+        tokens = dict()
+        num_tokens = 0
+        for s in servers:
+            cql = await manager.get_cql_exclusive(s)
+            res = await cql.run_async("SELECT tokens FROM system.local")
+            tokens[s.server_id] = sorted(list([int(i) for i in res[0].tokens]))
+            num_tokens += len(tokens[s.server_id])
+        return num_tokens, tokens
+
+    exp = 1
+    while 2**exp < num_nodes * tokens_per_node:
+        exp += 1
+    new_tokens_combined = []
+    powof2 = 2**exp
+    for i in range(powof2):
+        pfx = (i - powof2 // 2) << (64 - exp)
+        if not new_tokens_combined:
+            pfx += 1  # avoid min token
+        new_tokens_combined.append(pfx)
+    logger.debug(f"{new_tokens_combined=}")
+    calculated_new_tokens = defaultdict(list)
+    new_server_id = 1
+    for i, t in enumerate(new_tokens_combined):
+        calculated_new_tokens[new_server_id  + (i % num_nodes)].append(t)
+    for s, tokens in calculated_new_tokens.items():
+        calculated_new_tokens[s] = sorted(tokens)
+    logger.debug(f"{calculated_new_tokens=}")
+
+    servers = []
+    for i in range(1, num_nodes + 1):
+        logger.debug(f"Adding server {i} tokens={calculated_new_tokens[i]}")
+        cmdline = [
+            "--logger-log-level=storage_service=debug",
+            f"--initial-token={','.join([str(t) for t in calculated_new_tokens[i]])}",
+        ]
+        servers.append(await manager.server_add(cmdline=[f"--initial-token={','.join([str(t) for t in calculated_new_tokens[i]])}"], property_file={"dc": "dc1", "rack": f"rack{i}"}))
+
+    num_tokens, tokens = await get_tokens(servers)
+    logger.info(f"After: {num_tokens=} {tokens=}")
+
+    for s, tokens in tokens.items():
+        assert set(tokens) == set(calculated_new_tokens[s])
