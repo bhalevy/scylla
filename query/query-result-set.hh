@@ -45,10 +45,13 @@ inline bool operator==(const non_null_data_value& x, const non_null_data_value& 
 // Result set row is a set of cells that are associated with a row
 // including regular column cells, partition keys, as well as static values.
 class result_set_row {
-    schema_ptr _schema;
-    std::unordered_map<sstring, non_null_data_value> _cells;
 public:
-    result_set_row(schema_ptr schema, std::unordered_map<sstring, non_null_data_value>&& cells)
+    using map_type = std::unordered_map<const column_definition*, non_null_data_value>;
+private:
+    schema_ptr _schema;
+    map_type _cells;
+public:
+    result_set_row(schema_ptr schema, map_type&& cells)
         : _schema{schema}
         , _cells{std::move(cells)}
     { }
@@ -57,12 +60,28 @@ public:
     result_set_row& operator=(result_set_row&&) = default;
     result_set_row& operator=(const result_set_row&) = delete;
     result_set_row copy() const {
-        return {_schema, std::unordered_map{cells()}};
+        return {_schema, map_type{cells()}};
+    }
+    const schema& schema() const noexcept {
+        return *_schema;
+    }
+    const column_definition* find_column(const sstring& name) const {
+        return _schema->get_column_definition(to_bytes(name));
+    }
+    const column_definition& get_column(const sstring& name) const {
+        if (auto cdef = find_column(name)) {
+            return *cdef;
+        }
+        throw std::out_of_range(fmt::format("Row is missing column definition for '{}' in {}.{}", name, _schema->ks_name(), _schema->cf_name()));
     }
     // Look up a deserialized row cell value by column name
     const data_value*
     get_data_value(const sstring& column_name) const {
-        auto it = cells().find(column_name);
+        return get_data_value(get_column(column_name));
+    }
+    const data_value*
+    get_data_value(const column_definition& col) const {
+        auto it = cells().find(&col);
         if (it == cells().end()) {
             return nullptr;
         }
@@ -72,15 +91,21 @@ public:
     template<typename T>
     std::optional<T>
     get(const sstring& column_name) const {
-        if (const auto *value = get_ptr<T>(column_name)) {
+        return get<T>(get_column(column_name));
+    }
+    // Look up a deserialized row cell value by column definition
+    template<typename T>
+    std::optional<T>
+    get(const column_definition& col) const {
+        if (const auto *value = get_ptr<T>(col)) {
             return std::optional(*value);
         }
         return std::nullopt;
     }
     template<typename T>
     const T*
-    get_ptr(const sstring& column_name) const {
-        const auto *value = get_data_value(column_name);
+    get_ptr(const column_definition& col) const {
+        const auto *value = get_data_value(col);
         if (value == nullptr) {
             return nullptr;
         }
@@ -89,13 +114,17 @@ public:
     // throws no_value on error
     template<typename T>
     const T& get_nonnull(const sstring& column_name) const {
-        auto v = get_ptr<std::remove_reference_t<T>>(column_name);
+        return get_nonnull<T>(get_column(column_name));
+    }
+    template<typename T>
+    const T& get_nonnull(const column_definition& col) const {
+        auto v = get_ptr<std::remove_reference_t<T>>(col);
         if (v) {
             return *v;
         }
-        throw no_value(column_name);
+        throw no_value(col.name_as_text());
     }
-    const std::unordered_map<sstring, non_null_data_value>& cells() const { return _cells; }
+    const map_type& cells() const { return _cells; }
     friend inline bool operator==(const result_set_row& x, const result_set_row& y) = default;
     friend std::ostream& operator<<(std::ostream& out, const result_set_row& row);
 };

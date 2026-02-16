@@ -698,11 +698,12 @@ class db_config_table final : public streaming_virtual_table {
             return make_exception_future<>(virtual_table_update_exception("option value is required"));
         }
 
-        if (rs.row(0).cells().contains("type")) {
+        auto& row = rs.row(0);
+        if (auto col = row.find_column("type"); col && row.cells().contains(col)) {
             return make_exception_future<>(virtual_table_update_exception("option type is immutable"));
         }
 
-        if (rs.row(0).cells().contains("source")) {
+        if (auto col = row.find_column("source"); col && row.cells().contains(col)) {
             return make_exception_future<>(virtual_table_update_exception("option source is not updateable"));
         }
 

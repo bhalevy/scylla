@@ -459,7 +459,7 @@ private:
     Key extract_key(const query::result_set_row& row, const schema::const_iterator_range_type& key_cols) const {
         std::vector<bytes> exploded;
         for (const auto& cdef : key_cols) {
-            exploded.push_back(row.get_data_value(cdef.name_as_text())->serialize_nonnull());
+            exploded.push_back(row.get_data_value(cdef)->serialize_nonnull());
         }
         return Key::from_exploded(*_s, exploded);
     }

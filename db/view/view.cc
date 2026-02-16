@@ -3653,7 +3653,7 @@ future<> delete_ghost_rows_visitor::do_accept_new_row(partition_key pk, clusteri
         auto results = query::result_set::from_raw_result(_base_schema, partition_slice, result);
         auto& base_row = results.row(0);
         for (const auto& [col_def, col_val] : view_key_cols_not_in_base_key) {
-            const data_value* base_val = base_row.get_data_value(col_def->name_as_text());
+            const data_value* base_val = base_row.get_data_value(*col_def);
             if (!base_val || base_val->is_null() || col_val != base_val->serialize_nonnull()) {
                 co_await delete_ghost_row();
                 break;

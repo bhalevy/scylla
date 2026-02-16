@@ -22,6 +22,7 @@ row_assertion::matches(const query::result_set_row& row) const {
         auto&& value = column_and_value.second;
 
         // FIXME: result_set_row works on sstring column names instead of more general "bytes".
+
         auto ss_name = to_sstring(name);
 
         const data_value* val = row.get_data_value(ss_name);
@@ -37,8 +38,8 @@ row_assertion::matches(const query::result_set_row& row) const {
     }
     if (_only_that) {
         for (auto&& e : row.cells()) {
-            auto name = to_bytes(e.first);
-            if (!_expected_values.contains(name)) {
+            auto& name = e.first->name_as_text();
+            if (!_expected_values.contains(to_bytes(name))) {
                 return false;
             }
         }
