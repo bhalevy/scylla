@@ -313,22 +313,22 @@ static std::vector<const query::result_set_row*> collect_rows(const std::set<sst
     return ret;
 }
 
-static std::vector<column_definition> get_primary_key_definition(const schema_ptr& schema) {
-    std::vector<column_definition> primary_key;
+static std::vector<const column_definition*> get_primary_key_definition(const schema_ptr& schema) {
+    std::vector<const column_definition*> primary_key;
     for (const auto& column : schema->partition_key_columns()) {
-        primary_key.push_back(column);
+        primary_key.push_back(&column);
     }
     for (const auto& column : schema->clustering_key_columns()) {
-        primary_key.push_back(column);
+        primary_key.push_back(&column);
     }
 
     return primary_key;
 }
 
-static std::vector<bytes> get_primary_key(const std::vector<column_definition>& primary_key, const query::result_set_row* row) {
+static std::vector<bytes> get_primary_key(const std::vector<const column_definition*>& primary_key, const query::result_set_row* row) {
     std::vector<bytes> key;
     for (const auto& column : primary_key) {
-        const data_value *val = row->get_data_value(column.name_as_text());
+        const data_value *val = row->get_data_value(*column);
         key.push_back(val->serialize_nonnull());
     }
     return key;
