@@ -1591,6 +1591,10 @@ db::config::config(std::shared_ptr<db::extensions> exts)
         "Sets the maximum difference in percentages between the most loaded and least loaded nodes, below which the load balancer considers nodes balanced.")
     , minimal_tablet_size_for_balancing(this, "minimal_tablet_size_for_balancing", liveness::LiveUpdate, value_status::Used, service::default_target_tablet_size / 100,
         "Sets the minimal tablet size for the load balancer. For any tablet smaller than this, the balancer will use this size instead of the actual tablet size.")
+    , migrate_keyspace_to_tablets(this, "migrate_keyspace_to_tablets", value_status::Used, "",
+        "User keyspace to migrate from vnodes to tablets on this node.")
+    , migrate_tables_to_tablets(this, "migrate_tables_to_tablets", value_status::Used, "",
+        "A comma-separated list of user tables, in the keyspace given by `migrate_keyspace_to_tablets` to migrate from vnodes to tablets on this node.")
     /**
     * @Group Ungrouped properties
     */
