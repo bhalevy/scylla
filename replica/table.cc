@@ -4890,6 +4890,21 @@ compaction::compaction_group_view& table::compaction_group_view_for_sstable(cons
     return cg.view_for_sstable(sst);
 }
 
+future<compaction::compaction_group_view*> table::maybe_compaction_group_view_for_sstable(const sstables::shared_sstable& sst, bool quarantine_orphaned_sstables) const {
+    try {
+        auto& cg = compaction_group_for_sstable(sst, false);
+        co_return &cg.view_for_sstable(sst);
+    } catch (const no_such_storage_group& e) {
+        if (quarantine_orphaned_sstables) {
+            tlogger.error("{}: Quarantine SSTable.", std::current_exception());
+        } else {
+            on_internal_error(tlogger, e.what());
+        }
+    }
+    co_await sst->change_state(sstables::sstable_state::quarantine);
+    co_return nullptr;
+}
+
 data_dictionary::table
 table::as_data_dictionary() const {
     static constinit data_dictionary_impl _impl;

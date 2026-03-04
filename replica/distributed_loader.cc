@@ -120,7 +120,8 @@ distributed_loader::reshape(sharded<sstables::sstable_directory>& dir, sharded<r
         sstring ks_name, sstring table_name, compaction::compaction_sstable_creator_fn creator,
         std::function<bool (const sstables::shared_sstable&)> filter) {
     auto& compaction_module = db.local().get_compaction_manager().get_task_manager_module();
-    auto task = co_await compaction_module.make_and_start_task<compaction::table_reshaping_compaction_task_impl>({}, std::move(ks_name), std::move(table_name), dir, db, mode, std::move(creator), std::move(filter));
+    bool quarantine_orphaned_sstables = true;
+    auto task = co_await compaction_module.make_and_start_task<compaction::table_reshaping_compaction_task_impl>({}, std::move(ks_name), std::move(table_name), dir, db, mode, std::move(creator), std::move(filter), quarantine_orphaned_sstables);
     co_await task->done();
 }
 
@@ -424,6 +425,9 @@ future<> table_populator::populate_subdir(sharded<sstables::sstable_directory>& 
     auto do_allow_offstrategy_compaction = allow_offstrategy_compaction(state == sstables::sstable_state::normal);
     co_await directory.invoke_on_all([this, &eligible_for_reshape_on_boot, do_allow_offstrategy_compaction] (sstables::sstable_directory& dir) -> future<> {
         co_await dir.do_for_each_sstable([this, &eligible_for_reshape_on_boot, do_allow_offstrategy_compaction] (sstables::shared_sstable sst) {
+            if (sst->is_quarantined()) {
+                return make_ready_future();
+            }
             auto requires_offstrategy = sstables::offstrategy(do_allow_offstrategy_compaction && !eligible_for_reshape_on_boot(sst));
             return _global_table->add_sstable_and_update_cache(sst, requires_offstrategy);
         });
