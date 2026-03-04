@@ -727,6 +727,9 @@ public:
     compaction_group& compaction_group_for_sstable(const sstables::shared_sstable& sst) const override {
         return get_compaction_group();
     }
+    compaction_group* maybe_compaction_group_for_sstable(const sstables::shared_sstable& sst) const override {
+        return &get_compaction_group();
+    }
     size_t log2_storage_groups() const override {
         return 0;
     }
@@ -809,7 +812,7 @@ private:
         return tablet_map().get_tablet_id(t).value();
     }
 
-    std::pair<size_t, locator::tablet_range_side> storage_group_of(dht::token t) const {
+    std::pair<size_t, locator::tablet_range_side> storage_group_of(dht::token t, bool verify_storage_group = true) const {
         auto [id, side] = tablet_map().get_tablet_id_and_range_side(t);
         auto idx = id.value();
 #ifndef SCYLLA_BUILD_MODE_RELEASE
@@ -817,11 +820,13 @@ private:
             on_fatal_internal_error(tlogger, format("storage_group_of: index out of range: idx={} size_log2={} size={} token={}",
                                                     idx, log2_storage_groups(), tablet_count(), t));
         }
+      if (verify_storage_group) {
         auto& sg = storage_group_for_id(idx);
         if (!t.is_minimum() && !t.is_maximum() && !sg.token_range().contains(t, dht::token_comparator())) {
             on_fatal_internal_error(tlogger, format("storage_group_of: storage_group idx={} range={} does not contain token={}",
                                                     idx, sg.token_range(), t));
         }
+      }
 #endif
         return { idx, side };
     }
@@ -850,6 +855,8 @@ private:
         }
         return sg;
     }
+
+    compaction_group_ptr compaction_group_for_sstable_common(const sstables::shared_sstable& sst, bool verify_storage_group) const;
 public:
     tablet_storage_group_manager(table& t, const locator::effective_replication_map& erm)
         : _t(t)
@@ -892,6 +899,7 @@ public:
     utils::chunked_vector<storage_group_ptr> storage_groups_for_token_range(dht::token_range tr) const override;
     compaction_group& compaction_group_for_key(partition_key_view key, const schema_ptr& s) const override;
     compaction_group& compaction_group_for_sstable(const sstables::shared_sstable& sst) const override;
+    compaction_group* maybe_compaction_group_for_sstable(const sstables::shared_sstable& sst) const override;
 
     size_t log2_storage_groups() const override {
         return log2ceil(tablet_map().tablet_count());
@@ -1246,9 +1254,9 @@ compaction_group& table::compaction_group_for_key(partition_key_view key, const 
     return _sg_manager->compaction_group_for_key(key, s);
 }
 
-compaction_group& tablet_storage_group_manager::compaction_group_for_sstable(const sstables::shared_sstable& sst) const {
-    auto [first_id, first_range_side] = storage_group_of(sst->get_first_decorated_key().token());
-    auto [last_id, last_range_side] = storage_group_of(sst->get_last_decorated_key().token());
+compaction_group_ptr tablet_storage_group_manager::compaction_group_for_sstable_common(const sstables::shared_sstable& sst, bool verify_storage_group) const {
+    auto [first_id, first_range_side] = storage_group_of(sst->get_first_decorated_key().token(), verify_storage_group);
+    auto [last_id, last_range_side] = storage_group_of(sst->get_last_decorated_key().token(), verify_storage_group);
 
     if (first_id != last_id) {
         on_internal_error(tlogger, format("Unable to load SSTable {} that belongs to tablets {} and {}",
@@ -1256,20 +1264,47 @@ compaction_group& tablet_storage_group_manager::compaction_group_for_sstable(con
     }
 
     try {
-        auto& sg = storage_group_for_id(first_id);
-
-        if (first_range_side != last_range_side) {
-            return *sg.main_compaction_group();
+        storage_group* sg;
+        if (verify_storage_group) {
+            sg = &storage_group_for_id(first_id);
+        } else {
+            sg = storage_group_manager::maybe_storage_group_for_id(schema(), first_id);
+            if (!sg) {
+                return nullptr;
+            }
         }
 
-        return *sg.select_compaction_group(first_range_side);
+        if (first_range_side != last_range_side) {
+            return sg->main_compaction_group();
+        }
+
+        return sg->select_compaction_group(first_range_side);
     } catch (std::out_of_range& e) {
         on_internal_error(tlogger, format("Unable to load SSTable {} : {}", sst->get_filename(), e.what()));
     }
 }
 
+compaction_group& tablet_storage_group_manager::compaction_group_for_sstable(const sstables::shared_sstable& sst) const {
+    auto cg = compaction_group_for_sstable_common(sst, true);
+    return *cg;
+}
+
+compaction_group* tablet_storage_group_manager::maybe_compaction_group_for_sstable(const sstables::shared_sstable& sst) const {
+    auto cg = compaction_group_for_sstable_common(sst, false);
+    return cg ? &*cg : nullptr;
+}
+
 compaction_group& table::compaction_group_for_sstable(const sstables::shared_sstable& sst) const {
     return _sg_manager->compaction_group_for_sstable(sst);
+}
+
+future<compaction_group*> table::maybe_compaction_group_for_sstable(const sstables::shared_sstable& sst) const {
+    if (auto sg = _sg_manager->maybe_compaction_group_for_sstable(sst)) {
+        co_return sg;
+    }
+    // It is assumed that the sstable is not added to any compaction group yet so no need to remove it.
+    co_await sst->change_state(sstables::sstable_state::quarantine);
+    co_return nullptr;
 }
 
 future<> table::parallel_foreach_compaction_group(std::function<future<>(compaction_group&)> action) {
@@ -4884,6 +4919,13 @@ future<> table::parallel_foreach_compaction_group_view(std::function<future<>(co
 compaction::compaction_group_view& table::compaction_group_view_for_sstable(const sstables::shared_sstable& sst) const {
     auto& cg = compaction_group_for_sstable(sst);
     return cg.view_for_sstable(sst);
+}
+
+future<compaction::compaction_group_view*> table::maybe_compaction_group_view_for_sstable(const sstables::shared_sstable& sst) const {
+    if (auto* cg = co_await maybe_compaction_group_for_sstable(sst)) {
+        co_return &cg->view_for_sstable(sst);
+    }
+    co_return nullptr;
 }
 
 data_dictionary::table
