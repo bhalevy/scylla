@@ -571,7 +571,7 @@ sharded<service::storage_proxy> *the_storage_proxy;
 // This is used by perf-alternator to allow running scylla together with the tool
 // in a single process. So that it's easier to measure internals. It's not added
 // to main_func_type to not complicate common flow as no other tool needs such logic.
-std::function<void(lw_shared_ptr<db::config>)> after_init_func;
+std::function<future<>(lw_shared_ptr<db::config>, sharded<abort_source>&)> after_init_func;
 
 static locator::host_id initialize_local_info_thread(sharded<db::system_keyspace>& sys_ks,
         sharded<locator::snitch_ptr>& snitch,
@@ -1617,7 +1617,6 @@ To start the scylla server proper, simply invoke as: scylla server (or just scyl
                 gcfg.ring_delay_ms = cfg->ring_delay_ms();
                 gcfg.shadow_round_ms = cfg->shadow_round_ms();
                 gcfg.shutdown_announce_ms = cfg->shutdown_announce_in_ms();
-                gcfg.skip_wait_for_gossip_to_settle = cfg->skip_wait_for_gossip_to_settle();
                 gcfg.group0_id = group0_id;
                 gcfg.host_id = host_id;
                 gcfg.failure_detector_timeout_ms = cfg->failure_detector_timeout_in_ms;
@@ -1677,7 +1676,7 @@ To start the scylla server proper, simply invoke as: scylla server (or just scyl
 
             service::raft_group0 group0_service{
                     stop_signal.as_local_abort_source(), raft_gr.local(), messaging,
-                    gossiper.local(), feature_service.local(), sys_ks.local(), group0_client, dbcfg.gossip_scheduling_group};
+                    gossiper.local(), feature_service.local(), group0_client, dbcfg.gossip_scheduling_group};
 
             checkpoint(stop_signal, "starting tablet allocator");
             service::tablet_allocator::config tacfg {
@@ -2071,11 +2070,6 @@ To start the scylla server proper, simply invoke as: scylla server (or just scyl
                 gossiper.local().unregister_(mm.local().shared_from_this()).get();
             });
 
-            utils::loading_cache_config perm_cache_config;
-            perm_cache_config.max_size = cfg->permissions_cache_max_entries();
-            perm_cache_config.expiry = std::chrono::milliseconds(cfg->permissions_validity_in_ms());
-            perm_cache_config.refresh = std::chrono::milliseconds(cfg->permissions_update_interval_in_ms());
-
             auto start_auth_service = [&mm] (sharded<auth::service>& auth_service, std::any& stop_auth_service, const char* what) {
                 auth_service.invoke_on_all(&auth::service::start, std::ref(mm), std::ref(sys_ks)).get();
 
@@ -2104,7 +2098,7 @@ To start the scylla server proper, simply invoke as: scylla server (or just scyl
                 maintenance_auth_config.authenticator_java_name = sstring{auth::allow_all_authenticator_name};
                 maintenance_auth_config.role_manager_java_name = sstring{auth::maintenance_socket_role_manager_name};
 
-                maintenance_auth_service.start(perm_cache_config, std::ref(qp), std::ref(group0_client),  std::ref(mm_notifier), std::ref(mm), maintenance_auth_config, maintenance_socket_enabled::yes, std::ref(auth_cache)).get();
+                maintenance_auth_service.start(std::ref(qp), std::ref(group0_client),  std::ref(mm_notifier), std::ref(mm), maintenance_auth_config, maintenance_socket_enabled::yes, std::ref(auth_cache)).get();
 
                 cql_maintenance_server_ctl.emplace(maintenance_auth_service, mm_notifier, gossiper, qp, service_memory_limiter, sl_controller, lifecycle_notifier, *cfg, maintenance_cql_sg_stats_key, maintenance_socket_enabled::yes, dbcfg.statement_scheduling_group);
 
@@ -2116,7 +2110,7 @@ To start the scylla server proper, simply invoke as: scylla server (or just scyl
             db::snapshot_ctl::config snap_cfg = {
                 .backup_sched_group = dbcfg.streaming_scheduling_group,
             };
-            snapshot_ctl.start(std::ref(db), std::ref(task_manager), std::ref(sstm), snap_cfg).get();
+            snapshot_ctl.start(std::ref(db), std::ref(proxy), std::ref(task_manager), std::ref(sstm), snap_cfg).get();
             auto stop_snapshot_ctl = defer_verbose_shutdown("snapshots", [&snapshot_ctl] {
                 snapshot_ctl.stop().get();
             });
@@ -2371,7 +2365,7 @@ To start the scylla server proper, simply invoke as: scylla server (or just scyl
             auth_config.authenticator_java_name = qualified_authenticator_name;
             auth_config.role_manager_java_name = qualified_role_manager_name;
 
-            auth_service.start(std::move(perm_cache_config), std::ref(qp), std::ref(group0_client), std::ref(mm_notifier), std::ref(mm), auth_config, maintenance_socket_enabled::no, std::ref(auth_cache)).get();
+            auth_service.start(std::ref(qp), std::ref(group0_client), std::ref(mm_notifier), std::ref(mm), auth_config, maintenance_socket_enabled::no, std::ref(auth_cache)).get();
 
             std::any stop_auth_service;
             // Has to be called after node joined the cluster (join_cluster())
@@ -2420,7 +2414,7 @@ To start the scylla server proper, simply invoke as: scylla server (or just scyl
             bm_cfg.delay = std::chrono::milliseconds(cfg->ring_delay_ms());
             bm_cfg.replay_cleanup_after_replays = cfg->batchlog_replay_cleanup_after_replays();
 
-            bm.start(std::ref(qp), std::ref(sys_ks), bm_cfg).get();
+            bm.start(std::ref(qp), std::ref(sys_ks), std::ref(feature_service), bm_cfg).get();
             auto stop_batchlog_manager = defer_verbose_shutdown("batchlog manager", [&bm] {
                 bm.stop().get();
             });
@@ -2452,11 +2446,6 @@ To start the scylla server proper, simply invoke as: scylla server (or just scyl
             auto stop_view_backlog_broker = defer_verbose_shutdown("view update backlog broker", [] {
                 view_backlog_broker.stop().get();
             });
-
-            if (!ss.local().raft_topology_change_enabled()) {
-                startlog.info("Waiting for gossip to settle before accepting client requests...");
-                gossiper.local().wait_for_gossip_to_settle().get();
-            }
 
             checkpoint(stop_signal, "allow replaying hints");
             proxy.invoke_on_all(&service::storage_proxy::allow_replaying_hints).get();
@@ -2517,22 +2506,18 @@ To start the scylla server proper, simply invoke as: scylla server (or just scyl
             sharded<alternator::expiration_service> es;
             std::any stop_expiration_service;
 
-            if (cfg->alternator_port() || cfg->alternator_https_port()) {
-                // Start the expiration service on all shards.
-                // Currently we only run it if Alternator is enabled, because
-                // only Alternator uses it for its TTL feature. But in the
-                // future if we add a CQL interface to it, we may want to
-                // start this outside the Alternator if().
-                checkpoint(stop_signal, "starting the expiration service");
-                es.start(seastar::sharded_parameter([] (const replica::database& db) { return db.as_data_dictionary(); }, std::ref(db)),
+            // Start the expiration service on all shards.
+            // This service is used both by Alternator (for its TTL feature)
+            // and by CQL (for its per-row TTL feature).
+            checkpoint(stop_signal, "starting the expiration service");
+            es.start(seastar::sharded_parameter([] (const replica::database& db) { return db.as_data_dictionary(); }, std::ref(db)),
                          std::ref(proxy), std::ref(gossiper)).get();
-                stop_expiration_service = defer_verbose_shutdown("expiration service", [&es] {
-                    es.stop().get();
-                });
-                with_scheduling_group(maintenance_scheduling_group, [&es] {
-                    return es.invoke_on_all(&alternator::expiration_service::start);
-                }).get();
-            }
+            stop_expiration_service = defer_verbose_shutdown("expiration service", [&es] {
+                es.stop().get();
+            });
+            with_scheduling_group(maintenance_scheduling_group, [&es] {
+                return es.invoke_on_all(&alternator::expiration_service::start);
+            }).get();
 
             db.invoke_on_all(&replica::database::revert_initial_system_read_concurrency_boost).get();
             notify_set.notify_all(configurable::system_state::started).get();
@@ -2581,11 +2566,13 @@ To start the scylla server proper, simply invoke as: scylla server (or just scyl
             supervisor::notify("serving");
 
             startlog.info("Scylla version {} initialization completed.", scylla_version());
+            future<> after_init_fut = make_ready_future<>();
             if (after_init_func) {
-                after_init_func(cfg);
+                after_init_fut = after_init_func(cfg, stop_signal.as_sharded_abort_source());
             }
             stop_signal.wait().get();
             startlog.info("Signal received; shutting down");
+            std::move(after_init_fut).get();
 	    // At this point, all objects destructors and all shutdown hooks registered with defer() are executed
           } catch (const sleep_aborted&) {
             startlog.info("Startup interrupted");

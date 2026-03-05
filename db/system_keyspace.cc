@@ -335,6 +335,10 @@ schema_ptr system_keyspace::topology_requests() {
             .with_column("truncate_table_id", uuid_type)
             .with_column("new_keyspace_rf_change_ks_name", utf8_type)
             .with_column("new_keyspace_rf_change_data", map_type_impl::get_instance(utf8_type, utf8_type, false))
+            .with_column("snapshot_table_ids", set_type_impl::get_instance(uuid_type, false))
+            .with_column("snapshot_tag", utf8_type)
+            .with_column("snapshot_expiry", timestamp_type)
+            .with_column("snapshot_skip_flush", boolean_type)
             .set_comment("Topology request tracking")
             .with_hash_version()
             .build();
@@ -1714,7 +1718,9 @@ std::unordered_set<dht::token> decode_tokens(const set_type_impl::native_type& t
     std::unordered_set<dht::token> tset;
     for (auto& t: tokens) {
         auto str = value_cast<sstring>(t);
-        SCYLLA_ASSERT(str == dht::token::from_sstring(str).to_sstring());
+        if (str != dht::token::from_sstring(str).to_sstring()) {
+            on_internal_error(slogger, format("decode_tokens: invalid token string '{}'", str));
+        }
         tset.insert(dht::token::from_sstring(str));
     }
     return tset;
@@ -3191,7 +3197,7 @@ future<service::topology> system_keyspace::load_topology_state(const std::unorde
                     };
                 }
             } else if (must_have_tokens(nstate)) {
-                on_fatal_internal_error(slogger, format(
+                on_internal_error(slogger, format(
                         "load_topology_state: node {} in {} state but missing ring slice", host_id, nstate));
             }
         }
@@ -3273,7 +3279,7 @@ future<service::topology> system_keyspace::load_topology_state(const std::unorde
             // Currently, at most one node at a time can be in transitioning state.
             if (!map->empty()) {
                 const auto& [other_id, other_rs] = *map->begin();
-                on_fatal_internal_error(slogger, format(
+                on_internal_error(slogger, format(
                     "load_topology_state: found two nodes in transitioning state: {} in {} state and {} in {} state",
                     other_id, other_rs.state, host_id, nstate));
             }
@@ -3331,8 +3337,7 @@ future<service::topology> system_keyspace::load_topology_state(const std::unorde
                 format("SELECT count(range_end) as cnt FROM {}.{} WHERE key = '{}' AND id = ?",
                         NAME, CDC_GENERATIONS_V3, cdc::CDC_GENERATIONS_V3_KEY),
                 gen_id.id);
-            SCYLLA_ASSERT(gen_rows);
-            if (gen_rows->empty()) {
+            if (!gen_rows || gen_rows->empty()) {
                 on_internal_error(slogger, format(
                     "load_topology_state: last committed CDC generation time UUID ({}) present, but data missing", gen_id.id));
             }
@@ -3579,6 +3584,18 @@ system_keyspace::topology_requests_entry system_keyspace::topology_request_row_t
     if (row.has("new_keyspace_rf_change_data")) {
         entry.new_keyspace_rf_change_ks_name = row.get_as<sstring>("new_keyspace_rf_change_ks_name");
         entry.new_keyspace_rf_change_data = row.get_map<sstring,sstring>("new_keyspace_rf_change_data");
+    }
+    if (row.has("snapshot_table_ids")) {
+        entry.snapshot_tag = row.get_as<sstring>("snapshot_tag");
+        entry.snapshot_skip_flush = row.get_as<bool>("snapshot_skip_flush");
+        entry.snapshot_table_ids = row.get_set<utils::UUID>("snapshot_table_ids")
+            | std::views::transform([](auto& uuid) { return table_id(uuid); })
+            | std::ranges::to<std::unordered_set>()
+            ;
+        ;
+        if (row.has("snapshot_expiry")) {
+            entry.snapshot_expiry = row.get_as<db_clock::time_point>("snapshot_expiry");
+        }
     }
 
     return entry;

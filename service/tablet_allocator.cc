@@ -138,6 +138,13 @@ db::tablet_options combine_tablet_options(R&& opts) {
             total_expected_data_size_in_gb += *opt.expected_data_size_in_gb;
             total_expected_data_size_in_gb_count++;
         }
+        if (opt.max_tablet_count) {
+            if (!combined_opts.max_tablet_count) {
+                combined_opts.max_tablet_count = *opt.max_tablet_count;
+            } else {
+                combined_opts.max_tablet_count = std::min(*combined_opts.max_tablet_count, *opt.max_tablet_count);
+            }
+        }
     }
 
     if (total_expected_data_size_in_gb_count) {
@@ -887,8 +894,8 @@ class load_balancer {
     //
     // We allow at least two sessions per shard so that there is less chance for idling until load balancer
     // makes the next decision after streaming is finished.
-    const size_t max_write_streaming_load = 2;
-    const size_t max_read_streaming_load = 4;
+    size_t max_write_streaming_load;
+    size_t max_read_streaming_load;
 
     replica::database& _db;
     token_metadata_ptr _tm;
@@ -1024,6 +1031,8 @@ public:
             lblogger.info("Size based load balancing cluster feature disabled; forcing capacity based balancing");
             _force_capacity_based_balancing = true;
         }
+        max_read_streaming_load = db.get_config().tablet_streaming_read_concurrency_per_shard();
+        max_write_streaming_load = db.get_config().tablet_streaming_write_concurrency_per_shard();
     }
 
     bool ongoing_rack_list_colocation() const {
@@ -1107,6 +1116,11 @@ public:
             co_return true;
         }
         if (!is_auto_repair_enabled(config)) {
+            co_return false;
+        }
+        auto size = info.replicas.size();
+        if (size <= 1) {
+            lblogger.debug("Skipped auto repair for tablet={} replicas={}", gid, size);
             co_return false;
         }
         auto threshold = _db.get_config().auto_repair_threshold_default_in_seconds();
@@ -1779,10 +1793,10 @@ public:
             auto target_tablet_size = _target_tablet_size / tables.size();
 
             tablet_count_and_reason target_tablet_count = {1, ""};
-            auto maybe_apply = [&] (tablet_count_and_reason candidate) {
+            auto maybe_apply = [&] (tablet_count_and_reason candidate, bool force = false) {
                 lblogger.debug("Table {} ({}.{}) wants {} tablets due to {}", table, s->ks_name(), s->cf_name(),
                         candidate.tablet_count, candidate.reason);
-                if (candidate.tablet_count > target_tablet_count.tablet_count) {
+                if (candidate.tablet_count > target_tablet_count.tablet_count || force) {
                     target_tablet_count = candidate;
                 }
             };
@@ -1848,6 +1862,13 @@ public:
                 // can only increase the count above it, but decreasing may go against the true target count
                 // if tablet_count_from_size would demand more tablets.
                 maybe_apply({table_plan.current_tablet_count, "current count"});
+            }
+
+            // Apply max_tablet_count cap after all other factors have been considered.
+            if (tablet_options.max_tablet_count) {
+                if (target_tablet_count.tablet_count > static_cast<size_t>(*tablet_options.max_tablet_count)) {
+                    maybe_apply({static_cast<size_t>(*tablet_options.max_tablet_count), "max_tablet_count"}, true);
+                }
             }
 
             if (utils::get_local_injector().enter("tablet_force_tablet_count_increase")) {
@@ -2163,7 +2184,7 @@ public:
                 continue;
             }
             auto load = nodes[r.host].shards[r.shard].streaming_read_load;
-            if (load + info.stream_weight > max_read_streaming_load) {
+            if (load > 0 && load + info.stream_weight > max_read_streaming_load) {
                 lblogger.debug("Migration skipped because of read load limit on {} ({})", r, load);
                 return false;
             }
@@ -2173,7 +2194,7 @@ public:
                 continue;
             }
             auto load = nodes[r.host].shards[r.shard].streaming_write_load;
-            if (load + info.stream_weight > max_write_streaming_load) {
+            if (load > 0 && load + info.stream_weight > max_write_streaming_load) {
                 lblogger.debug("Migration skipped because of write load limit on {} ({})", r, load);
                 return false;
             }

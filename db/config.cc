@@ -1201,13 +1201,13 @@ db::config::config(std::shared_ptr<db::extensions> exts)
         "* org.apache.cassandra.auth.CassandraRoleManager: Stores role data in the system_auth keyspace;\n"
         "* com.scylladb.auth.LDAPRoleManager: Fetches role data from an LDAP server.")
     , permissions_validity_in_ms(this, "permissions_validity_in_ms", liveness::LiveUpdate, value_status::Used, 10000,
-        "How long permissions in cache remain valid. Depending on the authorizer, such as CassandraAuthorizer, fetching permissions can be resource intensive. Permissions caching is disabled when this property is set to 0 or when AllowAllAuthorizer is used. The cached value is considered valid as long as both its value is not older than the permissions_validity_in_ms "
+        "How long authorized statements cache entries remain valid. The cached value is considered valid as long as both its value is not older than the permissions_validity_in_ms "
         "and the cached value has been read at least once during the permissions_validity_in_ms time frame. If any of these two conditions doesn't hold the cached value is going to be evicted from the cache.\n"
         "\n"
         "Related information: Object permissions")
     , permissions_update_interval_in_ms(this, "permissions_update_interval_in_ms", liveness::LiveUpdate, value_status::Used, 2000,
-        "Refresh interval for permissions cache (if enabled). After this interval, cache entries become eligible for refresh. An async reload is scheduled every permissions_update_interval_in_ms time period and the old value is returned until it completes. If permissions_validity_in_ms has a non-zero value, then this property must also have a non-zero value. It's recommended to set this value to be at least 3 times smaller than the permissions_validity_in_ms.")
-    , permissions_cache_max_entries(this, "permissions_cache_max_entries", liveness::LiveUpdate, value_status::Used, 1000,
+        "Refresh interval for authorized statements cache. After this interval, cache entries become eligible for refresh. An async reload is scheduled every permissions_update_interval_in_ms time period and the old value is returned until it completes. If permissions_validity_in_ms has a non-zero value, then this property must also have a non-zero value. It's recommended to set this value to be at least 3 times smaller than the permissions_validity_in_ms. This option additionally controls the permissions refresh interval for LDAP.")
+    , permissions_cache_max_entries(this, "permissions_cache_max_entries", liveness::LiveUpdate, value_status::Unused, 1000,
         "Maximum cached permission entries. Must have a non-zero value if permissions caching is enabled (see a permissions_validity_in_ms description).")
     , server_encryption_options(this, "server_encryption_options", value_status::Used, {/*none*/},
         "Enable or disable inter-node encryption. You must also generate keys and provide the appropriate key and trust store locations and passwords. The available options are:\n"
@@ -1272,7 +1272,7 @@ db::config::config(std::shared_ptr<db::extensions> exts)
     , ignore_dead_nodes_for_replace(this, "ignore_dead_nodes_for_replace", value_status::Used, "", "List dead nodes to ignore for replace operation using a comma-separated list of host IDs. E.g., scylla --ignore-dead-nodes-for-replace 8d5ed9f4-7764-4dbd-bad8-43fddce94b7c,125ed9f4-7777-1dbn-mac8-43fddce9123e")
     , override_decommission(this, "override_decommission", value_status::Deprecated, false, "Set true to force a decommissioned node to join the cluster (cannot be set if consistent-cluster-management is enabled).")
     , enable_repair_based_node_ops(this, "enable_repair_based_node_ops", liveness::LiveUpdate, value_status::Used, true, "Set true to use enable repair based node operations instead of streaming based.")
-    , allowed_repair_based_node_ops(this, "allowed_repair_based_node_ops", liveness::LiveUpdate, value_status::Used, "replace,removenode,rebuild,bootstrap,decommission", "A comma separated list of node operations which are allowed to enable repair based node operations. The operations can be bootstrap, replace, removenode, decommission and rebuild.")
+    , allowed_repair_based_node_ops(this, "allowed_repair_based_node_ops", liveness::LiveUpdate, value_status::Used, "replace,removenode,rebuild", "A comma separated list of node operations which are allowed to enable repair based node operations. The operations can be bootstrap, replace, removenode, decommission and rebuild.")
     , enable_compacting_data_for_streaming_and_repair(this, "enable_compacting_data_for_streaming_and_repair", liveness::LiveUpdate, value_status::Used, true, "Enable the compacting reader, which compacts the data for streaming and repair (load'n'stream included) before sending it to, or synchronizing it with peers. Can reduce the amount of data to be processed by removing dead data, but adds CPU overhead.")
     , enable_tombstone_gc_for_streaming_and_repair(this, "enable_tombstone_gc_for_streaming_and_repair", liveness::LiveUpdate, value_status::Used, false,
             "If the compacting reader is enabled for streaming and repair (see enable_compacting_data_for_streaming_and_repair), allow it to garbage-collect tombstones."
@@ -1292,7 +1292,7 @@ db::config::config(std::shared_ptr<db::extensions> exts)
     , fd_initial_value_ms(this, "fd_initial_value_ms", value_status::Used, 2 * 1000, "The initial failure_detector interval time in milliseconds.")
     , shutdown_announce_in_ms(this, "shutdown_announce_in_ms", value_status::Used, 2 * 1000, "Time a node waits after sending gossip shutdown message in milliseconds. Same as -Dcassandra.shutdown_announce_in_ms in cassandra.")
     , developer_mode(this, "developer_mode", value_status::Used, DEVELOPER_MODE_DEFAULT, "Relax environment checks. Setting to true can reduce performance and reliability significantly.")
-    , skip_wait_for_gossip_to_settle(this, "skip_wait_for_gossip_to_settle", value_status::Used, -1, "An integer to configure the wait for gossip to settle. -1: wait normally, 0: do not wait at all, n: wait for at most n polls. Same as -Dcassandra.skip_wait_for_gossip_to_settle in cassandra.")
+    , skip_wait_for_gossip_to_settle(this, "skip_wait_for_gossip_to_settle", value_status::Deprecated, -1, "An integer to configure the wait for gossip to settle. -1: wait normally, 0: do not wait at all, n: wait for at most n polls. Same as -Dcassandra.skip_wait_for_gossip_to_settle in cassandra.")
     , force_gossip_generation(this, "force_gossip_generation", liveness::LiveUpdate, value_status::Used, -1 , "Force gossip to use the generation number provided by user.")
     , experimental_features(this, "experimental_features", value_status::Used, {}, experimental_features_help_string())
     , lsa_reclamation_step(this, "lsa_reclamation_step", value_status::Used, 1, "Minimum number of segments to reclaim in a single step.")
@@ -1527,17 +1527,21 @@ db::config::config(std::shared_ptr<db::extensions> exts)
          "Allows target tablet size to be configured. Defaults to 5G (in bytes). Maintaining tablets at reasonable sizes is important to be able to " \
          "redistribute load. A higher value means tablet migration throughput can be reduced. A lower value may cause number of tablets to increase significantly, " \
          "potentially resulting in performance drawbacks.")
+    , tablet_streaming_read_concurrency_per_shard(this, "tablet_streaming_read_concurrency_per_shard", liveness::LiveUpdate, value_status::Used, 2,
+         "Maximum number of tablets which may be leaving a shard at the same time. Effecting only on topology coordinator. Set to the same value on all nodes.")
+    , tablet_streaming_write_concurrency_per_shard(this, "tablet_streaming_write_concurrency_per_shard", liveness::LiveUpdate, value_status::Used, 2,
+         "Maximum number of tablets which may be pending on a shard at the same time. Effecting only on topology coordinator. Set to the same value on all nodes.")
     , replication_strategy_warn_list(this, "replication_strategy_warn_list", liveness::LiveUpdate, value_status::Used, {locator::replication_strategy_type::simple}, "Controls which replication strategies to warn about when creating/altering a keyspace. Doesn't affect the pre-existing keyspaces.")
     , replication_strategy_fail_list(this, "replication_strategy_fail_list", liveness::LiveUpdate, value_status::Used, {}, "Controls which replication strategies are disallowed to be used when creating/altering a keyspace. Doesn't affect the pre-existing keyspaces.")
     , service_levels_interval(this, "service_levels_interval_ms", liveness::LiveUpdate, value_status::Used, 10000, "Controls how often service levels module polls configuration table")
 
-    , audit(this, "audit", value_status::Used, "none",
+    , audit(this, "audit", value_status::Used, "table",
         "Controls the audit feature:\n"
         "\n"
         "\tnone   : No auditing enabled.\n"
         "\tsyslog : Audit messages sent to Syslog.\n"
         "\ttable  : Audit messages written to column family named audit.audit_log.\n")
-    , audit_categories(this, "audit_categories", liveness::LiveUpdate, value_status::Used, "DCL,DDL,AUTH", "Comma separated list of operation categories that should be audited.")
+    , audit_categories(this, "audit_categories", liveness::LiveUpdate, value_status::Used, "DCL,AUTH,ADMIN", "Comma separated list of operation categories that should be audited.")
     , audit_tables(this, "audit_tables", liveness::LiveUpdate, value_status::Used, "", "Comma separated list of table names (<keyspace>.<table>) that will be audited.")
     , audit_keyspaces(this, "audit_keyspaces", liveness::LiveUpdate, value_status::Used, "", "Comma separated list of keyspaces that will be audited. All tables in those keyspaces will be audited")
     , audit_unix_socket_path(this, "audit_unix_socket_path", value_status::Used, "/dev/log", "The path to the unix socket used for writing to syslog. Only applicable when audit is set to syslog.")
@@ -1587,6 +1591,10 @@ db::config::config(std::shared_ptr<db::extensions> exts)
         "Sets the maximum difference in percentages between the most loaded and least loaded nodes, below which the load balancer considers nodes balanced.")
     , minimal_tablet_size_for_balancing(this, "minimal_tablet_size_for_balancing", liveness::LiveUpdate, value_status::Used, service::default_target_tablet_size / 100,
         "Sets the minimal tablet size for the load balancer. For any tablet smaller than this, the balancer will use this size instead of the actual tablet size.")
+    , migrate_keyspace_to_tablets(this, "migrate_keyspace_to_tablets", value_status::Used, "",
+        "User keyspace to migrate from vnodes to tablets on this node.")
+    , migrate_tables_to_tablets(this, "migrate_tables_to_tablets", value_status::Used, "",
+        "A comma-separated list of user tables, in the keyspace given by `migrate_keyspace_to_tablets` to migrate from vnodes to tablets on this node.")
     /**
     * @Group Ungrouped properties
     */

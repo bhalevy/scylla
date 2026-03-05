@@ -542,6 +542,8 @@ public:
     named_value<double> tablets_initial_scale_factor;
     named_value<unsigned> tablets_per_shard_goal;
     named_value<uint64_t> target_tablet_size_in_bytes;
+    named_value<unsigned> tablet_streaming_read_concurrency_per_shard;
+    named_value<unsigned> tablet_streaming_write_concurrency_per_shard;
 
     named_value<std::vector<enum_option<replication_strategy_restriction_t>>> replication_strategy_warn_list;
     named_value<std::vector<enum_option<replication_strategy_restriction_t>>> replication_strategy_fail_list;
@@ -605,6 +607,8 @@ public:
     named_value<bool> force_capacity_based_balancing;
     named_value<float> size_based_balance_threshold_percentage;
     named_value<uint64_t> minimal_tablet_size_for_balancing;
+    named_value<sstring> migrate_keyspace_to_tablets;
+    named_value<sstring> migrate_tables_to_tablets;
 
     named_value<double> background_writer_scheduling_quota;
     named_value<bool> auto_adjust_flush_quota;

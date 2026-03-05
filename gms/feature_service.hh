@@ -81,6 +81,7 @@ public:
     gms::feature user_defined_functions { *this, "UDF"sv };
     gms::feature alternator_streams { *this, "ALTERNATOR_STREAMS"sv };
     gms::feature alternator_ttl { *this, "ALTERNATOR_TTL"sv };
+    gms::feature cql_row_ttl { *this, "CQL_ROW_TTL"sv };
     gms::feature range_scan_data_variant { *this, "RANGE_SCAN_DATA_VARIANT"sv };
     gms::feature cdc_generations_v2 { *this, "CDC_GENERATIONS_V2"sv };
     gms::feature user_defined_aggregates { *this, "UDA"sv };
@@ -111,6 +112,7 @@ public:
     gms::feature large_collection_detection { *this, "LARGE_COLLECTION_DETECTION"sv };
     gms::feature range_tombstone_and_dead_rows_detection { *this, "RANGE_TOMBSTONE_AND_DEAD_ROWS_DETECTION"sv };
     gms::feature truncate_as_topology_operation { *this, "TRUNCATE_AS_TOPOLOGY_OPERATION"sv };
+    gms::feature snapshot_as_topology_operation { *this, "SNAPSHOT_AS_TOPOLOGY_OPERATION"sv };
     gms::feature secondary_indexes_on_static_columns { *this, "SECONDARY_INDEXES_ON_STATIC_COLUMNS"sv };
     gms::feature tablets { *this, "TABLETS"sv };
     gms::feature table_digest_insensitive_to_expiry { *this, "TABLE_DIGEST_INSENSITIVE_TO_EXPIRY"sv };
@@ -183,12 +185,12 @@ public:
     gms::feature size_based_load_balancing { *this, "SIZE_BASED_LOAD_BALANCING"sv };
     gms::feature topology_noop_request { *this, "TOPOLOGY_NOOP_REQUEST"sv };
     gms::feature tablets_intermediate_fallback_cleanup { *this, "TABLETS_INTERMEDIATE_FALLBACK_CLEANUP"sv };
+    gms::feature batchlog_v2 { *this, "BATCHLOG_V2"sv };
 public:
 
     const std::unordered_map<sstring, std::reference_wrapper<feature>>& registered_features() const;
 
     static std::set<sstring> to_feature_set(sstring features_string);
-    future<> enable_features_on_join(gossiper&, db::system_keyspace&, service::storage_service&);
     future<> on_system_tables_loaded(db::system_keyspace& sys_ks);
 
     // Performs the feature check.

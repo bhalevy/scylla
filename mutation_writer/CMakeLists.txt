@@ -5,6 +5,7 @@ target_sources(mutation_writer
     multishard_writer.cc
     partition_based_splitting_writer.cc
     shard_based_splitting_writer.cc
+    vnode_based_splitting_writer.cc
     timestamp_based_splitting_writer.cc
     token_group_based_splitting_writer.cc)
 target_include_directories(mutation_writer

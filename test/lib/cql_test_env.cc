@@ -15,6 +15,7 @@
 #include "db/view/view_building_worker.hh"
 #include "replica/database_fwd.hh"
 #include "test/lib/cql_test_env.hh"
+#include "test/lib/test_utils.hh"
 #include "cdc/generation_service.hh"
 #include "cql3/functions/functions.hh"
 #include "cql3/query_processor.hh"
@@ -82,7 +83,6 @@
 #include "utils/disk_space_monitor.hh"
 
 #include <sys/time.h>
-#include <sys/resource.h>
 
 using namespace std::chrono_literals;
 
@@ -222,26 +222,10 @@ private:
         }
         return ::make_shared<service::query_state>(_core_local.local().client_state, empty_service_permit());
     }
-    static void adjust_rlimit() {
-        // Tests should use 1024 file descriptors, but don't punish them
-        // with weird behavior if they do.
-        //
-        // Since this more of a courtesy, don't make the situation worse if
-        // getrlimit/setrlimit fail for some reason.
-        struct rlimit lim;
-        int r = getrlimit(RLIMIT_NOFILE, &lim);
-        if (r == -1) {
-            return;
-        }
-        if (lim.rlim_cur < lim.rlim_max) {
-            lim.rlim_cur = lim.rlim_max;
-            setrlimit(RLIMIT_NOFILE, &lim);
-        }
-    }
 public:
     single_node_cql_env()
     {
-        adjust_rlimit();
+        tests::adjust_rlimit();
     }
 
     virtual future<::shared_ptr<cql_transport::messages::result_message>> execute_cql(std::string_view text) override {
@@ -294,7 +278,15 @@ public:
         cql3::prepared_cache_key_type id,
         std::unique_ptr<cql3::query_options> qo) override
     {
-        auto prepared = local_qp().get_prepared(id);
+        auto qs = make_query_state();
+        bool needs_authorization = false;
+        // First, try to lookup in the cache of already authorized statements. If the corresponding entry is not found there
+        // look for the prepared statement and then authorize it.
+        auto prepared = local_qp().get_prepared(qs->get_client_state().user(), id);
+        if (!prepared) {
+            needs_authorization = true;
+            prepared = local_qp().get_prepared(id);
+        }
         if (!prepared) {
             throw not_prepared_exception(id);
         }
@@ -303,9 +295,8 @@ public:
         SCYLLA_ASSERT(stmt->get_bound_terms() == qo->get_values_count());
         qo->prepare(prepared->bound_names);
 
-        auto qs = make_query_state();
         auto& lqo = *qo;
-        return local_qp().execute_prepared_without_checking_exception_message(*qs, std::move(stmt), lqo, std::move(prepared), std::move(id), true)
+        return local_qp().execute_prepared_without_checking_exception_message(*qs, std::move(stmt), lqo, std::move(prepared), std::move(id), needs_authorization)
             .then([qs, qo = std::move(qo)] (auto msg) {
                 return cql_transport::messages::propagate_exception_as_future(std::move(msg));
             });
@@ -877,22 +868,17 @@ private:
             std::set<gms::inet_address> seeds;
             auto seed_provider = db::config::seed_provider_type();
             if (seed_provider.parameters.contains("seeds")) {
-                size_t begin = 0;
-                size_t next = 0;
-                sstring seeds_str = seed_provider.parameters.find("seeds")->second;
-                while (begin < seeds_str.length() && begin != (next=seeds_str.find(",",begin))) {
-                    seeds.emplace(gms::inet_address(seeds_str.substr(begin,next-begin)));
-                    begin = next+1;
+                for (const auto& seed : utils::split_comma_separated_list(seed_provider.parameters.at("seeds"))) {
+                    seeds.emplace(seed);
                 }
             }
             if (seeds.empty()) {
-                seeds.emplace(gms::inet_address("127.0.0.1"));
+                seeds.emplace("127.0.0.1");
             }
 
             gms::gossip_config gcfg;
             gcfg.cluster_name = "Test Cluster";
             gcfg.seeds = std::move(seeds);
-            gcfg.skip_wait_for_gossip_to_settle = 0;
             gcfg.shutdown_announce_ms = 0;
             _gossiper.start(std::ref(abort_sources), std::ref(_token_metadata), std::ref(_ms), std::move(gcfg), std::ref(_gossip_address_map)).get();
             auto stop_ms_fd_gossiper = defer_verbose_shutdown("gossiper", [this] {
@@ -948,7 +934,7 @@ private:
 
             service::raft_group0 group0_service{
                     abort_sources.local(), _group0_registry.local(), _ms,
-                    _gossiper.local(), _feature_service.local(), _sys_ks.local(), group0_client, scheduling_groups.gossip_scheduling_group};
+                    _gossiper.local(), _feature_service.local(), group0_client, scheduling_groups.gossip_scheduling_group};
 
             auto compression_dict_updated_callback = [] (std::string_view) { return make_ready_future<>(); };
 
@@ -1151,11 +1137,6 @@ private:
             startlog.info("Verifying that all of the keyspaces are RF-rack-valid");
             _db.local().check_rf_rack_validity(_token_metadata.local().get());
 
-            utils::loading_cache_config perm_cache_config;
-            perm_cache_config.max_size = cfg->permissions_cache_max_entries();
-            perm_cache_config.expiry = std::chrono::milliseconds(cfg->permissions_validity_in_ms());
-            perm_cache_config.refresh = std::chrono::milliseconds(cfg->permissions_update_interval_in_ms());
-
             const qualified_name qualified_authorizer_name(auth::meta::AUTH_PACKAGE_NAME, cfg->authorizer());
             const qualified_name qualified_authenticator_name(auth::meta::AUTH_PACKAGE_NAME, cfg->authenticator());
             const qualified_name qualified_role_manager_name(auth::meta::AUTH_PACKAGE_NAME, cfg->role_manager());
@@ -1165,7 +1146,7 @@ private:
             auth_config.authenticator_java_name = qualified_authenticator_name;
             auth_config.role_manager_java_name = qualified_role_manager_name;
 
-            _auth_service.start(perm_cache_config, std::ref(_qp), std::ref(group0_client), std::ref(_mnotifier), std::ref(_mm), auth_config, maintenance_socket_enabled::no, std::ref(_auth_cache)).get();
+            _auth_service.start(std::ref(_qp), std::ref(group0_client), std::ref(_mnotifier), std::ref(_mm), auth_config, maintenance_socket_enabled::no, std::ref(_auth_cache)).get();
 
             _auth_service.invoke_on_all([this] (auth::service& auth) {
                 return auth.start(_mm.local(), _sys_ks.local());
@@ -1196,7 +1177,7 @@ private:
             bmcfg.replay_timeout = cfg_in.batchlog_replay_timeout.value_or(2s);
             bmcfg.delay = cfg_in.batchlog_delay;
             bmcfg.replay_cleanup_after_replays = cfg->batchlog_replay_cleanup_after_replays();
-            _batchlog_manager.start(std::ref(_qp), std::ref(_sys_ks), bmcfg).get();
+            _batchlog_manager.start(std::ref(_qp), std::ref(_sys_ks), std::ref(_feature_service), bmcfg).get();
             auto stop_bm = defer_verbose_shutdown("batchlog manager", [this] {
                 _batchlog_manager.stop().get();
             });

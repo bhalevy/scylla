@@ -154,6 +154,7 @@ def make_scylla_conf(mode: str, workdir: pathlib.Path, host_addr: str, seed_addr
         'rf_rack_valid_keyspaces': True,
 
         'alternator_allow_system_table_write': True,
+        'alternator_ttl_period_in_seconds': 0.5,
     }
 
 # Seastar options can not be passed through scylla.yaml, use command line
@@ -216,15 +217,26 @@ async def with_file_lock(lock_path: pathlib.Path) -> AsyncIterator[None]:
 
 async def get_scylla_2025_1_executable(build_mode: str) -> str:
     async def run_process(cmd, **kwargs):
-        proc = await asyncio.create_subprocess_exec(*cmd, **kwargs)
-        await proc.communicate()
-        assert proc.returncode == 0
+        proc = await asyncio.create_subprocess_exec(
+            *cmd, stderr=asyncio.subprocess.PIPE, **kwargs)
+        _, stderr = await proc.communicate()
+        if proc.returncode != 0:
+            raise RuntimeError(
+                f"Command {cmd} failed with exit code {proc.returncode}: {stderr.decode(errors='replace').strip()}"
+            )
 
     is_debug = build_mode == 'debug' or build_mode == 'sanitize'
     package = "scylla-debug" if is_debug else "scylla"
     arch = platform.machine()
     url = f'https://downloads.scylladb.com/downloads/scylla/relocatable/scylladb-2025.1/{package}-2025.1.0-0.20250325.9dca28d2b818.{arch}.tar.gz'
 
+    return await get_scylla_executable(url)
+
+async def get_scylla_executable(url: str) -> str:
+    async def run_process(cmd, **kwargs):
+        proc = await asyncio.create_subprocess_exec(*cmd, **kwargs)
+        await proc.communicate()
+        assert proc.returncode == 0
     archive_filename = urllib.parse.urlparse(url).path.split("/")[-1]
 
     xdg_cache_dir = pathlib.Path(os.getenv("XDG_CACHE_HOME", str(pathlib.Path.home() / ".cache")))
@@ -245,7 +257,7 @@ async def get_scylla_2025_1_executable(build_mode: str) -> str:
             if not unpacked_marker.exists():
                 if not downloaded_marker.exists():
                     archive_path.unlink(missing_ok=True)
-                    await run_process(["curl", "--retry", "10", "--fail", "--silent", "--show-error", "--output", archive_path, url])
+                    await run_process(["curl", "--retry", "40", "--retry-max-time", "60", "--fail", "--silent", "--show-error", "--retry-all-errors", "--output", archive_path, url])
                     downloaded_marker.touch()
                 shutil.rmtree(unpack_dir, ignore_errors=True)
                 unpack_dir.mkdir(exist_ok=True, parents=True)
@@ -819,7 +831,6 @@ class ScyllaServer:
             stderr=self.log_file,
             stdout=self.log_file,
             env=env,
-            preexec_fn=os.setsid,
         )
 
         if expected_server_up_state == ServerUpState.PROCESS_STARTED:

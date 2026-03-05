@@ -66,7 +66,6 @@ struct gossip_config {
     uint32_t ring_delay_ms = 30 * 1000;
     uint32_t shadow_round_ms = 300 * 1000;
     uint32_t shutdown_announce_ms = 2 * 1000;
-    uint32_t skip_wait_for_gossip_to_settle = -1;
     utils::updateable_value<uint32_t> failure_detector_timeout_ms;
     utils::updateable_value<int32_t> force_gossip_generation;
     utils::updateable_value<utils::UUID> recovery_leader;
@@ -212,8 +211,6 @@ public:
     };
     static constexpr std::chrono::milliseconds INTERVAL{1000};
     static constexpr std::chrono::hours A_VERY_LONG_TIME{24 * 3};
-
-    static constexpr std::chrono::milliseconds GOSSIP_SETTLE_MIN_WAIT_MS{5000};
 
     // Maximum difference between remote generation value and generation
     // value this node would get if this node were restarted that we are
@@ -525,9 +522,6 @@ public:
     future<> wait_alive(std::vector<locator::host_id> nodes, std::chrono::milliseconds timeout);
     future<> wait_alive(noncopyable_function<std::vector<locator::host_id>()> get_nodes, std::chrono::milliseconds timeout);
 
-    // Wait for `n` live nodes to show up in gossip (including ourself).
-    future<> wait_for_live_nodes_to_show_up(size_t n);
-
     // Get live members synchronized to all shards
     future<std::set<inet_address>> get_live_members_synchronized();
 
@@ -663,12 +657,7 @@ public:
 public:
     std::string_view get_gossip_status(const endpoint_state& ep_state) const noexcept;
     std::string_view get_gossip_status(const locator::host_id& endpoint) const noexcept;
-public:
-    future<> wait_for_gossip_to_settle() const;
-    future<> wait_for_range_setup() const;
 private:
-    future<> wait_for_gossip(std::chrono::milliseconds, std::optional<int32_t> = {}) const;
-
     uint64_t _nr_run = 0;
     uint64_t _msg_processing = 0;
 
@@ -679,6 +668,7 @@ private:
     netw::messaging_service& _messaging;
     gossip_address_map& _address_map;
     gossip_config _gcfg;
+    condition_variable _failure_detector_loop_cv;
     // Get features supported by a particular node
     std::set<sstring> get_supported_features(locator::host_id endpoint) const;
     locator::token_metadata_ptr get_token_metadata_ptr() const noexcept;
@@ -705,6 +695,7 @@ public:
 private:
     future<> failure_detector_loop();
     future<> failure_detector_loop_for_node(locator::host_id node, generation_type gossip_generation, uint64_t live_endpoints_version);
+    future<> failure_detector_loop_sleep(std::chrono::seconds duration);
 };
 
 

@@ -101,9 +101,9 @@ distributed_loader::lock_table(global_table_ptr& table, sharded<sstables::sstabl
 //  - The second part calls each shard's distributed object to reshard the SSTables they were
 //    assigned.
 future<>
-distributed_loader::reshard(sharded<sstables::sstable_directory>& dir, sharded<replica::database>& db, sstring ks_name, sstring table_name, compaction::compaction_sstable_creator_fn creator, compaction::owned_ranges_ptr owned_ranges_ptr) {
+distributed_loader::reshard(sharded<sstables::sstable_directory>& dir, sharded<replica::database>& db, sstring ks_name, sstring table_name, compaction::compaction_sstable_creator_fn creator, compaction::owned_ranges_ptr owned_ranges_ptr, bool vnodes_resharding) {
     auto& compaction_module = db.local().get_compaction_manager().get_task_manager_module();
-    auto task = co_await compaction_module.make_and_start_task<compaction::table_resharding_compaction_task_impl>({}, std::move(ks_name), std::move(table_name), dir, db, std::move(creator), std::move(owned_ranges_ptr));
+    auto task = co_await compaction_module.make_and_start_task<compaction::table_resharding_compaction_task_impl>({}, std::move(ks_name), std::move(table_name), dir, db, std::move(creator), std::move(owned_ranges_ptr), vnodes_resharding);
     co_await task->done();
 }
 
@@ -283,15 +283,17 @@ class table_populator {
     sstring _ks;
     sstring _cf;
     global_table_ptr& _global_table;
+    bool _migrate_to_tablets;
     std::vector<lw_shared_ptr<sharded<sstables::sstable_directory>>> _sstable_directories;
     sstables::sstable_version_types _version_for_reshaping = sstables::oldest_writable_sstable_format;
 
 public:
-    table_populator(global_table_ptr& ptr, sharded<replica::database>& db, sstring ks, sstring cf)
+    table_populator(global_table_ptr& ptr, sharded<replica::database>& db, sstring ks, sstring cf, bool migrate_to_tablets = false)
         : _db(db)
         , _ks(std::move(ks))
         , _cf(std::move(cf))
         , _global_table(ptr)
+        , _migrate_to_tablets(migrate_to_tablets)
     {
     }
 
@@ -394,15 +396,20 @@ sstables::shared_sstable make_sstable(replica::table& table, sstables::sstable_s
 
 future<> table_populator::populate_subdir(sharded<sstables::sstable_directory>& directory) {
     auto state = directory.local().state();
-    dblog.debug("Populating {}/{}/{} state={}", _ks, _cf, _global_table->get_storage_options(), state);
+    dblog.debug("Populating {}/{}/{} state={} migrate_to_tablets={}", _ks, _cf, _global_table->get_storage_options(), state, _migrate_to_tablets);
 
+    const auto& erm = _db.local().find_keyspace(_ks).get_static_effective_replication_map();
+    compaction::owned_ranges_ptr owned_ranges_ptr;
+    if (_migrate_to_tablets) {
+        owned_ranges_ptr = compaction::make_owned_ranges_ptr(co_await _db.local().get_keyspace_local_ranges(erm));
+    }
     co_await distributed_loader::reshard(directory, _db, _ks, _cf, [this, state] (shard_id shard) mutable {
         auto gen = smp::submit_to(shard, [this] () {
             return _global_table->calculate_generation_for_new_table();
         }).get();
 
         return make_sstable(*_global_table, state, gen, _version_for_reshaping);
-    });
+    }, owned_ranges_ptr, _migrate_to_tablets);
 
     // The node is offline at this point so we are very lenient with what we consider
     // offstrategy.
@@ -438,15 +445,28 @@ future<> distributed_loader::populate_keyspace(sharded<replica::database>& db,
 {
     dblog.info("Populating Keyspace {}", ks_name);
 
+    std::string tables_opt;
+    std::unordered_set<std::string_view> migrate_tables;
+    if (auto ks_opt = db.local().get_config().migrate_keyspace_to_tablets(); ks_opt == ks_name) {
+        tables_opt = db.local().get_config().migrate_tables_to_tablets();
+        if (tables_opt.empty()) {
+            throw std::runtime_error("migrate_tables_to_tablets must be set when migrate_keyspace_to_tablets is set");
+        }
+        for (const auto& t : std::views::split(tables_opt, ",")) {
+            migrate_tables.insert(std::string_view(t));
+        }
+    }
+
     co_await coroutine::parallel_for_each(ks.metadata()->cf_meta_data() | std::views::values, [&] (schema_ptr s) -> future<> {
         auto uuid = s->id();
         sstring cfname = s->cf_name();
         auto gtable = co_await get_table_on_all_shards(db, ks_name, cfname);
         auto& cf = *gtable;
+        bool migrate_to_tablets = migrate_tables.erase(cfname) != 0;
 
-        dblog.info("Keyspace {}: Reading CF {} id={} version={} storage={}", ks_name, cfname, uuid, s->version(), cf.get_storage_options());
+        dblog.info("Keyspace {}: Reading CF {} id={} version={} storage={} migrate_to_tablets={}", ks_name, cfname, uuid, s->version(), cf.get_storage_options(), migrate_to_tablets);
 
-        auto metadata = table_populator(gtable, db, ks_name, cfname);
+        auto metadata = table_populator(gtable, db, ks_name, cfname, migrate_to_tablets);
         std::exception_ptr ex;
 
         try {
