@@ -259,6 +259,7 @@ test_env::impl::impl(test_env_config cfg, sstable_compressor_factory& scfarg, ss
                 .memory_reclaim_threshold = db_config->components_memory_reclaim_threshold,
                 .data_file_directories = db_config->data_file_directories(),
                 .format = db_config->sstable_format,
+                .large_data_records_per_sstable = db_config->compaction_large_data_records_per_sstable,
             },
             feature_service,
             cache_tracker,
