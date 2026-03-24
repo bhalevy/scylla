@@ -12,6 +12,7 @@
 #include <seastar/core/when_all.hh>
 #include "db/system_keyspace.hh"
 #include "db/large_data_handler.hh"
+#include "keys/keys.hh"
 #include "sstables/sstables.hh"
 #include "gms/feature_service.hh"
 #include "cql3/untyped_result_set.hh"
@@ -73,10 +74,6 @@ void large_data_handler::plug_system_keyspace(db::system_keyspace& sys_ks) noexc
 
 future<> large_data_handler::unplug_system_keyspace() noexcept {
     co_await _sys_ks.unplug();
-}
-
-template <typename T> static std::string key_to_str(const T& key, const schema& s) {
-    return fmt::to_string(key.with_schema(s));
 }
 
 sstring large_data_handler::sst_filename(const sstables::sstable& sst) {

@@ -932,6 +932,13 @@ struct fmt::formatter<clustering_key_prefix::with_schema_wrapper> : fmt::formatt
     }
 };
 
+// Convert a key (partition_key, clustering_key_prefix, etc.) to a human-readable
+// string using its schema.
+template <typename T>
+std::string key_to_str(const T& key, const schema& s) {
+    return fmt::to_string(key.with_schema(s));
+}
+
 template<>
 struct appending_hash<partition_key_view> {
     template<typename Hasher>
