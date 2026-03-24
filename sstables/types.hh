@@ -548,6 +548,7 @@ enum class scylla_metadata_type : uint32_t {
     SSTableIdentifier = 10,
     Schema = 11,
     ComponentsDigests = 12,
+    LargeDataRecords = 13,
 };
 
 // UUID is used for uniqueness across nodes, such that an imported sstable
@@ -595,6 +596,31 @@ struct large_data_stats_entry {
     auto describe_type(sstable_version_types v, Describer f) { return f(max_value, threshold, above_threshold); }
 };
 
+// A single top-N large data record stored in the SSTable's scylla metadata.
+// Records are written by the sstable writer and survive tablet/shard migration
+// because they live in the SSTable file itself rather than in a CQL system table.
+struct large_data_record {
+    large_data_type type;
+    disk_string<uint32_t> partition_key;    // binary serialized partition key (sstables::key::get_bytes())
+    disk_string<uint32_t> clustering_key;   // binary serialized CK (clustering_key_prefix::representation()), empty if N/A
+    disk_string<uint32_t> column_name;      // column name as text, empty for partition/row entries
+    uint64_t value;                         // size in bytes (partition, row, or cell size depending on type)
+    // Type-dependent element count:
+    //   partition_size, rows_in_partition: number of rows in the partition
+    //   cell_size, elements_in_collection: number of elements in the collection (0 for non-collection cells)
+    //   row_size: 0
+    uint64_t elements_count;
+    // Partition-level auxiliary fields (meaningful only for partition_size records, 0 otherwise):
+    uint64_t range_tombstones;              // number of range tombstones in the partition
+    uint64_t dead_rows;                     // number of dead rows in the partition
+
+    template <typename Describer>
+    auto describe_type(sstable_version_types v, Describer f) {
+        return f(type, partition_key, clustering_key, column_name, value,
+                 elements_count, range_tombstones, dead_rows);
+    }
+};
+
 // Types of extended timestamp statistics.
 //
 // Note: For extensibility, never reuse an identifier,
@@ -639,6 +665,7 @@ struct sstable_schema_type {
 struct scylla_metadata {
     using extension_attributes = disk_hash<uint32_t, disk_string<uint32_t>, disk_string<uint32_t>>;
     using large_data_stats = disk_hash<uint32_t, large_data_type, large_data_stats_entry>;
+    using large_data_records = disk_array<uint32_t, large_data_record>;
     using sstable_origin = disk_string<uint32_t>;
     using scylla_build_id = disk_string<uint32_t>;
     using scylla_version = disk_string<uint32_t>;
@@ -659,7 +686,8 @@ struct scylla_metadata {
             disk_tagged_union_member<scylla_metadata_type, scylla_metadata_type::ExtTimestampStats, ext_timestamp_stats>,
             disk_tagged_union_member<scylla_metadata_type, scylla_metadata_type::SSTableIdentifier, sstable_identifier>,
             disk_tagged_union_member<scylla_metadata_type, scylla_metadata_type::Schema, sstable_schema>,
-            disk_tagged_union_member<scylla_metadata_type, scylla_metadata_type::ComponentsDigests, components_digests>
+            disk_tagged_union_member<scylla_metadata_type, scylla_metadata_type::ComponentsDigests, components_digests>,
+            disk_tagged_union_member<scylla_metadata_type, scylla_metadata_type::LargeDataRecords, large_data_records>
             > data;
     std::optional<uint32_t> digest;
 

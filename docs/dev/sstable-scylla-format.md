@@ -32,6 +32,7 @@ in individual sections
         | scylla_version
         | ext_timestamp_stats
         | components_digests
+        | large_data_records
 
 `sharding_metadata` (tag 1): describes what token sub-ranges are included in this
 sstable. This is used, when loading the sstable, to determine which shard(s)
@@ -70,6 +71,11 @@ identifier is stable and copied with the rest of the scylla metadata.
 all SSTable component files that are checksummed during write. Each entry maps a component
 type (e.g., Data, Index, Filter, Statistics, etc.) to its CRC32 checksum. This allows
 verifying the integrity of individual component files.
+
+`large_data_records` (tag 13): an `array<large_data_record>` with the top-N individual large
+data entries (partitions, rows, cells) found during the sstable write. Unlike `large_data_stats`
+which only stores aggregate statistics, this records the actual keys and sizes so they survive
+tablet/shard migration.
 
 The [scylla sstable dump-scylla-metadata](https://github.com/scylladb/scylladb/blob/master/docs/operating-scylla/admin-tools/scylla-sstable.rst#dump-scylla-metadata) tool
 can be used to dump the scylla metadata in JSON format.
@@ -169,3 +175,35 @@ row, and cell sizes and about number of rows in partition.
 For each entry, it keeps the largest value for the entry type,
 the respective large_data threshold and the number of entities
 that are above the threshold.
+
+## large_data_records subcomponent
+
+    large_data_records = record_count large_data_record*
+    record_count = be32
+    large_data_record = large_data_type partition_key clustering_key column_name value elements_count range_tombstones dead_rows
+        large_data_type = be32     // same enum as in large_data_stats
+        partition_key = string32   // binary serialized partition key (sstables::key::get_bytes())
+        clustering_key = string32  // binary serialized clustering key (clustering_key_prefix::representation()), empty if N/A
+        column_name = string32     // column name as text, empty for partition/row entries
+        value = be64               // size in bytes (partition, row, or cell size depending on type)
+        elements_count = be64      // type-dependent element count (see below)
+        range_tombstones = be64    // number of range tombstones (partition_size records only, 0 otherwise)
+        dead_rows = be64           // number of dead rows (partition_size records only, 0 otherwise)
+    string32 = string32_size byte*
+    string32_size = be32
+
+The large_data_records component holds individual top-N large data entries
+(partitions, rows, cells) found during the sstable write. Unlike large_data_stats,
+which only stores aggregate per-type statistics (max value, threshold, count above
+threshold), large_data_records preserves the actual partition key, clustering key,
+column name, and size for each above-threshold entry. This information is embedded
+in the sstable file itself and therefore survives tablet/shard migration.
+
+The elements_count field carries a type-dependent element count:
+
+- For partition_size and rows_in_partition records: number of rows in the partition
+- For cell_size and elements_in_collection records: number of elements in the collection (0 for non-collection cells)
+- For row_size records: 0
+
+The range_tombstones and dead_rows fields are meaningful only for
+partition_size records and are zero for all other record types.

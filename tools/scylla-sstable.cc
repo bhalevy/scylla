@@ -30,6 +30,7 @@
 #include "db/corrupt_data_handler.hh"
 #include "db/object_storage_endpoint_param.hh"
 #include "gms/feature_service.hh"
+#include "keys/keys.hh"
 #include "reader_concurrency_semaphore.hh"
 #include "readers/combined.hh"
 #include "readers/filtering.hh"
@@ -1338,6 +1339,7 @@ const char* to_string(sstables::scylla_metadata_type t) {
         case sstables::scylla_metadata_type::SSTableIdentifier: return "sstable_identifier";
         case sstables::scylla_metadata_type::Schema: return "schema";
         case sstables::scylla_metadata_type::ComponentsDigests: return "components_digests";
+        case sstables::scylla_metadata_type::LargeDataRecords: return "large_data_records";
     }
     std::abort();
 }
@@ -1363,12 +1365,13 @@ const char* to_string(sstables::ext_timestamp_stats_type t) {
 
 class scylla_metadata_visitor {
     json_writer& _writer;
+    schema_ptr _schema;
 
     dht::token as_token(const sstables::disk_string<uint16_t>& ds) const {
         return dht::token(dht::token::kind::key, bytes_view(ds));
     }
 public:
-    scylla_metadata_visitor(json_writer& writer) : _writer(writer) { }
+    scylla_metadata_visitor(json_writer& writer, schema_ptr schema = nullptr) : _writer(writer), _schema(std::move(schema)) { }
 
     void operator()(const sstables::sharding_metadata& val) const {
         _writer.StartArray();
@@ -1450,6 +1453,32 @@ public:
             _writer.Uint(v.above_threshold);
             _writer.EndObject();
         }
+        _writer.EndObject();
+    }
+    void operator()(const sstables::large_data_record& val) const {
+        _writer.StartObject();
+        _writer.Key("type");
+        _writer.String(to_string(val.type));
+        _writer.Key("partition_key");
+        auto pk = sstables::key_view(val.partition_key.value).to_partition_key(*_schema);
+        _writer.String(key_to_str(pk, *_schema));
+        _writer.Key("clustering_key");
+        if (!val.clustering_key.value.empty()) {
+            auto ck = clustering_key_prefix::from_bytes(val.clustering_key.value);
+            _writer.String(key_to_str(ck, *_schema));
+        } else {
+            _writer.String("");
+        }
+        _writer.Key("column_name");
+        _writer.String(disk_string_to_string(val.column_name));
+        _writer.Key("value");
+        _writer.Uint64(val.value);
+        _writer.Key("elements_count");
+        _writer.Uint64(val.elements_count);
+        _writer.Key("range_tombstones");
+        _writer.Uint64(val.range_tombstones);
+        _writer.Key("dead_rows");
+        _writer.Uint64(val.dead_rows);
         _writer.EndObject();
     }
     void operator()(const sstables::scylla_metadata::ext_timestamp_stats& val) const {
@@ -1538,7 +1567,7 @@ void dump_scylla_metadata_operation(schema_ptr schema, reader_permit permit, con
             continue;
         }
         for (const auto& [k, v] : m->data.data) {
-            std::visit(scylla_metadata_visitor(writer), v);
+            std::visit(scylla_metadata_visitor(writer, schema), v);
         }
         if (m->digest.has_value()) {
             writer.Key("digest");

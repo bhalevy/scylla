@@ -624,6 +624,7 @@ private:
     // It can be disengaged normally when loading legacy sstables that do not have this
     // information in their scylla metadata.
     std::optional<scylla_metadata::large_data_stats> _large_data_stats;
+    std::optional<scylla_metadata::large_data_records> _large_data_records;
     sstring _origin;
     std::optional<scylla_metadata::ext_timestamp_stats> _ext_timestamp_stats;
     optimized_optional<sstable_id> _sstable_identifier;
@@ -704,7 +705,8 @@ private:
     void write_scylla_metadata(shard_id shard,
                                run_identifier identifier,
                                std::optional<scylla_metadata::large_data_stats> ld_stats,
-                               std::optional<scylla_metadata::ext_timestamp_stats> ts_stats);
+                               std::optional<scylla_metadata::ext_timestamp_stats> ts_stats,
+                               std::optional<scylla_metadata::large_data_records> ld_records = std::nullopt);
 
     future<> read_filter(sstable_open_config cfg = {});
 
@@ -1087,6 +1089,12 @@ public:
     // iff _large_data_stats is available and the requested entry is in
     // the map.  Otherwise, return a disengaged optional.
     std::optional<large_data_stats_entry> get_large_data_stat(large_data_type t) const noexcept;
+
+    // Return the large_data_records stored in scylla_metadata, if present.
+    // Absent on legacy SSTables that predate LargeDataRecords support.
+    const std::optional<scylla_metadata::large_data_records>& get_large_data_records() const noexcept {
+        return _large_data_records;
+    }
 
     // Return the extended timestamp statistics map.
     // Some or all entries may be missing if not present in scylla_metadata
