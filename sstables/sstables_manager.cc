@@ -237,6 +237,7 @@ sstable_writer_config sstables_manager::configure_writer(sstring origin) const {
     cfg.summary_byte_cost = summary_byte_cost(_config.sstable_summary_ratio);
 
     cfg.origin = std::move(origin);
+    cfg.large_data_records_per_sstable = _config.large_data_records_per_sstable();
 
     return cfg;
 }

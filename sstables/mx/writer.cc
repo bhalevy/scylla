@@ -20,8 +20,10 @@
 #include "utils/exceptions.hh"
 #include "db/large_data_handler.hh"
 #include "db/corrupt_data_handler.hh"
+#include "keys/keys.hh"
 
 #include <functional>
+#include <queue>
 #include <boost/iterator/iterator_facade.hpp>
 #include <boost/container/static_vector.hpp>
 
@@ -626,6 +628,46 @@ private:
     large_data_stats_entry _cell_size_entry;
     large_data_stats_entry _elements_in_collection_entry;
 
+    // Bounded min-heaps for top-N large data records, one per large_data_type.
+    // Size-type heaps (partition_size, row_size, cell_size) compare by `value`;
+    // element-count-type heaps (rows_in_partition, elements_in_collection)
+    // compare by `elements_count`.
+    struct large_data_record_cmp_by_value {
+        bool operator()(const large_data_record& a, const large_data_record& b) const {
+            return a.value > b.value; // min-heap: smallest value on top
+        }
+    };
+    struct large_data_record_cmp_by_elements {
+        bool operator()(const large_data_record& a, const large_data_record& b) const {
+            return a.elements_count > b.elements_count; // min-heap: smallest elements_count on top
+        }
+    };
+    using ld_size_heap = std::priority_queue<large_data_record, std::vector<large_data_record>, large_data_record_cmp_by_value>;
+    using ld_elements_heap = std::priority_queue<large_data_record, std::vector<large_data_record>, large_data_record_cmp_by_elements>;
+    ld_size_heap _ld_partition_size_records;
+    ld_elements_heap _ld_rows_in_partition_records;
+    ld_size_heap _ld_row_size_records;
+    ld_size_heap _ld_cell_size_records;
+    ld_elements_heap _ld_elements_in_collection_records;
+
+    // Insert a record into a bounded min-heap, keeping at most N entries.
+    // Uses the heap's own comparator to decide eviction: since the comparator
+    // defines a min-heap (smallest on top), comp(rec, top) is true when rec
+    // is "greater" than top in the heap's ordering, meaning it should replace it.
+    template <typename Heap>
+    void insert_into_ld_heap(Heap& heap, large_data_record rec) {
+        auto max_records = _cfg.large_data_records_per_sstable;
+        if (max_records == 0) {
+            return;
+        }
+        if (heap.size() < max_records) {
+            heap.push(std::move(rec));
+        } else if (typename Heap::value_compare{}(rec, heap.top())) {
+            heap.pop();
+            heap.push(std::move(rec));
+        }
+    }
+
     void init_file_writers();
 
     // Returns the closed writer
@@ -1099,6 +1141,34 @@ void writer::maybe_record_large_partitions(const sstables::sstable& sst, const s
     auto ret = _sst.get_large_data_handler().maybe_record_large_partitions(sst, partition_key, partition_size, rows, range_rombstones, dead_rows).get();
     size_entry.above_threshold += unsigned(bool(ret.size));
     row_count_entry.above_threshold += unsigned(bool(ret.elements));
+
+    // Populate top-N large data records into separate per-type heaps.
+    if (ret.size) {
+        const auto& pk_bytes = partition_key.get_bytes();
+        insert_into_ld_heap(_ld_partition_size_records, large_data_record{
+            .type = large_data_type::partition_size,
+            .partition_key = disk_string<uint32_t>{bytes(pk_bytes)},
+            .clustering_key = disk_string<uint32_t>{bytes()},
+            .column_name = disk_string<uint32_t>{bytes()},
+            .value = partition_size,
+            .elements_count = rows,
+            .range_tombstones = range_rombstones,
+            .dead_rows = dead_rows,
+        });
+    }
+    if (ret.elements) {
+        const auto& pk_bytes = partition_key.get_bytes();
+        insert_into_ld_heap(_ld_rows_in_partition_records, large_data_record{
+            .type = large_data_type::rows_in_partition,
+            .partition_key = disk_string<uint32_t>{bytes(pk_bytes)},
+            .clustering_key = disk_string<uint32_t>{bytes()},
+            .column_name = disk_string<uint32_t>{bytes()},
+            .value = partition_size,
+            .elements_count = rows,
+            .range_tombstones = range_rombstones,
+            .dead_rows = dead_rows,
+        });
+    }
 }
 
 void writer::maybe_record_large_rows(const sstables::sstable& sst, const sstables::key& partition_key,
@@ -1109,6 +1179,16 @@ void writer::maybe_record_large_rows(const sstables::sstable& sst, const sstable
     }
     if (_sst.get_large_data_handler().maybe_record_large_rows(sst, partition_key, clustering_key, row_size).get()) {
         entry.above_threshold++;
+
+        const auto& pk_bytes = partition_key.get_bytes();
+        auto ck_bytes = clustering_key ? clustering_key->view().representation().linearize() : bytes();
+        insert_into_ld_heap(_ld_row_size_records, large_data_record{
+            .type = large_data_type::row_size,
+            .partition_key = disk_string<uint32_t>{bytes(pk_bytes)},
+            .clustering_key = disk_string<uint32_t>{std::move(ck_bytes)},
+            .column_name = disk_string<uint32_t>{bytes()},
+            .value = row_size,
+        });
     };
 }
 
@@ -1128,6 +1208,34 @@ void writer::maybe_record_large_cells(const sstables::sstable& sst, const sstabl
     }
     if (ret.elements) {
         collection_elements_entry.above_threshold++;
+    }
+
+    // Populate top-N large data records into separate per-type heaps.
+    if (ret.size) {
+        const auto& pk_bytes = partition_key.get_bytes();
+        auto ck_bytes = clustering_key ? clustering_key->view().representation().linearize() : bytes();
+        auto col_name = cdef.name_as_text();
+        insert_into_ld_heap(_ld_cell_size_records, large_data_record{
+            .type = large_data_type::cell_size,
+            .partition_key = disk_string<uint32_t>{bytes(pk_bytes)},
+            .clustering_key = disk_string<uint32_t>{std::move(ck_bytes)},
+            .column_name = disk_string<uint32_t>{to_bytes(col_name)},
+            .value = cell_size,
+            .elements_count = collection_elements,
+        });
+    }
+    if (ret.elements) {
+        const auto& pk_bytes = partition_key.get_bytes();
+        auto ck_bytes = clustering_key ? clustering_key->view().representation().linearize() : bytes();
+        auto col_name = cdef.name_as_text();
+        insert_into_ld_heap(_ld_elements_in_collection_records, large_data_record{
+            .type = large_data_type::elements_in_collection,
+            .partition_key = disk_string<uint32_t>{bytes(pk_bytes)},
+            .clustering_key = disk_string<uint32_t>{std::move(ck_bytes)},
+            .column_name = disk_string<uint32_t>{to_bytes(col_name)},
+            .value = cell_size,
+            .elements_count = collection_elements,
+        });
     }
 }
 
@@ -1718,7 +1826,32 @@ void writer::consume_end_of_stream() {
     std::optional<scylla_metadata::ext_timestamp_stats> ts_stats(scylla_metadata::ext_timestamp_stats{
         .map = _collector.get_ext_timestamp_stats()
     });
-    _sst.write_scylla_metadata(_shard, std::move(identifier), std::move(ld_stats), std::move(ts_stats));
+    // Drain all per-type min-heaps into a single large_data_records array.
+    std::optional<scylla_metadata::large_data_records> ld_records;
+    {
+        utils::chunked_vector<large_data_record> records;
+        auto drain_size_heap = [&records](ld_size_heap& heap) {
+            while (!heap.empty()) {
+                records.push_back(std::move(const_cast<large_data_record&>(heap.top())));
+                heap.pop();
+            }
+        };
+        auto drain_elements_heap = [&records](ld_elements_heap& heap) {
+            while (!heap.empty()) {
+                records.push_back(std::move(const_cast<large_data_record&>(heap.top())));
+                heap.pop();
+            }
+        };
+        drain_size_heap(_ld_partition_size_records);
+        drain_elements_heap(_ld_rows_in_partition_records);
+        drain_size_heap(_ld_row_size_records);
+        drain_size_heap(_ld_cell_size_records);
+        drain_elements_heap(_ld_elements_in_collection_records);
+        if (!records.empty()) {
+            ld_records = scylla_metadata::large_data_records{.elements = std::move(records)};
+        }
+    }
+    _sst.write_scylla_metadata(_shard, std::move(identifier), std::move(ld_stats), std::move(ts_stats), std::move(ld_records));
     if (!_cfg.leave_unsealed) {
         _sst.seal_sstable(_cfg.backup).get();
     }

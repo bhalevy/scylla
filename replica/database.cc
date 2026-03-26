@@ -382,6 +382,7 @@ static auto configure_sstables_manager(const db::config& cfg, const database_con
         .memory_reclaim_threshold = cfg.components_memory_reclaim_threshold,
         .data_file_directories = cfg.data_file_directories(),
         .format = cfg.sstable_format,
+        .large_data_records_per_sstable = cfg.compaction_large_data_records_per_sstable,
     };
 }
 

@@ -760,6 +760,8 @@ db::config::config(std::shared_ptr<db::extensions> exts)
         "Log a warning when writing a number of rows larger than this value.")
     , compaction_collection_elements_count_warning_threshold(this, "compaction_collection_elements_count_warning_threshold", liveness::LiveUpdate, value_status::Used, 10000,
         "Log a warning when writing a collection containing more elements than this value.")
+    , compaction_large_data_records_per_sstable(this, "compaction_large_data_records_per_sstable", liveness::LiveUpdate, value_status::Used, 10,
+        "Maximum number of large data records per type to store in each SSTable's scylla metadata.")
     /**
     * @Group Common memtable settings
     */

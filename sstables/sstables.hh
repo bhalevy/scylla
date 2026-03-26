@@ -123,6 +123,7 @@ struct sstable_writer_config {
     size_t summary_byte_cost;
     sstring origin;
     bool correct_pi_block_width = true;
+    uint32_t large_data_records_per_sstable = 10;
 
 private:
     explicit sstable_writer_config() {}
