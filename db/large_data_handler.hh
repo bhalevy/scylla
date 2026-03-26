@@ -98,17 +98,18 @@ public:
     future<above_threshold_result> maybe_record_large_partitions(const sstables::sstable& sst, const sstables::key& partition_key,
             uint64_t partition_size, uint64_t rows, uint64_t range_tombstones, uint64_t dead_rows);
 
-    future<bool> maybe_record_large_cells(const sstables::sstable& sst, const sstables::key& partition_key,
+    future<above_threshold_result> maybe_record_large_cells(const sstables::sstable& sst, const sstables::key& partition_key,
             const clustering_key_prefix* clustering_key, const column_definition& cdef, uint64_t cell_size, uint64_t collection_elements) {
         SCYLLA_ASSERT(running());
-        if (cell_size > _cell_threshold_bytes || collection_elements > _collection_elements_count_threshold) [[unlikely]] {
+        above_threshold_result above_threshold{.size = cell_size > _cell_threshold_bytes, .elements = collection_elements > _collection_elements_count_threshold};
+        if (above_threshold.size || above_threshold.elements) [[unlikely]] {
             return with_sem([&sst, &partition_key, clustering_key, &cdef, cell_size, collection_elements, this] {
                 return record_large_cells(sst, partition_key, clustering_key, cdef, cell_size, collection_elements);
-            }).then([] {
-                return true;
+            }).then([above_threshold] {
+                return above_threshold;
             });
         }
-        return make_ready_future<bool>(false);
+        return make_ready_future<above_threshold_result>();
     }
 
     future<> maybe_delete_large_data_entries(sstables::shared_sstable sst);

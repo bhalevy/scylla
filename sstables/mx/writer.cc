@@ -1122,14 +1122,13 @@ void writer::maybe_record_large_cells(const sstables::sstable& sst, const sstabl
     if (collection_elements_entry.max_value < collection_elements) {
         collection_elements_entry.max_value = collection_elements;
     }
-    if (_sst.get_large_data_handler().maybe_record_large_cells(_sst, *_partition_key, clustering_key, cdef, cell_size, collection_elements).get()) {
-        if (cell_size > cell_size_entry.threshold) {
-            cell_size_entry.above_threshold++;
-        }
-        if (collection_elements > collection_elements_entry.threshold) {
-            collection_elements_entry.above_threshold++;
-        }
-    };
+    auto ret = _sst.get_large_data_handler().maybe_record_large_cells(_sst, *_partition_key, clustering_key, cdef, cell_size, collection_elements).get();
+    if (ret.size) {
+        cell_size_entry.above_threshold++;
+    }
+    if (ret.elements) {
+        collection_elements_entry.above_threshold++;
+    }
 }
 
 void writer::write_cell(bytes_ostream& writer, const clustering_key_prefix* clustering_key, atomic_cell_view cell,
