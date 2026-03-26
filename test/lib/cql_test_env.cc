@@ -1006,9 +1006,7 @@ private:
                 _mnotifier.local().unregister_listener(&_ss.local()).get();
             });
 
-            smp::invoke_on_all([&] {
-                return db::initialize_virtual_tables(_db, _ss, _gossiper, _group0_registry, _sys_ks, _tablet_allocator, _ms, *cfg);
-            }).get();
+            db::initialize_virtual_tables(_db, _ss, _gossiper, _group0_registry, _sys_ks, _tablet_allocator, _ms, *cfg).get();
 
             _qp.invoke_on_all([this, &group0_client] (cql3::query_processor& qp) {
                 qp.start_remote(_mm.local(), _mapreduce_service.local(), _ss.local(), group0_client, 
