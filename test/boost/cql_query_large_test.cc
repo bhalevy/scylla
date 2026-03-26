@@ -90,6 +90,9 @@ SEASTAR_THREAD_TEST_CASE(test_large_data) {
         // Check the only the large row is added to system.large_rows.
         BOOST_REQUIRE_EQUAL(rows.size(), 1);
         auto row0 = rows[0];
+        // The result has 3 columns: partition_key, row_size, and table_name
+        // (CQL adds the filtered partition key column to the result set when
+        // using ALLOW FILTERING with a partial partition key restriction).
         BOOST_REQUIRE_EQUAL(row0.size(), 3);
         BOOST_REQUIRE_EQUAL(to_bytes(*row0[0]), "44");
         BOOST_REQUIRE_EQUAL(to_bytes(*row0[2]), "tbl");
@@ -118,10 +121,11 @@ SEASTAR_THREAD_TEST_CASE(test_large_data) {
 
         e.execute_cql("delete from tbl where a = 44;").get();
 
-        // In order to guarantee that system.large_rows, system.large_cells and system.large_partitions have been updated, we have to
+        // In order to guarantee that system.large_rows, system.large_cells and
+        // system.large_partitions are empty, we need to:
         // * flush, so that a tombstone for the above delete is created.
         // * do a major compaction, so that the tombstone is combined with the old entry,
-        //   and the old sstable is deleted.
+        //   and the old sstable (which holds the large data records in its metadata) is deleted.
         flush(e);
         e.db().invoke_on_all([] (replica::database& dbi) {
             return dbi.get_tables_metadata().parallel_for_each_table([&dbi] (table_id, lw_shared_ptr<replica::table> t) {
@@ -160,6 +164,71 @@ SEASTAR_THREAD_TEST_CASE(test_large_row_count_warning) {
             .with_row({ { utf8_type->decompose("42") },
                         { long_type->decompose(11L) },
                         { utf8_type->decompose("tbl") } });
+
+        return make_ready_future<>();
+    }, cfg).get();
+}
+
+// Test that when a partition exceeds both the size threshold and the row
+// count threshold, system.large_partitions still returns a single row
+// (not two rows with the same clustering key).
+SEASTAR_THREAD_TEST_CASE(test_large_partitions_dual_threshold) {
+    auto cfg = make_shared<db::config>();
+    // Set very low thresholds so that a single partition with a handful
+    // of rows containing modest data exceeds both size and row-count
+    // thresholds simultaneously.
+    cfg->compaction_large_partition_warning_threshold_mb(1);
+    cfg->compaction_rows_count_warning_threshold(10);
+    do_with_cql_env_thread([](cql_test_env& e) {
+        e.execute_cql("create table tbl (a int, b int, c text, primary key (a, b))").get();
+        // Insert enough rows with enough data to exceed 1 MB partition size
+        // AND more than 10 rows.
+        sstring blob(128 * 1024, 'x'); // 128 KB per row
+        for (int i = 0; i < 11; ++i) {
+            e.execute_cql(format("insert into tbl (a, b, c) values (42, {}, '{}');", i, blob)).get();
+        }
+        flush(e);
+
+        // There must be exactly one row in system.large_partitions for
+        // this table.  Before the fix, two rows with the same clustering
+        // key would have been emitted.
+        assert_that(e.execute_cql(
+                "select partition_key, rows from system.large_partitions "
+                "where table_name = 'tbl' allow filtering;").get())
+            .is_rows()
+            .with_size(1);
+
+        return make_ready_future<>();
+    }, cfg).get();
+}
+
+// Test that when a collection cell exceeds both the cell size threshold
+// and the collection element count threshold, system.large_cells still
+// returns a single row (not two rows with the same clustering key).
+SEASTAR_THREAD_TEST_CASE(test_large_cells_dual_threshold) {
+    auto cfg = make_shared<db::config>();
+    // Set very low thresholds so that a collection with modest elements
+    // exceeds both size and element-count thresholds simultaneously.
+    cfg->compaction_large_cell_warning_threshold_mb(1);
+    cfg->compaction_collection_elements_count_warning_threshold(10);
+    do_with_cql_env_thread([](cql_test_env& e) {
+        e.execute_cql("create table tbl (a int, b list<text>, primary key (a))").get();
+        // Insert 128 KB blobs, 11 times -> ~1.4 MB total, exceeding 1 MB
+        // threshold.  Also exceeds 10 element threshold.
+        sstring blob(128 * 1024, 'x');
+        for (int i = 0; i < 11; ++i) {
+            e.execute_cql("update tbl set b = ['" + blob + "'] + b where a = 42;").get();
+        }
+        flush(e);
+
+        // There must be exactly one row in system.large_cells for this
+        // table.  Before the fix, two rows with the same clustering key
+        // would have been emitted.
+        assert_that(e.execute_cql(
+                "select partition_key, column_name from system.large_cells "
+                "where table_name = 'tbl' allow filtering;").get())
+            .is_rows()
+            .with_size(1);
 
         return make_ready_future<>();
     }, cfg).get();

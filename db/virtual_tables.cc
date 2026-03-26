@@ -26,6 +26,8 @@
 #include "db/size_estimates_virtual_reader.hh"
 #include "db/view/build_progress_virtual_reader.hh"
 #include "index/built_indexes_virtual_reader.hh"
+#include "keys/keys.hh"
+#include "gms/feature_service.hh"
 #include "gms/gossiper.hh"
 #include "mutation/frozen_mutation.hh"
 #include "transport/protocol_server.hh"
@@ -35,6 +37,7 @@
 #include "service/raft/raft_group_registry.hh"
 #include "service/storage_service.hh"
 #include "service/tablet_allocator.hh"
+#include "sstables/sstables.hh"
 #include "locator/load_sketch.hh"
 #include "types/list.hh"
 #include "types/types.hh"
@@ -1461,6 +1464,595 @@ private:
     }
 };
 
+// Helper: convert bytes stored in a disk_string to sstring.
+// disk_string<uint32_t>::value is of type `bytes`.
+static sstring disk_string_to_sstring(const sstables::disk_string<uint32_t>& ds) {
+    return sstring(to_string_view(ds.value));
+}
+
+// Helper: convert int64_t millis-since-epoch to db_clock::time_point
+// for use with timestamp_type columns in virtual tables.
+static db_clock::time_point millis_to_db_clock(int64_t ms) {
+    return db_clock::time_point(db_clock::duration(ms));
+}
+
+// Derive compaction_time (milliseconds since Unix epoch) from the SSTable's
+// generation UUID.  If the generation is not UUID-based (legacy integer
+// generations), returns 0.
+static int64_t compaction_time_from_generation(const sstables::sstable& sst) {
+    auto gen = sst.generation();
+    if (gen.is_uuid_based()) {
+        return utils::UUID_gen::unix_timestamp(gen.as_uuid()).count();
+    }
+    return 0;
+}
+
+// Virtual table backed by LargeDataRecords in SSTable scylla metadata.
+// Shows partition_size records from all live SSTables, matching the
+// schema of the legacy system.large_partitions CQL table.
+class large_partitions_virtual_table : public streaming_virtual_table {
+    sharded<replica::database>& _db;
+
+    struct record {
+        sstring sstable_name;
+        int64_t partition_size;
+        sstring partition_key;
+        int64_t compaction_time;
+        int64_t rows;
+        int64_t range_tombstones;
+        int64_t dead_rows;
+    };
+
+    // Extract partition_size records from a single table's SSTables on the local shard.
+    // Called on each shard via map() to collect records cross-shard.
+    static future<std::vector<record>> collect_local_records(replica::table& table) {
+        std::vector<record> records;
+        auto table_schema = table.schema();
+        auto sstables = co_await table.take_sstable_set_snapshot();
+        for (const auto& sst : sstables) {
+            auto& records_opt = sst->get_large_data_records();
+            if (!records_opt) {
+                // Legacy SSTable without LargeDataRecords: emit synthetic row
+                // if above_threshold > 0 for partition_size or rows_in_partition stats.
+                auto stat = sst->get_large_data_stat(sstables::large_data_type::partition_size);
+                auto rows_stat = sst->get_large_data_stat(sstables::large_data_type::rows_in_partition);
+                if ((stat && stat->above_threshold > 0) || (rows_stat && rows_stat->above_threshold > 0)) {
+                    records.push_back(record{
+                        .sstable_name = sst->component_basename(sstables::component_type::Data),
+                        .partition_size = static_cast<int64_t>(stat ? stat->max_value : 0),
+                        .partition_key = "(details unavailable - legacy SSTable)",
+                        .compaction_time = compaction_time_from_generation(*sst),
+                        .rows = static_cast<int64_t>(rows_stat ? rows_stat->max_value : 0),
+                    });
+                }
+                continue;
+            }
+            auto compaction_time = compaction_time_from_generation(*sst);
+            auto sst_name = sst->component_basename(sstables::component_type::Data);
+            for (const auto& rec : records_opt->elements) {
+                if (rec.type != sstables::large_data_type::partition_size &&
+                    rec.type != sstables::large_data_type::rows_in_partition) {
+                    continue;
+                }
+                auto pk = sstables::key_view(rec.partition_key.value).to_partition_key(*table_schema);
+                records.push_back(record{
+                    .sstable_name = sst_name,
+                    .partition_size = static_cast<int64_t>(rec.value),
+                    .partition_key = key_to_str(pk, *table_schema),
+                    .compaction_time = compaction_time,
+                    .rows = static_cast<int64_t>(rec.elements_count),
+                    .range_tombstones = static_cast<int64_t>(rec.range_tombstones),
+                    .dead_rows = static_cast<int64_t>(rec.dead_rows),
+                });
+            }
+        }
+        co_return records;
+    }
+
+public:
+    explicit large_partitions_virtual_table(sharded<replica::database>& db)
+            : streaming_virtual_table(build_schema())
+            , _db(db)
+    {
+        _shard_aware = true;
+    }
+
+    static schema_ptr build_schema() {
+        auto id = generate_legacy_id(system_keyspace::NAME, system_keyspace::LARGE_PARTITIONS, 1);
+        schema_builder builder(system_keyspace::NAME, system_keyspace::LARGE_PARTITIONS, std::make_optional(id));
+        builder.with_column("keyspace_name", utf8_type, column_kind::partition_key);
+        builder.with_column("table_name", utf8_type, column_kind::partition_key);
+        builder.with_column("sstable_name", utf8_type, column_kind::clustering_key);
+        builder.with_column("partition_size", reversed_type_impl::get_instance(long_type), column_kind::clustering_key);
+        builder.with_column("partition_key", utf8_type, column_kind::clustering_key);
+        builder.with_column("rows", long_type);
+        builder.with_column("compaction_time", timestamp_type);
+        builder.with_column("range_tombstones", long_type);
+        builder.with_column("dead_rows", long_type);
+        builder.set_comment("partitions larger than specified threshold");
+        builder.with_hash_version();
+        return builder.build();
+    }
+
+    dht::decorated_key make_partition_key(const sstring& ks_name, const sstring& cf_name) {
+        return dht::decorate_key(*_s, partition_key::from_exploded(*_s, {
+            data_value(ks_name).serialize_nonnull(),
+            data_value(cf_name).serialize_nonnull()
+        }));
+    }
+
+    clustering_key make_clustering_key(const sstring& sstable_name, int64_t partition_size, const sstring& pk) {
+        return clustering_key::from_exploded(*_s, {
+            data_value(sstable_name).serialize_nonnull(),
+            reversed_type_impl::get_instance(long_type)->decompose(partition_size),
+            data_value(pk).serialize_nonnull()
+        });
+    }
+
+    future<> execute(reader_permit permit, result_collector& result, const query_restrictions& qr) override {
+        // Phase 1: Determine which (ks, table) partitions this shard owns.
+        // Table metadata is shared across all shards, so local iteration is sufficient.
+        struct table_info {
+            table_id tid;
+            dht::decorated_key dk;
+        };
+        std::vector<table_info> owned_tables;
+
+        auto& db = _db.local();
+        db.get_tables_metadata().for_each_table([&] (table_id tid, lw_shared_ptr<replica::table> table) {
+            auto& ks_name = table->schema()->ks_name();
+            auto& cf_name = table->schema()->cf_name();
+            auto dk = make_partition_key(ks_name, cf_name);
+            if (this_shard_owns(dk) && contains_key(qr.partition_range(), dk)) {
+                owned_tables.push_back(table_info{tid, std::move(dk)});
+            }
+        });
+
+        // Sort by token order — streaming_virtual_table requires
+        // partitions to be emitted in token order.
+        std::ranges::sort(owned_tables, dht::ring_position_less_comparator(*_s),
+                std::mem_fn(&table_info::dk));
+
+        // Phase 2: For each owned table, collect records from ALL shards
+        // in parallel, then sort and emit immediately.  We process one
+        // table at a time to bound memory usage: once we have emitted
+        // page_size records we stop and let CQL paging fetch the rest.
+        static constexpr size_t page_size = 1000;
+        size_t emitted = 0;
+
+        for (auto& ti : owned_tables) {
+            auto per_shard = co_await _db.map([tid = ti.tid] (replica::database& db) -> future<std::vector<record>> {
+                if (auto table = db.get_tables_metadata().get_table_if_exists(tid)) {
+                    co_return co_await collect_local_records(*table);
+                }
+                co_return std::vector<record>{};
+            });
+            std::vector<record> records;
+            for (auto& shard_records : per_shard) {
+                records.insert(records.end(),
+                    std::make_move_iterator(shard_records.begin()),
+                    std::make_move_iterator(shard_records.end()));
+            }
+            if (records.empty()) {
+                continue;
+            }
+            // Sort by (sstable_name ASC, partition_size DESC, partition_key ASC) to match clustering order
+            std::ranges::sort(records, [] (const record& a, const record& b) {
+                if (a.sstable_name != b.sstable_name) {
+                    return a.sstable_name < b.sstable_name;
+                } else if (a.partition_size != b.partition_size) {
+                    return a.partition_size > b.partition_size; // DESC
+                }
+                return a.partition_key < b.partition_key;
+            });
+            // A partition that exceeds both the size and the row-count
+            // thresholds produces two LargeDataRecords entries (one per
+            // type) that map to identical clustering keys.  Remove the
+            // duplicates so that every emitted row has a unique key.
+            records.erase(std::unique(records.begin(), records.end(), [] (const record& a, const record& b) {
+                return a.sstable_name == b.sstable_name
+                    && a.partition_size == b.partition_size
+                    && a.partition_key == b.partition_key;
+            }), records.end());
+            co_await result.emit_partition_start(ti.dk);
+            for (const auto& rec : records) {
+                clustering_row cr(make_clustering_key(rec.sstable_name, rec.partition_size, rec.partition_key));
+                if (rec.compaction_time != 0) {
+                    set_cell(cr.cells(), "compaction_time", millis_to_db_clock(rec.compaction_time));
+                }
+                if (rec.rows != 0) {
+                    set_cell(cr.cells(), "rows", rec.rows);
+                }
+                if (rec.range_tombstones != 0) {
+                    set_cell(cr.cells(), "range_tombstones", rec.range_tombstones);
+                }
+                if (rec.dead_rows != 0) {
+                    set_cell(cr.cells(), "dead_rows", rec.dead_rows);
+                }
+                co_await result.emit_row(std::move(cr));
+            }
+            co_await result.emit_partition_end();
+            emitted += records.size();
+            if (emitted >= page_size) {
+                break;
+            }
+        }
+    }
+};
+
+// Virtual table backed by LargeDataRecords in SSTable scylla metadata.
+// Shows row_size records from all live SSTables, matching the
+// schema of the legacy system.large_rows CQL table.
+class large_rows_virtual_table : public streaming_virtual_table {
+    sharded<replica::database>& _db;
+
+    struct record {
+        sstring sstable_name;
+        int64_t row_size;
+        sstring partition_key;
+        sstring clustering_key;
+        int64_t compaction_time;
+    };
+
+    // Extract row_size records from a single table's SSTables on the local shard.
+    static future<std::vector<record>> collect_local_records(replica::table& table) {
+        std::vector<record> records;
+        auto table_schema = table.schema();
+        auto sstables = co_await table.take_sstable_set_snapshot();
+        for (const auto& sst : sstables) {
+            auto& records_opt = sst->get_large_data_records();
+            if (!records_opt) {
+                auto stat = sst->get_large_data_stat(sstables::large_data_type::row_size);
+                if (stat && stat->above_threshold > 0) {
+                    records.push_back(record{
+                        .sstable_name = sst->component_basename(sstables::component_type::Data),
+                        .row_size = static_cast<int64_t>(stat->max_value),
+                        .partition_key = "(details unavailable - legacy SSTable)",
+                        .clustering_key = "",
+                        .compaction_time = compaction_time_from_generation(*sst),
+                    });
+                }
+                continue;
+            }
+            auto compaction_time = compaction_time_from_generation(*sst);
+            auto sst_name = sst->component_basename(sstables::component_type::Data);
+            for (const auto& rec : records_opt->elements) {
+                if (rec.type != sstables::large_data_type::row_size) {
+                    continue;
+                }
+                auto pk = sstables::key_view(rec.partition_key.value).to_partition_key(*table_schema);
+                auto ck_str = rec.clustering_key.value.empty()
+                    ? sstring()
+                    : sstring(key_to_str(clustering_key_prefix::from_bytes(rec.clustering_key.value), *table_schema));
+                records.push_back(record{
+                    .sstable_name = sst_name,
+                    .row_size = static_cast<int64_t>(rec.value),
+                    .partition_key = key_to_str(pk, *table_schema),
+                    .clustering_key = std::move(ck_str),
+                    .compaction_time = compaction_time,
+                });
+            }
+        }
+        co_return records;
+    }
+
+public:
+    explicit large_rows_virtual_table(sharded<replica::database>& db)
+            : streaming_virtual_table(build_schema())
+            , _db(db)
+    {
+        _shard_aware = true;
+    }
+
+    static schema_ptr build_schema() {
+        auto id = generate_legacy_id(system_keyspace::NAME, system_keyspace::LARGE_ROWS, 1);
+        return schema_builder(system_keyspace::NAME, system_keyspace::LARGE_ROWS, std::make_optional(id))
+            .with_column("keyspace_name", utf8_type, column_kind::partition_key)
+            .with_column("table_name", utf8_type, column_kind::partition_key)
+            .with_column("sstable_name", utf8_type, column_kind::clustering_key)
+            .with_column("row_size", reversed_type_impl::get_instance(long_type), column_kind::clustering_key)
+            .with_column("partition_key", utf8_type, column_kind::clustering_key)
+            .with_column("clustering_key", utf8_type, column_kind::clustering_key)
+            .with_column("compaction_time", timestamp_type)
+            .set_comment("rows larger than specified threshold")
+            .with_hash_version()
+            .build();
+    }
+
+    dht::decorated_key make_partition_key(const sstring& ks_name, const sstring& cf_name) {
+        return dht::decorate_key(*_s, partition_key::from_exploded(*_s, {
+            data_value(ks_name).serialize_nonnull(),
+            data_value(cf_name).serialize_nonnull()
+        }));
+    }
+
+    clustering_key make_clustering_key(const sstring& sstable_name, int64_t row_size,
+                                        const sstring& pk, const sstring& ck) {
+        return clustering_key::from_exploded(*_s, {
+            data_value(sstable_name).serialize_nonnull(),
+            reversed_type_impl::get_instance(long_type)->decompose(row_size),
+            data_value(pk).serialize_nonnull(),
+            data_value(ck).serialize_nonnull()
+        });
+    }
+
+    future<> execute(reader_permit permit, result_collector& result, const query_restrictions& qr) override {
+        struct table_info {
+            table_id tid;
+            dht::decorated_key dk;
+        };
+        std::vector<table_info> owned_tables;
+
+        auto& db = _db.local();
+        db.get_tables_metadata().for_each_table([&] (table_id tid, lw_shared_ptr<replica::table> table) {
+            auto& ks_name = table->schema()->ks_name();
+            auto& cf_name = table->schema()->cf_name();
+            auto dk = make_partition_key(ks_name, cf_name);
+            if (this_shard_owns(dk) && contains_key(qr.partition_range(), dk)) {
+                owned_tables.push_back(table_info{tid, std::move(dk)});
+            }
+        });
+
+        std::ranges::sort(owned_tables, dht::ring_position_less_comparator(*_s),
+                std::mem_fn(&table_info::dk));
+
+        static constexpr size_t page_size = 1000;
+        size_t emitted = 0;
+
+        for (auto& ti : owned_tables) {
+            auto per_shard = co_await _db.map([tid = ti.tid] (replica::database& db) -> future<std::vector<record>> {
+                if (auto table = db.get_tables_metadata().get_table_if_exists(tid)) {
+                    co_return co_await collect_local_records(*table);
+                }
+                co_return std::vector<record>{};
+            });
+            std::vector<record> records;
+            for (auto& shard_records : per_shard) {
+                records.insert(records.end(),
+                    std::make_move_iterator(shard_records.begin()),
+                    std::make_move_iterator(shard_records.end()));
+            }
+            if (records.empty()) {
+                continue;
+            }
+            std::ranges::sort(records, [] (const record& a, const record& b) {
+                if (a.sstable_name != b.sstable_name) {
+                    return a.sstable_name < b.sstable_name;
+                } else if (a.row_size != b.row_size) {
+                    return a.row_size > b.row_size; // DESC
+                } else if (a.partition_key != b.partition_key) {
+                    return a.partition_key < b.partition_key;
+                }
+                return a.clustering_key < b.clustering_key;
+            });
+            co_await result.emit_partition_start(ti.dk);
+            for (const auto& rec : records) {
+                clustering_row cr(make_clustering_key(rec.sstable_name, rec.row_size, rec.partition_key, rec.clustering_key));
+                if (rec.compaction_time != 0) {
+                    set_cell(cr.cells(), "compaction_time", millis_to_db_clock(rec.compaction_time));
+                }
+                co_await result.emit_row(std::move(cr));
+            }
+            co_await result.emit_partition_end();
+            emitted += records.size();
+            if (emitted >= page_size) {
+                break;
+            }
+        }
+    }
+};
+
+// Virtual table backed by LargeDataRecords in SSTable scylla metadata.
+// Shows cell_size records from all live SSTables, matching the
+// schema of the legacy system.large_cells CQL table.
+class large_cells_virtual_table : public streaming_virtual_table {
+    sharded<replica::database>& _db;
+
+    struct record {
+        sstring sstable_name;
+        int64_t cell_size;
+        sstring partition_key;
+        sstring clustering_key;
+        sstring column_name;
+        int64_t collection_elements;  // -1 means not applicable
+        int64_t compaction_time;
+    };
+
+    // Extract cell_size records from a single table's SSTables on the local shard.
+    static future<std::vector<record>> collect_local_records(replica::table& table) {
+        std::vector<record> records;
+        auto table_schema = table.schema();
+        auto sstables = co_await table.take_sstable_set_snapshot();
+        for (const auto& sst : sstables) {
+            auto& records_opt = sst->get_large_data_records();
+            if (!records_opt) {
+                auto stat = sst->get_large_data_stat(sstables::large_data_type::cell_size);
+                auto elem_stat = sst->get_large_data_stat(sstables::large_data_type::elements_in_collection);
+                if ((stat && stat->above_threshold > 0) || (elem_stat && elem_stat->above_threshold > 0)) {
+                    records.push_back(record{
+                        .sstable_name = sst->component_basename(sstables::component_type::Data),
+                        .cell_size = static_cast<int64_t>(stat ? stat->max_value : 0),
+                        .partition_key = "(details unavailable - legacy SSTable)",
+                        .clustering_key = "",
+                        .column_name = "",
+                        .collection_elements = elem_stat ? static_cast<int64_t>(elem_stat->max_value) : int64_t(-1),
+                        .compaction_time = compaction_time_from_generation(*sst),
+                    });
+                }
+                continue;
+            }
+            auto compaction_time = compaction_time_from_generation(*sst);
+            auto sst_name = sst->component_basename(sstables::component_type::Data);
+            for (const auto& rec : records_opt->elements) {
+                if (rec.type != sstables::large_data_type::cell_size &&
+                    rec.type != sstables::large_data_type::elements_in_collection) {
+                    continue;
+                }
+                auto pk = sstables::key_view(rec.partition_key.value).to_partition_key(*table_schema);
+                auto ck_str = rec.clustering_key.value.empty()
+                    ? sstring()
+                    : sstring(key_to_str(clustering_key_prefix::from_bytes(rec.clustering_key.value), *table_schema));
+                records.push_back(record{
+                    .sstable_name = sst_name,
+                    .cell_size = static_cast<int64_t>(rec.value),
+                    .partition_key = key_to_str(pk, *table_schema),
+                    .clustering_key = std::move(ck_str),
+                    .column_name = disk_string_to_sstring(rec.column_name),
+                    .collection_elements = rec.elements_count > 0
+                        ? static_cast<int64_t>(rec.elements_count) : int64_t(-1),
+                    .compaction_time = compaction_time,
+                });
+            }
+        }
+        co_return records;
+    }
+
+public:
+    explicit large_cells_virtual_table(sharded<replica::database>& db)
+            : streaming_virtual_table(build_schema())
+            , _db(db)
+    {
+        _shard_aware = true;
+    }
+
+    static schema_ptr build_schema() {
+        auto id = generate_legacy_id(system_keyspace::NAME, system_keyspace::LARGE_CELLS, 1);
+        return schema_builder(system_keyspace::NAME, system_keyspace::LARGE_CELLS, std::make_optional(id))
+            .with_column("keyspace_name", utf8_type, column_kind::partition_key)
+            .with_column("table_name", utf8_type, column_kind::partition_key)
+            .with_column("sstable_name", utf8_type, column_kind::clustering_key)
+            .with_column("cell_size", reversed_type_impl::get_instance(long_type), column_kind::clustering_key)
+            .with_column("partition_key", utf8_type, column_kind::clustering_key)
+            .with_column("clustering_key", utf8_type, column_kind::clustering_key)
+            .with_column("column_name", utf8_type, column_kind::clustering_key)
+            .with_column("collection_elements", long_type)
+            .with_column("compaction_time", timestamp_type)
+            .set_comment("cells larger than specified threshold")
+            .with_hash_version()
+            .build();
+    }
+
+    dht::decorated_key make_partition_key(const sstring& ks_name, const sstring& cf_name) {
+        return dht::decorate_key(*_s, partition_key::from_exploded(*_s, {
+            data_value(ks_name).serialize_nonnull(),
+            data_value(cf_name).serialize_nonnull()
+        }));
+    }
+
+    clustering_key make_clustering_key(const sstring& sstable_name, int64_t cell_size,
+                                        const sstring& pk, const sstring& ck, const sstring& col_name) {
+        return clustering_key::from_exploded(*_s, {
+            data_value(sstable_name).serialize_nonnull(),
+            reversed_type_impl::get_instance(long_type)->decompose(cell_size),
+            data_value(pk).serialize_nonnull(),
+            data_value(ck).serialize_nonnull(),
+            data_value(col_name).serialize_nonnull()
+        });
+    }
+
+    future<> execute(reader_permit permit, result_collector& result, const query_restrictions& qr) override {
+        struct table_info {
+            table_id tid;
+            dht::decorated_key dk;
+        };
+        std::vector<table_info> owned_tables;
+
+        auto& db = _db.local();
+        db.get_tables_metadata().for_each_table([&] (table_id tid, lw_shared_ptr<replica::table> table) {
+            auto& ks_name = table->schema()->ks_name();
+            auto& cf_name = table->schema()->cf_name();
+            auto dk = make_partition_key(ks_name, cf_name);
+            if (this_shard_owns(dk) && contains_key(qr.partition_range(), dk)) {
+                owned_tables.push_back(table_info{tid, std::move(dk)});
+            }
+        });
+
+        std::ranges::sort(owned_tables, dht::ring_position_less_comparator(*_s),
+                std::mem_fn(&table_info::dk));
+
+        static constexpr size_t page_size = 1000;
+        size_t emitted = 0;
+
+        for (auto& ti : owned_tables) {
+            auto per_shard = co_await _db.map([tid = ti.tid] (replica::database& db) -> future<std::vector<record>> {
+                if (auto table = db.get_tables_metadata().get_table_if_exists(tid)) {
+                    co_return co_await collect_local_records(*table);
+                }
+                co_return std::vector<record>{};
+            });
+            std::vector<record> records;
+            for (auto& shard_records : per_shard) {
+                records.insert(records.end(),
+                    std::make_move_iterator(shard_records.begin()),
+                    std::make_move_iterator(shard_records.end()));
+            }
+            if (records.empty()) {
+                continue;
+            }
+            std::ranges::sort(records, [] (const record& a, const record& b) {
+                if (a.sstable_name != b.sstable_name) {
+                    return a.sstable_name < b.sstable_name;
+                } else if (a.cell_size != b.cell_size) {
+                    return a.cell_size > b.cell_size; // DESC
+                } else if (a.partition_key != b.partition_key) {
+                    return a.partition_key < b.partition_key;
+                } else if (a.clustering_key != b.clustering_key) {
+                    return a.clustering_key < b.clustering_key;
+                }
+                return a.column_name < b.column_name;
+            });
+            // A collection cell that exceeds both the size and the
+            // element-count thresholds produces two LargeDataRecords
+            // entries that map to identical clustering keys.  Remove the
+            // duplicates so that every emitted row has a unique key.
+            records.erase(std::unique(records.begin(), records.end(), [] (const record& a, const record& b) {
+                return a.sstable_name == b.sstable_name
+                    && a.cell_size == b.cell_size
+                    && a.partition_key == b.partition_key
+                    && a.clustering_key == b.clustering_key
+                    && a.column_name == b.column_name;
+            }), records.end());
+            co_await result.emit_partition_start(ti.dk);
+            for (const auto& rec : records) {
+                clustering_row cr(make_clustering_key(rec.sstable_name, rec.cell_size,
+                    rec.partition_key, rec.clustering_key, rec.column_name));
+                if (rec.compaction_time != 0) {
+                    set_cell(cr.cells(), "compaction_time", millis_to_db_clock(rec.compaction_time));
+                }
+                if (rec.collection_elements >= 0) {
+                    set_cell(cr.cells(), "collection_elements", rec.collection_elements);
+                }
+                co_await result.emit_row(std::move(cr));
+            }
+            co_await result.emit_partition_end();
+            emitted += records.size();
+            if (emitted >= page_size) {
+                break;
+            }
+        }
+    }
+};
+
+}
+
+// Helper: register a virtual table on the local shard.
+static future<> add_virtual_table(
+        sharded<db::system_keyspace>& sys_ks,
+        sharded<replica::database>& dist_db,
+        sharded<service::storage_service>& dist_ss,
+        std::unique_ptr<virtual_table>&& tbl) {
+    auto& virtual_tables = *sys_ks.local().get_virtual_tables_registry();
+    auto& db = dist_db.local();
+    auto& ss = dist_ss.local();
+
+    auto schema = tbl->schema();
+    virtual_tables[schema->id()] = std::move(tbl);
+    co_await db.create_local_system_table(schema, false, ss.get_erm_factory());
+    auto& cf = db.find_column_family(schema);
+    cf.mark_ready_for_writes(nullptr);
+    auto& vt = virtual_tables[schema->id()];
+    cf.set_virtual_reader(vt->as_mutation_source());
+    cf.set_virtual_writer([&vt = *vt] (const frozen_mutation& m) { return vt.apply(m); });
 }
 
 future<> initialize_virtual_tables(
@@ -1469,43 +2061,86 @@ future<> initialize_virtual_tables(
         sharded<db::system_keyspace>& sys_ks,
         sharded<service::tablet_allocator>& tablet_allocator,
         sharded<netw::messaging_service>& ms,
-        db::config& cfg) {
+        db::config& cfg,
+        gms::feature_service& feat) {
     co_await smp::invoke_on_all([&] () -> future<> {
-        auto& virtual_tables_registry = sys_ks.local().get_virtual_tables_registry();
-        auto& virtual_tables = *virtual_tables_registry;
-        auto& db = dist_db.local();
-        auto& ss = dist_ss.local();
-
         auto add_table = [&] (std::unique_ptr<virtual_table>&& tbl) -> future<> {
-            auto schema = tbl->schema();
-            virtual_tables[schema->id()] = std::move(tbl);
-            co_await db.create_local_system_table(schema, false, ss.get_erm_factory());
-            auto& cf = db.find_column_family(schema);
-            cf.mark_ready_for_writes(nullptr);
-            auto& vt = virtual_tables[schema->id()];
-            cf.set_virtual_reader(vt->as_mutation_source());
-            cf.set_virtual_writer([&vt = *vt] (const frozen_mutation& m) { return vt.apply(m); });
+            co_await add_virtual_table(sys_ks, dist_db, dist_ss, std::move(tbl));
         };
+
+        auto& db = dist_db.local();
 
         // Add built-in virtual tables here.
         co_await add_table(std::make_unique<cluster_status_table>(dist_ss, dist_gossiper));
-        co_await add_table(std::make_unique<token_ring_table>(db, ss));
+        co_await add_table(std::make_unique<token_ring_table>(db, dist_ss.local()));
         co_await add_table(std::make_unique<snapshots_table>(dist_db));
-        co_await add_table(std::make_unique<protocol_servers_table>(ss));
-        co_await add_table(std::make_unique<runtime_info_table>(dist_db, ss));
+        co_await add_table(std::make_unique<protocol_servers_table>(dist_ss.local()));
+        co_await add_table(std::make_unique<runtime_info_table>(dist_db, dist_ss.local()));
         co_await add_table(std::make_unique<versions_table>());
         co_await add_table(std::make_unique<db_config_table>(cfg));
-        co_await add_table(std::make_unique<clients_table>(ss));
+        co_await add_table(std::make_unique<clients_table>(dist_ss.local()));
         co_await add_table(std::make_unique<raft_state_table>(dist_raft_gr));
         co_await add_table(std::make_unique<load_per_node>(tablet_allocator, dist_db, dist_raft_gr, ms, dist_gossiper));
         co_await add_table(std::make_unique<tablet_sizes>(tablet_allocator, dist_db, dist_raft_gr, ms));
-        co_await add_table(std::make_unique<cdc_timestamps_table>(db, ss));
-        co_await add_table(std::make_unique<cdc_streams_table>(db, ss));
+        co_await add_table(std::make_unique<cdc_timestamps_table>(db, dist_ss.local()));
+        co_await add_table(std::make_unique<cdc_streams_table>(db, dist_ss.local()));
 
         db.find_column_family(system_keyspace::size_estimates()).set_virtual_reader(mutation_source(db::size_estimates::virtual_reader(db, sys_ks.local())));
         db.find_column_family(system_keyspace::views_builds_in_progress()).set_virtual_reader(mutation_source(db::view::build_progress_virtual_reader(db)));
         db.find_column_family(system_keyspace::built_indexes()).set_virtual_reader(mutation_source(db::index::built_indexes_virtual_reader(db)));
     });
+
+    // Drop old physical system.large_* tables and register virtual
+    // replacements.  Must run on shard 0 (uses cross-shard operations).
+    auto activate_large_data_virtual_tables = [&dist_db, &sys_ks, &dist_ss] () -> future<> {
+        // Drop old physical system.large_* tables.  Their data is now
+        // served from SSTable metadata via virtual tables.
+        // TODO: In a follow-up, read existing large data entries from
+        // the old tables and populate per-sstable LargeDataRecords
+        // metadata via component_rewrite before dropping.
+        for (auto table_name : {
+                db::system_keyspace::LARGE_PARTITIONS,
+                db::system_keyspace::LARGE_ROWS,
+                db::system_keyspace::LARGE_CELLS}) {
+            try {
+                co_await replica::database::legacy_drop_table_on_all_shards(
+                        dist_db, sys_ks, db::system_keyspace::NAME, table_name, false);
+            } catch (const replica::no_such_column_family&) {
+                // Already dropped (e.g. restart after feature was enabled).
+            }
+        }
+
+        // Add virtual tables on all shards.
+        co_await smp::invoke_on_all([&dist_db, &sys_ks, &dist_ss] () -> future<> {
+            co_await add_virtual_table(sys_ks, dist_db, dist_ss,
+                    std::make_unique<large_partitions_virtual_table>(dist_db));
+            co_await add_virtual_table(sys_ks, dist_db, dist_ss,
+                    std::make_unique<large_rows_virtual_table>(dist_db));
+            co_await add_virtual_table(sys_ks, dist_db, dist_ss,
+                    std::make_unique<large_cells_virtual_table>(dist_db));
+        });
+    };
+
+    if (feat.large_data_virtual_tables) {
+        // Feature already enabled (e.g. test environment or restart after
+        // upgrade).  Activate directly as a coroutine — no seastar::async
+        // context needed.
+        co_await activate_large_data_virtual_tables();
+    } else {
+        // Feature not yet enabled.  Register a callback that will fire
+        // when the feature is enabled during rolling upgrade.  The callback
+        // runs inside seastar::async context (via feature_service::enable),
+        // so .get() is safe.
+        //
+        // The listener_registration must outlive the feature, so we store
+        // it in a static variable (process lifetime).  This function is
+        // only called on shard 0, so the listener fires only on shard 0.
+        static gms::feature::listener_registration large_data_vt_listener;
+        large_data_vt_listener = feat.large_data_virtual_tables.when_enabled(
+                [activate_large_data_virtual_tables = std::move(activate_large_data_virtual_tables)] {
+            activate_large_data_virtual_tables().get();
+        });
+    }
 }
 
 virtual_tables_registry::virtual_tables_registry() : unique_ptr(std::make_unique<virtual_tables_registry_impl>()) {

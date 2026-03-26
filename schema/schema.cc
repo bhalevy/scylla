@@ -1285,9 +1285,20 @@ bool operator==(const column_definition& x, const column_definition& y)
 }
 
 // Based on org.apache.cassandra.config.CFMetaData#generateLegacyCfId
+//
+// The version suffix (e.g. "_v1") allows creating a table with a
+// different UUID than the original (version 0).  This is used when
+// replacing a physical table with a virtual table of the same name:
+// the virtual table uses version 1 so its UUID differs from the old
+// physical table, allowing the old table to be properly dropped by
+// UUID before the replacement is registered.
 table_id
-generate_legacy_id(const sstring& ks_name, const sstring& cf_name) {
-    return table_id(utils::UUID_gen::get_name_UUID(ks_name + cf_name));
+generate_legacy_id(const sstring& ks_name, const sstring& cf_name, unsigned version) {
+    auto name = ks_name + cf_name;
+    if (version > 0) {
+        name += fmt::format("_v{}", version);
+    }
+    return table_id(utils::UUID_gen::get_name_UUID(name));
 }
 
 schema_builder& schema_builder::set_compaction_strategy_options(std::map<sstring, sstring>&& options) {

@@ -24,6 +24,7 @@ class tablet_allocator;
 }
 
 namespace gms {
+class feature_service;
 class gossiper;
 }
 
@@ -44,7 +45,8 @@ future<> initialize_virtual_tables(
     sharded<db::system_keyspace>&,
     sharded<service::tablet_allocator>&,
     sharded<netw::messaging_service>&,
-    db::config&);
+    db::config&,
+    gms::feature_service&);
 
 
 class virtual_table;

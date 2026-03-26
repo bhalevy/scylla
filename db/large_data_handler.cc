@@ -142,6 +142,10 @@ future<> large_data_handler::maybe_update_large_data_entries_sstable_name(sstabl
     return when_all(std::move(large_partitions), std::move(large_rows), std::move(large_cells)).discard_result();
 }
 
+bool cql_table_large_data_handler::skip_cql_writes() const {
+    return bool(_feat.large_data_virtual_tables);
+}
+
 cql_table_large_data_handler::cql_table_large_data_handler(gms::feature_service& feat,
         utils::updateable_value<uint32_t> partition_threshold_mb,
         utils::updateable_value<uint32_t> row_threshold_mb,
@@ -180,6 +184,9 @@ future<> cql_table_large_data_handler::do_insert_large_data_entry(std::string_vi
         sstring ks_name, sstring cf_name, sstring sstable_name,
         int64_t size, sstring partition_key, db_clock::time_point compaction_time,
         const std::vector<sstring>& extra_fields, Args&&... args) const {
+    if (skip_cql_writes()) {
+        co_return;
+    }
     auto sys_ks = _sys_ks.get_permit();
     if (!sys_ks) {
         co_return;
@@ -284,6 +291,9 @@ future<> cql_table_large_data_handler::record_large_rows(const sstables::sstable
 }
 
 future<> cql_table_large_data_handler::delete_large_data_entries(const schema& s, sstring sstable_name, std::string_view large_table_name) const {
+    if (skip_cql_writes()) {
+        co_return;
+    }
     auto sys_ks = _sys_ks.get_permit();
     SCYLLA_ASSERT(sys_ks);
     const sstring req =
@@ -329,6 +339,9 @@ cql_table_large_data_handler::row_reinsert_func cql_table_large_data_handler::ma
 }
 
 future<> cql_table_large_data_handler::update_large_data_entries_sstable_name(const schema& s, sstring old_name, sstring new_name, std::string_view large_table_name) const {
+    if (skip_cql_writes()) {
+        co_return;
+    }
     auto sys_ks = _sys_ks.get_permit();
     SCYLLA_ASSERT(sys_ks);
     // sstable_name is a clustering key, so we can't update it in place.

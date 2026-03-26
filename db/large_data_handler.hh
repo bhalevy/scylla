@@ -181,6 +181,12 @@ protected:
     virtual future<> record_large_rows(const sstables::sstable& sst, const sstables::key& partition_key, const clustering_key_prefix* clustering_key, uint64_t row_size) const override;
 
 private:
+    // Returns true if CQL writes to system.large_* tables should be skipped.
+    // Once LARGE_DATA_VIRTUAL_TABLES is enabled, large data records are served
+    // from SSTable metadata via virtual tables and the physical CQL tables are
+    // dropped, so writing to them is both unnecessary and would fail.
+    bool skip_cql_writes() const;
+
     future<> internal_record_large_cells(const sstables::sstable& sst, const sstables::key& partition_key,
             const clustering_key_prefix* clustering_key, const column_definition& cdef, uint64_t cell_size, uint64_t collection_elements) const;
     future<> internal_record_large_cells_and_collections(const sstables::sstable& sst, const sstables::key& partition_key,

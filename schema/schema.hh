@@ -1075,7 +1075,7 @@ public:
 
 std::ostream& operator<<(std::ostream& os, const view_ptr& view);
 
-table_id generate_legacy_id(const sstring& ks_name, const sstring& cf_name);
+table_id generate_legacy_id(const sstring& ks_name, const sstring& cf_name, unsigned version = 0);
 
 
 // Thrown when attempted to access a schema-dependent object using
