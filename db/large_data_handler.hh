@@ -91,11 +91,11 @@ public:
         return make_ready_future<bool>(false);
     }
 
-    struct partition_above_threshold {
+    struct above_threshold_result {
         bool size = false;
-        bool rows = false;
+        bool elements = false;
     };
-    future<partition_above_threshold> maybe_record_large_partitions(const sstables::sstable& sst, const sstables::key& partition_key,
+    future<above_threshold_result> maybe_record_large_partitions(const sstables::sstable& sst, const sstables::key& partition_key,
             uint64_t partition_size, uint64_t rows, uint64_t range_tombstones, uint64_t dead_rows);
 
     future<bool> maybe_record_large_cells(const sstables::sstable& sst, const sstables::key& partition_key,

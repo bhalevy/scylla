@@ -40,19 +40,19 @@ large_data_handler::large_data_handler(uint64_t partition_threshold_bytes, uint6
         partition_threshold_bytes, row_threshold_bytes, cell_threshold_bytes, rows_count_threshold, _collection_elements_count_threshold);
 }
 
-future<large_data_handler::partition_above_threshold> large_data_handler::maybe_record_large_partitions(const sstables::sstable& sst, const sstables::key& key, uint64_t partition_size, uint64_t rows, uint64_t range_tombstones, uint64_t dead_rows) {
+future<large_data_handler::above_threshold_result> large_data_handler::maybe_record_large_partitions(const sstables::sstable& sst, const sstables::key& key, uint64_t partition_size, uint64_t rows, uint64_t range_tombstones, uint64_t dead_rows) {
     SCYLLA_ASSERT(running());
-    partition_above_threshold above_threshold{partition_size > _partition_threshold_bytes, rows > _rows_count_threshold};
+    above_threshold_result above_threshold{.size = partition_size > _partition_threshold_bytes, .elements = rows > _rows_count_threshold};
     static_assert(std::is_same_v<decltype(above_threshold.size), bool>);
     _stats.partitions_bigger_than_threshold += above_threshold.size; // increment if true
-    if (above_threshold.size || above_threshold.rows) [[unlikely]] {
+    if (above_threshold.size || above_threshold.elements) [[unlikely]] {
         return with_sem([&sst, &key, partition_size, rows, range_tombstones, dead_rows, this] {
             return record_large_partitions(sst, key, partition_size, rows, range_tombstones, dead_rows);
         }).then([above_threshold] {
             return above_threshold;
         });
     }
-    return make_ready_future<partition_above_threshold>();
+    return make_ready_future<above_threshold_result>();
 }
 
 void large_data_handler::start() {
