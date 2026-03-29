@@ -628,6 +628,16 @@ private:
     large_data_stats_entry _cell_size_entry;
     large_data_stats_entry _elements_in_collection_entry;
 
+    // Per-row max timestamp tracker.  Reset at the start of each row
+    // (write_static_row / write_clustered) and updated by write_cell,
+    // write_liveness_info, and row/collection tombstones.
+    max_tracker<api::timestamp_type> _row_max_timestamp{api::missing_timestamp};
+
+    // Per-collection max timestamp tracker.  Reset at the start of
+    // write_collection and updated by each write_cell call within
+    // the collection, plus the collection tombstone if present.
+    max_tracker<api::timestamp_type> _collection_max_timestamp{api::missing_timestamp};
+
     // Bounded min-heaps for top-N large data records, one per large_data_type.
     // Size-type heaps (partition_size, row_size, cell_size) compare by `value`;
     // element-count-type heaps (rows_in_partition, elements_in_collection)
@@ -1309,6 +1319,10 @@ void writer::write_cell(bytes_ostream& writer, const clustering_key_prefix* clus
     }
 
     auto timestamp = cell.timestamp();
+    _row_max_timestamp.update(timestamp);
+    if (!cdef.is_atomic()) {
+        _collection_max_timestamp.update(timestamp);
+    }
     if (is_deleted) {
         _c_stats.update_timestamp(timestamp, is_live::no);
         _c_stats.update_local_deletion_time_and_tombstone_histogram(cell.deletion_time());
@@ -1336,6 +1350,7 @@ void writer::write_liveness_info(bytes_ostream& writer, const row_marker& marker
     }
 
     api::timestamp_type timestamp = marker.timestamp();
+    _row_max_timestamp.update(timestamp);
     if (marker.is_live()) {
         _c_stats.update_timestamp(timestamp, is_live::yes);
         _c_stats.update_live_row_marker_timestamp(timestamp);
@@ -1365,10 +1380,15 @@ void writer::write_collection(bytes_ostream& writer, const clustering_key_prefix
         bool has_complex_deletion) {
     uint64_t current_pos = writer.size();
     uint64_t collection_elements = 0;
+    _collection_max_timestamp = max_tracker<api::timestamp_type>{api::missing_timestamp};
     collection.with_deserialized(*cdef.type, [&] (collection_mutation_view_description mview) {
         if (has_complex_deletion) {
             write_delta_deletion_time(writer, mview.tomb);
             _c_stats.update(mview.tomb);
+            if (mview.tomb) {
+                _collection_max_timestamp.update(mview.tomb.timestamp);
+                _row_max_timestamp.update(mview.tomb.timestamp);
+            }
         }
 
         collection_elements = mview.cells.size();
@@ -1415,6 +1435,7 @@ void writer::write_row_body(bytes_ostream& writer, const clustering_row& row, bo
     write_liveness_info(writer, row.marker());
     auto write_tombstone_and_update_stats = [this, &writer] (const tombstone& t) {
         _c_stats.do_update(t);
+        _row_max_timestamp.update(t.timestamp);
         do_write_delta_deletion_time(writer, t);
     };
     if (row.tomb().regular()) {
@@ -1455,6 +1476,7 @@ static bool row_has_complex_deletion(const schema& s, const row& r, column_kind 
 }
 
 void writer::write_static_row(const row& static_row, column_kind kind) {
+    _row_max_timestamp = max_tracker<api::timestamp_type>{api::missing_timestamp};
     uint64_t current_pos = _data_writer->offset();
     // Static row flag is stored in extended flags so extension_flag is always set for static rows
     row_flags flags = row_flags::extension_flag;
@@ -1486,6 +1508,7 @@ stop_iteration writer::consume(static_row&& sr) {
 }
 
 void writer::write_clustered(const clustering_row& clustered_row, uint64_t prev_row_size) {
+    _row_max_timestamp = max_tracker<api::timestamp_type>{api::missing_timestamp};
     uint64_t current_pos = _data_writer->offset();
     row_flags flags = row_flags::none;
     row_extended_flags ext_flags = row_extended_flags::none;
