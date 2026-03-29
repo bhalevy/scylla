@@ -613,11 +613,16 @@ struct large_data_record {
     // Partition-level auxiliary fields (meaningful only for partition_size records, 0 otherwise):
     uint64_t range_tombstones;              // number of range tombstones in the partition
     uint64_t dead_rows;                     // number of dead rows in the partition
+    // Maximum client-supplied mutation timestamp across all cells/rows covered
+    // by this record.  Used by the distributed cache to determine which record
+    // reflects the latest mutations when different nodes reach different
+    // decisions as compaction proceeds.
+    int64_t max_timestamp;
 
     template <typename Describer>
     auto describe_type(sstable_version_types v, Describer f) {
         return f(type, partition_key, clustering_key, column_name, value,
-                 elements_count, range_tombstones, dead_rows);
+                 elements_count, range_tombstones, dead_rows, max_timestamp);
     }
 };
 

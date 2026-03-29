@@ -557,7 +557,8 @@ The content is dumped in JSON, using the following schema:
         "value": Uint64,             // size in bytes (partition, row, or cell size depending on type)
         "elements_count": Uint64,    // rows (partition_size, rows_in_partition) or collection elements (cell_size, elements_in_collection), 0 for row_size
         "range_tombstones": Uint64,  // range tombstones (partition_size records only, 0 otherwise)
-        "dead_rows": Uint64          // dead rows (partition_size records only, 0 otherwise)
+        "dead_rows": Uint64,         // dead rows (partition_size records only, 0 otherwise)
+        "max_timestamp": Int64       // maximum client-supplied mutation timestamp (microseconds)
     }
 
 dump-schema

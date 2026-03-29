@@ -5516,7 +5516,7 @@ SEASTAR_THREAD_TEST_CASE(test_large_data_records_round_trip) {
             auto pk = ss.make_pkey();
             mutation m(s, pk);
             auto ck = ss.make_ckey("ck1");
-            ss.add_row(m, ck, "a_value_that_is_larger_than_one_byte");
+            auto ts = ss.add_row(m, ck, "a_value_that_is_larger_than_one_byte");
 
             auto mt = make_memtable(s, {m});
             auto sst = env.make_sstable(s, version);
@@ -5562,6 +5562,8 @@ SEASTAR_THREAD_TEST_CASE(test_large_data_records_round_trip) {
                     BOOST_REQUIRE_EQUAL(rec.elements_count, 2u);
                     BOOST_REQUIRE_EQUAL(rec.range_tombstones, 0u);
                     BOOST_REQUIRE_EQUAL(rec.dead_rows, 0u);
+                    // Partition max_timestamp must equal the mutation timestamp
+                    BOOST_REQUIRE_EQUAL(rec.max_timestamp, ts);
                     break;
                 case large_data_type::row_size:
                     found_row_size = true;
@@ -5571,6 +5573,13 @@ SEASTAR_THREAD_TEST_CASE(test_large_data_records_round_trip) {
                     if (!rec.clustering_key.value.empty()) {
                         auto rec_ck = clustering_key_prefix::from_bytes(rec.clustering_key.value);
                         BOOST_REQUIRE(rec_ck.equal(*s, ck));
+                        // Row max_timestamp must equal the mutation timestamp
+                        // (the row has a single cell with timestamp ts)
+                        BOOST_REQUIRE_EQUAL(rec.max_timestamp, ts);
+                    } else {
+                        // Static row has no cells or marker in this test, so max_timestamp
+                        // is the default (api::missing_timestamp).
+                        BOOST_REQUIRE_EQUAL(rec.max_timestamp, api::missing_timestamp);
                     }
                     BOOST_REQUIRE(rec.column_name.value.empty());
                     // Non-partition records should have zero auxiliary fields
@@ -5586,6 +5595,8 @@ SEASTAR_THREAD_TEST_CASE(test_large_data_records_round_trip) {
                     // should be zero.
                     BOOST_REQUIRE_EQUAL(rec.range_tombstones, 0u);
                     BOOST_REQUIRE_EQUAL(rec.dead_rows, 0u);
+                    // Cell max_timestamp must equal the mutation timestamp
+                    BOOST_REQUIRE_EQUAL(rec.max_timestamp, ts);
                     break;
                 default:
                     break;

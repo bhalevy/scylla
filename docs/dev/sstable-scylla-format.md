@@ -180,7 +180,7 @@ that are above the threshold.
 
     large_data_records = record_count large_data_record*
     record_count = be32
-    large_data_record = large_data_type partition_key clustering_key column_name value elements_count range_tombstones dead_rows
+    large_data_record = large_data_type partition_key clustering_key column_name value elements_count range_tombstones dead_rows max_timestamp
         large_data_type = be32     // same enum as in large_data_stats
         partition_key = string32   // binary serialized partition key (sstables::key::get_bytes())
         clustering_key = string32  // binary serialized clustering key (clustering_key_prefix::representation()), empty if N/A
@@ -189,6 +189,7 @@ that are above the threshold.
         elements_count = be64      // type-dependent element count (see below)
         range_tombstones = be64    // number of range tombstones (partition_size records only, 0 otherwise)
         dead_rows = be64           // number of dead rows (partition_size records only, 0 otherwise)
+        max_timestamp = be64s      // maximum client-supplied mutation timestamp (signed, microseconds)
     string32 = string32_size byte*
     string32_size = be32
 
@@ -207,3 +208,15 @@ The elements_count field carries a type-dependent element count:
 
 The range_tombstones and dead_rows fields are meaningful only for
 partition_size records and are zero for all other record types.
+
+The max_timestamp field stores the maximum client-supplied mutation
+timestamp (in microseconds since Unix epoch) across all cells covered
+by the record.  For partition_size and rows_in_partition records this
+is the maximum timestamp across the entire partition.  For row_size
+records it is the maximum timestamp across all cells in the row.  For
+cell_size records it is the cell's own timestamp (atomic cells) or the
+maximum timestamp across all elements of the collection.  For
+elements_in_collection records it is the same as for cell_size.  This
+field is used by the distributed cache to determine which record
+reflects the latest mutations when different nodes reach different
+decisions as compaction proceeds.

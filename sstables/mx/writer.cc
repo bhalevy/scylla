@@ -777,7 +777,8 @@ private:
     void maybe_record_large_rows(const sstables::sstable& sst, const sstables::key& partition_key,
             const clustering_key_prefix* clustering_key, const uint64_t row_size);
     void maybe_record_large_cells(const sstables::sstable& sst, const sstables::key& partition_key,
-            const clustering_key_prefix* clustering_key, const column_definition& cdef, uint64_t cell_size, uint64_t collection_elements);
+            const clustering_key_prefix* clustering_key, const column_definition& cdef, uint64_t cell_size, uint64_t collection_elements,
+            api::timestamp_type max_timestamp);
 
     void record_corrupt_row(clustering_row&& clustered_row);
 
@@ -1164,6 +1165,7 @@ void writer::maybe_record_large_partitions(const sstables::sstable& sst, const s
             .elements_count = rows,
             .range_tombstones = range_rombstones,
             .dead_rows = dead_rows,
+            .max_timestamp = _c_stats.timestamp_tracker.max(),
         });
     }
     if (ret.elements) {
@@ -1177,6 +1179,7 @@ void writer::maybe_record_large_partitions(const sstables::sstable& sst, const s
             .elements_count = rows,
             .range_tombstones = range_rombstones,
             .dead_rows = dead_rows,
+            .max_timestamp = _c_stats.timestamp_tracker.max(),
         });
     }
 }
@@ -1198,12 +1201,14 @@ void writer::maybe_record_large_rows(const sstables::sstable& sst, const sstable
             .clustering_key = disk_string<uint32_t>{std::move(ck_bytes)},
             .column_name = disk_string<uint32_t>{bytes()},
             .value = row_size,
+            .max_timestamp = _row_max_timestamp.get(),
         });
     };
 }
 
 void writer::maybe_record_large_cells(const sstables::sstable& sst, const sstables::key& partition_key,
-        const clustering_key_prefix* clustering_key, const column_definition& cdef, uint64_t cell_size, uint64_t collection_elements) {
+        const clustering_key_prefix* clustering_key, const column_definition& cdef, uint64_t cell_size, uint64_t collection_elements,
+        api::timestamp_type max_timestamp) {
     auto& cell_size_entry = _cell_size_entry;
     if (cell_size_entry.max_value < cell_size) {
         cell_size_entry.max_value = cell_size;
@@ -1232,6 +1237,7 @@ void writer::maybe_record_large_cells(const sstables::sstable& sst, const sstabl
             .column_name = disk_string<uint32_t>{to_bytes(col_name)},
             .value = cell_size,
             .elements_count = collection_elements,
+            .max_timestamp = max_timestamp,
         });
     }
     if (ret.elements) {
@@ -1245,6 +1251,7 @@ void writer::maybe_record_large_cells(const sstables::sstable& sst, const sstabl
             .column_name = disk_string<uint32_t>{to_bytes(col_name)},
             .value = cell_size,
             .elements_count = collection_elements,
+            .max_timestamp = max_timestamp,
         });
     }
 }
@@ -1315,7 +1322,7 @@ void writer::write_cell(bytes_ostream& writer, const clustering_key_prefix* clus
     // We record collections in write_collection, so ignore them here
     if (cdef.is_atomic()) {
         uint64_t size = writer.size() - current_pos;
-        maybe_record_large_cells(_sst, *_partition_key, clustering_key, cdef, size, 0);
+        maybe_record_large_cells(_sst, *_partition_key, clustering_key, cdef, size, 0, cell.timestamp());
     }
 
     auto timestamp = cell.timestamp();
@@ -1403,7 +1410,7 @@ void writer::write_collection(bytes_ostream& writer, const clustering_key_prefix
         _c_stats.cells_count += collection_elements;
     });
     uint64_t size = writer.size() - current_pos;
-    maybe_record_large_cells(_sst, *_partition_key, clustering_key, cdef, size, collection_elements);
+    maybe_record_large_cells(_sst, *_partition_key, clustering_key, cdef, size, collection_elements, _collection_max_timestamp.get());
 }
 
 void writer::write_cells(bytes_ostream& writer, const clustering_key_prefix* clustering_key, column_kind kind, const row& row_body,

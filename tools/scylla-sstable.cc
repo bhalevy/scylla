@@ -1479,6 +1479,8 @@ public:
         _writer.Uint64(val.range_tombstones);
         _writer.Key("dead_rows");
         _writer.Uint64(val.dead_rows);
+        _writer.Key("max_timestamp");
+        _writer.Int64(val.max_timestamp);
         _writer.EndObject();
     }
     void operator()(const sstables::scylla_metadata::ext_timestamp_stats& val) const {
