@@ -1501,6 +1501,7 @@ class large_partitions_virtual_table : public streaming_virtual_table {
         int64_t rows;
         int64_t range_tombstones;
         int64_t dead_rows;
+        int64_t max_timestamp;  // api::missing_timestamp if unavailable
     };
 
     // Extract partition_size records from a single table's SSTables on the local shard.
@@ -1543,6 +1544,7 @@ class large_partitions_virtual_table : public streaming_virtual_table {
                     .rows = static_cast<int64_t>(rec.elements_count),
                     .range_tombstones = static_cast<int64_t>(rec.range_tombstones),
                     .dead_rows = static_cast<int64_t>(rec.dead_rows),
+                    .max_timestamp = rec.max_timestamp,
                 });
             }
         }
@@ -1569,6 +1571,7 @@ public:
         builder.with_column("compaction_time", timestamp_type);
         builder.with_column("range_tombstones", long_type);
         builder.with_column("dead_rows", long_type);
+        builder.with_column("max_timestamp", long_type);
         builder.set_comment("partitions larger than specified threshold");
         builder.with_hash_version();
         return builder.build();
@@ -1669,6 +1672,9 @@ public:
                 if (rec.dead_rows != 0) {
                     set_cell(cr.cells(), "dead_rows", rec.dead_rows);
                 }
+                if (rec.max_timestamp != api::missing_timestamp) {
+                    set_cell(cr.cells(), "max_timestamp", rec.max_timestamp);
+                }
                 co_await result.emit_row(std::move(cr));
             }
             co_await result.emit_partition_end();
@@ -1692,6 +1698,7 @@ class large_rows_virtual_table : public streaming_virtual_table {
         sstring partition_key;
         sstring clustering_key;
         int64_t compaction_time;
+        int64_t max_timestamp;  // api::missing_timestamp if unavailable
     };
 
     // Extract row_size records from a single table's SSTables on the local shard.
@@ -1730,6 +1737,7 @@ class large_rows_virtual_table : public streaming_virtual_table {
                     .partition_key = key_to_str(pk, *table_schema),
                     .clustering_key = std::move(ck_str),
                     .compaction_time = compaction_time,
+                    .max_timestamp = rec.max_timestamp,
                 });
             }
         }
@@ -1754,6 +1762,7 @@ public:
             .with_column("partition_key", utf8_type, column_kind::clustering_key)
             .with_column("clustering_key", utf8_type, column_kind::clustering_key)
             .with_column("compaction_time", timestamp_type)
+            .with_column("max_timestamp", long_type)
             .set_comment("rows larger than specified threshold")
             .with_hash_version()
             .build();
@@ -1831,6 +1840,9 @@ public:
                 if (rec.compaction_time != 0) {
                     set_cell(cr.cells(), "compaction_time", millis_to_db_clock(rec.compaction_time));
                 }
+                if (rec.max_timestamp != api::missing_timestamp) {
+                    set_cell(cr.cells(), "max_timestamp", rec.max_timestamp);
+                }
                 co_await result.emit_row(std::move(cr));
             }
             co_await result.emit_partition_end();
@@ -1856,6 +1868,7 @@ class large_cells_virtual_table : public streaming_virtual_table {
         sstring column_name;
         int64_t collection_elements;  // -1 means not applicable
         int64_t compaction_time;
+        int64_t max_timestamp;  // api::missing_timestamp if unavailable
     };
 
     // Extract cell_size records from a single table's SSTables on the local shard.
@@ -1901,6 +1914,7 @@ class large_cells_virtual_table : public streaming_virtual_table {
                     .collection_elements = rec.elements_count > 0
                         ? static_cast<int64_t>(rec.elements_count) : int64_t(-1),
                     .compaction_time = compaction_time,
+                    .max_timestamp = rec.max_timestamp,
                 });
             }
         }
@@ -1927,6 +1941,7 @@ public:
             .with_column("column_name", utf8_type, column_kind::clustering_key)
             .with_column("collection_elements", long_type)
             .with_column("compaction_time", timestamp_type)
+            .with_column("max_timestamp", long_type)
             .set_comment("cells larger than specified threshold")
             .with_hash_version()
             .build();
@@ -2021,6 +2036,9 @@ public:
                 }
                 if (rec.collection_elements >= 0) {
                     set_cell(cr.cells(), "collection_elements", rec.collection_elements);
+                }
+                if (rec.max_timestamp != api::missing_timestamp) {
+                    set_cell(cr.cells(), "max_timestamp", rec.max_timestamp);
                 }
                 co_await result.emit_row(std::move(cr));
             }
