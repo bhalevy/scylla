@@ -63,7 +63,6 @@ struct sstable_snapshot_metadata {
 
 class storage_manager : public peering_sharded_service<storage_manager> {
     struct config_updater {
-        serialized_action action;
         utils::observer<std::vector<db::object_storage_endpoint_param>> observer;
         config_updater(const db::config& cfg, storage_manager&);
     };
@@ -79,7 +78,6 @@ class storage_manager : public peering_sharded_service<storage_manager> {
     std::unique_ptr<config_updater> _config_updater;
     seastar::metrics::metric_groups metrics;
 
-    future<> update_config(const db::config&);
     object_storage_endpoint& get_endpoint(const sstring& ep);
 
 public:

@@ -9,6 +9,7 @@
 #include <seastar/coroutine/parallel_for_each.hh>
 #include <seastar/coroutine/switch_to.hh>
 #include <unordered_map>
+#include <unordered_set>
 #include "utils/log.hh"
 #include "sstables/sstables_manager.hh"
 #include "sstables/sstable_directory.hh"
@@ -99,45 +100,13 @@ storage_manager::storage_manager(const db::config& cfg, config stm_cfg)
 }
 
 future<> storage_manager::stop() {
-    if (_config_updater) {
-        co_await _config_updater->action.join();
-    }
-
-    for (auto ep : _object_storage_endpoints) {
-        if (ep.second.client != nullptr) {
-            co_await ep.second.client->close();
+    for (auto& [name, ep] : _object_storage_endpoints) {
+        if (ep.client != nullptr) {
+            co_await ep.client->close();
         }
     }
 }
 
-future<> storage_manager::update_config(const db::config& cfg) {
-    // Updates S3 client configurations if the endpoint is already known and
-    // removes the entries that are not present in the new configuration.
-    // Even though we remove obsolete S3 clients from this map, each IO
-    // holds a shared_ptr to the client, so the clients will be kept alive for
-    // as long as needed. 
-    // This was split in two loops to guarantee the code is exception safe with
-    // regards to _s3_endpoints content.
-    std::unordered_set<sstring> updates;
-    for (auto& e : cfg.object_storage_endpoints()) {
-        auto endpoint = e.key();
-        updates.insert(endpoint);
-
-        auto [it, added] = _object_storage_endpoints.try_emplace(endpoint, e);
-        if (!added) {
-            if (it->second.client != nullptr) {
-                co_await it->second.client->update_config(e);
-            }
-            it->second.cfg = e;
-        }
-    }
-
-    std::erase_if(_object_storage_endpoints, [&updates](const auto& e) {
-        return !updates.contains(e.first);
-    });
-
-    co_return;
-}
 
 auto storage_manager::get_endpoint(const sstring& endpoint) -> object_storage_endpoint& {
     auto found = _object_storage_endpoints.find(endpoint);
@@ -173,10 +142,30 @@ std::vector<sstring> storage_manager::endpoints(sstring type) const noexcept {
 }
 
 storage_manager::config_updater::config_updater(const db::config& cfg, storage_manager& sstm)
-    : action([&sstm, &cfg] () mutable {
-        return sstm.update_config(cfg);
-    })
-    , observer(cfg.object_storage_endpoints.observe(action.make_observer()))
+    : observer(cfg.object_storage_endpoints.observe([&sstm, &cfg] (const std::vector<db::object_storage_endpoint_param>&) {
+        // Sync part: runs atomically in the current reactor turn 
+        // Update _object_storage_endpoints so that any subsequent call to
+        // get_endpoint_client() immediately sees the new configuration.
+        // Each client's update_config_sync() spawns its own async background
+        // work (credential refresh for S3, old client close for GCS) into a
+        // client-local gated fiber.
+        std::unordered_set<sstring> updates;
+        for (auto& e : cfg.object_storage_endpoints()) {
+            auto endpoint = e.key();
+            smlogger.info("config_updater: endpoint={}, config={}", endpoint, e);
+            updates.insert(endpoint);
+            auto [it, added] = sstm._object_storage_endpoints.try_emplace(endpoint, e);
+            if (!added) {
+                if (it->second.client) {
+                    it->second.client->update_config_sync(e);
+                }
+                it->second.cfg = e;
+            }
+        }
+        std::erase_if(sstm._object_storage_endpoints, [&updates](const auto& e) {
+            return !updates.contains(e.first);
+        });
+    }))
 {}
 
 sstables::sstable::version_types sstables_manager::get_highest_supported_format() const noexcept {
