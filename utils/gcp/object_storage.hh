@@ -20,13 +20,16 @@
 #include "utils/rjson.hh"
 #include "utils/chunked_vector.hh"
 #include "utils/seekable_source.hh"
+#include "utils/closeable_shared_ptr.hh"
+#include "utils/rest/client.hh"
+#include "utils/gcp/gcp_credentials.hh"
 
 namespace seastar {
 class abort_source;
 }
 
-namespace utils::gcp {
-    struct google_credentials;
+namespace utils::http {
+struct url_info;
 }
 
 namespace utils::gcp::storage {
@@ -64,10 +67,44 @@ namespace utils::gcp::storage {
      * Minimal GCP object storage client
      */
     class client {
-        class impl;
+        using body_writer = std::function<future<>(output_stream<char>&&)>;
+        using writer_and_size = std::pair<body_writer, size_t>;
+        using body_variant = std::variant<std::string, writer_and_size>;
+        using handler_func_ex = rest::handler_func_ex;
+        using headers_type = std::vector<rest::key_value>;
+        using request_wrapper = rest::request_wrapper;
+        using httpclient = rest::httpclient;
+        using key_values = rest::key_values;
+
+        class impl {
+            std::string _endpoint;
+            std::optional<google_credentials> _credentials;
+            seastar::semaphore _unlimited;
+            seastar::semaphore& _limits;
+            seastar::http::experimental::client _client;
+            shared_ptr<seastar::tls::certificate_credentials> _certs;
+            future<> authorize(request_wrapper& req, const std::string& scope);
+        public:
+            impl(const utils::http::url_info&, std::optional<google_credentials>, seastar::semaphore*, shared_ptr<seastar::tls::certificate_credentials> creds);
+            impl(std::string_view endpoint, std::optional<google_credentials>, seastar::semaphore*, shared_ptr<seastar::tls::certificate_credentials> creds);
+
+            future<> send_with_retry(const std::string& path, const std::string& scope, body_variant, std::string_view content_type, handler_func_ex, httpclient::method_type op, key_values headers = {}, seastar::abort_source* = nullptr);
+            future<> send_with_retry(const std::string& path, const std::string& scope, body_variant, std::string_view content_type, rest::httpclient::handler_func, httpclient::method_type op, key_values headers = {}, seastar::abort_source* = nullptr);
+            future<rest::httpclient::result_type> send_with_retry(const std::string& path, const std::string& scope, body_variant, std::string_view content_type, httpclient::method_type op, key_values headers = {}, seastar::abort_source* = nullptr);
+
+            auto get_units(size_t s) const {
+                return seastar::get_units(_limits, s);
+            }
+            auto try_get_units(size_t s) const {
+                return seastar::try_get_units(_limits, s);
+            }
+            future<> close();
+        };
+
         class object_data_sink;
         class object_data_source;
-        shared_ptr<impl> _impl;
+        utils::closeable_shared_ptr_factory<impl> _impl_factory;
+        utils::shared_ptr_tracker<impl> _impl;
     public:
         static const std::string DEFAULT_ENDPOINT;
 

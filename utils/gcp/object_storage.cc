@@ -74,7 +74,7 @@ static auto parse_rfc3339(const std::string& s) {
 }
 
 class utils::gcp::storage::client::object_data_sink : public data_sink_impl {
-    shared_ptr<impl> _impl;
+    utils::shared_ptr_tracker<impl> _impl;
     std::string _bucket;
     std::string _object_name;
     rjson::value _metadata;
@@ -90,8 +90,8 @@ class utils::gcp::storage::client::object_data_sink : public data_sink_impl {
     std::exception_ptr _exception;
     seastar::abort_source* _as;
 public:
-    object_data_sink(shared_ptr<impl> i, std::string_view bucket, std::string_view object_name, rjson::value metadata, seastar::abort_source* as)
-        : _impl(i)
+    object_data_sink(utils::shared_ptr_tracker<impl>&& i, std::string_view bucket, std::string_view object_name, rjson::value metadata, seastar::abort_source* as)
+        : _impl(std::move(i))
         , _bucket(bucket)
         , _object_name(object_name)
         , _metadata(std::move(metadata))
@@ -182,7 +182,7 @@ public:
 };
 
 class utils::gcp::storage::client::object_data_source : public seekable_data_source_impl {
-    shared_ptr<impl> _impl;
+    utils::shared_ptr_tracker<impl> _impl;
     std::string _bucket;
     std::string _object_name;
     std::string _session_path;
@@ -199,8 +199,8 @@ class utils::gcp::storage::client::object_data_source : public seekable_data_sou
     }
 
 public:
-    object_data_source(shared_ptr<impl> i, std::string_view bucket, std::string_view object_name, seastar::abort_source* as)
-        : _impl(i)
+    object_data_source(utils::shared_ptr_tracker<impl>&& i, std::string_view bucket, std::string_view object_name, seastar::abort_source* as)
+        : _impl(std::move(i))
         , _bucket(bucket)
         , _object_name(object_name)
         , _as(as)
@@ -216,40 +216,7 @@ public:
     future<std::chrono::system_clock::time_point> timestamp() override;
 };
 
-using body_writer = std::function<future<>(output_stream<char>&&)>;
-using writer_and_size = std::pair<body_writer, size_t>;
-using body_variant = std::variant<std::string, writer_and_size>;
-using handler_func_ex = rest::handler_func_ex;
-using headers_type = std::vector<rest::key_value>;
-
-using namespace rest;
-
-class utils::gcp::storage::client::impl {
-    std::string _endpoint;
-    std::optional<google_credentials> _credentials;
-    seastar::semaphore _unlimited;
-    seastar::semaphore& _limits;
-    seastar::http::experimental::client _client;
-    shared_ptr<seastar::tls::certificate_credentials> _certs;
-    future<> authorize(request_wrapper& req, const std::string& scope);
-public:
-    impl(const utils::http::url_info&, std::optional<google_credentials>, seastar::semaphore*, shared_ptr<seastar::tls::certificate_credentials> creds);
-    impl(std::string_view endpoint, std::optional<google_credentials>, seastar::semaphore*, shared_ptr<seastar::tls::certificate_credentials> creds);
-
-    future<> send_with_retry(const std::string& path, const std::string& scope, body_variant, std::string_view content_type, handler_func_ex, httpclient::method_type op, key_values headers = {}, seastar::abort_source* = nullptr);
-    future<> send_with_retry(const std::string& path, const std::string& scope, body_variant, std::string_view content_type, rest::httpclient::handler_func, httpclient::method_type op, key_values headers = {}, seastar::abort_source* = nullptr);
-    future<rest::httpclient::result_type> send_with_retry(const std::string& path, const std::string& scope, body_variant, std::string_view content_type, httpclient::method_type op, key_values headers = {}, seastar::abort_source* = nullptr);
-
-    auto get_units(size_t s) const {
-        return seastar::get_units(_limits, s);
-    }
-    auto try_get_units(size_t s) const {
-        return seastar::try_get_units(_limits, s);
-    }
-    future<> close();
-};
-
-future<> storage::client::impl::authorize(request_wrapper& req, const std::string& scope) {
+future<> storage::client::impl::authorize(rest::request_wrapper& req, const std::string& scope) {
     if (_credentials) {
         co_await _credentials->refresh(scope, &storage_scope_implies, _certs);
         req.add_header(utils::gcp::AUTHORIZATION, format_bearer(_credentials->token));
@@ -324,7 +291,7 @@ utils::gcp::storage::client::impl::send_with_retry(const std::string& path, cons
     // GCP storage requires this even if content is empty
     req.add_header("Content-Length", std::to_string(req.request().content_length));
 
-    gcp_storage.trace("Sending: {}", redacted_request_type {
+    gcp_storage.trace("Sending: {}", rest::redacted_request_type {
         req.request(),
         bearer_filter()
     });
@@ -829,11 +796,13 @@ future<> utils::gcp::storage::client::object_data_source::read_info() {
 }
 
 utils::gcp::storage::client::client(std::string_view endpoint, std::optional<google_credentials> c, shared_ptr<seastar::tls::certificate_credentials> certs)
-    : _impl(seastar::make_shared<impl>(endpoint, std::move(c), nullptr, std::move(certs)))
+    : _impl_factory(seastar::make_shared<impl>(endpoint, std::move(c), nullptr, std::move(certs)))
+    , _impl(_impl_factory.get())
 {}
 
 utils::gcp::storage::client::client(std::string_view endpoint, std::optional<google_credentials> c, seastar::semaphore& memory, shared_ptr<seastar::tls::certificate_credentials> certs)
-    : _impl(seastar::make_shared<impl>(endpoint, std::move(c), &memory, std::move(certs)))
+    : _impl_factory(seastar::make_shared<impl>(endpoint, std::move(c), &memory, std::move(certs)))
+    , _impl(_impl_factory.get())
 {}
 
 utils::gcp::storage::client::~client() = default;
@@ -1149,15 +1118,16 @@ future<> utils::gcp::storage::client::copy_object(std::string_view bucket, std::
 }
 
 seastar::data_sink utils::gcp::storage::client::create_upload_sink(std::string_view bucket, std::string_view object_name, rjson::value metadata, seastar::abort_source* as) const {
-    return seastar::data_sink(std::make_unique<object_data_sink>(_impl, bucket, object_name, std::move(metadata), as));
+    return seastar::data_sink(std::make_unique<object_data_sink>(_impl_factory.get(), bucket, object_name, std::move(metadata), as));
 }
 
 seekable_data_source utils::gcp::storage::client::create_download_source(std::string_view bucket, std::string_view object_name, seastar::abort_source* as) const {
-    return seekable_data_source(std::make_unique<object_data_source>(_impl, bucket, object_name, as));
+    return seekable_data_source(std::make_unique<object_data_source>(_impl_factory.get(), bucket, object_name, as));
 }
 
 future<> utils::gcp::storage::client::close() {
-    return _impl->close();
+    _impl.reset();
+    co_await _impl_factory.close();
 }
 
 const std::string utils::gcp::storage::client::DEFAULT_ENDPOINT = "https://storage.googleapis.com";
