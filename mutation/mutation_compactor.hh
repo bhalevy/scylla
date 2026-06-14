@@ -185,6 +185,7 @@ class compact_mutation_state {
     uint32_t _current_partition_limit;
     bool _empty_partition{};
     bool _empty_partition_in_gc_consumer{};
+    bool _empty_partition_in_tombstone_consumer{};
     std::optional<dht::decorated_key> _dk;
     bool _return_static_content_on_partition_with_no_rows{};
 
@@ -198,6 +199,11 @@ class compact_mutation_state {
     // Used to determine whether any active tombstones need closing at EOS.
     tombstone _current_emitted_tombstone;
     tombstone _current_emitted_gc_tombstone;
+    tombstone _current_emitted_tombstone_consumer_tombstone;
+
+    // When true, non-purgeable tombstones are routed to a separate tombstone consumer
+    // instead of the regular consumer. Used by tombstone segregation in ICS.
+    bool _segregate_tombstones = false;
 
     std::unique_ptr<mutation_compactor_garbage_collector> _collector;
 
@@ -209,12 +215,13 @@ class compact_mutation_state {
     // Remember if we requested to stop mid-partition.
     stop_iteration _stop = stop_iteration::no;
 private:
-    template <typename Consumer, typename GCConsumer>
-    requires CompactedFragmentsConsumer<Consumer> && CompactedFragmentsConsumer<GCConsumer>
-    stop_iteration do_consume(range_tombstone_change&& rtc, Consumer& consumer, GCConsumer& gc_consumer) {
+    template <typename Consumer, typename TombstoneConsumer, typename GCConsumer>
+    requires CompactedFragmentsConsumer<Consumer> && CompactedFragmentsConsumer<TombstoneConsumer> && CompactedFragmentsConsumer<GCConsumer>
+    stop_iteration do_consume(range_tombstone_change&& rtc, Consumer& consumer, TombstoneConsumer& tombstone_consumer, GCConsumer& gc_consumer) {
         _validator(mutation_fragment_v2::kind::range_tombstone_change, rtc.position(), rtc.tombstone());
         stop_iteration gc_consumer_stop = stop_iteration::no;
         stop_iteration consumer_stop = stop_iteration::no;
+        stop_iteration tombstone_consumer_stop = stop_iteration::no;
         if (rtc.tombstone() <= _partition_tombstone) {
             rtc.set_tombstone({});
         }
@@ -229,14 +236,37 @@ private:
                 rtc.set_tombstone({});
             }
         }
-        // If we have a previous active tombstone we emit the current one even if it is purged.
-        if (_current_emitted_tombstone || (rtc.tombstone() && !can_purge)) {
-            partition_is_not_empty(consumer);
-            _current_emitted_tombstone = rtc.tombstone();
-            consumer_stop = consumer.consume(std::move(rtc));
+        if (_segregate_tombstones) {
+            // Route non-purgeable range tombstones to tombstone consumer
+            if (_current_emitted_tombstone_consumer_tombstone || (rtc.tombstone() && !can_purge)) {
+                partition_is_not_empty_for_tombstone_consumer(tombstone_consumer);
+                _current_emitted_tombstone_consumer_tombstone = rtc.tombstone();
+                tombstone_consumer_stop = tombstone_consumer.consume(range_tombstone_change(rtc.position(), rtc.tombstone()));
+                rtc.set_tombstone({});
+            }
+            // Still need to close the range in regular consumer if it had an active tombstone
+            if (_current_emitted_tombstone) {
+                partition_is_not_empty(consumer);
+                _current_emitted_tombstone = {};
+                consumer_stop = consumer.consume(range_tombstone_change(rtc.position(), tombstone{}));
+            }
+        } else {
+            // If we have a previous active tombstone we emit the current one even if it is purged.
+            if (_current_emitted_tombstone || (rtc.tombstone() && !can_purge)) {
+                partition_is_not_empty(consumer);
+                _current_emitted_tombstone = rtc.tombstone();
+                consumer_stop = consumer.consume(std::move(rtc));
+            }
         }
-        return gc_consumer_stop || consumer_stop;
+        return gc_consumer_stop || consumer_stop || tombstone_consumer_stop;
     }
+
+    template <typename Consumer, typename GCConsumer>
+    requires CompactedFragmentsConsumer<Consumer> && CompactedFragmentsConsumer<GCConsumer>
+    stop_iteration do_consume(range_tombstone_change&& rtc, Consumer& consumer, GCConsumer& gc_consumer) {
+        return do_consume(std::move(rtc), consumer, consumer, gc_consumer);
+    }
+
     static constexpr bool sstable_compaction() {
         return SSTableCompaction == compact_for_sstables::yes;
     }
@@ -260,8 +290,22 @@ private:
             ++_stats.live_partitions;
             consumer.consume_new_partition(*_dk);
             auto pt = _partition_tombstone;
-            if (pt && !can_purge_tombstone(pt)) {
+            // When tombstone segregation is active, partition tombstone goes to
+            // the tombstone consumer, not the regular consumer.
+            if (pt && !_segregate_tombstones && !can_purge_tombstone(pt)) {
                 consumer.consume(pt);
+            }
+        }
+    }
+
+    template <typename TombstoneConsumer>
+    void partition_is_not_empty_for_tombstone_consumer(TombstoneConsumer& tombstone_consumer) {
+        if (_empty_partition_in_tombstone_consumer) {
+            _empty_partition_in_tombstone_consumer = false;
+            tombstone_consumer.consume_new_partition(*_dk);
+            auto pt = _partition_tombstone;
+            if (pt && !can_purge_tombstone(pt)) {
+                tombstone_consumer.consume(pt);
             }
         }
     }
@@ -405,6 +449,7 @@ public:
             !has_ck_selector(_slice.row_ranges(_schema, pk));
         _empty_partition = true;
         _empty_partition_in_gc_consumer = true;
+        _empty_partition_in_tombstone_consumer = true;
         _rows_in_current_partition = 0;
         _static_row_live = false;
         _partition_tombstone = {};
@@ -417,19 +462,28 @@ public:
         _effective_tombstone = {};
         _current_emitted_tombstone = {};
         _current_emitted_gc_tombstone = {};
+        _current_emitted_tombstone_consumer_tombstone = {};
 
         ++_stats.total_partitions;
+    }
+
+    template <typename Consumer, typename TombstoneConsumer, typename GCConsumer>
+    requires CompactedFragmentsConsumer<Consumer> && CompactedFragmentsConsumer<TombstoneConsumer> && CompactedFragmentsConsumer<GCConsumer>
+    void consume(tombstone t, Consumer& consumer, TombstoneConsumer& tombstone_consumer, GCConsumer& gc_consumer) {
+        _partition_tombstone = t;
+        if (can_purge_tombstone(t)) {
+            partition_is_not_empty_for_gc_consumer(gc_consumer);
+        } else if (_segregate_tombstones) {
+            partition_is_not_empty_for_tombstone_consumer(tombstone_consumer);
+        } else {
+            partition_is_not_empty(consumer);
+        }
     }
 
     template <typename Consumer, typename GCConsumer>
     requires CompactedFragmentsConsumer<Consumer> && CompactedFragmentsConsumer<GCConsumer>
     void consume(tombstone t, Consumer& consumer, GCConsumer& gc_consumer) {
-        _partition_tombstone = t;
-        if (can_purge_tombstone(t)) {
-            partition_is_not_empty_for_gc_consumer(gc_consumer);
-        } else {
-            partition_is_not_empty(consumer);
-        }
+        consume(t, consumer, consumer, gc_consumer);
     }
 
     template <typename Consumer>
@@ -438,9 +492,9 @@ public:
         partition_is_not_empty(consumer);
     }
 
-    template <typename Consumer, typename GCConsumer>
-    requires CompactedFragmentsConsumer<Consumer> && CompactedFragmentsConsumer<GCConsumer>
-    stop_iteration consume(static_row&& sr, Consumer& consumer, GCConsumer& gc_consumer) {
+    template <typename Consumer, typename TombstoneConsumer, typename GCConsumer>
+    requires CompactedFragmentsConsumer<Consumer> && CompactedFragmentsConsumer<TombstoneConsumer> && CompactedFragmentsConsumer<GCConsumer>
+    stop_iteration consume(static_row&& sr, Consumer& consumer, TombstoneConsumer& tombstone_consumer, GCConsumer& gc_consumer) {
         _validator(mutation_fragment_v2::kind::static_row, sr.position(), {});
         _last_static_row = static_row(_schema, sr);
         _last_pos = position_in_partition(position_in_partition::static_row_tag_t());
@@ -467,15 +521,27 @@ public:
         }
         _static_row_live = is_live;
         if (is_live || !sr.empty()) {
-            partition_is_not_empty(consumer);
-            _stop = consumer.consume(std::move(sr), current_tombstone, is_live);
+            if (_segregate_tombstones && !is_live) {
+                // Entirely dead static row → tombstone consumer
+                partition_is_not_empty_for_tombstone_consumer(tombstone_consumer);
+                _stop = tombstone_consumer.consume(std::move(sr), current_tombstone, false);
+            } else {
+                partition_is_not_empty(consumer);
+                _stop = consumer.consume(std::move(sr), current_tombstone, is_live);
+            }
         }
         return _stop;
     }
 
     template <typename Consumer, typename GCConsumer>
     requires CompactedFragmentsConsumer<Consumer> && CompactedFragmentsConsumer<GCConsumer>
-    stop_iteration consume(clustering_row&& cr, Consumer& consumer, GCConsumer& gc_consumer) {
+    stop_iteration consume(static_row&& sr, Consumer& consumer, GCConsumer& gc_consumer) {
+        return consume(std::move(sr), consumer, consumer, gc_consumer);
+    }
+
+    template <typename Consumer, typename TombstoneConsumer, typename GCConsumer>
+    requires CompactedFragmentsConsumer<Consumer> && CompactedFragmentsConsumer<TombstoneConsumer> && CompactedFragmentsConsumer<GCConsumer>
+    stop_iteration consume(clustering_row&& cr, Consumer& consumer, TombstoneConsumer& tombstone_consumer, GCConsumer& gc_consumer) {
         _validator(mutation_fragment_v2::kind::clustering_row, cr.position(), {});
         if (!sstable_compaction()) {
             _last_pos = cr.position();
@@ -520,8 +586,14 @@ public:
         }
 
         if (!cr.empty()) {
-            partition_is_not_empty(consumer);
-            _stop = consumer.consume(std::move(cr), t, is_live);
+            if (_segregate_tombstones && !is_live) {
+                // Entirely dead clustering row → tombstone consumer
+                partition_is_not_empty_for_tombstone_consumer(tombstone_consumer);
+                _stop = tombstone_consumer.consume(std::move(cr), t, false);
+            } else {
+                partition_is_not_empty(consumer);
+                _stop = consumer.consume(std::move(cr), t, is_live);
+            }
         }
         if (!sstable_compaction() && is_live && ++_rows_in_current_partition == _current_partition_limit) {
             _stop = stop_iteration::yes;
@@ -531,18 +603,30 @@ public:
 
     template <typename Consumer, typename GCConsumer>
     requires CompactedFragmentsConsumer<Consumer> && CompactedFragmentsConsumer<GCConsumer>
-    stop_iteration consume(range_tombstone_change&& rtc, Consumer& consumer, GCConsumer& gc_consumer) {
+    stop_iteration consume(clustering_row&& cr, Consumer& consumer, GCConsumer& gc_consumer) {
+        return consume(std::move(cr), consumer, consumer, gc_consumer);
+    }
+
+    template <typename Consumer, typename TombstoneConsumer, typename GCConsumer>
+    requires CompactedFragmentsConsumer<Consumer> && CompactedFragmentsConsumer<TombstoneConsumer> && CompactedFragmentsConsumer<GCConsumer>
+    stop_iteration consume(range_tombstone_change&& rtc, Consumer& consumer, TombstoneConsumer& tombstone_consumer, GCConsumer& gc_consumer) {
         if (!sstable_compaction()) {
             _last_pos = rtc.position();
         }
         ++_stats.range_tombstones;
-        _stop = do_consume(std::move(rtc), consumer, gc_consumer);
+        _stop = do_consume(std::move(rtc), consumer, tombstone_consumer, gc_consumer);
         return _stop;
     }
 
     template <typename Consumer, typename GCConsumer>
     requires CompactedFragmentsConsumer<Consumer> && CompactedFragmentsConsumer<GCConsumer>
-    stop_iteration consume_end_of_partition(Consumer& consumer, GCConsumer& gc_consumer) {
+    stop_iteration consume(range_tombstone_change&& rtc, Consumer& consumer, GCConsumer& gc_consumer) {
+        return consume(std::move(rtc), consumer, consumer, gc_consumer);
+    }
+
+    template <typename Consumer, typename TombstoneConsumer, typename GCConsumer>
+    requires CompactedFragmentsConsumer<Consumer> && CompactedFragmentsConsumer<TombstoneConsumer> && CompactedFragmentsConsumer<GCConsumer>
+    stop_iteration consume_end_of_partition(Consumer& consumer, TombstoneConsumer& tombstone_consumer, GCConsumer& gc_consumer) {
         // Only check if the active tombstone has to be closed, if the partition
         // was cut by the consumer. Otherwise, leave the stream as-is.
         if (_stop) {
@@ -550,7 +634,7 @@ public:
                 auto rtc = range_tombstone_change(position_in_partition::after_key(_schema, _last_pos), tombstone{});
                 // do_consume() overwrites _effective_tombstone with {}, so save and restore it.
                 auto prev_tombstone = _effective_tombstone;
-                do_consume(std::move(rtc), consumer, gc_consumer);
+                do_consume(std::move(rtc), consumer, tombstone_consumer, gc_consumer);
                 _effective_tombstone = prev_tombstone;
             } else if (_validator.validator().current_tombstone()) {
                 // It is possible that the range-tombstone providing the active
@@ -563,6 +647,9 @@ public:
         _validator.on_end_of_partition();
         if (!_empty_partition_in_gc_consumer) {
             gc_consumer.consume_end_of_partition();
+        }
+        if (!_empty_partition_in_tombstone_consumer) {
+            tombstone_consumer.consume_end_of_partition();
         }
         if (!_empty_partition) {
             // #589 - Do not add extra row for static content unless we did a CK range-less query.
@@ -589,6 +676,21 @@ public:
             }
         }
         return stop_iteration::no;
+    }
+
+    template <typename Consumer, typename GCConsumer>
+    requires CompactedFragmentsConsumer<Consumer> && CompactedFragmentsConsumer<GCConsumer>
+    stop_iteration consume_end_of_partition(Consumer& consumer, GCConsumer& gc_consumer) {
+        return consume_end_of_partition(consumer, consumer, gc_consumer);
+    }
+
+    template <typename Consumer, typename TombstoneConsumer, typename GCConsumer>
+    requires CompactedFragmentsConsumer<Consumer> && CompactedFragmentsConsumer<TombstoneConsumer> && CompactedFragmentsConsumer<GCConsumer>
+    auto consume_end_of_stream(Consumer& consumer, TombstoneConsumer& tombstone_consumer, GCConsumer& gc_consumer) {
+        _validator.on_end_of_stream();
+        gc_consumer.consume_end_of_stream();
+        tombstone_consumer.consume_end_of_stream();
+        return consumer.consume_end_of_stream();
     }
 
     template <typename Consumer, typename GCConsumer>
@@ -699,6 +801,8 @@ public:
     }
 
     const ::compaction_stats& stats() const { return _stats; }
+
+    void set_segregate_tombstones(bool value) noexcept { _segregate_tombstones = value; }
 };
 
 template<compact_for_sstables SSTableCompaction, typename Consumer, typename GCConsumer>
@@ -782,4 +886,77 @@ template<typename Consumer, typename GCConsumer = noop_compacted_fragments_consu
 requires CompactedFragmentsConsumer<Consumer> && CompactedFragmentsConsumer<GCConsumer>
 struct compact_for_compaction : compact_mutation<compact_for_sstables::yes, Consumer, GCConsumer> {
     using compact_mutation<compact_for_sstables::yes, Consumer, GCConsumer>::compact_mutation;
+};
+
+/// Three-consumer variant for tombstone segregation during compaction.
+/// Routes live data to Consumer, non-purgeable tombstones to TombstoneConsumer,
+/// and purgeable tombstones to GCConsumer.
+template<compact_for_sstables SSTableCompaction, typename Consumer, typename TombstoneConsumer, typename GCConsumer>
+requires CompactedFragmentsConsumer<Consumer> && CompactedFragmentsConsumer<TombstoneConsumer> && CompactedFragmentsConsumer<GCConsumer>
+class compact_mutation_with_tombstone_segregation {
+    lw_shared_ptr<compact_mutation_state<SSTableCompaction>> _state;
+    Consumer _consumer;
+    TombstoneConsumer _tombstone_consumer;
+    GCConsumer _gc_consumer;
+
+public:
+    compact_mutation_with_tombstone_segregation(const schema& s, gc_clock::time_point compaction_time,
+            max_purgeable_fn get_max_purgeable,
+            const tombstone_gc_state& gc_state,
+            Consumer consumer, TombstoneConsumer tombstone_consumer, GCConsumer gc_consumer,
+            tombstone_purge_stats* tombstone_stats = nullptr)
+        : _state(make_lw_shared<compact_mutation_state<SSTableCompaction>>(s, compaction_time, get_max_purgeable, gc_state, tombstone_stats))
+        , _consumer(std::move(consumer))
+        , _tombstone_consumer(std::move(tombstone_consumer))
+        , _gc_consumer(std::move(gc_consumer)) {
+        _state->set_segregate_tombstones(true);
+    }
+
+    compact_mutation_with_tombstone_segregation(lw_shared_ptr<compact_mutation_state<SSTableCompaction>> state,
+            Consumer consumer, TombstoneConsumer tombstone_consumer, GCConsumer gc_consumer)
+        : _state(std::move(state))
+        , _consumer(std::move(consumer))
+        , _tombstone_consumer(std::move(tombstone_consumer))
+        , _gc_consumer(std::move(gc_consumer)) {
+        _state->set_segregate_tombstones(true);
+    }
+
+    void consume_new_partition(const dht::decorated_key& dk) {
+        _state->consume_new_partition(dk);
+    }
+
+    void consume(tombstone t) {
+        _state->consume(std::move(t), _consumer, _tombstone_consumer, _gc_consumer);
+    }
+
+    stop_iteration consume(static_row&& sr) {
+        return _state->consume(std::move(sr), _consumer, _tombstone_consumer, _gc_consumer);
+    }
+
+    stop_iteration consume(clustering_row&& cr) {
+        return _state->consume(std::move(cr), _consumer, _tombstone_consumer, _gc_consumer);
+    }
+
+    stop_iteration consume(range_tombstone_change&& rtc) {
+        return _state->consume(std::move(rtc), _consumer, _tombstone_consumer, _gc_consumer);
+    }
+
+    stop_iteration consume_end_of_partition() {
+        return _state->consume_end_of_partition(_consumer, _tombstone_consumer, _gc_consumer);
+    }
+
+    auto consume_end_of_stream() {
+        return _state->consume_end_of_stream(_consumer, _tombstone_consumer, _gc_consumer);
+    }
+
+    lw_shared_ptr<compact_mutation_state<SSTableCompaction>> get_state() {
+        return _state;
+    }
+};
+
+template<typename Consumer, typename TombstoneConsumer, typename GCConsumer = noop_compacted_fragments_consumer>
+requires CompactedFragmentsConsumer<Consumer> && CompactedFragmentsConsumer<TombstoneConsumer> && CompactedFragmentsConsumer<GCConsumer>
+struct compact_for_compaction_with_tombstone_segregation
+    : compact_mutation_with_tombstone_segregation<compact_for_sstables::yes, Consumer, TombstoneConsumer, GCConsumer> {
+    using compact_mutation_with_tombstone_segregation<compact_for_sstables::yes, Consumer, TombstoneConsumer, GCConsumer>::compact_mutation_with_tombstone_segregation;
 };
