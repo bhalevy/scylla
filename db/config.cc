@@ -1784,6 +1784,10 @@ db::config::config(std::shared_ptr<db::extensions> exts)
         "Set the maximum shares of regular compaction to the specific value. Do not set this unless you know what you are doing and suspect a problem in the controller. This option will be retired when the controller reaches more maturity.")
     , compaction_enforce_min_threshold(this, "compaction_enforce_min_threshold", liveness::LiveUpdate, value_status::Used, false,
         "If set to true, enforce the min_threshold option for compactions strictly. If false (default), Scylla may decide to compact even if below min_threshold.")
+    , compaction_tombstone_segregation(this, "compaction_tombstone_segregation", liveness::LiveUpdate, value_status::Used, false,
+        "If set to true, compaction of repaired sstables using incremental compaction strategy segregates "
+        "non-purgeable tombstones into separate tombstone-only sstables that are then included in subsequent "
+        "compaction jobs to expedite tombstone application and garbage collection.")
     , compaction_flush_all_tables_before_major_seconds(this, "compaction_flush_all_tables_before_major_seconds", value_status::Used, 86400,
         "Set the minimum interval in seconds between flushing all tables before each major compaction (default is 86400)."
         "This option is useful for maximizing tombstone garbage collection by releasing all active commitlog segments."

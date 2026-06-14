@@ -1621,6 +1621,7 @@ keyspace::make_column_family_config(const schema& s, const database& db) const {
     cfg.enable_cache = _config.enable_cache;
     cfg.enable_dangerous_direct_import_of_cassandra_counters = _config.enable_dangerous_direct_import_of_cassandra_counters;
     cfg.compaction_enforce_min_threshold = _config.compaction_enforce_min_threshold;
+    cfg.compaction_tombstone_segregation = _config.compaction_tombstone_segregation;
     cfg.dirty_memory_manager = _config.dirty_memory_manager;
     cfg.streaming_read_concurrency_semaphore = _config.streaming_read_concurrency_semaphore;
     cfg.compaction_concurrency_semaphore = _config.compaction_concurrency_semaphore;
@@ -2597,6 +2598,7 @@ database::make_keyspace_config(const keyspace_metadata& ksm, system_keyspace is_
     }
     cfg.enable_dangerous_direct_import_of_cassandra_counters = _cfg.enable_dangerous_direct_import_of_cassandra_counters();
     cfg.compaction_enforce_min_threshold = _cfg.compaction_enforce_min_threshold;
+    cfg.compaction_tombstone_segregation = _cfg.compaction_tombstone_segregation;
     // don't make system or internal keyspace writes wait for user writes (if under pressure)
     if (is_system || extensions().is_extension_internal_keyspace(ksm.name())) {
         cfg.dirty_memory_manager = &_system_dirty_memory_manager;
