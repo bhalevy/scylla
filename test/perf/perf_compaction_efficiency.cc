@@ -45,6 +45,7 @@ struct test_config {
     uint64_t min_sstable_size = 10000;
     std::map<sstring, sstring> compaction_options;
     sstring output_format = "text";
+    bool tombstone_segregation = false;
     bool verbose = false;
 };
 
@@ -370,7 +371,8 @@ void log_sstable_state(sharded<replica::database>& db, const schema_ptr& s, sstr
         });
         fmt::print("[shard {}] {} - {} sstables:\n", this_shard_id(), label, sorted.size());
         for (auto& sst : sorted) {
-            fmt::print("  gen={} size={}\n", sst->generation(), sst->bytes_on_disk());
+            fmt::print("  gen={} size={}{}\n", sst->generation(), sst->bytes_on_disk(),
+                sst->is_tombstone_only() ? " [tombstone-only]" : "");
         }
         std::fflush(stdout);
     }).get();
@@ -427,8 +429,15 @@ void do_compaction_efficiency_test(cql_test_env& env, test_config& cfg) {
         "  PRIMARY KEY (pk, ck)"
         ") WITH compaction = {{{}}}"
         " AND tablets = {{'min_per_shard_tablet_count': '1'}}"
-        " AND tombstone_gc = {{'mode': 'immediate'}}",
-        compaction_opts);
+        " AND tombstone_gc = {{'mode': '{}'}}",
+        compaction_opts,
+        cfg.tombstone_segregation ? "disabled" : "immediate");
+
+    if (cfg.tombstone_segregation) {
+        // With tombstone segregation, use a large gc_grace_seconds to keep tombstones non-purgeable.
+        // This exercises the tombstone segregation path rather than GC purging.
+        create_table_cql += " AND gc_grace_seconds = 86400";
+    }
 
     if (cfg.default_time_to_live > 0) {
         create_table_cql += fmt::format(" AND default_time_to_live = {}",
@@ -674,6 +683,8 @@ int scylla_compaction_efficiency_main(int argc, char** argv) {
             "compaction strategy options as key=value,key=value (min_sstable_size=10000 added by default)")
         ("output-format", bpo::value<std::string>()->default_value("text"),
             "output format: text, json")
+        ("tombstone-segregation", bpo::bool_switch()->default_value(false),
+            "enable tombstone segregation for compaction (segregates non-purgeable tombstones into separate sstables)")
         ("verbose", bpo::bool_switch()->default_value(false),
             "print per-shard sstable state after each flush and compaction")
         ;
@@ -693,6 +704,7 @@ int scylla_compaction_efficiency_main(int argc, char** argv) {
             // Set memtable space very high to prevent automatic flushing.
             // The test controls flush timing explicitly.
             db_cfg->memtable_total_space_in_mb(1 << 20); // ~1TB
+            db_cfg->compaction_tombstone_segregation(app.configuration()["tombstone-segregation"].as<bool>());
             cql_test_config cql_cfg(db_cfg);
             cql_cfg.initial_tablets = 1; // Enable tablets for the default keyspace
 
@@ -730,6 +742,7 @@ int scylla_compaction_efficiency_main(int argc, char** argv) {
                     cfg.compaction_options["min_sstable_size"] = "10000";
                 }
                 cfg.output_format = app.configuration()["output-format"].as<std::string>();
+                cfg.tombstone_segregation = app.configuration()["tombstone-segregation"].as<bool>();
                 cfg.verbose = app.configuration()["verbose"].as<bool>();
                 if (cfg.output_format != "text" && cfg.output_format != "json") {
                     throw std::invalid_argument(fmt::format("invalid value for output-format: {}", cfg.output_format));
