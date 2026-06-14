@@ -874,6 +874,7 @@ public:
         estimated_partitions = std::max(uint64_t(1), estimated_partitions);
 
         _sst.open_sstable(cfg.origin);
+        _sst._tombstone_only = cfg.tombstone_only;
         _sst.create_data().get();
         _compression_enabled = !_sst.has_component(component_type::CRC);
         _delayed_filter = _sst.has_component(component_type::Filter) && !_sst.has_component(component_type::Index);

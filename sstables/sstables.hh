@@ -125,6 +125,7 @@ struct sstable_writer_config {
     sstring origin;
     bool correct_pi_block_width = true;
     uint32_t large_data_records_per_sstable = 10;
+    bool tombstone_only = false;
 
 private:
     explicit sstable_writer_config() {}
@@ -449,6 +450,8 @@ public:
 
     bool is_uploaded() const noexcept { return _state == sstable_state::upload; }
 
+    bool is_tombstone_only() const noexcept { return _tombstone_only; }
+
     std::vector<std::pair<component_type, sstring>> all_components() const;
 
     future<> snapshot(const sstring& name) const;
@@ -634,6 +637,7 @@ private:
     sstring _origin;
     std::optional<scylla_metadata::ext_timestamp_stats> _ext_timestamp_stats;
     optimized_optional<sstable_id> _sstable_identifier;
+    bool _tombstone_only = false;
 
     // Total reclaimable memory from all the components of the SSTable.
     // It is initialized to 0 to prevent the sstables manager from reclaiming memory

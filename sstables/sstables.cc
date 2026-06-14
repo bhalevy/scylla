@@ -1727,6 +1727,7 @@ future<> sstable::open_data(sstable_open_config cfg) noexcept {
     if (origin) {
         _origin = sstring(to_string_view(bytes_view(origin->value)));
     }
+    _tombstone_only = _components->scylla_metadata->is_tombstone_only();
     auto* ts_stats = _components->scylla_metadata->data.get<scylla_metadata_type::ExtTimestampStats, scylla_metadata::ext_timestamp_stats>();
     if (ts_stats) {
         _ext_timestamp_stats.emplace(*ts_stats);
@@ -2431,6 +2432,10 @@ sstable::write_scylla_metadata(shard_id shard, struct run_identifier identifier,
     }
     _components->scylla_metadata->data.set<scylla_metadata_type::Schema>(std::move(sstable_schema));
     _components->scylla_metadata->data.set<scylla_metadata_type::ComponentsDigests>(scylla_metadata::components_digests{_components_digests});
+
+    if (_tombstone_only) {
+        _components->scylla_metadata->set_tombstone_only();
+    }
 
     _components->scylla_metadata->digest = serialized_checksum(_version, _components->scylla_metadata->data);
 

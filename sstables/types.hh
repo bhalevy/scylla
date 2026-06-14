@@ -553,6 +553,7 @@ enum class scylla_metadata_type : uint32_t {
     Schema = 11,
     ComponentsDigests = 12,
     LargeDataRecords = 13,
+    TombstoneOnly = 14,
 };
 
 // UUID is used for uniqueness across nodes, such that an imported sstable
@@ -564,6 +565,15 @@ struct run_identifier {
 
     template <typename Describer>
     auto describe_type(sstable_version_types v, Describer f) { return f(id); }
+};
+
+// Marker indicating an sstable contains only tombstones (no live data).
+// The sstable is tombstone-only iff this metadata entry is present and value is true.
+struct tombstone_only_metadata {
+    bool value = false;
+
+    template <typename Describer>
+    auto describe_type(sstable_version_types v, Describer f) { return f(value); }
 };
 
 using sstable_id = utils::tagged_uuid<struct sstable_id_tag>;
@@ -696,7 +706,8 @@ struct scylla_metadata {
             disk_tagged_union_member<scylla_metadata_type, scylla_metadata_type::SSTableIdentifier, sstable_identifier>,
             disk_tagged_union_member<scylla_metadata_type, scylla_metadata_type::Schema, sstable_schema>,
             disk_tagged_union_member<scylla_metadata_type, scylla_metadata_type::ComponentsDigests, components_digests>,
-            disk_tagged_union_member<scylla_metadata_type, scylla_metadata_type::LargeDataRecords, large_data_records>
+            disk_tagged_union_member<scylla_metadata_type, scylla_metadata_type::LargeDataRecords, large_data_records>,
+            disk_tagged_union_member<scylla_metadata_type, scylla_metadata_type::TombstoneOnly, tombstone_only_metadata>
             > data;
     std::optional<uint32_t> digest;
 
@@ -745,6 +756,13 @@ struct scylla_metadata {
     }
     const components_digests* get_components_digests() const {
         return data.get<scylla_metadata_type::ComponentsDigests, components_digests>();
+    }
+    bool is_tombstone_only() const {
+        auto* m = data.get<scylla_metadata_type::TombstoneOnly, tombstone_only_metadata>();
+        return m && m->value;
+    }
+    void set_tombstone_only(bool value = true) {
+        data.set<scylla_metadata_type::TombstoneOnly>(tombstone_only_metadata{value});
     }
 };
 
