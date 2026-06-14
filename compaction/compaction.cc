@@ -787,6 +787,40 @@ protected:
     virtual bool enable_garbage_collected_sstable_writer() const noexcept {
         return _contains_multi_fragment_runs && _max_sstable_size != std::numeric_limits<uint64_t>::max() && bool(_replacer);
     }
+
+    virtual bool enable_tombstone_segregation_writer() const noexcept {
+        return _table_s.enable_tombstone_segregation();
+    }
+
+    compaction_writer create_tombstone_compaction_writer(sstables::run_id tombstone_run) const {
+        auto sst = _sstable_creator(this_shard_id());
+        auto monitor = std::make_unique<compaction_write_monitor>(sst, _table_s, maximum_timestamp(), _sstable_level);
+        sstables::sstable_writer_config cfg = _table_s.configure_writer("tombstone_segregation");
+        cfg.run_identifier = tombstone_run;
+        cfg.monitor = monitor.get();
+        cfg.tombstone_only = true;
+        uint64_t estimated_partitions = std::max(1UL, uint64_t(ceil(partitions_per_sstable() * _estimated_droppable_tombstone_ratio)));
+        auto writer = sst->get_writer(*schema(), estimated_partitions, cfg, get_encoding_stats());
+        return compaction_writer(std::move(monitor), std::move(writer), std::move(sst));
+    }
+
+    void stop_tombstone_compaction_writer(compaction_writer* c_writer) {
+        c_writer->writer.consume_end_of_stream();
+        auto sst = c_writer->sst;
+        sst->open_data().get();
+        _new_unused_sstables.push_back(std::move(sst));
+    }
+
+    // Writes a separate sstable run containing only non-purgeable tombstones.
+    // These sstables are kept and included in subsequent compaction jobs to
+    // expedite tombstone application to older data.
+    compacted_fragments_writer get_tombstone_compacted_fragments_writer() {
+        auto tombstone_run = sstables::run_id::create_random_id();
+        return compacted_fragments_writer(*this,
+             [this, tombstone_run] (const dht::decorated_key&) { return create_tombstone_compaction_writer(tombstone_run); },
+             [this] (compaction_writer* cw) { stop_tombstone_compaction_writer(cw); },
+             _stop_request_observable);
+    }
 public:
     compaction& operator=(const compaction&) = delete;
     compaction(const compaction&) = delete;
@@ -946,7 +980,7 @@ private:
         // consume_without_gc_writer(), which uses compacting_reader, is ~3% slower.
         // let's only use it when GC writer is disabled and interposer consumer is enabled, as we
         // wouldn't like others to pay the penalty for something they don't need.
-        if (!enable_garbage_collected_sstable_writer() && use_interposer_consumer()) {
+        if (!enable_garbage_collected_sstable_writer() && !enable_tombstone_segregation_writer() && use_interposer_consumer()) {
             return consume_without_gc_writer(now);
         }
         auto consumer = make_interposer_consumer([this, now] (mutation_reader reader) mutable
@@ -954,6 +988,34 @@ private:
             return seastar::async([this, reader = std::move(reader), now] () mutable {
                 auto close_reader = deferred_close(reader);
 
+                if (enable_tombstone_segregation_writer()) {
+                    if (enable_garbage_collected_sstable_writer()) {
+                        // Three-way split: data + tombstone + GC
+                        using compact_mutations = compact_for_compaction_with_tombstone_segregation<
+                            compacted_fragments_writer, compacted_fragments_writer, compacted_fragments_writer>;
+                        auto cfc = compact_mutations(*schema(), now,
+                            max_purgeable_func(),
+                            get_tombstone_gc_state(),
+                            get_compacted_fragments_writer(),
+                            get_tombstone_compacted_fragments_writer(),
+                            get_gc_compacted_fragments_writer(),
+                            &_tombstone_purge_stats);
+                        reader.consume_in_thread(std::move(cfc));
+                    } else {
+                        // Two-way with tombstone segregation: data + tombstone (no GC)
+                        using compact_mutations = compact_for_compaction_with_tombstone_segregation<
+                            compacted_fragments_writer, compacted_fragments_writer, noop_compacted_fragments_consumer>;
+                        auto cfc = compact_mutations(*schema(), now,
+                            max_purgeable_func(),
+                            get_tombstone_gc_state(),
+                            get_compacted_fragments_writer(),
+                            get_tombstone_compacted_fragments_writer(),
+                            noop_compacted_fragments_consumer(),
+                            &_tombstone_purge_stats);
+                        reader.consume_in_thread(std::move(cfc));
+                    }
+                    return;
+                }
                 if (enable_garbage_collected_sstable_writer()) {
                     using compact_mutations = compact_for_compaction<compacted_fragments_writer, compacted_fragments_writer>;
                     auto cfc = compact_mutations(*schema(), now,

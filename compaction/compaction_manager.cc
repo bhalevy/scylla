@@ -1421,6 +1421,30 @@ protected:
             compaction_group_view& t = *_compacting_table;
             compaction_strategy cs = t.get_compaction_strategy();
             compaction_descriptor descriptor = co_await cs.get_sstables_for_compaction(t, _cm.get_strategy_control());
+
+            // Inject overlapping tombstone-only sstables into the compaction job
+            // to expedite tombstone application over older data.
+            if (t.enable_tombstone_segregation() && !descriptor.sstables.empty()) {
+                auto main_set = co_await t.main_sstable_set();
+                // Compute token range of selected sstables
+                auto token_min = descriptor.sstables.front()->get_first_decorated_key().token();
+                auto token_max = descriptor.sstables.front()->get_last_decorated_key().token();
+                for (const auto& sst : descriptor.sstables) {
+                    token_min = std::min(token_min, sst->get_first_decorated_key().token());
+                    token_max = std::max(token_max, sst->get_last_decorated_key().token());
+                }
+                for (const auto& sst : *main_set->all()) {
+                    if (sst->is_tombstone_only()
+                        && !sst->is_quarantined()
+                        && !_cm._compacting_sstables.contains(sst)
+                        // Check token range overlap
+                        && sst->get_first_decorated_key().token() <= token_max
+                        && sst->get_last_decorated_key().token() >= token_min) {
+                        descriptor.sstables.push_back(sst);
+                    }
+                }
+            }
+
             int weight = calculate_weight(descriptor);
             cmlog.debug("Started minor compaction sstables={} sstables_reapired_at={} range={} uuid={} compaction_uuid={}",
                     descriptor.sstables, compacting_table()->get_sstables_repaired_at(),

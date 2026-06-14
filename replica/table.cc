@@ -3134,6 +3134,9 @@ public:
     tombstone_gc_state get_tombstone_gc_state() const noexcept override {
         return _t.get_tombstone_gc_state();
     }
+    bool enable_tombstone_segregation() const noexcept override {
+        return _t.get_config().compaction_tombstone_segregation;
+    }
     compaction::compaction_backlog_tracker& get_backlog_tracker() override {
         return _cg.get_backlog_tracker();
     }

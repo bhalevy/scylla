@@ -824,6 +824,7 @@ public:
     virtual bool is_auto_compaction_disabled_by_user() const noexcept override { return false; }
     virtual bool tombstone_gc_enabled() const noexcept override { return false; }
     virtual tombstone_gc_state get_tombstone_gc_state() const noexcept override { return _tombstone_gc_state; }
+    virtual bool enable_tombstone_segregation() const noexcept override { return false; }
     virtual compaction::compaction_backlog_tracker& get_backlog_tracker() override { return _backlog_tracker; }
     virtual const std::string get_group_id() const noexcept override { return _group_id; }
     virtual seastar::condition_variable& get_staging_done_condition() noexcept override { return _staging_done_condition; }
@@ -1345,6 +1346,7 @@ const char* to_string(sstables::scylla_metadata_type t) {
         case sstables::scylla_metadata_type::Schema: return "schema";
         case sstables::scylla_metadata_type::ComponentsDigests: return "components_digests";
         case sstables::scylla_metadata_type::LargeDataRecords: return "large_data_records";
+        case sstables::scylla_metadata_type::TombstoneOnly: return "tombstone_only";
     }
     std::abort();
 }
@@ -1505,6 +1507,10 @@ public:
 
     void operator()(const sstables::scylla_metadata::sstable_identifier& sid) const {
         _writer.AsString(sid.value);
+    }
+
+    void operator()(const sstables::tombstone_only_metadata& val) const {
+        _writer.Bool(val.value);
     }
 
     void operator()(const sstables::sstable_column_description& cd) const {
