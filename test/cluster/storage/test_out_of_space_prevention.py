@@ -16,6 +16,7 @@ from cassandra.cluster import ConsistencyLevel
 from cassandra.query import SimpleStatement
 from typing import Callable
 
+from test import nodetool
 from test.cluster.util import get_topology_coordinator, find_server_by_host_id, new_test_keyspace, new_test_table, reconnect_driver
 from test.pylib.manager_client import ManagerClient, wait_for_cql_and_get_hosts
 from test.pylib.tablets import get_tablet_count
@@ -25,8 +26,8 @@ from test.cluster.storage.conftest import space_limited_servers
 logger = logging.getLogger(__name__)
 
 
-def write_generator(table, size_in_kb: int):
-    for idx in range(size_in_kb):
+def write_generator(table, size_in_kb: int, start_idx: int = 0):
+    for idx in range(start_idx, start_idx + size_in_kb):
         yield f"INSERT INTO {table} (pk, t) VALUES ({idx}, '{'x' * 1020}')"
 
 
@@ -777,3 +778,33 @@ async def test_load_and_stream_rejected_on_critical_disk(manager: ManagerClient,
                     sstable_files_after = list_sstable_files()
                     assert sstable_files_after == sstable_files_before, \
                         f"Orphan SSTable files found after failed stream: {sstable_files_after - sstable_files_before}"
+
+
+@pytest.mark.xfail      # This test is expected to fail until we implement incremental release of sstables in TWCS major compaction.
+@pytest.mark.skip_mode(mode='release', reason='error injections are not supported in release mode')
+async def test_twcs_major_compaction_oos(manager: ManagerClient, volumes_factory: Callable) -> None:
+    """
+    Test that major compaction of a TWCS table does not cause out-of-space when the table starts at ~50% utilization.
+    """
+    cmdline = ["--logger-log-level", "compaction=debug"]
+    async with space_limited_servers(manager, volumes_factory, ["15M"]*3, cmdline=cmdline) as servers:
+        cql, _ = await manager.get_ready_cql(servers)
+
+        log = await manager.server_open_log(servers[0].server_id)
+        mark = await log.mark()
+
+        async with new_test_keyspace(manager, "WITH replication = {'class': 'NetworkTopologyStrategy', 'replication_factor': 3} AND tablets = {'enabled': 'true'}") as ks:
+            async with new_test_table(manager, ks, "pk int PRIMARY KEY, t text",
+                                      extra=" WITH compaction = {'class': 'TimeWindowCompactionStrategy', "
+                                            "'compaction_window_size': '1', 'compaction_window_unit': 'MINUTES'} AND "
+                                            "default_time_to_live=60 AND compression = { }") as cf:
+                await manager.api.disable_autocompaction(servers[0].ip_addr, ks)
+                # populate data with >50% capacity
+                size_in_kb = 100
+                for i in range(50):
+                    await asyncio.gather(*[cql.run_async(query) for query in write_generator(cf, size_in_kb, start_idx=i*size_in_kb)])
+                    await manager.api.flush_keyspace(servers[0].ip_addr, ks)
+
+                logger.info("Run major compaction")
+                await manager.api.keyspace_compaction(servers[0].ip_addr, ks)
+                await log.wait_for(f"Major {cf} .* Compacted .*", timeout=10, from_mark=mark)
