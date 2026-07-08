@@ -39,6 +39,7 @@
 #include "db/system_keyspace.hh"
 #include <seastar/http/exception.hh>
 #include <seastar/util/short_streams.hh>
+#include <seastar/util/closeable.hh>
 #include <seastar/core/coroutine.hh>
 #include <seastar/coroutine/parallel_for_each.hh>
 #include <seastar/coroutine/exception.hh>
@@ -50,7 +51,9 @@
 #include "release.hh"
 #include "compaction/compaction_manager.hh"
 #include "compaction/task_manager_module.hh"
+#include "sstables/object_storage_client.hh"
 #include "sstables/sstables.hh"
+#include "sstables/storage.hh"
 #include "replica/database.hh"
 #include "db/extensions.hh"
 #include "db/snapshot-ctl.hh"
@@ -1439,6 +1442,169 @@ rest_retrain_dict(http_context& ctx, sharded<service::storage_service>& ss, serv
     co_return json_void();
 }
 
+static sstring require_query_param(const http::request& req, std::string_view name) {
+    auto value = req.get_query_param(std::string(name));
+    if (value.empty()) {
+        throw bad_param_exception(fmt::format("Missing required query parameter '{}'", name));
+    }
+    return value;
+}
+
+static sstring object_storage_prefix(std::string_view keyspace = {}) {
+    if (keyspace.empty()) {
+        return "keyspaces/";
+    }
+    return fmt::format("keyspaces/{}/tables/", keyspace);
+}
+
+static sstables::object_storage_client& get_object_storage_client(http_context& ctx, const http::request& req) {
+    auto endpoint = require_query_param(req, "endpoint");
+    return *ctx.db.local().get_user_sstables_manager().get_endpoint_client(std::move(endpoint));
+}
+
+static future<> collect_object_storage_entries(abstract_lister& lister, std::vector<sstring>& entries) {
+    while (auto entry = co_await lister.get()) {
+        entries.push_back(entry->name);
+    }
+}
+
+static future<std::vector<sstring>> list_object_storage_entries(sstables::object_storage_client& client, sstring bucket, sstring prefix) {
+    std::vector<sstring> entries;
+    auto lister = client.make_object_lister(std::move(bucket), std::move(prefix), [] (const std::filesystem::path&, const directory_entry&) { return true; });
+    co_await with_closeable(std::move(lister), [&entries] (abstract_lister& lister) {
+        return collect_object_storage_entries(lister, entries);
+    });
+    co_return entries;
+}
+
+static std::optional<sstring> first_path_component(std::string_view path) {
+    if (path.empty()) {
+        return std::nullopt;
+    }
+    auto pos = path.find('/');
+    return sstring(path.substr(0, pos));
+}
+
+static std::vector<sstring> unique_sorted(std::unordered_set<sstring> values) {
+    auto result = values | std::views::all | std::ranges::to<std::vector<sstring>>();
+    std::ranges::sort(result);
+    return result;
+}
+
+static
+future<json::json_return_type>
+rest_object_storage_keyspaces(http_context& ctx, std::unique_ptr<http::request> req) {
+    auto& client = get_object_storage_client(ctx, *req);
+    auto bucket = require_query_param(*req, "bucket");
+    auto entries = co_await list_object_storage_entries(client, std::move(bucket), object_storage_prefix());
+    std::unordered_set<sstring> keyspaces;
+    for (const auto& entry : entries) {
+        if (auto keyspace = first_path_component(entry)) {
+            keyspaces.emplace(std::move(*keyspace));
+        }
+    }
+    co_return unique_sorted(std::move(keyspaces));
+}
+
+static std::pair<sstring, sstring> parse_object_storage_table_entry(std::string_view entry) {
+    auto table = first_path_component(entry);
+    if (!table) {
+        throw bad_param_exception(fmt::format("Malformed object-storage table path: {}", entry));
+    }
+
+    constexpr size_t uuid_length = 36;
+    if (table->size() <= uuid_length || (*table)[table->size() - uuid_length - 1] != '-') {
+        throw bad_param_exception(fmt::format("Malformed object-storage table directory: {}", *table));
+    }
+
+    auto id_pos = table->size() - uuid_length;
+    return {table->substr(0, id_pos - 1), table->substr(id_pos)};
+}
+
+static
+future<json::json_return_type>
+rest_object_storage_tables(http_context& ctx, std::unique_ptr<http::request> req) {
+    auto keyspace = require_query_param(*req, "keyspace");
+    auto& client = get_object_storage_client(ctx, *req);
+    auto bucket = require_query_param(*req, "bucket");
+    auto entries = co_await list_object_storage_entries(client, std::move(bucket), object_storage_prefix(keyspace));
+    std::map<std::pair<sstring, sstring>, ss::object_storage_table> tables;
+    for (const auto& entry : entries) {
+        auto [name, id] = parse_object_storage_table_entry(entry);
+        auto& table = tables[{name, id}];
+        table.name = std::move(name);
+        table.id = std::move(id);
+    }
+    std::vector<ss::object_storage_table> result;
+    result.reserve(tables.size());
+    for (auto& table : tables | std::views::values) {
+        result.emplace_back(std::move(table));
+    }
+    co_return result;
+}
+
+static std::pair<sstring, sstring> resolve_object_storage_table(const std::vector<sstring>& entries, std::string_view table_name, std::string_view requested_table_id) {
+    std::unordered_set<sstring> matching_ids;
+    sstring table_dir;
+    for (const auto& entry : entries) {
+        auto [name, id] = parse_object_storage_table_entry(entry);
+        if (name != table_name) {
+            continue;
+        }
+        if (!requested_table_id.empty() && id != requested_table_id) {
+            continue;
+        }
+        matching_ids.emplace(id);
+        table_dir = first_path_component(entry).value();
+    }
+
+    if (matching_ids.empty()) {
+        throw bad_param_exception(fmt::format("No object-storage table '{}'{}", table_name, requested_table_id.empty() ? "" : fmt::format(" with id {}", requested_table_id)));
+    }
+    if (matching_ids.size() > 1) {
+        throw bad_param_exception(fmt::format("More than one object-storage table named '{}'; provide table_id", table_name));
+    }
+    return {std::move(table_dir), *matching_ids.begin()};
+}
+
+static
+future<json::json_return_type>
+rest_object_storage_sstables(http_context& ctx, std::unique_ptr<http::request> req) {
+    auto keyspace = require_query_param(*req, "keyspace");
+    auto table_name = require_query_param(*req, "table");
+    auto table_id = req->get_query_param("table_id");
+    auto bucket = require_query_param(*req, "bucket");
+    auto& client = get_object_storage_client(ctx, *req);
+    auto keyspace_prefix = object_storage_prefix(keyspace);
+    auto keyspace_entries = co_await list_object_storage_entries(client, bucket, keyspace_prefix);
+    auto [table_dir, _] = resolve_object_storage_table(keyspace_entries, table_name, table_id);
+
+    auto table_prefix = fmt::format("{}{}", keyspace_prefix, table_dir);
+    auto table_entries = co_await list_object_storage_entries(client, bucket, fmt::format("{}/", table_prefix));
+    std::map<sstring, ss::object_storage_sstable> sstables;
+    for (const auto& entry : table_entries) {
+        auto sid = first_path_component(entry);
+        if (!sid) {
+            continue;
+        }
+        auto& sst = sstables[*sid];
+        sst.sstable_id = *sid;
+    }
+    for (auto& [sid_string, sst] : sstables) {
+        auto sid = sstables::sstable_id(utils::UUID(sid_string));
+        auto refs = co_await sstables::list_object_storage_references(client, bucket, table_prefix, sid);
+        std::ranges::sort(refs);
+        sst.num_references = refs.size();
+        sst.references = std::move(refs);
+    }
+    std::vector<ss::object_storage_sstable> result;
+    result.reserve(sstables.size());
+    for (auto& sst : sstables | std::views::values) {
+        result.emplace_back(std::move(sst));
+    }
+    co_return result;
+}
+
 static
 future<json::json_return_type>
 rest_sstable_info(http_context& ctx, std::unique_ptr<http::request> req) {
@@ -2024,6 +2190,9 @@ void set_storage_service(http_context& ctx, routes& r, sharded<service::storage_
     ss::get_effective_ownership.set(r, gated(ss, rest_bind(rest_get_effective_ownership, ctx, ss)));
     ss::retrain_dict.set(r, gated(ss, rest_bind(rest_retrain_dict, ctx, ss, group0_client)));
     ss::estimate_compression_ratios.set(r, gated(ss, rest_bind(rest_estimate_compression_ratios, ctx, ss)));
+    ss::object_storage_keyspaces.set(r, gated(ss, rest_bind(rest_object_storage_keyspaces, ctx)));
+    ss::object_storage_tables.set(r, gated(ss, rest_bind(rest_object_storage_tables, ctx)));
+    ss::object_storage_sstables.set(r, gated(ss, rest_bind(rest_object_storage_sstables, ctx)));
     ss::sstable_info.set(r, gated(ss, rest_bind(rest_sstable_info, ctx)));
     ss::logstor_info.set(r, gated(ss, rest_bind(rest_logstor_info, ctx)));
     ss::reload_raft_topology_state.set(r, gated(ss, rest_bind(rest_reload_raft_topology_state, ss, group0_client)));
@@ -2107,6 +2276,9 @@ void unset_storage_service(http_context& ctx, routes& r) {
     ss::get_total_hints.unset(r);
     ss::get_ownership.unset(r);
     ss::get_effective_ownership.unset(r);
+    ss::object_storage_keyspaces.unset(r);
+    ss::object_storage_tables.unset(r);
+    ss::object_storage_sstables.unset(r);
     ss::sstable_info.unset(r);
     ss::logstor_info.unset(r);
     ss::reload_raft_topology_state.unset(r);
