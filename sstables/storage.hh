@@ -11,11 +11,13 @@
 
 #include "utils/assert.hh"
 #include <filesystem>
+#include <fmt/format.h>
 
 #include <seastar/core/file.hh>
 #include <seastar/core/fstream.hh>
 #include <seastar/core/future.hh>
 #include <seastar/core/reactor.hh>
+#include <seastar/core/sstring.hh>
 
 #include "data_dictionary/storage_options.hh"
 #include "schema/schema_fwd.hh"
@@ -38,6 +40,34 @@ class delayed_commit_changes;
 class sstable;
 class sstables_manager;
 class entry_descriptor;
+
+class prefix_formatter {
+    std::string_view _prefix;
+    const schema* _schema = nullptr;
+
+public:
+    explicit prefix_formatter(std::string_view prefix) noexcept
+        : _prefix(prefix)
+    {}
+
+    explicit prefix_formatter(const schema& schema) noexcept
+        : _schema(&schema)
+    {}
+
+    sstring as_string() const;
+
+    std::string_view raw_prefix() const noexcept {
+        return _prefix;
+    }
+
+    const schema* get_schema() const noexcept {
+        return _schema;
+    }
+
+    operator sstring() const {
+        return as_string();
+    }
+};
 
 struct atomic_delete_context {
     sstring pending_delete_log;
@@ -124,7 +154,7 @@ public:
     virtual future<uint64_t> free_space() const = 0;
     virtual future<> unlink_component(const sstable& sst, component_type) noexcept = 0;
 
-    virtual sstring prefix() const  = 0;
+    virtual prefix_formatter prefix() const  = 0;
     virtual future<bool> exists(const sstable& sst, component_type type) const = 0;
 
     // Returns true if this storage backend uses object storage (S3/GCS).
@@ -140,3 +170,8 @@ future<> init_keyspace_storage(const sstables_manager&, const data_dictionary::s
 std::vector<std::filesystem::path> get_local_directories(const std::vector<sstring>& data_file_directories, const data_dictionary::storage_options::local& so);
 
 } // namespace sstables
+
+template <>
+struct fmt::formatter<sstables::prefix_formatter> : fmt::formatter<std::string_view> {
+    auto format(const sstables::prefix_formatter& prefix, fmt::format_context& ctx) const -> decltype(ctx.out());
+};

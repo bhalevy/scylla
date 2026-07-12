@@ -9,6 +9,8 @@
 #include "storage.hh"
 
 #include <cerrno>
+#include <algorithm>
+#include <cctype>
 #include <boost/algorithm/string.hpp>
 #include <boost/algorithm/string/erase.hpp>
 
@@ -41,6 +43,19 @@
 #include "utils/io-wrappers.hh"
 
 namespace sstables {
+
+sstring sanitize_object_storage_prefix_component(sstring s) {
+    // Follow Amazon S3's safe character guidelines for object keys.
+    // See https://docs.aws.amazon.com/AmazonS3/latest/userguide/object-keys.html#object-key-guidelines
+    std::ranges::replace_if(s, [] (unsigned char c) {
+        return !std::isalnum(c) && c != '!' && c != '-' && c != '_' && c != '.' && c != '*' && c != '\'' && c != '(' && c != ')';
+    }, '_');
+    return s;
+}
+
+sstring prefix_formatter::as_string() const {
+    return fmt::format("{}", *this);
+}
 
 // cannot define these classes in an anonymous namespace, as we need to
 // declare these storage classes as "friend" of class sstable
@@ -104,11 +119,11 @@ public:
     virtual future<> atomic_delete_complete(atomic_delete_context ctx) const override;
     virtual future<> remove_by_registry_entry(entry_descriptor desc) override;
     virtual future<uint64_t> free_space() const override {
-        return seastar::fs_avail(prefix());
+        return seastar::fs_avail(prefix().as_string());
     }
     virtual future<> unlink_component(const sstable& sst, component_type) noexcept override;
 
-    virtual sstring prefix() const override { return _dir.native(); }
+    virtual prefix_formatter prefix() const override { return prefix_formatter(_dir.native()); }
     bool is_object_storage() const override { return false; }
     future<bool> exists(const sstable& sst, component_type type) const override {
         return file_exists(sst.get_filename(type).format());
@@ -588,8 +603,8 @@ future<atomic_delete_context> filesystem_storage::atomic_delete_prepare(const st
     atomic_delete_context res;
 
     for (const auto& sst : ssts) {
-        auto prefix = sst->_storage->prefix();
-        res.prefixes.insert(prefix);
+        auto prefix = sst->_storage->prefix().as_string();
+        res.prefixes.emplace(prefix);
     }
 
     res.pending_delete_log = co_await sstable_directory::create_pending_deletion_log(_base_dir, ssts);
@@ -638,7 +653,8 @@ protected:
     schema_ptr _schema;
     shared_ptr<sstables::object_storage_client> _client;
     sstring _bucket;
-    std::optional<sstring> _location;
+    bool _uses_foreign_location;
+    sstring _foreign_location;
     seastar::abort_source* _as;
 
     static constexpr auto status_creating = "creating";
@@ -649,8 +665,8 @@ protected:
     object_name make_object_name(const sstable& sst, sstring comp, generation_type gen) const;
 
     table_id owner() const {
-        if (_location) {
-            on_internal_error(sstlog, format("Storage holds '{}' prefix, but registry owner is expected", *_location));
+        if (_uses_foreign_location) {
+            on_internal_error(sstlog, format("Storage holds '{}' prefix, but registry owner is expected", prefix()));
         }
         return _schema->id();
     }
@@ -663,10 +679,11 @@ public:
         , _schema(std::move(schema))
         , _client(std::move(client))
         , _bucket(std::move(bucket))
-        , _location(std::move(loc))
+        , _uses_foreign_location(loc.has_value())
+        , _foreign_location(loc ? std::move(*loc) : sstring())
         , _as(as)
     {
-        sstlog.debug("Object storage type={} keyspace={} table={} table_id={} bucket={} loc={}", _type, _schema->ks_name(), _schema->cf_name(), _schema->id(), _bucket, _location ? *_location : "<none>");
+        sstlog.debug("Object storage type={} keyspace={} table={} table_id={} bucket={} loc={}", _type, _schema->ks_name(), _schema->cf_name(), _schema->id(), _bucket, _uses_foreign_location ? _foreign_location : "<none>");
     }
 
     future<> seal(const sstable& sst) override;
@@ -701,11 +718,8 @@ public:
         return *sid;
     }
 
-    sstring prefix() const override { 
-        if (_location) {
-            return *_location;
-        }
-        return fmt::to_string(_schema->id());
+    prefix_formatter prefix() const override {
+        return _uses_foreign_location ? prefix_formatter(_foreign_location) : prefix_formatter(*_schema);
     }
 
     future<bool> exists(const sstable& sst, component_type type) const override {
@@ -754,9 +768,9 @@ object_name object_storage_base::make_object_name(const sstable& sst, sstring co
         throw std::runtime_error(fmt::format("'{}' STORAGE only works with uuid_sstable_identifier enabled", _type));
     }
 
-    auto ret = _location
-            ? object_name(_bucket, *_location, sstable::component_basename(sst.get_schema()->ks_name(), sst.get_schema()->cf_name(), sst.get_version(), gen, sst.get_format(), comp))
-            : object_name(_bucket, gen, comp);
+    auto ret = _uses_foreign_location
+            ? object_name(_bucket, prefix(), sstable::component_basename(sst.get_schema()->ks_name(), sst.get_schema()->cf_name(), sst.get_version(), gen, sst.get_format(), comp))
+            : object_name(_bucket, prefix(), gen, comp);
     sstlog.trace("make_object_name: sstable_id={} generation={} comp={}: {}", sst.sstable_identifier(), gen, comp, ret.str());
     return ret;
 }
@@ -960,7 +974,7 @@ future<> object_storage_base::remove_by_registry_entry(entry_descriptor desc) {
     std::vector<sstring> components;
 
     try {
-        auto f = make_readable_file(object_name(_bucket, desc.generation, sstable_version_constants::get_component_map(desc.version).at(component_type::TOC)));
+        auto f = make_readable_file(object_name(_bucket, prefix(), desc.generation, sstable_version_constants::get_component_map(desc.version).at(component_type::TOC)));
         auto [components, digest] = co_await with_closeable(std::move(f), [] (file& f) {
             return sstable::read_and_parse_toc(f);
         });
@@ -972,10 +986,10 @@ future<> object_storage_base::remove_by_registry_entry(entry_descriptor desc) {
 
     co_await coroutine::parallel_for_each(components, [this, &desc] (sstring comp) -> future<> {
         if (comp != sstable_version_constants::TOC_SUFFIX) {
-            co_await delete_object(object_name(_bucket, desc.generation, comp));
+            co_await delete_object(object_name(_bucket, prefix(), desc.generation, comp));
         }
     });
-    co_await delete_object(object_name(_bucket, desc.generation, sstable_version_constants::TOC_SUFFIX));
+    co_await delete_object(object_name(_bucket, prefix(), desc.generation, sstable_version_constants::TOC_SUFFIX));
 }
 
 future<> object_storage_base::unlink_component(const sstable& sst, component_type type) noexcept {
@@ -1111,3 +1125,13 @@ future<> destroy_table_storage(const data_dictionary::storage_options& so) {
 }
 
 } // namespace sstables
+
+auto fmt::formatter<sstables::prefix_formatter>::format(const sstables::prefix_formatter& prefix, fmt::format_context& ctx) const -> decltype(ctx.out()) {
+    if (auto schema = prefix.get_schema()) {
+        auto ks_name = sstables::sanitize_object_storage_prefix_component(schema->ks_name());
+        auto cf_name = sstables::sanitize_object_storage_prefix_component(schema->cf_name());
+        auto str = fmt::format("keyspaces/{}/tables/{}-{}", ks_name, cf_name, schema->id());
+        return fmt::formatter<std::string_view>::format(std::string_view(str), ctx);
+    }
+    return fmt::formatter<std::string_view>::format(prefix.raw_prefix(), ctx);
+}

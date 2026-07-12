@@ -79,7 +79,7 @@ tasks::is_user_task backup_task_impl::is_user_task() const noexcept {
 
 future<> backup_task_impl::worker::upload_component(sstring name) {
     auto component_name = _task._snapshot_dir / name;
-    auto destination = sstables::object_name(_task._bucket, _task._prefix, name);
+    auto destination = sstables::object_name(_task._bucket, sstables::prefix_formatter(_task._prefix), name);
     snap_log.trace("Upload {} to {}", component_name.native(), destination);
 
     // Start uploading in the background. The caller waits for these fibers
