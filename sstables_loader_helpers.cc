@@ -110,7 +110,7 @@ future<minimal_sst_info> download_sstable(replica::database& db, replica::table&
                         new_sst.mutate_sstable_level(0);
                     };
                     auto sst_creator = [&](auto) {
-                        return sm.make_sstable(schema, storage_opts, sstables::sstable_generation_generator{}(), sst->sstable_identifier(), sst->state(), descriptor.version, descriptor.format, db_clock::now());
+                        return sm.make_sstable(schema, storage_opts, sstables::sstable_generation_generator{}(), sst->state(), descriptor.version, descriptor.format, db_clock::now());
                     };
                     auto new_sst = co_await sst->link_with_rewritten_component(std::move(sst_creator), component_type::Statistics, std::move(modifier));
                     co_await sst->unlink();
