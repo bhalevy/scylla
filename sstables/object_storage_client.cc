@@ -36,12 +36,12 @@ using namespace utils;
 static logging::logger osclog("object_storage_client");
 
 
-sstables::object_name::object_name(std::string_view bucket, std::string_view prefix, std::string_view type)
+sstables::object_name::object_name(std::string_view bucket, const prefix_formatter& prefix, std::string_view type)
     : _name(fmt::format("/{}/{}/{}", bucket, prefix, type))
 {}
 
-sstables::object_name::object_name(std::string_view bucket, const generation_type& gen, std::string_view type) 
-    : _name(fmt::format("/{}/{}/{}", bucket, gen, type))
+sstables::object_name::object_name(std::string_view bucket, const prefix_formatter& prefix, const generation_type& gen, std::string_view type)
+    : _name(fmt::format("/{}/{}/{}/{}", bucket, prefix, gen, type))
 {}
 sstables::object_name::object_name(std::string_view bucket, std::string_view object) 
     : _name(fmt::format("/{}/{}", bucket, object))

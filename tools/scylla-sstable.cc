@@ -1973,7 +1973,7 @@ void shard_of_with_vnodes(const std::vector<sstables::shared_sstable>& sstables,
             shard_count, ignore_msb_bits).build();
         auto new_sst = sstable_manager.make_sstable(
             schema,
-            data_dictionary::make_local_options(fs::path(sst->get_storage().prefix())),
+            data_dictionary::make_local_options(fs::path(sst->get_storage().prefix().as_string())),
             sst->generation(),
             sstable_state::normal,
             sst->get_version());
