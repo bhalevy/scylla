@@ -310,26 +310,74 @@ The optional `files` member may contain a list of non-SSTable files included in 
 
 3. `CREATE KEYSPACE` with S3/GS storage
 
-When creating a keyspace with S3/GS storage, the data is stored under the bucket passed as argument to the `CREATE KEYSPACE` statement.  
-Once the statement is issued, Scylla will transparently use the S3/GS bucket as the location of the SSTables for that keyspace.  
-Like in the case above, there is no hierarchy for the data, *all SSTables components are stored flat within the bucket*.
+When creating a keyspace with S3/GS storage, the data is stored under the bucket passed as argument to the `CREATE KEYSPACE` statement.
+Once the statement is issued, Scylla will transparently use the S3/GS bucket as the location of the SSTables for that keyspace.
+
+Automatically managed object-storage tables use a unified layout shared across S3 and GS. SSTable components are stored under a table prefix and grouped by the stable SSTable identifier (`sstable_id`), not by the node-local generation name:
+
 ```perl
 scylla-sstables-bucket/
 │
-├── 3gqe_1lnj_4sbpc2ezoscu9hhtor/
-│   ├── Data.db
-│   ├── Index.db
-│   ├── Summary.db
-│   └── ...
-│
-├── 1abx_k29m_9fyug3sdtjwj8krpqh/
-│   ├── Data.db
-│   ├── Index.db
-│   ├── Summary.db
-│   └── ...
-│
-└── ... (other SSTable folders)
+└── keyspaces/
+    └── my_keyspace/
+        └── tables/
+            └── my_table-67e35000-d8c6-11f0-9599-060de9f3bd1b/
+                ├── 4f4d0a90-d8c6-11f0-8b18-060de9f3bd1b/
+                │   ├── Data.db
+                │   ├── Index.db
+                │   ├── Summary.db
+                │   ├── TOC.txt
+                │   ├── ...
+                │   └── refs/
+                │       └── nodes/
+                │           ├── 7adf1ca2-6783-40ab-aa1f-ef1e0b5d98ba/
+                │           │   └── 3gqe_1lnj_4sbpc2ezoscu9hhtor
+                │           └── 10e68be1-d352-4173-bf34-2249dbb7329e/
+                │               └── 4c5s_0281_0v5kg2b4gri84iggoz
+                ├── 87a72290-d8c6-11f0-a5ea-060de9f3bd1b/
+                │   ├── Data.db
+                │   ├── Index.db
+                │   ├── Summary.db
+                │   ├── TOC.txt
+                │   ├── ...
+                │   └── refs/
+                │       └── nodes/
+                │           └── 7adf1ca2-6783-40ab-aa1f-ef1e0b5d98ba/
+                │               └── 5n8a_03tw_2jv4g2a4k2m33sq8ah
+                └── ...
 ```
+
+The table prefix is:
+
+```text
+keyspaces/{keyspace}/tables/{table}-{table_id}/
+```
+
+Each SSTable lives under:
+
+```text
+keyspaces/{keyspace}/tables/{table}-{table_id}/{sstable_id}/
+```
+
+SSTable component object names are the component suffixes used by the local SSTable format, for example `Data.db`, `Index.db`, `Summary.db`, `Scylla.db`, and `TOC.txt`.
+
+Reference objects under `refs/nodes/` record which nodes still own a reference to the SSTable data:
+
+```text
+keyspaces/{keyspace}/tables/{table}-{table_id}/{sstable_id}/refs/nodes/{host_id}/{generation}
+```
+
+The reference object body is empty. Its name is the metadata: `{host_id}` identifies the node and `{generation}` is that node's local SSTable generation name for the shared SSTable.
+
+The `sstable_id` identifies the shared object-storage SSTable data. The local `generation` identifies a node-local SSTable entry in `system.sstables`. A newly created SSTable normally has an `sstable_id` derived from its generation. After tablet migration or reference sharing, multiple local SSTable entries can have different generations while pointing at the same object-storage data via the same `sstable_id`.
+
+Object-storage SSTable lifecycle:
+- Creation: Scylla uploads component objects under `{sstable_id}` and creates this node's `refs/nodes/{host_id}/{generation}` reference before sealing the local row in `system.sstables`.
+- Sharing: when tablet migration can share object-storage data, the receiving node creates a new local SSTable entry with its own generation and adds a node reference under the existing `{sstable_id}` prefix instead of copying all component objects.
+- Local removal: when a node removes its local SSTable, it first deletes its own reference object. If other references remain, component objects are left intact.
+- Final cleanup: component objects are deleted only after no reference objects remain for the `sstable_id`. This prevents one node from deleting shared data still referenced by another node.
+
+The `status` and `state` fields in `system.sstables` describe the local SSTable entry lifecycle. They do not describe a global lifecycle state for the object-storage component set identified by `sstable_id`.
 
 ## Downloading, deleting, uploading SSTables
 
@@ -397,7 +445,7 @@ There is high likelihood that a scrubbed SSTable results in different values for
 For the `storage_service/backup` REST API, in theory only removing an entire SSTable from the backup would require changing  
 the manifest file and remove the corresponding entry for the SSTable, in all other cases, no metadata changes needed.
 
-For the `CREATE KEYSPACE` on S3, there is no need to update any metadata as we currently don’t have any.
+For `CREATE KEYSPACE` on S3/GS storage, Scylla tracks object-storage SSTables in `system.sstables` and uses reference objects under the SSTable prefix to decide when component objects can be deleted. Manual changes to the objects under this layout should keep `system.sstables`, component objects, and `refs/nodes/{host_id}/{generation}` objects consistent.
 
 > **NOTE:**
 > It’s obvious to say that re-uploading a scrubbed SSTable means re-uploading all its components as it’s likely most of them were changed.
