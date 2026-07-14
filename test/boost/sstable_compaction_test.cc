@@ -7596,6 +7596,13 @@ static future<> do_test_perform_component_rewrite_single_sstable(sstables::updat
         case sstables::update_sstable_id::no:
             BOOST_REQUIRE_EQUAL(new_sst->sstable_identifier(), original_sst->sstable_identifier());
             break;
+        case sstables::update_sstable_id::maybe:
+            if (original_sst->get_storage().is_object_storage()) {
+                BOOST_REQUIRE_NE(new_sst->sstable_identifier(), original_sst->sstable_identifier());
+            } else {
+                BOOST_REQUIRE_EQUAL(new_sst->sstable_identifier(), original_sst->sstable_identifier());
+            }
+            break;
         }
 
         all_sstables = table->get_sstables();
@@ -7603,6 +7610,10 @@ static future<> do_test_perform_component_rewrite_single_sstable(sstables::updat
         BOOST_REQUIRE(!all_sstables->contains(original_sst));
         BOOST_REQUIRE(all_sstables->contains(new_sst));
     });
+}
+
+SEASTAR_TEST_CASE(test_perform_component_rewrite_single_sstable) {
+    return do_test_perform_component_rewrite_single_sstable(sstables::update_sstable_id::maybe);
 }
 
 SEASTAR_TEST_CASE(test_perform_component_rewrite_single_sstable_with_backup) {

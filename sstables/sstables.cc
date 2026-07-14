@@ -1585,7 +1585,8 @@ bool sstable::should_update_repaired_at(int64_t repaired_at) const {
 // 4. Apply the modifier function to the new SSTable's components
 // 5. Re-read the Scylla metadata from disk
 //    - Ensures we have the latest on-disk metadata (not potentially modified in-memory state)
-// 6. If update_sstable_id is true, update the Scylla metadata's sstable identifier to a new value
+// 6. Update the Scylla metadata's sstable identifier to a new value if requested
+//    or when required by the storage backend.
 // 7. Write the component with updated Scylla metadata
 //    - Uses write_component_with_metadata() which handles digest calculation and metadata updates
 // 8. Finalize the new SSTable
@@ -1607,7 +1608,10 @@ future<shared_sstable> sstable::link_with_rewritten_component(std::function<shar
     }
 
     return seastar::async([this, creator = std::move(sstable_creator), component, modifier = std::move(modifier), update_id] {
-        auto do_update_sstable_id = update_id == update_sstable_id::yes;
+        if (update_id == update_sstable_id::no && _storage->is_object_storage()) {
+            on_internal_error(sstlog, "Cannot keep sstable id when rewriting object-storage sstable component");
+        }
+        auto do_update_sstable_id = update_id == update_sstable_id::yes || (update_id == update_sstable_id::maybe && _storage->is_object_storage());
         auto new_sst = creator(shared_from_this());
         auto generation = new_sst->generation();
 
