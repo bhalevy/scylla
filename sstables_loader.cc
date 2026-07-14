@@ -261,7 +261,11 @@ private:
     future<sst_classification_info> download_fully_contained_sstables(std::vector<sstables::shared_sstable> sstables) const {
         sst_classification_info downloaded_sstables(this_smp_shard_count());
         for (const auto& sstable : sstables) {
-            auto min_info = co_await download_sstable(_db.local(), _table, sstable, llog);
+            // For now, tablet-aware restore doesn't need to mutate sstable level to 0
+            // since we support only restoring to empty tables and so we can keep the sstable levels on backup.
+            // Once we support restoring onto live tables we may want to mutate the ingested sstables' level to 0.
+            bool need_mutate_level = false;
+            auto min_info = co_await download_sstable(_db.local(), _table, sstable, need_mutate_level, llog);
             downloaded_sstables[min_info.shard].emplace_back(min_info);
         }
         co_return downloaded_sstables;
@@ -1077,7 +1081,8 @@ future<> sstables_loader::download_tablet_sstables(locator::global_tablet_id tid
                 co_await max_concurrent_for_each(sst_chunk, 16, [&loader, tid, &local_min_infos](const auto& sst) -> future<> {
                     auto& table = loader._db.local().find_column_family(tid.table);
                     auto stream_guard = table.stream_in_progress();
-                    auto min_info = co_await download_sstable(loader._db.local(), table, sst, llog);
+                    bool need_mutate_level = true;
+                    auto min_info = co_await download_sstable(loader._db.local(), table, sst, need_mutate_level, llog);
                     local_min_infos[min_info.shard].emplace_back(std::move(min_info));
                 });
                 co_return local_min_infos;

@@ -31,7 +31,7 @@ struct minimal_sst_info {
     sstables::sstable_format_types format;
 };
 
-future<minimal_sst_info> download_sstable(replica::database& db, replica::table& table, sstables::shared_sstable sstable, logging::logger& logger);
+future<minimal_sst_info> download_sstable(replica::database& db, replica::table& table, sstables::shared_sstable sstable, bool need_mutate_level, logging::logger& logger);
 
 template <std::ranges::input_range Range, typename T = std::ranges::range_value_t<Range>>
 seastar::future<std::tuple<std::vector<T>, std::vector<T>>>

@@ -14,9 +14,10 @@
 #include "replica/database.hh"
 #include "sstables/shared_sstable.hh"
 #include "sstables/sstables.hh"
+#include "sstables/sstables_manager.hh"
 #include "utils/error_injection.hh"
 
-future<minimal_sst_info> download_sstable(replica::database& db, replica::table& table, sstables::shared_sstable sstable, logging::logger& logger) {
+future<minimal_sst_info> download_sstable(replica::database& db, replica::table& table, sstables::shared_sstable sstable, bool need_mutate_level, logging::logger& logger) {
     constexpr auto foptions = file_open_options{.extent_allocation_size_hint = 32_MiB, .sloppy_size = true};
     constexpr auto stream_options = file_output_stream_options{.buffer_size = 128_KiB, .write_behind = 10};
     auto components = sstable->all_components();
@@ -100,6 +101,22 @@ future<minimal_sst_info> download_sstable(replica::database& db, replica::table&
                     on_internal_error(logger, "Fully-contained sstable must belong to one shard only");
                 }
                 logger.debug("SSTable shards {}", fmt::join(shards, ", "));
+                if (need_mutate_level && sst->should_mutate_sstable_level(0)) {
+                    logger.trace("download_sstable mutating {} to level 0\n", sst->get_filename());
+                    auto& sm = table.get_sstables_manager();
+                    auto schema = sst->get_schema();
+                    auto& storage_opts = table.get_storage_options();
+                    auto modifier = [] (auto& new_sst) {
+                        new_sst.mutate_sstable_level(0);
+                    };
+                    auto sst_creator = [&](auto) {
+                        return sm.make_sstable(schema, storage_opts, sstables::sstable_generation_generator{}(), sst->sstable_identifier(), sst->state(), descriptor.version, descriptor.format, db_clock::now());
+                    };
+                    auto new_sst = co_await sst->link_with_rewritten_component(std::move(sst_creator), component_type::Statistics, std::move(modifier), false);
+                    co_await sst->unlink();
+                    sst = std::move(new_sst);
+                    descriptor.generation = sst->generation();
+                }
                 co_return minimal_sst_info{shards.front(), gen, descriptor.version, descriptor.format};
             }
         } catch (...) {
