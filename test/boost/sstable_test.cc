@@ -404,7 +404,7 @@ SEASTAR_TEST_CASE(wrong_range) {
     });
 }
 
-future<sstable_ptr> mutate_sstable_level(test_env& env, sstable_ptr sstp, const std::string& dir_path, uint32_t new_level, sstables::update_sstable_id update_id = sstables::update_sstable_id::no) {
+future<sstable_ptr> mutate_sstable_level(test_env& env, sstable_ptr sstp, const std::string& dir_path, uint32_t new_level, sstables::update_sstable_id update_id = sstables::update_sstable_id::maybe) {
     auto modifier = [new_level] (sstables::sstable& sst) {
         sst.mutate_sstable_level(new_level);
     };
