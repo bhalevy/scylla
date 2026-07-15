@@ -63,8 +63,7 @@ future<minimal_sst_info> download_sstable(replica::database& db, replica::table&
                                              table.get_sstables_manager(),
                                              table.get_storage_options(),
                                              sstables::sstable_state::normal,
-                                             sstables::sstable::component_basename(
-                                                 table.schema()->ks_name(), table.schema()->cf_name(), descriptor.version, gen, descriptor.format, it->first),
+                                             descriptor,
                                              sstables::sstable_stream_sink_cfg{.last_component = std::next(it) == components.cend(), .leave_unsealed = true});
             auto out = co_await sstable_sink->output(foptions, stream_options);
 
