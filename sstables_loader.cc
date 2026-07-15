@@ -218,7 +218,7 @@ private:
     using sst_classification_info = std::vector<std::vector<minimal_sst_info>>;
 
     future<> attach_sstable(shard_id from_shard, const sstring& ks, const sstring& cf, const minimal_sst_info& min_info) const {
-        llog.debug("Adding downloaded SSTables to the table {} on shard {}, submitted from shard {}", _table.schema()->cf_name(), this_shard_id(), from_shard);
+        llog.debug("Adding downloaded SSTable gen={} to the table {} on shard {}, submitted from shard {}", min_info.generation, _table.schema()->cf_name(), this_shard_id(), from_shard);
         auto& db = _db.local();
         auto& table = db.find_column_family(ks, cf);
         auto& sst_manager = table.get_sstables_manager();
