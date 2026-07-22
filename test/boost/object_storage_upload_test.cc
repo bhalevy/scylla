@@ -12,6 +12,9 @@
 #include <fmt/format.h>
 
 #include <seastar/core/future.hh>
+#include <seastar/core/coroutine.hh>
+#include <seastar/core/byteorder.hh>
+#include <seastar/core/sleep.hh>
 #include <seastar/testing/test_case.hh>
 #include <seastar/testing/test_fixture.hh>
 
@@ -19,6 +22,8 @@
 #include "sstables/object_storage_client.hh"
 #include "sstables/storage.hh"
 #include "utils/upload_progress.hh"
+#include "utils/murmur_hash.hh"
+#include "utils/base64.hh"
 
 #include "test/lib/test_utils.hh"
 #include "test/lib/random_utils.hh"
@@ -102,4 +107,21 @@ SEASTAR_TEST_CASE(test_large_file_upload_s3, *boost::unit_test::precondition(tes
 
 SEASTAR_FIXTURE_TEST_CASE(test_large_file_upload_gs, gcs_fixture, *check_run_test_decorator("ENABLE_GCP_STORAGE_TEST", true)) {
     return test_file_upload(test_env_config{ .storage = make_test_object_storage_options("GS") }, large_size);
+}
+
+SEASTAR_TEST_CASE(test_timeuuid_cardinality) {
+    auto make_time_uuid = [] (int64_t rand_bits) {
+        auto millis = duration_cast<std::chrono::milliseconds>(db_clock::now().time_since_epoch());
+        return utils::UUID(utils::UUID_gen::create_time(utils::UUID_gen::from_unix_timestamp(millis)), rand_bits);
+    };
+    for (int64_t rand_bits : { 0x12345678L, 0x87654321L }) {
+        for (int i = 0; i < 3; i++) {
+            auto uuid = make_time_uuid(rand_bits);;
+            auto hash = utils::murmur_hash::hash32(uuid.serialize(), 0);
+            auto hash_bytes = uninitialized_string<bytes>(4);
+            write_le(reinterpret_cast<char*>(hash_bytes.data()), hash);
+            fmt::print("rand_bits={:08x} uuid={} hash: {:08x} (base64={})\n", rand_bits, uuid, hash, base64url_encode(hash_bytes));
+            co_await sleep(std::chrono::milliseconds(1));
+        }
+    }
 }
