@@ -227,6 +227,33 @@ def upload_folder_to_s3(folder_path, s3_server):
     return sstables
 
 
+def upload_live_sstable_to_s3(folder_path, s3_server):
+    s3_resource = s3_server.get_resource()
+    bucket = s3_resource.Bucket(s3_server.bucket_name)
+    client = s3_resource.meta.client
+    sstable_id = str(uuid.uuid1())
+    data_sstable = None
+    for root, dirs, files in os.walk(folder_path):
+        for file in files:
+            file_path = os.path.join(root, file)
+            match = re.match(r"([a-z]+)-[^-]+-([^-]+)-(.+)$", file)
+            if not match:
+                continue
+            version, sstable_format, component = match.groups()
+            s3_key = os.path.join("relocated", "sstables", sstable_id, component)
+            if component == "TOC.txt":
+                with open(file_path, "rb") as f:
+                    toc = f.read().decode("utf-8")
+                toc = re.sub(rf"{version}-[^-]+-{sstable_format}-", "", toc)
+                client.put_object(Bucket=s3_server.bucket_name, Key=s3_key, Body=toc.encode("utf-8"),
+                                  Metadata={"version": version, "format": sstable_format})
+                data_sstable = f"s3://{s3_server.bucket_name}/{s3_key}"
+                continue
+            bucket.upload_file(file_path, s3_key)
+    assert data_sstable
+    return data_sstable
+
+
 @pytest.mark.parametrize("what", ["index", "compression-info", "summary", "statistics", "scylla-metadata"])
 @pytest.mark.parametrize("where", ["s3", "mixed"])
 def test_scylla_sstable_dump_component_with_s3(skip_s3_tests, cql, test_keyspace, scylla_path, scylla_data_dir,
@@ -263,6 +290,25 @@ def test_scylla_sstable_dump_data_with_s3(skip_s3_tests, cql, test_keyspace, scy
         args = [scylla_path, "sstable", "dump-data", "--scylla-yaml-file", scylla_yaml_file, "--schema-file",
                 schema_file, "--output-format", "json"]
         out = subprocess.check_output(args + sstables)
+
+    print(out)
+
+    assert out
+    assert json.loads(out)
+
+
+def test_scylla_sstable_dump_scylla_metadata_with_live_s3(skip_s3_tests, cql, test_keyspace, scylla_path, scylla_data_dir,
+                                                          scylla_home_dir, s3_server):
+    objconf = s3_server.create_endpoint_conf()
+    scylla_yaml_file = os.path.join(scylla_home_dir, "conf", "scylla.yaml")
+    with open(scylla_yaml_file, "a") as f:
+        f.write(f"\n{yaml.dump({'object_storage_endpoints': objconf})}")
+    with scylla_sstable(simple_clustering_table, cql, test_keyspace, scylla_data_dir) as (_, schema_file, sstables):
+        live_sstable = upload_live_sstable_to_s3(os.path.dirname(sstables[0]), s3_server)
+        assert live_sstable.endswith("/TOC.txt")
+        args = [scylla_path, "sstable", "dump-scylla-metadata", "--scylla-yaml-file", scylla_yaml_file, "--schema-file",
+                schema_file]
+        out = subprocess.check_output(args + [live_sstable])
 
     print(out)
 
