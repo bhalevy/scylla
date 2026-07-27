@@ -1696,8 +1696,9 @@ future<shared_sstable> sstable::link_with_rewritten_component(std::function<shar
     return seastar::async([this, creator = std::move(sstable_creator), component, modifier = std::move(modifier), update_id] {
         auto new_sst = creator(shared_from_this());
         auto generation = new_sst->generation();
+        sstable_id sid = update_id ? new_sst->emplace_sstable_identifier() : old_sst->emplace_sstable_identifier();
 
-        _storage->link_with_excluded_components(*this, generation, {component, component_type::Scylla}).get();
+        _storage->link_with_excluded_components(*this, generation, {component, component_type::Scylla}, sid).get();
         new_sst->copy_components(*this).get();
 
         modifier(*new_sst);
@@ -1707,11 +1708,7 @@ future<shared_sstable> sstable::link_with_rewritten_component(std::function<shar
         scylla_metadata metadata;
         read_simple<component_type::Scylla>(metadata).get();
         if (update_id) {
-            if (auto sid = new_sst->sstable_identifier()) {
-                metadata.set_sstable_identifier(*sid);
-            } else {
-                metadata.set_sstable_identifier();
-            }
+            metadata.set_sstable_identifier(sid);
         }
 
         new_sst->write_component_with_metadata(component, std::move(metadata));
@@ -2522,16 +2519,7 @@ sstable::write_scylla_metadata(shard_id shard, struct run_identifier identifier,
         _components->scylla_metadata->data.set<scylla_metadata_type::ExtTimestampStats>(std::move(*ts_stats));
     }
 
-    sstable_id sid;
-    if (_sstable_identifier) {
-        sid = *_sstable_identifier;
-    } else if (generation().is_uuid_based()) {
-        sid = sstable_id(generation().as_uuid());
-    } else {
-        sid = sstable_id(utils::UUID_gen::get_time_UUID());
-        sstlog.info("SSTable {} has numerical generation. SSTable identifier in scylla_metadata set to {}", get_filename(), sid);
-    }
-    _components->scylla_metadata->set_sstable_identifier(sid);
+    auto sid = emplace_sstable_identifier();
 
     sstable_schema_type sstable_schema;
     sstable_schema.id = _schema->id();
@@ -2547,6 +2535,23 @@ sstable::write_scylla_metadata(shard_id shard, struct run_identifier identifier,
     _components->scylla_metadata->digest = serialized_checksum(_version, _components->scylla_metadata->data);
 
     write_simple<component_type::Scylla>(*_components->scylla_metadata);
+}
+
+sstable_id sstable::emplace_sstable_identifier() noexcept {
+    sstable_id sid;
+    if (_sstable_identifier) {
+        sid = *_sstable_identifier;
+    } else if (generation().is_uuid_based()) {
+        sid = sstable_id(generation().as_uuid());
+    } else {
+        sid = sstable_id(utils::UUID_gen::get_time_UUID());
+        sstlog.info("SSTable {} has numerical generation. SSTable identifier in scylla_metadata set to {}", get_filename(), sid);
+    }
+    if (_components->scylla_metadata) {
+        _components->scylla_metadata->set_sstable_identifier(sid);
+    }
+    _sstable_identifier = sid;
+    return sid;
 }
 
 bool sstable::may_contain_rows(const query::clustering_row_ranges& ranges) const {
