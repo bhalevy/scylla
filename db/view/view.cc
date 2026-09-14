@@ -1031,6 +1031,28 @@ void view_updates::update_entry_for_computed_column(
     }
 }
 
+// Returns the timestamp of the latest write to the base row that is visible
+// to the view: the maximum of the base row marker timestamp and of the
+// timestamps of the cells of base columns selected by the view (for
+// collections, the latest update of the collection). Writes to unselected
+// columns don't generate view updates, so they are ignored here.
+static api::timestamp_type latest_write_timestamp(const schema& base, const schema& view, const clustering_or_static_row& row) {
+    const auto kind = row.column_kind();
+    api::timestamp_type ts = row.marker().timestamp();
+    row.cells().for_each_cell([&] (column_id id, const atomic_cell_or_collection& c) {
+        const auto& def = base.column_at(kind, id);
+        if (!view_column(base, view, kind, id)) {
+            return;
+        }
+        if (def.is_atomic()) {
+            ts = std::max(ts, c.as_atomic_cell(def).timestamp());
+        } else {
+            ts = std::max(ts, c.as_collection_mutation().last_update(*def.type));
+        }
+    });
+    return ts;
+}
+
 // view_updates::generate_update() is the main function for taking an update
 // to a base table row - consisting of existing and updated versions of row -
 // and creating from it zero or more updates to a given materialized view.
@@ -1222,6 +1244,8 @@ void view_updates::generate_update(
         }
     }
 
+    const bool use_latest_write_timestamp = bool(db.features().view_latest_write_timestamp);
+
     // If has_new_row, calculate a row marker for this view row - i.e., a
     // timestamp and ttl - based on those of the updatable view key column
     // (or, in an Alternator-only extension, more than one).
@@ -1239,6 +1263,22 @@ void view_updates::generate_update(
         // *maximum* of those key columns, as explained in pull-request #17172.
         for (size_t i = 1; i < updatable_view_key_cols.size(); ++i) {
             new_row_ts = std::max(new_row_ts, updatable_view_key_cols[i].after.get_ts());
+        }
+        // Stamp the row marker with the timestamp of the latest write to
+        // the base row rather than with just the (possibly very old)
+        // timestamp of the view key column. Otherwise an update touching
+        // only regular view columns re-injects a live row marker with a
+        // stale timestamp into the view memtable, dragging its
+        // min_live_row_marker_timestamp down and preventing expired
+        // shadowable tombstones in the partition from being purged by
+        // compaction. The shadowable tombstone deleting an old view row
+        // is computed with the same rule (see old_row_ts below), so it is
+        // never older than the marker of the row it deletes.
+        // Both rules must be applied consistently, hence the cluster feature:
+        // an old-style tombstone stamped with the view key column's timestamp
+        // would be shadowed by a new-style marker.
+        if (use_latest_write_timestamp) {
+            new_row_ts = std::max(new_row_ts, latest_write_timestamp(*_base, *_view, update));
         }
         // We assume that either updatable_view_key_cols has just one column
         // (the only situation allowed in CQL) or if there is more then one
@@ -1264,6 +1304,13 @@ void view_updates::generate_update(
         // view_updates::compute_row_marker().
         for (size_t i = 1; i < updatable_view_key_cols.size(); ++i) {
             old_row_ts = std::max(old_row_ts, updatable_view_key_cols[i].before.get_ts());
+        }
+        // The old view row's marker carries the timestamp of the latest
+        // write to the base row before this update (see new_row_ts above).
+        // The shadowable tombstone deleting the old view row must not be
+        // older than that marker, or it would be shadowed by it.
+        if (use_latest_write_timestamp) {
+            old_row_ts = std::max(old_row_ts, latest_write_timestamp(*_base, *_view, *existing));
         }
         if (has_new_row) {
             if (same_row) {
