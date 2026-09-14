@@ -28,6 +28,8 @@
 #include "types/map.hh"
 #include "types/vector.hh"
 #include "utils/chunked_string.hh"
+#include "utils/rjson.hh"
+#include "test/lib/log.hh"
 
 BOOST_AUTO_TEST_SUITE(view_schema_test)
 
@@ -3396,5 +3398,212 @@ SEASTAR_TEST_CASE(test_mv_allow_some_column_drops) {
         BOOST_REQUIRE_THROW(e.execute_cql("alter table cf2 drop d").get(), exceptions::invalid_request_exception);
     });
 }
+
+namespace {
+
+// Returns the mutation-fragment metadata (as JSON) of the view clustering
+// rows matching `restriction`, keyed by mutation source ("memtable:N",
+// "sstable:..."). Only clustering-row fragments are returned.
+std::map<sstring, rjson::value> get_view_row_fragments(cql_test_env& e, const sstring& view, const sstring& restriction) {
+    auto msg = e.execute_cql(format("select mutation_source, metadata from mutation_fragments({}) where {} allow filtering", view, restriction)).get();
+    auto& rows = dynamic_cast<cql_transport::messages::result_message::rows&>(*msg).rs().result_set().rows();
+    std::map<sstring, rjson::value> ret;
+    for (auto& row : rows) {
+        if (!row[0] || !row[1]) {
+            continue;
+        }
+        auto source = value_cast<sstring>(utf8_type->deserialize(managed_bytes_view(*row[0])));
+        auto metadata = rjson::parse(value_cast<sstring>(utf8_type->deserialize(managed_bytes_view(*row[1]))));
+        if (!metadata.IsObject() || !metadata.HasMember("columns")) {
+            continue; // not a clustering row
+        }
+        testlog.info("{} {}: {}", view, source, rjson::print(metadata));
+        ret.emplace(std::move(source), std::move(metadata));
+    }
+    return ret;
+}
+
+api::timestamp_type view_min_memtable_live_row_marker_timestamp(cql_test_env& e, const sstring& view) {
+    return e.db().map_reduce0([view] (replica::database& db) {
+        return db.find_column_family("ks", view).min_memtable_live_row_marker_timestamp();
+    }, api::max_timestamp, [] (api::timestamp_type a, api::timestamp_type b) { return std::min(a, b); }).get();
+}
+
+void flush_all(cql_test_env& e) {
+    e.db().invoke_on_all([] (replica::database& db) { return db.flush_all_memtables(); }).get();
+}
+
+} // anonymous namespace
+
+// Reproducer for the tombstone-GC starvation seen in materialized views
+// whose key contains a base regular column: a base update that touches
+// only a *non-key* view column re-pushes the view row marker with the
+// (possibly very old) timestamp of the view key column, instead of the
+// timestamp of the update. Such stale live row markers accumulate in the
+// view memtable and drag min_live_row_marker_timestamp down, which then
+// prevents purging any expired shadowable tombstone in the same partition.
+SEASTAR_TEST_CASE(test_view_row_marker_timestamp_on_non_key_update) {
+    auto cfg = make_shared<db::config>();
+    cfg->enable_cache(false);
+    return do_with_cql_env_thread([] (cql_test_env& e) {
+        e.execute_cql("create table cf (p int primary key, v1 int, v2 int)").get();
+        e.execute_cql("create materialized view vcf as select * from cf "
+                      "where p is not null and v1 is not null "
+                      "primary key (p, v1)").get();
+        auto I = [] (int32_t v) { return int32_type->decompose(v); };
+
+        e.execute_cql("insert into cf (p, v1, v2) values (0, 0, 0) using timestamp 100").get();
+        eventually([&] {
+            assert_that(e.execute_cql("select * from vcf").get()).is_rows().with_rows({{I(0), I(0), I(0)}});
+        });
+        BOOST_REQUIRE_EQUAL(view_min_memtable_live_row_marker_timestamp(e, "vcf"), 100);
+        flush_all(e);
+        BOOST_REQUIRE_EQUAL(view_min_memtable_live_row_marker_timestamp(e, "vcf"), api::max_timestamp);
+
+        // Update a base column which is a regular (non-key) column in the view.
+        // The view key (p, v1) is unchanged.
+        e.execute_cql("update cf using timestamp 200 set v2 = 1 where p = 0").get();
+        eventually([&] {
+            assert_that(e.execute_cql("select * from vcf").get()).is_rows().with_rows({{I(0), I(0), I(1)}});
+        });
+
+        auto frags = get_view_row_fragments(e, "vcf", "p = 0 and v1 = 0");
+        BOOST_REQUIRE_EQUAL(frags.size(), 2); // one sstable, one memtable
+        auto it = std::ranges::find_if(frags, [] (auto& kv) { return kv.first.starts_with("memtable"); });
+        BOOST_REQUIRE(it != frags.end());
+        const auto& md = it->second;
+        BOOST_REQUIRE_EQUAL(rjson::get<int64_t>(rjson::get(rjson::get(md, "columns"), "v2"), "timestamp"), 200);
+        // The view update carries a row marker. We expect it to be stamped
+        // with the timestamp of the update that generated it, not with the
+        // timestamp of the (unchanged) view key column.
+        BOOST_REQUIRE(md.HasMember("marker"));
+        BOOST_REQUIRE_EQUAL(rjson::get<int64_t>(rjson::get(md, "marker"), "timestamp"), 200);
+        BOOST_REQUIRE_EQUAL(view_min_memtable_live_row_marker_timestamp(e, "vcf"), 200);
+    }, cfg);
+}
+
+// Companion of the test above: whatever timestamp the row marker gets on a
+// non-key update, a subsequent change of the view key column must still
+// delete the old view row (the shadowable tombstone must not be shadowed
+// by the row marker written by the non-key update), and moving the key
+// back or out-of-order timestamps must keep working.
+static void do_test_view_key_change_after_non_key_update(cql_test_env& e, std::function<void()>&& maybe_flush) {
+    // v3 is not selected by the view.
+    e.execute_cql("create table cf (p int primary key, v1 int, v2 int, v3 int)").get();
+    e.execute_cql("create materialized view vcf as select p, v1, v2 from cf "
+                  "where p is not null and v1 is not null "
+                  "primary key (p, v1)").get();
+    auto I = [] (int32_t v) { return int32_type->decompose(v); };
+    auto expect_view = [&] (std::vector<std::vector<bytes_opt>> rows) {
+        eventually([&] {
+            assert_that(e.execute_cql("select * from vcf").get()).is_rows().with_rows(rows);
+        });
+    };
+
+    e.execute_cql("insert into cf (p, v1, v2) values (0, 0, 0) using timestamp 100").get();
+    expect_view({{I(0), I(0), I(0)}});
+    maybe_flush();
+
+    // Non-key update: view key unchanged.
+    e.execute_cql("update cf using timestamp 200 set v2 = 1 where p = 0").get();
+    expect_view({{I(0), I(0), I(1)}});
+    maybe_flush();
+
+    // Change the view key: the old view row (0, 0) must be deleted.
+    e.execute_cql("update cf using timestamp 300 set v1 = 1 where p = 0").get();
+    expect_view({{I(0), I(1), I(1)}});
+    maybe_flush();
+
+    // Move the key back to its original value: (0, 0) must be resurrected
+    // and (0, 1) deleted.
+    e.execute_cql("update cf using timestamp 400 set v1 = 0 where p = 0").get();
+    expect_view({{I(0), I(0), I(1)}});
+    maybe_flush();
+
+    // Out-of-order: a non-key update with a timestamp lower than the
+    // preceding key change.
+    e.execute_cql("update cf using timestamp 600 set v1 = 2 where p = 0").get();
+    expect_view({{I(0), I(2), I(1)}});
+    maybe_flush();
+    e.execute_cql("update cf using timestamp 500 set v2 = 2 where p = 0").get();
+    expect_view({{I(0), I(2), I(2)}});
+    maybe_flush();
+
+    // A write to a column not selected by the view generates no view
+    // update, and must not affect the timestamps of subsequent view
+    // updates either: after it, a key change followed by a move back
+    // with a lower (but still newer than the key change) timestamp must
+    // work as before.
+    e.execute_cql("update cf using timestamp 5000 set v3 = 1 where p = 0").get();
+    expect_view({{I(0), I(2), I(2)}});
+    maybe_flush();
+    e.execute_cql("update cf using timestamp 610 set v1 = 5 where p = 0").get();
+    expect_view({{I(0), I(5), I(2)}});
+    maybe_flush();
+    e.execute_cql("update cf using timestamp 620 set v1 = 2 where p = 0").get();
+    expect_view({{I(0), I(2), I(2)}});
+    maybe_flush();
+
+    // Non-key update followed by a key change with timestamp lower than
+    // the non-key update. The key change wins on v1, so the view row moves,
+    // but v2 keeps its newer value.
+    e.execute_cql("update cf using timestamp 800 set v2 = 3 where p = 0").get();
+    expect_view({{I(0), I(2), I(3)}});
+    maybe_flush();
+    e.execute_cql("update cf using timestamp 700 set v1 = 3 where p = 0").get();
+    expect_view({{I(0), I(3), I(3)}});
+    maybe_flush();
+
+    // Move the key back to 2 with a timestamp that is newer than the key
+    // change (700) but older than the latest non-key write (800). The base
+    // row now has v1 = 2, so the view must show (0, 2, 3).
+    e.execute_cql("update cf using timestamp 750 set v1 = 2 where p = 0").get();
+    expect_view({{I(0), I(2), I(3)}});
+    maybe_flush();
+
+    // Delete the base row: the view row must go away.
+    e.execute_cql("delete from cf using timestamp 900 where p = 0").get();
+    expect_view({});
+    maybe_flush();
+
+    // And come back with a new key.
+    e.execute_cql("insert into cf (p, v1, v2) values (0, 4, 4) using timestamp 1000").get();
+    expect_view({{I(0), I(4), I(4)}});
+}
+
+// Run with the VIEW_LATEST_WRITE_TIMESTAMP cluster feature both enabled
+// (the default in tests) and disabled (the legacy algorithm), with and
+// without flushing between steps.
+static future<> run_test_view_key_change_after_non_key_update(bool latest_write_timestamp, bool with_flush) {
+    cql_test_config cfg;
+    cfg.db_config->enable_cache(false);
+    if (!latest_write_timestamp) {
+        cfg.disabled_features.insert("VIEW_LATEST_WRITE_TIMESTAMP");
+    }
+    return do_with_cql_env_thread([with_flush] (cql_test_env& e) {
+        do_test_view_key_change_after_non_key_update(e, [&] {
+            if (with_flush) {
+                flush_all(e);
+            }
+        });
+    }, cfg);
+}
+
+SEASTAR_TEST_CASE(test_view_key_change_after_non_key_update) {
+    return run_test_view_key_change_after_non_key_update(true, false);
+}
+
+SEASTAR_TEST_CASE(test_view_key_change_after_non_key_update_with_flush) {
+    return run_test_view_key_change_after_non_key_update(true, true);
+}
+
+SEASTAR_TEST_CASE(test_view_key_change_after_non_key_update_legacy) {
+    return run_test_view_key_change_after_non_key_update(false, false);
+}
+
+SEASTAR_TEST_CASE(test_view_key_change_after_non_key_update_legacy_with_flush) {
+    return run_test_view_key_change_after_non_key_update(false, true);
+}
+
 
 BOOST_AUTO_TEST_SUITE_END()
