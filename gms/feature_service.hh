@@ -180,11 +180,6 @@ public:
     gms::feature topology_noop_request { *this, "TOPOLOGY_NOOP_REQUEST"sv };
     gms::feature tablets_intermediate_fallback_cleanup { *this, "TABLETS_INTERMEDIATE_FALLBACK_CLEANUP"sv };
     gms::feature batchlog_v2 { *this, "BATCHLOG_V2"sv };
-    // View row markers and the shadowable tombstones deleting old view rows
-    // are stamped with the timestamp of the latest write to the base row
-    // (as seen by the view), rather than with the timestamp of the view key
-    // column (see view_updates::generate_update()).
-    gms::feature view_latest_write_timestamp { *this, "VIEW_LATEST_WRITE_TIMESTAMP"sv };
     gms::feature vnodes_to_tablets_migrations { *this, "VNODES_TO_TABLETS_MIGRATIONS"sv };
     gms::feature writetime_ttl_individual_element { *this, "WRITETIME_TTL_INDIVIDUAL_ELEMENT"sv };
     gms::feature arbitrary_tablet_boundaries { *this, "ARBITRARY_TABLET_BOUNDARIES"sv };
