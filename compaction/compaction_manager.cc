@@ -607,9 +607,25 @@ protected:
 
         switch_state(state::pending);
         auto units = co_await acquire_semaphore(_cm._maintenance_ops_sem);
-        // Write lock is used to synchronize selection of sstables for compaction and their registration.
-        // Also used to synchronize with regular compaction, so major waits for regular to cease before selecting candidates.
-        auto lock_holder = co_await _compaction_state.lock.hold_write_lock();
+        // Major must see every sstable of the group, so it may not select while a
+        // regular compaction is running: that job's inputs are registered in
+        // _compacting_sstables and get_candidates() would exclude them, leaving
+        // major to compact a subset. Stop the scheduler from dispatching further
+        // regular jobs for the group, then wait for the one in flight, if any.
+        _compaction_state.major_compaction_pending = true;
+        auto clear_major_pending = defer([&cm = _cm, &cs = _compaction_state] () noexcept {
+            if (std::exchange(cs.major_compaction_pending, false)) {
+                cm.reevaluate_deferred_compactions();
+            }
+        });
+        try {
+            while (_compaction_state.regular_compaction_dispatched) {
+                cmlog.debug("Major compaction for {} waiting for regular compaction to complete", *_compacting_table);
+                co_await _compaction_state.compaction_done.when();
+            }
+        } catch (const broken_condition_variable&) {
+            co_return std::nullopt;
+        }
         if (!can_proceed()) {
             co_return std::nullopt;
         }
@@ -629,10 +645,14 @@ protected:
 
         cmlog.info0("User initiated compaction started on behalf of {}", *t);
 
-        // Now that the sstables for major compaction are registered,
-        // release both locks to let regular compaction run in parallel to major.
+        // Now that the sstables for major compaction are registered, let regular
+        // compaction run in parallel to major: the exclusion covers selection,
+        // not the whole job. Groups parked while major was selecting come back
+        // to the ready queue here.
         sstable_set_units.return_all();
-        lock_holder.return_all();
+        if (std::exchange(_compaction_state.major_compaction_pending, false)) {
+            _cm.reevaluate_deferred_compactions();
+        }
 
         co_await utils::get_local_injector().inject("major_compaction_wait", [this] (auto& handler) -> future<> {
             cmlog.info("major_compaction_wait: waiting");
@@ -1575,8 +1595,6 @@ protected:
                 co_return std::nullopt;
             }
             switch_state(state::pending);
-            // Read lock serializes with major compaction (which takes write lock).
-            auto lock_holder = co_await _compaction_state.lock.hold_read_lock();
             if (!can_proceed()) {
                 co_return std::nullopt;
             }
@@ -1619,8 +1637,13 @@ protected:
 
             // Finished selecting and registering compacting sstables.
             // Release sstable_set_lock (snapshot+filter+registration is complete).
-            // Keep read lock held during compaction execution.
             sstable_set_units.return_all();
+
+            // Lets a test hold a regular compaction here, after its inputs are
+            // registered as compacting, which is the window in which a major
+            // compaction must not select: get_candidates() excludes these
+            // sstables, so major would otherwise compact a subset of the group.
+            co_await utils::get_local_injector().inject("regular_compaction_registered_wait", utils::wait_for_message(60s));
 
             setup_new_compaction(descriptor.run_identifier);
             _compaction_state.last_regular_compaction = gc_clock::now();
@@ -1680,6 +1703,13 @@ void compaction_manager::dispatch_regular_compaction(compaction_state& cs) {
     if (cs.regular_compaction_dispatched) {
         return;
     }
+    if (cs.major_compaction_pending) {
+        // A major compaction is waiting to select this group's sstables. Park the
+        // group rather than dropping it; major lowers the flag once it has
+        // selected, and reevaluate_deferred_compactions() brings it back.
+        defer_regular_compaction(cs);
+        return;
+    }
     if (!can_perform_regular_compaction(t)) {
         return;
     }
@@ -1727,6 +1757,10 @@ future<> compaction_manager::perform_regular_compaction_job(compaction_state& cs
     }
 
     cs.regular_compaction_dispatched = false;
+    // finish_compaction() signals compaction_done from inside the job, before this
+    // flag is cleared, so a major compaction waiting for the group to go quiet
+    // needs another wake-up once it actually has.
+    cs.compaction_done.broadcast();
     --_regular_jobs_running;
     if ((performed || cs.regular_compaction_submissions != submissions) &&
             !cs.gate.is_closed() && cs.stop_generation == stop_generation && can_perform_regular_compaction(t)) {
