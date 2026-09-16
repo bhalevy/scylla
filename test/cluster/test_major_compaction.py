@@ -422,3 +422,64 @@ async def test_stop_compaction_type_translation(manager: ScyllaClusterManager, s
 
     await log.wait_for(f"Stopping .* ongoing compactions.*types={expected_types} due to user request",
                        from_mark=mark, timeout=60)
+
+@pytest.mark.skip_mode(mode='release', reason='error injections are not supported in release mode')
+async def test_major_compaction_waits_for_regular_compaction(manager: ScyllaClusterManager):
+    """
+    Test that major compaction does not select its inputs while a regular
+    compaction is running on the same compaction group.
+
+    A running regular compaction has its inputs registered as compacting, and
+    get_candidates() excludes those, so a major compaction that selected in that
+    window would compact a subset of the group -- with a single regular
+    compaction covering every sstable, it would find no candidates at all and
+    silently do nothing.
+
+    1. Create a single node cluster and a table with autocompaction disabled.
+    2. Populate it into several sstables.
+    3. Inject an error that holds a regular compaction after it registered its
+       inputs, and enable autocompaction to let one start.
+    4. Request a major compaction, which must wait for the regular one.
+    5. Release the regular compaction and expect major to compact the group,
+       rather than finding nothing to do.
+    """
+    logger.info("Starting a single node cluster")
+    server = await manager.server_add(cmdline=["--logger-log-level", "compaction=debug",
+                                               "--logger-log-level", "compaction_manager=debug"])
+    await disable_autocompaction_across_keyspaces(manager, server.ip_addr)
+
+    cf = "cf"
+    cql = manager.get_cql()
+    async with new_test_keyspace(manager, "WITH replication = {'class': 'NetworkTopologyStrategy', 'replication_factor': 1} AND tablets = {'initial': 1}") as ks:
+        logger.info("Creating table")
+        await cql.run_async(f"CREATE TABLE {ks}.{cf} (pk int PRIMARY KEY)")
+        await manager.api.disable_autocompaction(server.ip_addr, ks, cf)
+
+        logger.info("Populating table into several sstables")
+        for i in range(4):
+            await asyncio.gather(*[cql.run_async(f"INSERT INTO {ks}.{cf} (pk) VALUES ({k});") for k in range(i * 25, (i + 1) * 25)])
+            await manager.api.keyspace_flush(server.ip_addr, ks, cf)
+
+        logger.info("Inject error to hold a regular compaction after it registers its inputs")
+        injection = "regular_compaction_registered_wait"
+        await manager.api.enable_injection(server.ip_addr, injection, False)
+
+        log = await manager.server_open_log(server.server_id)
+
+        logger.info("Enable autocompaction and wait for a regular compaction to reach the injection point")
+        await manager.api.enable_autocompaction(server.ip_addr, ks, cf)
+        await manager.api.wait_for_injection_enter(server.ip_addr, injection)
+
+        logger.info("Request a major compaction and wait until it blocks on the regular one")
+        mark = await log.mark()
+        compaction_task = asyncio.create_task(manager.api.keyspace_compaction(server.ip_addr, ks, cf))
+        # Without the exclusion, major selects right away while the regular
+        # compaction holds its inputs, so this line never appears.
+        await log.wait_for(f"Major compaction for .* waiting for regular compaction to complete", from_mark=mark, timeout=60)
+
+        logger.info("Release the regular compaction")
+        await manager.api.message_injection(server.ip_addr, injection)
+
+        logger.info("Major compaction must find candidates and compact them")
+        await compaction_task
+        await log.wait_for(f"Major {ks}.{cf} .* Compacted .*", from_mark=mark, timeout=60)
