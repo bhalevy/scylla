@@ -30,20 +30,25 @@ namespace compaction {
 // Two or more compaction_group_view can be served by the same instance of sstable::sstable_set,
 // so it's not safe to track any sstable state here.
 //
-// Locking
-// =======
+// Locking and exclusion
+// =====================
 //
-// Two locks govern concurrency for compaction selection and sstable set mutation:
+// Concurrency for compaction selection and sstable set mutation is governed by
+// the compaction manager's scheduler, plus one lock:
 //
-// 1) lock (rwlock)
+// 1) Scheduler exclusion (major_compaction_pending, regular_compaction_dispatched)
 //
-//    Serializes major compaction against regular compaction selection.
-//    Major compaction takes the write lock to ensure no regular compaction
-//    is in the middle of selecting candidates -- so major sees all sstables.
-//    Regular compaction takes the read lock, allowing multiple regular
-//    compactions to select concurrently.
+//    Major compaction must see every sstable of the group, so it may not select
+//    while a regular compaction is running: a running regular compaction has its
+//    inputs registered in _compacting_sstables, get_candidates() excludes them,
+//    and major would silently compact a subset.
 //
-//    Lock ordering: lock is taken BEFORE sstable_set_lock when both are needed.
+//    A requested major raises major_compaction_pending, which stops the
+//    scheduler from dispatching further regular jobs for the group, and then
+//    waits for regular_compaction_dispatched to clear. Once it has selected and
+//    registered its inputs it lowers the flag again, so regular compaction runs
+//    in parallel with major's execution -- exclusivity covers selection, not the
+//    whole job.
 //
 // 2) sstable_set_lock (semaphore, count=1)
 //
@@ -63,9 +68,6 @@ namespace compaction {
 //
 //    The sstable_set_lock ensures that (a) and (b) do not interleave.
 //
-// Lock ordering (when both are acquired):
-//    lock -> sstable_set_lock
-//
 struct compaction_state {
     // The compaction group this state belongs to. compaction_manager owns the
     // 1:1 mapping between the two, so a state linked into one of the
@@ -83,10 +85,6 @@ struct compaction_state {
     // Used both by compaction tasks that refer to the compaction_state
     // and by any function running under run_with_compaction_disabled().
     seastar::named_gate gate;
-
-    // Serializes major compaction selection against regular compaction selection.
-    // Major takes write lock; regular takes read lock.
-    seastar::rwlock lock;
 
     // Protects the view's sstable set ownership. Serializes sstable set reads
     // (snapshot + filter + registration) against sstable set mutations
@@ -111,6 +109,12 @@ struct compaction_state {
     // group is serialized: intra-group parallelism would not buy disk
     // parallelism, which is already saturated across shards.
     bool regular_compaction_dispatched = false;
+
+    // Raised while a major compaction for this group is waiting to select its
+    // inputs, and lowered once it has selected and registered them. While it is
+    // raised the scheduler does not dispatch regular compaction for the group,
+    // so that major is not starved by a group that keeps finding work.
+    bool major_compaction_pending = false;
 
     // Set when a group is submitted while a job is already in flight for it, so
     // that the scheduler queues the group again and reselects once more, rather

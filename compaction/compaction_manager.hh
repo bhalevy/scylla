@@ -352,6 +352,14 @@ public:
 
     void register_metrics();
 
+    // Cap on the number of regular compaction jobs dispatched at once. Only
+    // tests set it for now; the configurable limit arrives with the per-type
+    // limits that replace _maintenance_ops_sem and _off_strategy_sem.
+    void set_max_regular_jobs_for_tests(size_t n) noexcept {
+        _max_regular_jobs = n;
+        _scheduler_wakeup.signal();
+    }
+
     // enable the compaction manager.
     void enable();
 
