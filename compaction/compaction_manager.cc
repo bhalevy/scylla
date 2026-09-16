@@ -1296,6 +1296,17 @@ compaction_manager::do_stop_ongoing_compactions(sstring reason, std::function<bo
     auto ongoing_compactions = std::ranges::count_if(_tasks, [&filter] (const compaction_task_executor& task) {
         return filter(task.compacting_table());
     });
+    // Regular compaction runs as a sequence of single-job tasks, so a stop request
+    // may find no task to stop for a group that is about to dispatch its next job.
+    // Bump the generation of every matching group, whether or not it has a task
+    // right now, so that such a sequence observes the stop and ends.
+    if (!type_opt || *type_opt == compaction_type::Compaction) {
+        for (auto& [t, cs] : _compaction_state) {
+            if (filter(t)) {
+                ++cs.stop_generation;
+            }
+        }
+    }
     auto tasks = _tasks
             | std::views::filter([&filter, type_opt] (const auto& task) {
                 return filter(task.compacting_table()) && (!type_opt || task.compaction_type() == *type_opt);
@@ -1488,11 +1499,17 @@ future<stop_iteration> compaction_task_executor::maybe_retry(std::exception_ptr 
 }
 
 class regular_compaction_task_executor : public compaction_task_executor, public regular_compaction_task_impl {
+    // Set when a compaction job is performed, telling the submitter
+    // (compaction_manager::perform_regular_compaction) to look for more work.
+    bool& _performed;
 public:
-    regular_compaction_task_executor(compaction_manager& mgr, throw_if_stopping do_throw_if_stopping, compaction_group_view& t)
+    regular_compaction_task_executor(compaction_manager& mgr, throw_if_stopping do_throw_if_stopping, compaction_group_view& t, bool& performed)
         : compaction_task_executor(mgr, do_throw_if_stopping, &t, compaction_type::Compaction, "Compaction")
         , regular_compaction_task_impl(mgr._task_manager_module, tasks::task_id::create_random_id(), mgr._task_manager_module->new_sequence_number(), t.schema()->ks_name(), t.schema()->cf_name(), "", tasks::task_id::create_null_id())
-    {}
+        , _performed(performed)
+    {
+        _performed = false;
+    }
 
     virtual void abort() noexcept override {
         return compaction_task_executor::abort(_as);
@@ -1589,7 +1606,13 @@ protected:
                     co_await update_history(*_compacting_table, std::move(res), _compaction_data);
                 }
                 _cm.reevaluate_postponed_compactions();
-                continue;
+                // Perform a single job per task, and let the submitter dispatch
+                // another one while there is more work to do. Selecting the next
+                // job in a fresh task keeps one task_manager task tied to exactly
+                // one compaction job, and gives a scheduler a chance to weigh this
+                // compaction group against the others before the next job starts.
+                _performed = true;
+                co_return std::nullopt;
             } catch (...) {
                 ex = std::current_exception();
             }
@@ -1604,6 +1627,21 @@ protected:
     }
 };
 
+future<> compaction_manager::perform_regular_compaction(compaction_group_view& t, gate::holder gh) {
+    // Each task performs at most one compaction job, so keep dispatching tasks
+    // as long as jobs are being performed. A task that finds nothing to compact,
+    // is refused a weight, or is stopped, leaves `performed` unset and ends the
+    // sequence; in the refused case the group was postponed and will be
+    // resubmitted by postponed_compactions_reevaluation().
+    // gh keeps the group's compaction_state, and hence cs, alive across the loop.
+    auto& cs = get_compaction_state(&t);
+    const auto stop_generation = cs.stop_generation;
+    bool performed = false;
+    do {
+        co_await perform_compaction<regular_compaction_task_executor>(throw_if_stopping::no, tasks::make_empty_task_info(), t, performed).discard_result();
+    } while (performed && !cs.gate.is_closed() && cs.stop_generation == stop_generation && can_perform_regular_compaction(t));
+}
+
 void compaction_manager::submit(compaction_group_view& t) {
     if (t.is_auto_compaction_disabled_by_user()) {
         return;
@@ -1616,7 +1654,7 @@ void compaction_manager::submit(compaction_group_view& t) {
 
     // OK to drop future.
     // waited via compaction_task_executor::compaction_done()
-    (void)perform_compaction<regular_compaction_task_executor>(throw_if_stopping::no, tasks::make_empty_task_info(), t).then_wrapped([gh = std::move(gh)] (auto f) { f.ignore_ready_future(); });
+    (void)perform_regular_compaction(t, std::move(*gh)).handle_exception([] (std::exception_ptr) {});
 }
 
 bool compaction_manager::can_perform_regular_compaction(compaction_group_view& t) {

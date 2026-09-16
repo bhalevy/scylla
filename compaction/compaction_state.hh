@@ -89,6 +89,13 @@ struct compaction_state {
     // Raised by any function running under run_with_compaction_disabled();
     long compaction_disabled_counter = 0;
 
+    // Bumped whenever ongoing regular compactions are stopped for this group.
+    // A sequence of compaction jobs (compaction_manager::perform_regular_compaction)
+    // runs one job per task, so a stop request landing between two jobs finds no
+    // task to stop. Such a sequence captures this counter and stops dispatching
+    // further jobs once it changes.
+    uint64_t stop_generation = 0;
+
     // Signaled whenever a compaction task completes.
     condition_variable compaction_done;
 
