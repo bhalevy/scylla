@@ -14,6 +14,8 @@
 #include <seastar/core/condition-variable.hh>
 #include "seastarx.hh"
 
+#include <boost/intrusive/list.hpp>
+
 #include <memory>
 #include <unordered_set>
 
@@ -65,6 +67,19 @@ namespace compaction {
 //    lock -> sstable_set_lock
 //
 struct compaction_state {
+    // The compaction group this state belongs to. compaction_manager owns the
+    // 1:1 mapping between the two, so a state linked into one of the
+    // scheduler's queues can be resolved back to the group its jobs run on.
+    compaction_group_view& view;
+
+    // Hook for the compaction manager's scheduler queues. A state is linked
+    // into at most one queue at a time. The link mode is auto_unlink so that
+    // destroying a state -- which happens when its compaction group is removed
+    // -- cannot leave a dangling entry behind in a queue.
+    using queue_hook_type = boost::intrusive::list_member_hook<
+            boost::intrusive::link_mode<boost::intrusive::auto_unlink>>;
+    queue_hook_type queue_hook;
+
     // Used both by compaction tasks that refer to the compaction_state
     // and by any function running under run_with_compaction_disabled().
     seastar::named_gate gate;
@@ -89,24 +104,23 @@ struct compaction_state {
     // Raised by any function running under run_with_compaction_disabled();
     long compaction_disabled_counter = 0;
 
-    // Set while a sequence of regular compaction jobs
-    // (compaction_manager::perform_regular_compaction) is dispatching jobs for
-    // this group, so that concurrent submits join the running sequence instead
-    // of starting a second one. Regular compaction of a group is serialized:
-    // intra-group parallelism would not buy disk parallelism, which is already
-    // saturated across shards.
-    bool regular_compaction_sequence_active = false;
+    // Set while a regular compaction job dispatched by the scheduler
+    // (compaction_manager::dispatch_regular_compaction) is in flight for this
+    // group, so that a submit arriving meanwhile only marks the group for
+    // requeueing instead of starting a second job. Regular compaction of a
+    // group is serialized: intra-group parallelism would not buy disk
+    // parallelism, which is already saturated across shards.
+    bool regular_compaction_dispatched = false;
 
-    // Set when a group is submitted while its sequence is already running, so
-    // that the sequence reselects once more before it ends, rather than missing
-    // sstables that showed up after its last selection.
+    // Set when a group is submitted while a job is already in flight for it, so
+    // that the scheduler queues the group again and reselects once more, rather
+    // than missing sstables that showed up after the last selection.
     bool regular_compaction_resubmitted = false;
 
     // Bumped whenever ongoing regular compactions are stopped for this group.
-    // A sequence of compaction jobs (compaction_manager::perform_regular_compaction)
-    // runs one job per task, so a stop request landing between two jobs finds no
-    // task to stop. Such a sequence captures this counter and stops dispatching
-    // further jobs once it changes.
+    // The scheduler dispatches one job per task, so a stop request landing
+    // between two jobs finds no task to stop. A dispatched job captures this
+    // counter and does not queue the group again once it changes.
     uint64_t stop_generation = 0;
 
     // Signaled whenever a compaction task completes.

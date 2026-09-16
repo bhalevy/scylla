@@ -17,6 +17,8 @@
 #include <seastar/core/abort_source.hh>
 #include <seastar/core/condition-variable.hh>
 #include <seastar/core/rwlock.hh>
+#include <boost/intrusive/list.hpp>
+#include <limits>
 #include "sstables/shared_sstable.hh"
 #include "utils/exponential_backoff_retry.hh"
 #include "utils/updateable_value.hh"
@@ -128,10 +130,36 @@ private:
     // a sstable from being compacted twice.
     std::unordered_set<sstables::shared_sstable> _compacting_sstables;
 
-    std::optional<future<>> _waiting_reevaluation;
-    condition_variable _postponed_reevaluation;
-    // tables that wait for compaction but had its submission postponed due to ongoing compaction.
-    std::unordered_set<compaction::compaction_group_view*> _postponed;
+    // Per-shard scheduler for regular compaction.
+    //
+    // Dispatch is owned by a single fiber (compaction_scheduler_fiber) rather
+    // than by the submitters, so that the shard can weigh its compaction groups
+    // against one another and cap how many jobs run at once. Groups waiting for
+    // dispatch are held in intrusive queues: with tablets there are thousands of
+    // them per shard, so enqueue and dequeue must be O(1) and allocation-free.
+    //
+    // A group is linked into at most one queue at a time:
+    //  - _ready_groups: has work to do and is waiting for a dispatch slot.
+    //  - _deferred_groups: its last job was refused by the weight tracker; moved
+    //    back to _ready_groups once a weight is released.
+    using compaction_queue = boost::intrusive::list<compaction::compaction_state,
+            boost::intrusive::member_hook<compaction::compaction_state,
+                    compaction::compaction_state::queue_hook_type,
+                    &compaction::compaction_state::queue_hook>,
+            boost::intrusive::constant_time_size<false>>;
+    compaction_queue _ready_groups;
+    compaction_queue _deferred_groups;
+    // Woken whenever a group becomes ready or a dispatch slot is released.
+    condition_variable _scheduler_wakeup;
+    std::optional<future<>> _scheduler_fiber;
+    // Number of regular compaction jobs currently dispatched.
+    size_t _regular_jobs_running = 0;
+    // Cap on _regular_jobs_running. Unlimited for now: this is the scheduler
+    // skeleton, which must not change how much compaction runs. The limit
+    // becomes meaningful, and configurable, once every compaction type is
+    // routed through the scheduler.
+    static constexpr size_t unlimited_jobs = std::numeric_limits<size_t>::max();
+    size_t _max_regular_jobs = unlimited_jobs;
     // tracks taken weights of ongoing compactions, only one compaction per weight is allowed.
     // weight is value assigned to a compaction job that is log base N of total size of all input sstables.
     std::unordered_set<int> _weight_tracker;
@@ -229,16 +257,25 @@ private:
     // table still exists and compaction is not disabled for the table.
     inline bool can_proceed(compaction::compaction_group_view* t) const;
 
-    future<> postponed_compactions_reevaluation();
-    void reevaluate_postponed_compactions() noexcept;
-    future<> stop_postponed_compactions() noexcept;
-    // Postpone compaction for a table that couldn't be executed due to ongoing
-    // similar-sized compaction.
-    void postpone_compaction_for_table(compaction::compaction_group_view* t);
+    // Dispatches regular compaction jobs for the groups in _ready_groups, up to
+    // _max_regular_jobs at a time. Runs until the manager is disabled.
+    future<> compaction_scheduler_fiber();
+    future<> stop_compaction_scheduler() noexcept;
+    // Queue a group for regular compaction dispatch and wake the scheduler.
+    // A no-op if the group is already queued.
+    void enqueue_regular_compaction(compaction::compaction_state& cs) noexcept;
+    // Park a group whose job was refused due to an ongoing similar-sized
+    // compaction, until a compaction weight is released.
+    void defer_regular_compaction(compaction::compaction_state& cs) noexcept;
+    // Move every deferred group back to the ready queue and wake the scheduler.
+    void reevaluate_deferred_compactions() noexcept;
+    // Starts a single regular compaction job for cs, in the background.
+    void dispatch_regular_compaction(compaction::compaction_state& cs);
 
-    // Dispatches regular compaction tasks for t, one job per task, for as long
-    // as jobs are being performed. Holds gh for the lifetime of the sequence.
-    future<> perform_regular_compaction(compaction::compaction_group_view& t, gate::holder gh);
+    // Performs a single regular compaction job for cs and, if there is more work
+    // to do, queues the group again for the scheduler to weigh against the
+    // others. Holds gh for the lifetime of the job, which keeps cs alive.
+    future<> perform_regular_compaction_job(compaction::compaction_state& cs, gate::holder gh);
 
     using quarantine_invalid_sstables = compaction_type_options::scrub::quarantine_invalid_sstables;
     future<compaction_stats_opt> perform_sstable_scrub_validate_mode(compaction::compaction_group_view& t, tasks::task_info info, quarantine_invalid_sstables quarantine_sstables);
