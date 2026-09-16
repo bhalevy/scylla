@@ -5466,6 +5466,10 @@ void tombstone_gc_disabled_fn(test_env& env) {
             t.set_tombstone_gc_enabled(tombstone_gc_enabled);
         }
         auto stop = deferred_stop(t);
+        // This test compacts the sstables it adds, so a regular compaction
+        // selecting the same inputs would race it: whichever job finishes second
+        // finds its inputs already unlinked when it attaches its output.
+        t->disable_auto_compaction().get();
         for (auto& sst : all) {
             column_family_test(t).add_sstable(sst).get();
         }
