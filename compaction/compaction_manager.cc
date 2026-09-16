@@ -1628,18 +1628,31 @@ protected:
 };
 
 future<> compaction_manager::perform_regular_compaction(compaction_group_view& t, gate::holder gh) {
-    // Each task performs at most one compaction job, so keep dispatching tasks
-    // as long as jobs are being performed. A task that finds nothing to compact,
-    // is refused a weight, or is stopped, leaves `performed` unset and ends the
-    // sequence; in the refused case the group was postponed and will be
-    // resubmitted by postponed_compactions_reevaluation().
+    // Each task performs at most one compaction job, so keep dispatching tasks as
+    // long as jobs are being performed, or a submit arrived meanwhile. A task that
+    // finds nothing to compact, is refused a weight, or is stopped, leaves
+    // `performed` unset and ends the sequence; in the refused case the group was
+    // postponed and will be resubmitted by postponed_compactions_reevaluation().
     // gh keeps the group's compaction_state, and hence cs, alive across the loop.
     auto& cs = get_compaction_state(&t);
+    // Runs before the first suspension point, so two submits in the same task
+    // cannot both start a sequence.
+    if (cs.regular_compaction_sequence_active) {
+        cs.regular_compaction_resubmitted = true;
+        co_return;
+    }
+    cs.regular_compaction_sequence_active = true;
+    auto clear_active = defer([&cs] () noexcept { cs.regular_compaction_sequence_active = false; });
+
     const auto stop_generation = cs.stop_generation;
     bool performed = false;
     do {
+        // Cleared before dispatching, so that a submit racing with this job is
+        // observed below and not lost.
+        cs.regular_compaction_resubmitted = false;
         co_await perform_compaction<regular_compaction_task_executor>(throw_if_stopping::no, tasks::make_empty_task_info(), t, performed).discard_result();
-    } while (performed && !cs.gate.is_closed() && cs.stop_generation == stop_generation && can_perform_regular_compaction(t));
+    } while ((performed || cs.regular_compaction_resubmitted) &&
+            !cs.gate.is_closed() && cs.stop_generation == stop_generation && can_perform_regular_compaction(t));
 }
 
 void compaction_manager::submit(compaction_group_view& t) {

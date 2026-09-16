@@ -89,6 +89,19 @@ struct compaction_state {
     // Raised by any function running under run_with_compaction_disabled();
     long compaction_disabled_counter = 0;
 
+    // Set while a sequence of regular compaction jobs
+    // (compaction_manager::perform_regular_compaction) is dispatching jobs for
+    // this group, so that concurrent submits join the running sequence instead
+    // of starting a second one. Regular compaction of a group is serialized:
+    // intra-group parallelism would not buy disk parallelism, which is already
+    // saturated across shards.
+    bool regular_compaction_sequence_active = false;
+
+    // Set when a group is submitted while its sequence is already running, so
+    // that the sequence reselects once more before it ends, rather than missing
+    // sstables that showed up after its last selection.
+    bool regular_compaction_resubmitted = false;
+
     // Bumped whenever ongoing regular compactions are stopped for this group.
     // A sequence of compaction jobs (compaction_manager::perform_regular_compaction)
     // runs one job per task, so a stop request landing between two jobs finds no
