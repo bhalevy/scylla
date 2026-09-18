@@ -152,14 +152,30 @@ private:
     // Woken whenever a group becomes ready or a dispatch slot is released.
     condition_variable _scheduler_wakeup;
     std::optional<future<>> _scheduler_fiber;
-    // Number of regular compaction jobs currently dispatched.
-    size_t _regular_jobs_running = 0;
-    // Cap on _regular_jobs_running. Unlimited for now: this is the scheduler
-    // skeleton, which must not change how much compaction runs. The limit
-    // becomes meaningful, and configurable, once every compaction type is
-    // routed through the scheduler.
+    // Job slots.
+    //
+    // A compaction task is long lived: it selects and fences its sstables, then
+    // produces one or more compaction jobs. Tasks run concurrently -- how many
+    // of each kind is governed by _maintenance_ops_sem and _off_strategy_sem for
+    // maintenance, and by one task per group for regular compaction -- while the
+    // jobs they produce compete for a slot here. The job is the unit of work
+    // that costs disk and CPU, so it is the unit worth capping.
+    //
+    // _max_jobs caps jobs of every class, and _max_maintenance_jobs caps the
+    // maintenance ones alone. Regular compaction has no sub-cap, so it uses
+    // every slot while no maintenance job is running, and a maintenance job
+    // waits for one to be freed rather than preempting. Waiters are woken in
+    // arrival order, so regular compaction cannot starve maintenance.
+    //
+    // Both default to unlimited, which is what keeps this patch from changing
+    // how much compaction runs; the configurable values come later.
     static constexpr size_t unlimited_jobs = std::numeric_limits<size_t>::max();
-    size_t _max_regular_jobs = unlimited_jobs;
+    size_t _jobs_running = 0;
+    size_t _maintenance_jobs_running = 0;
+    size_t _max_jobs = unlimited_jobs;
+    size_t _max_maintenance_jobs = unlimited_jobs;
+    // Woken whenever a job slot is released.
+    condition_variable _job_slot_released;
     // tracks taken weights of ongoing compactions, only one compaction per weight is allowed.
     // weight is value assigned to a compaction job that is log base N of total size of all input sstables.
     std::unordered_set<int> _weight_tracker;
@@ -272,6 +288,46 @@ private:
     // Starts a single regular compaction job for cs, in the background.
     void dispatch_regular_compaction(compaction::compaction_state& cs);
 
+public:
+    // Class of a compaction job, for the purpose of capping how many run at once.
+    enum class job_class { regular, maintenance };
+
+    // Held for the duration of one compaction job.
+    class job_slot {
+        compaction_manager* _cm;
+        job_class _class;
+    public:
+        job_slot(compaction_manager& cm, job_class c) noexcept : _cm(&cm), _class(c) {}
+        job_slot(job_slot&& o) noexcept : _cm(std::exchange(o._cm, nullptr)), _class(o._class) {}
+        job_slot(const job_slot&) = delete;
+        ~job_slot() {
+            if (_cm) {
+                _cm->release_job_slot(_class);
+            }
+        }
+    };
+
+    // Waits for a slot to run one compaction job of the given class.
+    //
+    // Ordering: acquire every lock a job needs -- _maintenance_ops_sem,
+    // _off_strategy_sem, compaction_state::incremental_repair_lock -- BEFORE
+    // asking for a slot, and never ask for one while about to take such a lock.
+    // seastar's rwlock is a FIFO semaphore, so a waiting repair writer blocks
+    // later readers; a job holding a slot and waiting for the read lock, behind
+    // a job holding the read lock and waiting for a slot, would deadlock.
+    future<job_slot> acquire_job_slot(job_class c);
+
+private:
+    bool can_start_job(job_class c) const noexcept {
+        return _jobs_running < _max_jobs &&
+                (c != job_class::maintenance || _maintenance_jobs_running < _max_maintenance_jobs);
+    }
+    void take_job_slot(job_class c) noexcept {
+        ++_jobs_running;
+        _maintenance_jobs_running += (c == job_class::maintenance);
+    }
+    void release_job_slot(job_class c) noexcept;
+
     // Performs a single regular compaction job for cs and, if there is more work
     // to do, queues the group again for the scheduler to weigh against the
     // others. Holds gh for the lifetime of the job, which keeps cs alive.
@@ -352,11 +408,12 @@ public:
 
     void register_metrics();
 
-    // Cap on the number of regular compaction jobs dispatched at once. Only
-    // tests set it for now; the configurable limit arrives with the per-type
-    // limits that replace _maintenance_ops_sem and _off_strategy_sem.
-    void set_max_regular_jobs_for_tests(size_t n) noexcept {
-        _max_regular_jobs = n;
+    // Caps on concurrent compaction jobs. Only tests set them for now; the
+    // configurable values arrive with the metrics in a later patch.
+    void set_max_jobs_for_tests(size_t max_jobs, size_t max_maintenance_jobs) noexcept {
+        _max_jobs = max_jobs;
+        _max_maintenance_jobs = max_maintenance_jobs;
+        _job_slot_released.broadcast();
         _scheduler_wakeup.signal();
     }
 

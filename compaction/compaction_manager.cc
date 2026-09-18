@@ -641,6 +641,7 @@ protected:
             cmlog.info("major_compaction_wait: released");
         });
 
+        auto slot = co_await _cm.acquire_job_slot(compaction_manager::job_class::maintenance);
         co_await compact_sstables_and_update_history(std::move(descriptor), _compaction_data, on_replace);
 
         finish_compaction();
@@ -1246,7 +1247,7 @@ future<> compaction_manager::compaction_scheduler_fiber() {
             _deferred_groups.clear();
             co_return;
         }
-        while (!_ready_groups.empty() && _regular_jobs_running < _max_regular_jobs) {
+        while (!_ready_groups.empty() && can_start_job(job_class::regular)) {
             auto& cs = _ready_groups.front();
             _ready_groups.pop_front();
             dispatch_regular_compaction(cs);
@@ -1257,6 +1258,24 @@ future<> compaction_manager::compaction_scheduler_fiber() {
             co_await coroutine::maybe_yield();
         }
     }
+}
+
+future<compaction_manager::job_slot> compaction_manager::acquire_job_slot(job_class c) {
+    // Waiters are woken in arrival order by the broadcast in release_job_slot(),
+    // and each rechecks, so a maintenance job is not starved by regular ones.
+    while (!can_start_job(c)) {
+        co_await _job_slot_released.when();
+    }
+    take_job_slot(c);
+    co_return job_slot(*this, c);
+}
+
+void compaction_manager::release_job_slot(job_class c) noexcept {
+    --_jobs_running;
+    _maintenance_jobs_running -= (c == job_class::maintenance);
+    _job_slot_released.broadcast();
+    // A freed slot may let the scheduler dispatch a regular compaction.
+    _scheduler_wakeup.signal();
 }
 
 void compaction_manager::enqueue_regular_compaction(compaction_state& cs) noexcept {
@@ -1681,7 +1700,9 @@ void compaction_manager::dispatch_regular_compaction(compaction_state& cs) {
     // Cleared before dispatching, so that a submit racing with this job is
     // observed when it completes and not lost.
     cs.regular_compaction_resubmitted = false;
-    ++_regular_jobs_running;
+    // The scheduler checked can_start_job() before dispatching, and nothing has
+    // suspended since, so the slot is available.
+    take_job_slot(job_class::regular);
 
     // OK to drop future.
     // waited via compaction_task_executor::compaction_done()
@@ -1710,13 +1731,10 @@ future<> compaction_manager::perform_regular_compaction_job(compaction_state& cs
     // flag is cleared, so a major compaction waiting for the group to go quiet
     // needs another wake-up once it actually has.
     cs.compaction_done.broadcast();
-    --_regular_jobs_running;
+    release_job_slot(job_class::regular);
     if ((performed || cs.regular_compaction_resubmitted) &&
             !cs.gate.is_closed() && cs.stop_generation == stop_generation && can_perform_regular_compaction(t)) {
         enqueue_regular_compaction(cs);
-    } else {
-        // Wake the scheduler anyway: a dispatch slot was just released.
-        _scheduler_wakeup.signal();
     }
 
     if (ex) {
@@ -1906,6 +1924,7 @@ protected:
                     co_return std::nullopt;
                 }
                 cmlog.info("Starting off-strategy compaction for {}, {} candidates were found", t, size);
+                auto slot = co_await _cm.acquire_job_slot(compaction_manager::job_class::maintenance);
                 co_await run_offstrategy_compaction(_compaction_data);
                 finish_compaction();
                 cmlog.info("Done with off-strategy compaction for {}", t);
@@ -2002,6 +2021,7 @@ protected:
 
             std::exception_ptr ex;
             try {
+                auto slot = co_await _cm.acquire_job_slot(compaction_manager::job_class::maintenance);
                 compaction_result res = co_await compact_sstables_and_update_history(std::move(descriptor), _compaction_data, on_replace, _can_purge);
                 finish_compaction();
                 _cm.reevaluate_deferred_compactions();
@@ -2399,6 +2419,7 @@ private:
             try {
                 setup_new_compaction(descriptor.run_identifier);
                 co_await utils::get_local_injector().inject("sstable_cleanup_wait", utils::wait_for_message(std::chrono::seconds(60)));
+                auto slot = co_await _cm.acquire_job_slot(compaction_manager::job_class::maintenance);
                 co_await compact_sstables_and_update_history(descriptor, _compaction_data, on_replace);
                 finish_compaction();
                 _cm.reevaluate_deferred_compactions();
