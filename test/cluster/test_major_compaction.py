@@ -416,3 +416,72 @@ async def test_major_compaction_with_concurrent_regular_compaction(manager: Scyl
         await manager.api.message_injection(server.ip_addr, injection)
         await compaction_task
         await log.wait_for(f"Major {ks}.{cf} .* Compacted {initial_sstables} sstables", from_mark=mark, timeout=120)
+
+@pytest.mark.skip_mode(mode='release', reason='error injections are not supported in release mode')
+async def test_compaction_max_concurrent_jobs(manager: ScyllaClusterManager):
+    """
+    Test that compaction_max_concurrent_jobs bounds how many compaction jobs
+    run at once, and that groups with work to do wait for a slot.
+
+    With the limit set to one, a regular compaction held at its injection point
+    occupies the only slot.  A second compaction group with work of its own is
+    then ready but undispatched, which is what groups_ready reports; jobs_waiting
+    stays zero, since regular compaction is held back at dispatch rather than
+    inside acquire_job_slot().
+
+    1. Create a single node cluster with compaction_max_concurrent_jobs=1.
+    2. Create a table over two tablets, so there are two compaction groups, and
+       flush enough sstables into each to make both want to compact.
+    3. Hold a regular compaction after it registers its inputs.
+    4. Expect exactly one job running and at least one group ready to run but
+       not dispatched.
+    5. Release it and expect the backlog to drain.
+    """
+    # One shard, so that the metrics below, which are summed over shards, read
+    # the per-shard limit directly.
+    logger.info("Starting a single node, single shard cluster with a limit of one compaction job")
+    server = await manager.server_add(
+            config={'compaction_max_concurrent_jobs': 1},
+            cmdline=["--smp", "1",
+                     "--logger-log-level", "compaction=debug",
+                     "--logger-log-level", "compaction_manager=debug"])
+    await disable_autocompaction_across_keyspaces(manager, server.ip_addr)
+
+    cf = "cf"
+    cql = manager.get_cql()
+    async with new_test_keyspace(manager, "WITH replication = {'class': 'NetworkTopologyStrategy', 'replication_factor': 1} AND tablets = {'initial': 2}") as ks:
+        logger.info("Creating table")
+        await cql.run_async(f"CREATE TABLE {ks}.{cf} (pk int PRIMARY KEY)"
+                            f" WITH compaction = {{'class': 'SizeTieredCompactionStrategy',"
+                            f" 'min_threshold': 4, 'max_threshold': 4}}")
+        await manager.api.disable_autocompaction(server.ip_addr, ks, cf)
+
+        logger.info("Flushing sstables into both compaction groups")
+        for i in range(8):
+            await asyncio.gather(*[cql.run_async(f"INSERT INTO {ks}.{cf} (pk) VALUES ({k});") for k in range(i * 50, (i + 1) * 50)])
+            await manager.api.keyspace_flush(server.ip_addr, ks, cf)
+
+        logger.info("Hold a regular compaction after it registers its inputs")
+        injection = "regular_compaction_registered_wait"
+        await manager.api.enable_injection(server.ip_addr, injection, False)
+
+        logger.info("Enable autocompaction, which makes both groups want to compact")
+        await manager.api.enable_autocompaction(server.ip_addr, ks, cf)
+        await manager.api.wait_for_injection_enter(server.ip_addr, injection)
+
+        metrics = await manager.metrics.query(server.ip_addr)
+        jobs_running = metrics.get('scylla_compaction_manager_jobs_running')
+        groups_ready = metrics.get('scylla_compaction_manager_groups_ready')
+        jobs_waiting = metrics.get('scylla_compaction_manager_jobs_waiting')
+        logger.info(f"jobs_running={jobs_running} groups_ready={groups_ready} jobs_waiting={jobs_waiting}")
+
+        # The limit is one, so the held compaction is the only job running,
+        # however many groups have work to do.
+        assert jobs_running == 1
+        # The other group wants to compact but has no slot to do it in.
+        assert groups_ready >= 1
+        # Regular compaction never blocks inside acquire_job_slot().
+        assert jobs_waiting == 0
+
+        logger.info("Release the held compaction")
+        await manager.api.message_injection(server.ip_addr, injection)
