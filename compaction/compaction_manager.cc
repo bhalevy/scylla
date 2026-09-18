@@ -662,6 +662,11 @@ protected:
             cmlog.info("major_compaction_wait: released");
         });
 
+        auto slot = co_await _cm.acquire_job_slot(compaction_manager::job_class::maintenance, &_compaction_data.abort);
+        if (!slot) {
+            // Asked to stop while waiting for a slot.
+            co_return std::nullopt;
+        }
         co_await compact_sstables_and_update_history(std::move(descriptor), _compaction_data, on_replace);
 
         finish_compaction();
@@ -1276,7 +1281,7 @@ future<> compaction_manager::compaction_scheduler_fiber() {
             _deferred_groups.clear();
             co_return;
         }
-        while (!_ready_groups.empty() && _regular_jobs_running < _max_regular_jobs) {
+        while (!_ready_groups.empty() && !should_defer_to_maintenance() && can_start_job(job_class::regular)) {
             auto& cs = _ready_groups.front();
             _ready_groups.pop_front();
             try {
@@ -1294,6 +1299,58 @@ future<> compaction_manager::compaction_scheduler_fiber() {
             co_await coroutine::maybe_yield();
         }
     }
+}
+
+future<std::optional<compaction_manager::job_slot>> compaction_manager::acquire_job_slot(job_class c, abort_source* as) {
+    if (!can_start_job(c)) {
+        _maintenance_jobs_waiting += (c == job_class::maintenance);
+        auto decrement = defer([this, c] () noexcept {
+            _maintenance_jobs_waiting -= (c == job_class::maintenance);
+            // The scheduler stands down while a maintenance job waits, so tell
+            // it that one no longer does.
+            _scheduler_wakeup.signal();
+        });
+        // Nothing releases a slot on abort, so wake the wait from the abort
+        // itself; the loop below then sees that it was asked to stop.
+        optimized_optional<abort_source::subscription> abort_sub;
+        if (as) {
+            abort_sub = as->subscribe([this] () noexcept { _job_slot_released.broadcast(); });
+        }
+        while (!can_start_job(c)) {
+            if (as && as->abort_requested()) {
+                co_return std::nullopt;
+            }
+            co_await _job_slot_released.when();
+        }
+    }
+    take_job_slot(c);
+    co_return job_slot(*this, c);
+}
+
+void compaction_manager::take_job_slot(job_class c) noexcept {
+    // The caller is committed by the time it gets here, so report and carry on
+    // rather than refusing: overshooting the limit is a policy violation, not a
+    // correctness one, and aborting a node over it would be worse.
+    if (!can_start_job(c)) {
+        on_internal_error_noexcept(cmlog, "taking a compaction job slot that is not available");
+    }
+    ++_jobs_running;
+    _maintenance_jobs_running += (c == job_class::maintenance);
+}
+
+void compaction_manager::release_job_slot(job_class c) noexcept {
+    // A double release would wrap these around, since they are unsigned, and
+    // can_start_job() would then admit every job for the life of the shard --
+    // the limit would be silently gone rather than merely wrong.
+    if (!_jobs_running || (c == job_class::maintenance && !_maintenance_jobs_running)) {
+        on_internal_error_noexcept(cmlog, "releasing a compaction job slot that was not taken");
+        return;
+    }
+    --_jobs_running;
+    _maintenance_jobs_running -= (c == job_class::maintenance);
+    _job_slot_released.broadcast();
+    // A freed slot may let the scheduler dispatch a regular compaction.
+    _scheduler_wakeup.signal();
 }
 
 void compaction_manager::enqueue_regular_compaction(compaction_state& cs) noexcept {
@@ -1568,10 +1625,16 @@ future<stop_iteration> compaction_task_executor::maybe_retry(std::exception_ptr 
 }
 
 class regular_compaction_task_executor : public compaction_task_executor, public regular_compaction_task_impl {
+    // The job slot this task runs under, accounted when the scheduler dispatched
+    // it. Held here so that it is given back exactly once, when the task ends,
+    // and can be handed back early while backing off after a failure.
+    std::optional<compaction_manager::job_slot> _slot;
 public:
-    regular_compaction_task_executor(compaction_manager& mgr, throw_if_stopping do_throw_if_stopping, compaction_group_view& t)
+    regular_compaction_task_executor(compaction_manager& mgr, throw_if_stopping do_throw_if_stopping, compaction_group_view& t,
+            compaction_manager::job_slot slot)
         : compaction_task_executor(mgr, do_throw_if_stopping, &t, compaction_type::Compaction, "Compaction")
         , regular_compaction_task_impl(mgr._task_manager_module, tasks::task_id::create_random_id(), mgr._task_manager_module->new_sequence_number(), t.schema()->ks_name(), t.schema()->cf_name(), "", tasks::task_id::create_null_id())
+        , _slot(std::move(slot))
     {}
 
     virtual void abort() noexcept override {
@@ -1650,6 +1713,12 @@ protected:
             std::exception_ptr ex;
 
             try {
+                // Lets a test make a regular compaction fail, so that the retry
+                // path -- which gives the job slot back for the duration of the
+                // backoff -- can be exercised.
+                utils::get_local_injector().inject("regular_compaction_fail", [] {
+                    throw std::runtime_error("injected regular compaction failure");
+                });
                 bool should_update_history = this->should_update_history(descriptor.options.type());
                 compaction_result res = co_await compact_sstables(std::move(descriptor), _compaction_data, on_replace);
                 cmlog.debug("Finished minor compaction old_sstables={} new_sstables={} sstables_reapired_at={} range={} uuid={} compaction_uuid={}",
@@ -1685,7 +1754,24 @@ protected:
             }
 
             finish_compaction(state::failed);
+            // Give the job slot back for the duration of the backoff, which can
+            // reach five minutes. A group whose compaction keeps failing must not
+            // occupy a slot while it waits: with enough such groups every slot
+            // would be held by a sleeping task and no compaction of any kind
+            // could start on the shard.
+            //
+            // The task can also end here, by maybe_retry() returning yes or
+            // throwing; the slot stays given back either way, and _slot's
+            // destructor does nothing since it no longer holds one.
+            _slot.reset();
             if ((co_await maybe_retry(std::move(ex))) == stop_iteration::yes) {
+                co_return std::nullopt;
+            }
+            // Retake it before selecting again, so that a retry waits for a slot
+            // like any other job rather than bypassing the limit.
+            _slot = co_await _cm.acquire_job_slot(compaction_manager::job_class::regular, &_compaction_data.abort);
+            if (!_slot) {
+                // Asked to stop while waiting to retake the slot.
                 co_return std::nullopt;
             }
         }
@@ -1718,15 +1804,16 @@ void compaction_manager::dispatch_regular_compaction(compaction_state& cs) {
         return;
     }
     cs.regular_compaction_dispatched = true;
-    ++_regular_jobs_running;
-    // Starting the job allocates, so it can throw. Undo the counter and the flag
-    // if it does: leaking them would cost a slot for the life of the shard and
+    // The scheduler checked can_start_job() before dispatching, and nothing has
+    // suspended since, so the slot is available.
+    take_job_slot(job_class::regular);
+    // Starting the job allocates, so it can throw. Undo the slot and the flag if
+    // it does: leaking them would cost a slot for the life of the shard and
     // leave the group looking permanently busy, which also blocks any major
     // compaction on it while it holds _maintenance_ops_sem.
     auto undo = defer([this, &cs] () noexcept {
         cs.regular_compaction_dispatched = false;
-        --_regular_jobs_running;
-        _scheduler_wakeup.signal();
+        release_job_slot(job_class::regular);
     });
 
     // OK to drop future.
@@ -1749,8 +1836,11 @@ future<> compaction_manager::perform_regular_compaction_job(compaction_state& cs
     const auto submissions = cs.regular_compaction_submissions;
     bool performed = false;
     std::exception_ptr ex;
+    // Adopt the slot the scheduler accounted when it dispatched this job. From
+    // here it is owned by the task, which gives it back when it ends.
+    auto slot = job_slot(*this, job_class::regular);
     try {
-        auto stats = co_await perform_compaction<regular_compaction_task_executor>(throw_if_stopping::no, tasks::make_empty_task_info(), t);
+        auto stats = co_await perform_compaction<regular_compaction_task_executor>(throw_if_stopping::no, tasks::make_empty_task_info(), t, std::move(slot));
         performed = stats.has_value();
     } catch (...) {
         ex = std::current_exception();
@@ -1761,13 +1851,9 @@ future<> compaction_manager::perform_regular_compaction_job(compaction_state& cs
     // flag is cleared, so a major compaction waiting for the group to go quiet
     // needs another wake-up once it actually has.
     cs.compaction_done.broadcast();
-    --_regular_jobs_running;
     if ((performed || cs.regular_compaction_submissions != submissions) &&
             !cs.gate.is_closed() && cs.stop_generation == stop_generation && can_perform_regular_compaction(t)) {
         enqueue_regular_compaction(cs);
-    } else {
-        // Wake the scheduler anyway: a dispatch slot was just released.
-        _scheduler_wakeup.signal();
     }
 
     if (ex) {
@@ -1959,6 +2045,11 @@ protected:
                     co_return std::nullopt;
                 }
                 cmlog.info("Starting off-strategy compaction for {}, {} candidates were found", t, size);
+                auto slot = co_await _cm.acquire_job_slot(compaction_manager::job_class::maintenance, &_compaction_data.abort);
+                if (!slot) {
+                    // Asked to stop while waiting for a slot.
+                    co_return std::nullopt;
+                }
                 co_await run_offstrategy_compaction(_compaction_data);
                 finish_compaction();
                 cmlog.info("Done with off-strategy compaction for {}", t);
@@ -2055,6 +2146,11 @@ protected:
 
             std::exception_ptr ex;
             try {
+                auto slot = co_await _cm.acquire_job_slot(compaction_manager::job_class::maintenance, &_compaction_data.abort);
+                if (!slot) {
+                    // Asked to stop while waiting for a slot.
+                    co_return compaction_result{};
+                }
                 compaction_result res = co_await compact_sstables_and_update_history(std::move(descriptor), _compaction_data, on_replace, _can_purge);
                 finish_compaction();
                 _cm.reevaluate_deferred_compactions();
@@ -2452,6 +2548,11 @@ private:
             try {
                 setup_new_compaction(descriptor.run_identifier);
                 co_await utils::get_local_injector().inject("sstable_cleanup_wait", utils::wait_for_message(std::chrono::seconds(60)));
+                auto slot = co_await _cm.acquire_job_slot(compaction_manager::job_class::maintenance, &_compaction_data.abort);
+                if (!slot) {
+                    // Asked to stop while waiting for a slot.
+                    co_return;
+                }
                 co_await compact_sstables_and_update_history(descriptor, _compaction_data, on_replace);
                 finish_compaction();
                 _cm.reevaluate_deferred_compactions();
