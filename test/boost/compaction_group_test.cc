@@ -272,3 +272,56 @@ SEASTAR_TEST_CASE(compactions_dont_cross_group_boundary_test) {
         }
     });
 }
+
+// Verifies the per-shard cap on concurrent compaction jobs and the reservation
+// that keeps a maintenance job from being crowded out by regular compaction.
+// The caps default to unlimited, so nothing else exercises them.
+SEASTAR_TEST_CASE(compaction_job_slots_test) {
+    return sstables::test_env::do_with_async([] (sstables::test_env& env) {
+        using job_class = compaction::compaction_manager::job_class;
+
+        // The test env creates its compaction manager along with the first
+        // table, so make one before reaching for it.
+        auto s = schema_builder(this_smp_shard_count(), "tests", "job_slots")
+                .with_column("id", utf8_type, column_kind::partition_key)
+                .with_column("value", int32_type)
+                .build();
+        auto cf = env.make_table_for_tests(s);
+        auto stop = deferred_stop(cf);
+        auto& cm = cf->get_compaction_manager();
+
+        // Two jobs at a time, at most one of them maintenance.
+        cm.set_max_jobs_for_tests(2, 1);
+
+        // Regular compaction uses both slots while no maintenance job runs.
+        auto regular1 = cm.acquire_job_slot(job_class::regular).get();
+        auto regular2 = cm.acquire_job_slot(job_class::regular).get();
+
+        // The cap is reached, so a maintenance job waits for a slot to be
+        // freed rather than preempting one.
+        auto maintenance = cm.acquire_job_slot(job_class::maintenance);
+        BOOST_REQUIRE(!maintenance.available());
+
+        // Freeing a regular slot lets it in.
+        { auto released = std::move(regular1); }
+        auto maintenance_slot = maintenance.get();
+
+        // With a maintenance job running, its own cap of one holds a second one
+        // back even though the total cap would allow it.
+        auto maintenance2 = cm.acquire_job_slot(job_class::maintenance);
+        BOOST_REQUIRE(!maintenance2.available());
+
+        // ... while the slot it cannot take is still available to regular
+        // compaction, which has no sub-cap of its own.
+        { auto released = std::move(regular2); }
+        auto regular3 = cm.acquire_job_slot(job_class::regular).get();
+        BOOST_REQUIRE(!maintenance2.available());
+
+        // Releasing the maintenance job admits the waiting one.
+        { auto released = std::move(maintenance_slot); }
+        auto maintenance2_slot = maintenance2.get();
+
+        // Leave the caps as the rest of the suite expects them.
+        cm.set_max_jobs_for_tests(std::numeric_limits<size_t>::max(), std::numeric_limits<size_t>::max());
+    });
+}
