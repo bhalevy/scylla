@@ -85,6 +85,9 @@ public:
         utils::updateable_value<float> static_shares = utils::updateable_value<float>(0);
         utils::updateable_value<float> max_shares = utils::updateable_value<float>(0);
         utils::updateable_value<uint32_t> throughput_mb_per_sec = utils::updateable_value<uint32_t>(0);
+        // 0 means no limit, for both.
+        utils::updateable_value<uint32_t> max_concurrent_jobs = utils::updateable_value<uint32_t>(0);
+        utils::updateable_value<uint32_t> max_concurrent_maintenance_jobs = utils::updateable_value<uint32_t>(0);
         std::chrono::seconds flush_all_tables_before_major = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::days(1));
     };
 
@@ -167,8 +170,8 @@ private:
     // waits for one to be freed rather than preempting. Waiters are woken in
     // arrival order, so regular compaction cannot starve maintenance.
     //
-    // Both default to unlimited, which is what keeps this patch from changing
-    // how much compaction runs; the configurable values come later.
+    // Both are set from compaction_max_concurrent_jobs and
+    // compaction_max_concurrent_maintenance_jobs, which default to no limit.
     static constexpr size_t unlimited_jobs = std::numeric_limits<size_t>::max();
     size_t _jobs_running = 0;
     size_t _maintenance_jobs_running = 0;
@@ -178,6 +181,8 @@ private:
     // for them, so it has to tell them apart from a regular job waiting to
     // retry after a failure, which it need not defer to.
     size_t _maintenance_jobs_waiting = 0;
+    // Jobs blocked in acquire_job_slot(), of every class, for the metric.
+    size_t _jobs_waiting = 0;
     // Woken whenever a job slot is released.
     condition_variable _job_slot_released;
     // tracks taken weights of ongoing compactions, only one compaction per weight is allowed.
@@ -209,6 +214,8 @@ private:
     serialized_action _update_compaction_static_shares_action;
     utils::observer<float> _compaction_static_shares_observer;
     utils::observer<float> _compaction_max_shares_observer;
+    utils::observer<uint32_t> _max_concurrent_jobs_observer;
+    utils::observer<uint32_t> _max_concurrent_maintenance_jobs_observer;
     uint64_t _validation_errors = 0;
 
     class strategy_control;
@@ -355,6 +362,11 @@ private:
     // Defined out of line: reports a broken invariant through cmlog.
     void take_job_slot(job_class c) noexcept;
     void release_job_slot(job_class c) noexcept;
+    // A configured value of 0 means no limit.
+    static size_t job_limit(uint32_t configured) noexcept {
+        return configured ? size_t(configured) : unlimited_jobs;
+    }
+    void set_max_jobs(size_t max_jobs, size_t max_maintenance_jobs) noexcept;
 
     // Performs a single regular compaction job for cs and, if there is more work
     // to do, queues the group again for the scheduler to weigh against the
@@ -436,13 +448,11 @@ public:
 
     void register_metrics();
 
-    // Caps on concurrent compaction jobs. Only tests set them for now; the
-    // configurable values arrive with the metrics in a later patch.
+    // Overrides the configured caps on concurrent compaction jobs, until the
+    // configuration changes again. For tests, which have no configuration to
+    // set.
     void set_max_jobs_for_tests(size_t max_jobs, size_t max_maintenance_jobs) noexcept {
-        _max_jobs = max_jobs;
-        _max_maintenance_jobs = max_maintenance_jobs;
-        _job_slot_released.broadcast();
-        _scheduler_wakeup.signal();
+        set_max_jobs(max_jobs, max_maintenance_jobs);
     }
 
     // enable the compaction manager.

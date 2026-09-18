@@ -1330,6 +1330,8 @@ To start the scylla server proper, simply invoke as: scylla server (or just scyl
                     .static_shares = cfg->compaction_static_shares,
                     .max_shares = cfg->compaction_max_shares,
                     .throughput_mb_per_sec = cfg->compaction_throughput_mb_per_sec,
+                    .max_concurrent_jobs = cfg->compaction_max_concurrent_jobs,
+                    .max_concurrent_maintenance_jobs = cfg->compaction_max_concurrent_maintenance_jobs,
                     .flush_all_tables_before_major = cfg->compaction_flush_all_tables_before_major_seconds() * 1s,
                 };
             });

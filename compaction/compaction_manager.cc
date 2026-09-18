@@ -1178,8 +1178,15 @@ compaction_manager::compaction_manager(config cfg, abort_source& as, tasks::task
         cmlog.info("Updating max shares to {}", max_shares);
         _compaction_controller.set_max_shares(max_shares);
     }))
+    , _max_concurrent_jobs_observer(_cfg.max_concurrent_jobs.observe([this] (const uint32_t& max_jobs) {
+        set_max_jobs(job_limit(max_jobs), _max_maintenance_jobs);
+    }))
+    , _max_concurrent_maintenance_jobs_observer(_cfg.max_concurrent_maintenance_jobs.observe([this] (const uint32_t& max_maintenance_jobs) {
+        set_max_jobs(_max_jobs, job_limit(max_maintenance_jobs));
+    }))
     , _strategy_control(std::make_unique<strategy_control>(*this))
 {
+    set_max_jobs(job_limit(_cfg.max_concurrent_jobs.get()), job_limit(_cfg.max_concurrent_maintenance_jobs.get()));
     tm.register_module(_task_manager_module->get_name(), _task_manager_module);
     register_metrics();
 }
@@ -1194,6 +1201,8 @@ compaction_manager::compaction_manager(tasks::task_manager& tm)
     , _update_compaction_static_shares_action([] { return make_ready_future<>(); })
     , _compaction_static_shares_observer(_cfg.static_shares.observe(_update_compaction_static_shares_action.make_observer()))
     , _compaction_max_shares_observer(_cfg.max_shares.observe([] (const float& max_shares) {}))
+    , _max_concurrent_jobs_observer(_cfg.max_concurrent_jobs.observe([] (const uint32_t&) {}))
+    , _max_concurrent_maintenance_jobs_observer(_cfg.max_concurrent_maintenance_jobs.observe([] (const uint32_t&) {}))
     , _strategy_control(std::make_unique<strategy_control>(*this))
 {
     tm.register_module(_task_manager_module->get_name(), _task_manager_module);
@@ -1223,6 +1232,12 @@ void compaction_manager::register_metrics() {
         // constant-time sized. Only walked when the metric is scraped.
         sm::make_gauge("postponed_compactions", [this] { return _deferred_groups.size(); },
                        sm::description("Holds the number of tables with postponed compaction.")),
+        sm::make_gauge("jobs_running", [this] { return _jobs_running; },
+                       sm::description("Holds the number of compaction jobs currently running, of every kind.")),
+        sm::make_gauge("maintenance_jobs_running", [this] { return _maintenance_jobs_running; },
+                       sm::description("Holds the number of maintenance compaction jobs currently running.")),
+        sm::make_gauge("jobs_waiting", [this] { return _jobs_waiting; },
+                       sm::description("Holds the number of compaction jobs waiting for a slot to run in.")),
         sm::make_gauge("backlog", [this] { return _last_backlog; },
                        sm::description("Holds the sum of compaction backlog for all tables in the system.")),
         sm::make_gauge("normalized_backlog", [this] { return _last_backlog / available_memory(); },
@@ -1303,8 +1318,10 @@ future<> compaction_manager::compaction_scheduler_fiber() {
 
 future<std::optional<compaction_manager::job_slot>> compaction_manager::acquire_job_slot(job_class c, abort_source* as) {
     if (!can_start_job(c)) {
+        ++_jobs_waiting;
         _maintenance_jobs_waiting += (c == job_class::maintenance);
         auto decrement = defer([this, c] () noexcept {
+            --_jobs_waiting;
             _maintenance_jobs_waiting -= (c == job_class::maintenance);
             // The scheduler stands down while a maintenance job waits, so tell
             // it that one no longer does.
@@ -1336,6 +1353,20 @@ void compaction_manager::take_job_slot(job_class c) noexcept {
     }
     ++_jobs_running;
     _maintenance_jobs_running += (c == job_class::maintenance);
+}
+
+void compaction_manager::set_max_jobs(size_t max_jobs, size_t max_maintenance_jobs) noexcept {
+    if (max_jobs == _max_jobs && max_maintenance_jobs == _max_maintenance_jobs) {
+        return;
+    }
+    cmlog.info("Updating max concurrent compaction jobs to {}, of which maintenance {}",
+            max_jobs == unlimited_jobs ? "unlimited" : fmt::to_string(max_jobs),
+            max_maintenance_jobs == unlimited_jobs ? "unlimited" : fmt::to_string(max_maintenance_jobs));
+    _max_jobs = max_jobs;
+    _max_maintenance_jobs = max_maintenance_jobs;
+    // Raising a limit may let waiting jobs, and deferred groups, proceed.
+    _job_slot_released.broadcast();
+    _scheduler_wakeup.signal();
 }
 
 void compaction_manager::release_job_slot(job_class c) noexcept {
