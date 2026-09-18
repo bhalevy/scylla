@@ -1841,6 +1841,15 @@ db::config::config(std::shared_ptr<db::extensions> exts)
         "If set to higher than 0, ignore the controller's output and set the compaction shares statically. Do not set this unless you know what you are doing and suspect a problem in the controller. This option will be retired when the controller reaches more maturity.")
     , compaction_max_shares(this, "compaction_max_shares", liveness::LiveUpdate, value_status::Used, default_compaction_maximum_shares,
         "Set the maximum shares of regular compaction to the specific value. Do not set this unless you know what you are doing and suspect a problem in the controller. This option will be retired when the controller reaches more maturity.")
+    , compaction_max_concurrent_jobs(this, "compaction_max_concurrent_jobs", liveness::LiveUpdate, value_status::Used, 0,
+        "Maximum number of compaction jobs running concurrently on a shard, counting every kind of compaction. "
+        "A compaction task selects the sstables it will compact and then produces one or more jobs; the jobs are "
+        "what consume disk and CPU, so they are what this bounds. Set to 0, the default, for no limit.")
+    , compaction_max_concurrent_maintenance_jobs(this, "compaction_max_concurrent_maintenance_jobs", liveness::LiveUpdate, value_status::Used, 0,
+        "Maximum number of maintenance compaction jobs -- major, cleanup, upgrade, scrub, off-strategy -- running "
+        "concurrently on a shard, within the limit set by compaction_max_concurrent_jobs. Regular compaction has no "
+        "such sub-limit, so it uses every slot while no maintenance job is running, and a maintenance job waits for a "
+        "slot to be freed rather than preempting one. Set to 0, the default, for no limit.")
     , compaction_enforce_min_threshold(this, "compaction_enforce_min_threshold", liveness::LiveUpdate, value_status::Used, false,
         "If set to true, enforce the min_threshold option for compactions strictly. If false (default), Scylla may decide to compact even if below min_threshold.")
     , compaction_flush_all_tables_before_major_seconds(this, "compaction_flush_all_tables_before_major_seconds", value_status::Used, 86400,
