@@ -54,16 +54,26 @@ Unchanged from before the scheduler, and still enforced where it always was:
 
 ### Job-level admission
 
-Every compaction job takes a slot from the scheduler for its duration:
+Most compaction jobs take a slot from the scheduler for their duration --
+regular, major, off-strategy, cleanup, and the rewrite family (upgrade, scrub,
+split, component rewrite). Reshard, reshape and scrub in validate mode do not
+yet, so they are not bounded by these limits:
 
 - `_max_jobs` caps jobs of every class.
 - `_max_maintenance_jobs` caps the maintenance ones alone.
 
 Regular compaction has no sub-cap, so it uses every slot while no maintenance
 job is running. A maintenance job waits for a slot to be freed rather than
-preempting one, and waiters recheck on a broadcast, so regular compaction cannot
-starve maintenance. Expressing the reservation as two caps rather than as a rule
+preempting one. Expressing the reservation as two caps rather than as a rule
 keeps the policy in one predicate, `can_start_job()`.
+
+Note that a freed slot is not handed to the longest waiter. Maintenance jobs
+wait in `acquire_job_slot()`, while regular compaction is dispatched by the
+scheduler fiber, which takes a slot synchronously without ever entering that
+wait. Under sustained regular load and a small limit the fiber can therefore win
+every freed slot and a maintenance job can wait for a long time -- while holding
+`_maintenance_ops_sem`, and for major via `compact_all_sstables()` the repair
+read lock as well. This is a known gap, not a property of the design.
 
 Both are configured by `compaction_max_concurrent_jobs` and
 `compaction_max_concurrent_maintenance_jobs`, live-updatable, both defaulting to
@@ -92,11 +102,14 @@ The hook uses `auto_unlink`, so destroying a `compaction_state` — which happen
 when its compaction group is removed — cannot leave a dangling queue entry.
 
 A dispatched regular task performs **one job and returns**, queueing its group
-again if it did work or if a submit arrived meanwhile. One task_manager task is
+again if it did work or if a submit arrived meanwhile -- except on the retry
+path below, where it keeps its slot and runs further jobs under the same task. One task_manager task is
 therefore one compaction job, and the scheduler gets to weigh this group against
 the others before the group's next job starts. The task's internal loop survives
 only for the `maybe_retry()` path, so a failing job's exponential backoff is not
-reset on every retry.
+reset on every retry. That path keeps the job slot across a backoff of up to 300
+seconds, and does not recheck `major_compaction_pending`, so persistently failing
+groups can hold every slot; another known gap.
 
 ## Fencing, and major compaction
 
@@ -189,8 +202,11 @@ rules, in order:
    efficient one runs, so that a low-fan-in compaction does not dilute the
    write amplification a high-fan-in one is achieving.
 
-A refused job leaves its group in `_deferred_groups`, and a weight release or a
-compaction completion splices it back.
+A refused job leaves its group in `_deferred_groups`. It comes back when any
+task finishes, when a submit arrives for that group, or on the periodic
+submission -- the last two matter because the weight tracker weighs a job
+against every running task, so a major compaction can refuse regular jobs across
+the whole shard.
 
 How much of this survives the scheduler is worth deciding before the series
 lands:

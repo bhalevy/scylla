@@ -170,8 +170,8 @@ private:
     // waits for one to be freed rather than preempting. Waiters are woken in
     // arrival order, so regular compaction cannot starve maintenance.
     //
-    // Both default to unlimited, which is what keeps this patch from changing
-    // how much compaction runs; the configurable values come later.
+    // Both are set from compaction_max_concurrent_jobs and
+    // compaction_max_concurrent_maintenance_jobs, which default to no limit.
     static constexpr size_t unlimited_jobs = std::numeric_limits<size_t>::max();
     size_t _jobs_running = 0;
     size_t _maintenance_jobs_running = 0;
@@ -280,8 +280,8 @@ private:
     // table still exists and compaction is not disabled for the table.
     inline bool can_proceed(compaction::compaction_group_view* t) const;
 
-    // Dispatches regular compaction jobs for the groups in _ready_groups, up to
-    // _max_regular_jobs at a time. Runs until the manager is disabled.
+    // Dispatches regular compaction jobs for the groups in _ready_groups, for as
+    // long as can_start_job() allows. Runs until the manager is disabled.
     future<> compaction_scheduler_fiber();
     future<> stop_compaction_scheduler() noexcept;
     // Queue a group for regular compaction dispatch and wake the scheduler.

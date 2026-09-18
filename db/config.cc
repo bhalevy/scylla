@@ -1842,7 +1842,8 @@ db::config::config(std::shared_ptr<db::extensions> exts)
     , compaction_max_shares(this, "compaction_max_shares", liveness::LiveUpdate, value_status::Used, default_compaction_maximum_shares,
         "Set the maximum shares of regular compaction to the specific value. Do not set this unless you know what you are doing and suspect a problem in the controller. This option will be retired when the controller reaches more maturity.")
     , compaction_max_concurrent_jobs(this, "compaction_max_concurrent_jobs", liveness::LiveUpdate, value_status::Used, 0,
-        "Maximum number of compaction jobs running concurrently on a shard, counting every kind of compaction. "
+        "Maximum number of compaction jobs running concurrently on a shard. Reshard, reshape and scrub in "
+        "validate mode are not counted. "
         "A compaction task selects the sstables it will compact and then produces one or more jobs; the jobs are "
         "what consume disk and CPU, so they are what this bounds. Set to 0, the default, for no limit.")
     , compaction_max_concurrent_maintenance_jobs(this, "compaction_max_concurrent_maintenance_jobs", liveness::LiveUpdate, value_status::Used, 0,
