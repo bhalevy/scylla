@@ -272,3 +272,150 @@ SEASTAR_TEST_CASE(compactions_dont_cross_group_boundary_test) {
         }
     });
 }
+
+// Verifies the per-shard cap on concurrent compaction jobs and the reservation
+// that keeps a maintenance job from being crowded out by regular compaction.
+// The caps default to unlimited, so nothing else exercises them.
+SEASTAR_TEST_CASE(compaction_job_slots_test) {
+    return sstables::test_env::do_with_async([] (sstables::test_env& env) {
+        using job_class = compaction::compaction_manager::job_class;
+
+        // The test env creates its compaction manager along with the first
+        // table, so make one before reaching for it.
+        auto s = schema_builder(this_smp_shard_count(), "tests", "job_slots")
+                .with_column("id", utf8_type, column_kind::partition_key)
+                .with_column("value", int32_type)
+                .build();
+        auto cf = env.make_table_for_tests(s);
+        auto stop = deferred_stop(cf);
+        auto& cm = cf->get_compaction_manager();
+
+        // Two jobs at a time, at most one of them maintenance.
+        cm.set_max_jobs_for_tests(2, 1);
+
+        // Regular compaction uses both slots while no maintenance job runs.
+        auto regular1 = cm.acquire_job_slot(job_class::regular).get();
+        BOOST_REQUIRE(regular1);
+        auto regular2 = cm.acquire_job_slot(job_class::regular).get();
+        BOOST_REQUIRE(regular2);
+
+        // The cap is reached, so a maintenance job waits for a slot to be
+        // freed rather than preempting one.
+        auto maintenance = cm.acquire_job_slot(job_class::maintenance);
+        BOOST_REQUIRE(!maintenance.available());
+
+        // Freeing a regular slot lets it in.
+        { auto released = std::move(regular1); }
+        auto maintenance_slot = maintenance.get();
+
+        // With a maintenance job running, its own cap of one holds a second one
+        // back even though the total cap would allow it.
+        auto maintenance2 = cm.acquire_job_slot(job_class::maintenance);
+        BOOST_REQUIRE(!maintenance2.available());
+
+        // ... while the slot it cannot take is still available to regular
+        // compaction, which has no sub-cap of its own.
+        { auto released = std::move(regular2); }
+        auto regular3 = cm.acquire_job_slot(job_class::regular).get();
+        BOOST_REQUIRE(regular3);
+        BOOST_REQUIRE(!maintenance2.available());
+
+        // Releasing the maintenance job admits the waiting one.
+        { auto released = std::move(maintenance_slot); }
+        auto maintenance2_slot = maintenance2.get();
+
+        // Leave the caps as the rest of the suite expects them.
+        cm.set_max_jobs_for_tests(std::numeric_limits<size_t>::max(), std::numeric_limits<size_t>::max());
+    });
+}
+
+// Verifies that the scheduler stands down for a maintenance job waiting for a
+// job slot, and only for one it could actually hand a slot to. Regular
+// compaction takes its slot synchronously in the scheduler fiber, so without
+// this it would win every released slot.
+SEASTAR_TEST_CASE(compaction_defer_to_maintenance_test) {
+    return sstables::test_env::do_with_async([] (sstables::test_env& env) {
+        using job_class = compaction::compaction_manager::job_class;
+        auto s = schema_builder(this_smp_shard_count(), "tests", "defer_to_maintenance")
+                .with_column("id", utf8_type, column_kind::partition_key)
+                .with_column("value", int32_type)
+                .build();
+        auto cf = env.make_table_for_tests(s);
+        auto stop = deferred_stop(cf);
+        auto& cm = cf->get_compaction_manager();
+
+        cm.set_max_jobs_for_tests(1, 1);
+        auto held = cm.acquire_job_slot(job_class::regular).get();
+        BOOST_REQUIRE(held);
+        BOOST_REQUIRE(!cm.should_defer_to_maintenance());
+
+        // A maintenance job waiting for the only slot: the scheduler must leave
+        // the next released slot to it.
+        auto maintenance = cm.acquire_job_slot(job_class::maintenance);
+        BOOST_REQUIRE(!maintenance.available());
+        BOOST_REQUIRE(cm.should_defer_to_maintenance());
+
+        // Once it has the slot it is no longer waiting, and the scheduler
+        // resumes dispatching.
+        { auto released = std::move(held); }
+        auto maintenance_slot = maintenance.get();
+        BOOST_REQUIRE(maintenance_slot);
+        BOOST_REQUIRE(!cm.should_defer_to_maintenance());
+
+        // A maintenance job held back by its own sub-limit rather than by the
+        // overall one is not worth standing down for: a released slot could not
+        // go to it anyway, so regular compaction may as well use it.
+        cm.set_max_jobs_for_tests(2, 1);
+        auto blocked_by_sub_limit = cm.acquire_job_slot(job_class::maintenance);
+        BOOST_REQUIRE(!blocked_by_sub_limit.available());
+        BOOST_REQUIRE(!cm.should_defer_to_maintenance());
+
+        // Nor is a regular job waiting to retry after a failure: the scheduler
+        // dispatches those itself and must not defer to them.
+        cm.set_max_jobs_for_tests(1, 1);
+        auto regular_waiter = cm.acquire_job_slot(job_class::regular);
+        BOOST_REQUIRE(!regular_waiter.available());
+        BOOST_REQUIRE(!cm.should_defer_to_maintenance());
+
+        cm.set_max_jobs_for_tests(std::numeric_limits<size_t>::max(), std::numeric_limits<size_t>::max());
+        blocked_by_sub_limit.get();
+        regular_waiter.get();
+    });
+}
+
+// Verifies that a job asked to stop while waiting for a slot gives up, rather
+// than waiting out a slot it is not going to use and only noticing the abort
+// once it has one.
+SEASTAR_TEST_CASE(compaction_job_slot_abort_test) {
+    return sstables::test_env::do_with_async([] (sstables::test_env& env) {
+        using job_class = compaction::compaction_manager::job_class;
+        auto s = schema_builder(this_smp_shard_count(), "tests", "job_slot_abort")
+                .with_column("id", utf8_type, column_kind::partition_key)
+                .with_column("value", int32_type)
+                .build();
+        auto cf = env.make_table_for_tests(s);
+        auto stop = deferred_stop(cf);
+        auto& cm = cf->get_compaction_manager();
+
+        cm.set_max_jobs_for_tests(1, 1);
+        auto held = cm.acquire_job_slot(job_class::regular).get();
+        BOOST_REQUIRE(held);
+
+        abort_source as;
+        auto blocked = cm.acquire_job_slot(job_class::maintenance, &as);
+        BOOST_REQUIRE(!blocked.available());
+
+        // Nothing releases a slot here, so only the abort can end the wait.
+        as.request_abort();
+        auto slot = blocked.get();
+        BOOST_REQUIRE(!slot);
+
+        // And it did not take the slot on its way out: the one held is still
+        // the only one accounted for.
+        auto second = cm.acquire_job_slot(job_class::maintenance);
+        BOOST_REQUIRE(!second.available());
+
+        cm.set_max_jobs_for_tests(std::numeric_limits<size_t>::max(), std::numeric_limits<size_t>::max());
+        second.get();
+    });
+}
