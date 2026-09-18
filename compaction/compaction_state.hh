@@ -116,6 +116,12 @@ struct compaction_state {
     // so that major is not starved by a group that keeps finding work.
     bool major_compaction_pending = false;
 
+    // Set while the group is parked in the scheduler's deferred queue, so that a
+    // submit can tell it apart from a group already queued as ready and promote
+    // it back. Without that, a submit finds the group linked, does nothing, and
+    // the group waits for something else to release a compaction weight.
+    bool regular_compaction_deferred = false;
+
     // Set when a group is submitted while a job is already in flight for it, so
     // that the scheduler queues the group again and reselects once more, rather
     // than missing sstables that showed up after the last selection.

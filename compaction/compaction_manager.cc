@@ -1064,6 +1064,11 @@ void compaction_task_executor::finish_compaction(state finish_state) noexcept {
         _compaction_retry.reset();
     }
     _compaction_state.compaction_done.signal();
+    // Any task finishing can unblock a group the weight tracker refused, since
+    // can_register_compaction() weighs a job against every running task, not
+    // only the regular ones. Major, off-strategy and custom jobs would
+    // otherwise leave deferred groups parked behind them.
+    _cm.reevaluate_deferred_compactions();
 }
 
 void compaction_task_executor::abort(abort_source& as) noexcept {
@@ -1257,6 +1262,10 @@ std::function<void()> compaction_manager::compaction_submission_callback() {
                 enqueue_regular_compaction(state);
             }
         }
+        // Unconditionally, as the periodic submission did before the scheduler:
+        // this is the backstop that gets a deferred group moving again when
+        // nothing else does.
+        reevaluate_deferred_compactions();
     };
 }
 
@@ -1271,7 +1280,14 @@ future<> compaction_manager::compaction_scheduler_fiber() {
         while (!_ready_groups.empty() && can_start_job(job_class::regular)) {
             auto& cs = _ready_groups.front();
             _ready_groups.pop_front();
-            dispatch_regular_compaction(cs);
+            try {
+                dispatch_regular_compaction(cs);
+            } catch (...) {
+                // Dispatching allocates a coroutine frame, so it can throw under
+                // memory pressure. Letting that out of the fiber would end
+                // regular compaction on the shard for good, silently.
+                cmlog.error("Failed to dispatch regular compaction for {}: {:t}", cs.view, std::current_exception());
+            }
             // Dispatching is synchronous, so yield to keep a long ready queue --
             // there is one group per tablet -- from stalling the reactor. The
             // loop rechecks its conditions, and dispatch_regular_compaction()
@@ -1309,7 +1325,25 @@ void compaction_manager::set_max_jobs(size_t max_jobs, size_t max_maintenance_jo
     _scheduler_wakeup.signal();
 }
 
+void compaction_manager::take_job_slot(job_class c) noexcept {
+    // The caller is committed by the time it gets here, so report and carry on
+    // rather than refusing: overshooting the limit is a policy violation, not a
+    // correctness one, and aborting a node over it would be worse.
+    if (!can_start_job(c)) {
+        on_internal_error_noexcept(cmlog, "taking a compaction job slot that is not available");
+    }
+    ++_jobs_running;
+    _maintenance_jobs_running += (c == job_class::maintenance);
+}
+
 void compaction_manager::release_job_slot(job_class c) noexcept {
+    // A double release would wrap these around, since they are unsigned, and
+    // can_start_job() would then admit every job for the life of the shard --
+    // the limit would be silently gone rather than merely wrong.
+    if (!_jobs_running || (c == job_class::maintenance && !_maintenance_jobs_running)) {
+        on_internal_error_noexcept(cmlog, "releasing a compaction job slot that was not taken");
+        return;
+    }
     --_jobs_running;
     _maintenance_jobs_running -= (c == job_class::maintenance);
     _job_slot_released.broadcast();
@@ -1318,19 +1352,34 @@ void compaction_manager::release_job_slot(job_class c) noexcept {
 }
 
 void compaction_manager::enqueue_regular_compaction(compaction_state& cs) noexcept {
-    if (!cs.queue_hook.is_linked()) {
-        _ready_groups.push_back(cs);
+    if (cs.queue_hook.is_linked()) {
+        if (!cs.regular_compaction_deferred) {
+            // Already queued as ready.
+            _scheduler_wakeup.signal();
+            return;
+        }
+        // Parked for want of a compaction weight. A submit is new information --
+        // there are sstables now that were not there when the job was refused --
+        // so move the group back to the ready queue rather than leaving it to
+        // wait for a weight to be released.
+        cs.queue_hook.unlink();
     }
+    cs.regular_compaction_deferred = false;
+    _ready_groups.push_back(cs);
     _scheduler_wakeup.signal();
 }
 
 void compaction_manager::defer_regular_compaction(compaction_state& cs) noexcept {
     if (!cs.queue_hook.is_linked()) {
+        cs.regular_compaction_deferred = true;
         _deferred_groups.push_back(cs);
     }
 }
 
 void compaction_manager::reevaluate_deferred_compactions() noexcept {
+    for (auto& cs : _deferred_groups) {
+        cs.regular_compaction_deferred = false;
+    }
     _ready_groups.splice(_ready_groups.end(), _deferred_groups);
     _scheduler_wakeup.signal();
 }
@@ -1742,10 +1791,19 @@ void compaction_manager::dispatch_regular_compaction(compaction_state& cs) {
     // The scheduler checked can_start_job() before dispatching, and nothing has
     // suspended since, so the slot is available.
     take_job_slot(job_class::regular);
+    // Starting the job allocates, so it can throw. Undo the slot and the flag if
+    // it does: leaking them would cost a slot for the life of the shard and
+    // leave the group looking permanently busy, which also blocks any major
+    // compaction on it while it holds _maintenance_ops_sem.
+    auto undo = defer([this, &cs] () noexcept {
+        cs.regular_compaction_dispatched = false;
+        release_job_slot(job_class::regular);
+    });
 
     // OK to drop future.
     // waited via compaction_task_executor::compaction_done()
     (void)perform_regular_compaction_job(cs, std::move(*gh)).handle_exception([] (std::exception_ptr) {});
+    undo.cancel();
 }
 
 future<> compaction_manager::perform_regular_compaction_job(compaction_state& cs, gate::holder gh) {

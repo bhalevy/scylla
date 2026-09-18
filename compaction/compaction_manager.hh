@@ -329,10 +329,8 @@ private:
         return _jobs_running < _max_jobs &&
                 (c != job_class::maintenance || _maintenance_jobs_running < _max_maintenance_jobs);
     }
-    void take_job_slot(job_class c) noexcept {
-        ++_jobs_running;
-        _maintenance_jobs_running += (c == job_class::maintenance);
-    }
+    // Defined out of line: reports a broken invariant through cmlog.
+    void take_job_slot(job_class c) noexcept;
     void release_job_slot(job_class c) noexcept;
     // A configured value of 0 means no limit.
     static size_t job_limit(uint32_t configured) noexcept {
