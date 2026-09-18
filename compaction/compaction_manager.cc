@@ -1237,7 +1237,13 @@ void compaction_manager::register_metrics() {
         sm::make_gauge("maintenance_jobs_running", [this] { return _maintenance_jobs_running; },
                        sm::description("Holds the number of maintenance compaction jobs currently running.")),
         sm::make_gauge("jobs_waiting", [this] { return _jobs_waiting; },
-                       sm::description("Holds the number of compaction jobs waiting for a slot to run in.")),
+                       sm::description("Holds the number of maintenance compaction jobs waiting for a slot to run in. "
+                                       "Regular compaction is held back at dispatch rather than here, see groups_ready.")),
+        // O(n) in the number of ready groups, like postponed_compactions above.
+        sm::make_gauge("groups_ready", [this] { return _ready_groups.size(); },
+                       sm::description("Holds the number of compaction groups with regular compaction work to do that "
+                                       "the scheduler has not dispatched yet, because the limit on concurrent "
+                                       "compaction jobs is reached or a major compaction is selecting.")),
         sm::make_gauge("backlog", [this] { return _last_backlog; },
                        sm::description("Holds the sum of compaction backlog for all tables in the system.")),
         sm::make_gauge("normalized_backlog", [this] { return _last_backlog / available_memory(); },
