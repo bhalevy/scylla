@@ -345,3 +345,74 @@ async def test_major_compaction_waits_for_regular_compaction(manager: ScyllaClus
         logger.info("Major compaction must find candidates and compact them")
         await compaction_task
         await log.wait_for(f"Major {ks}.{cf} .* Compacted .*", from_mark=mark, timeout=60)
+
+@pytest.mark.skip_mode(mode='release', reason='error injections are not supported in release mode')
+async def test_major_compaction_with_concurrent_regular_compaction(manager: ScyllaClusterManager):
+    """
+    Test that a major compaction over more sstables than max_threshold runs
+    alongside regular compaction of sstables that appeared after it selected.
+
+    Major fences the sstables it selected, so sstables flushed afterwards are
+    not its concern and regular compaction is free to compact them.  The two
+    then have compaction jobs in flight at the same time, which is what the
+    scheduler serializes.
+
+    1. Create a single node cluster and a table with a low max_threshold and
+       autocompaction disabled.
+    2. Flush more than max_threshold sstables.
+    3. Inject an error to hold major compaction after it selected them.
+    4. Enable autocompaction and start a major compaction, which pauses holding
+       every sstable flushed so far.
+    5. Flush more sstables, which major did not select, and expect a regular
+       compaction to compact them while major is paused.
+    6. Release major and expect it to compact exactly the sstables it selected.
+    """
+    max_threshold = 4
+    initial_sstables = 8
+
+    logger.info("Starting a single node cluster")
+    server = await manager.server_add(cmdline=["--logger-log-level", "compaction=debug",
+                                               "--logger-log-level", "compaction_manager=debug"])
+    await disable_autocompaction_across_keyspaces(manager, server.ip_addr)
+
+    cf = "cf"
+    cql = manager.get_cql()
+    async with new_test_keyspace(manager, "WITH replication = {'class': 'NetworkTopologyStrategy', 'replication_factor': 1} AND tablets = {'initial': 1}") as ks:
+        logger.info("Creating table")
+        await cql.run_async(f"CREATE TABLE {ks}.{cf} (pk int PRIMARY KEY)"
+                            f" WITH compaction = {{'class': 'SizeTieredCompactionStrategy',"
+                            f" 'min_threshold': {max_threshold}, 'max_threshold': {max_threshold}}}")
+        await manager.api.disable_autocompaction(server.ip_addr, ks, cf)
+
+        logger.info(f"Flushing {initial_sstables} sstables, more than max_threshold={max_threshold}")
+        for i in range(initial_sstables):
+            await asyncio.gather(*[cql.run_async(f"INSERT INTO {ks}.{cf} (pk) VALUES ({k});") for k in range(i * 20, (i + 1) * 20)])
+            await manager.api.keyspace_flush(server.ip_addr, ks, cf)
+
+        logger.info("Inject error to hold major compaction after it selects its sstables")
+        injection = "major_compaction_wait"
+        await manager.api.enable_injection(server.ip_addr, injection, False)
+
+        log = await manager.server_open_log(server.server_id)
+        mark = await log.mark()
+
+        # Autocompaction stays disabled until major has selected: enabling it
+        # first lets a regular compaction consume the sstables before major ever
+        # sees them, and major is then left with whatever it merged them into.
+        logger.info("Start a major compaction and wait for it to select its sstables")
+        compaction_task = asyncio.create_task(manager.api.keyspace_compaction(server.ip_addr, ks, cf))
+        await manager.api.wait_for_injection_enter(server.ip_addr, injection)
+
+        logger.info("Enable autocompaction and flush more sstables, which major did not select")
+        await manager.api.enable_autocompaction(server.ip_addr, ks, cf)
+        for i in range(initial_sstables, initial_sstables + max_threshold):
+            await asyncio.gather(*[cql.run_async(f"INSERT INTO {ks}.{cf} (pk) VALUES ({k});") for k in range(i * 20, (i + 1) * 20)])
+            await manager.api.keyspace_flush(server.ip_addr, ks, cf)
+
+        logger.info("A regular compaction must compact them while major is held")
+        await log.wait_for(f"Compact {ks}.{cf} .* Compacted .*", from_mark=mark, timeout=120)
+
+        logger.info("Release major compaction")
+        await manager.api.message_injection(server.ip_addr, injection)
+        await compaction_task
+        await log.wait_for(f"Major {ks}.{cf} .* Compacted {initial_sstables} sstables", from_mark=mark, timeout=120)
