@@ -235,6 +235,10 @@ private:
     // similar-sized compaction.
     void postpone_compaction_for_table(compaction::compaction_group_view* t);
 
+    // Dispatches regular compaction tasks for t, one job per task, for as long
+    // as jobs are being performed. Holds gh for the lifetime of the sequence.
+    future<> perform_regular_compaction(compaction::compaction_group_view& t, gate::holder gh);
+
     using quarantine_invalid_sstables = compaction_type_options::scrub::quarantine_invalid_sstables;
     future<compaction_stats_opt> perform_sstable_scrub_validate_mode(compaction::compaction_group_view& t, tasks::task_info info, quarantine_invalid_sstables quarantine_sstables);
     future<> update_static_shares(float shares);
