@@ -14,6 +14,8 @@
 #include <seastar/core/condition-variable.hh>
 #include "seastarx.hh"
 
+#include <boost/intrusive/list.hpp>
+
 #include <memory>
 #include <unordered_set>
 
@@ -65,6 +67,19 @@ namespace compaction {
 //    lock -> sstable_set_lock
 //
 struct compaction_state {
+    // The compaction group this state belongs to. compaction_manager owns the
+    // 1:1 mapping between the two, so a state linked into one of the
+    // scheduler's queues can be resolved back to the group its jobs run on.
+    compaction_group_view& view;
+
+    // Hook for the compaction manager's scheduler queues. A state is linked
+    // into at most one queue at a time. The link mode is auto_unlink so that
+    // destroying a state -- which happens when its compaction group is removed
+    // -- cannot leave a dangling entry behind in a queue.
+    using queue_hook_type = boost::intrusive::list_member_hook<
+            boost::intrusive::link_mode<boost::intrusive::auto_unlink>>;
+    queue_hook_type queue_hook;
+
     // Used both by compaction tasks that refer to the compaction_state
     // and by any function running under run_with_compaction_disabled().
     seastar::named_gate gate;
@@ -95,6 +110,26 @@ struct compaction_state {
 
     // Raised by any function running under run_with_compaction_disabled();
     long compaction_disabled_counter = 0;
+
+    // Set while a regular compaction job dispatched by the scheduler
+    // (compaction_manager::dispatch_regular_compaction) is in flight for this
+    // group, so that a submit arriving meanwhile only marks the group for
+    // requeueing instead of starting a second job. Regular compaction of a
+    // group is serialized: intra-group parallelism would not buy disk
+    // parallelism, which is already saturated across shards.
+    bool regular_compaction_dispatched = false;
+
+    // Set while the group is parked in the scheduler's deferred queue, so that a
+    // submit can tell it apart from a group already queued as ready and promote
+    // it back. Without that, a submit finds the group linked, does nothing, and
+    // the group waits for something else to release a compaction weight.
+    bool regular_compaction_deferred = false;
+
+    // Bumped whenever the group is submitted for regular compaction. A job
+    // samples it when it starts and compares when it ends, so a submit that
+    // arrived while it ran queues the group again and makes it select once more,
+    // rather than being missed because the job was already in flight.
+    uint64_t regular_compaction_submissions = 0;
 
     // Bumped whenever ongoing regular compactions are stopped for this group.
     uint64_t stop_generation = 0;

@@ -241,7 +241,7 @@ void compaction_manager::register_weight(compaction_group_view& t, int weight) {
 
 void compaction_manager::deregister_weight(compaction_group_view& t, int weight) {
     get_compaction_state(&t).weight_tracker.erase(weight);
-    reevaluate_postponed_compactions();
+    reevaluate_deferred_compactions();
 }
 
 future<std::vector<sstables::shared_sstable>> in_strategy_sstables(compaction_group_view& table_s) {
@@ -1064,6 +1064,11 @@ void compaction_task_executor::finish_compaction(state finish_state) noexcept {
         _compaction_retry.reset();
     }
     _compaction_state.compaction_done.signal();
+    // Any task finishing can unblock a group the weight tracker refused, since
+    // can_register_compaction() weighs a job against every running task, not
+    // only the regular ones. Major, off-strategy and custom jobs would
+    // otherwise leave deferred groups parked behind them.
+    _cm.reevaluate_deferred_compactions();
 }
 
 void compaction_task_executor::abort(abort_source& as) noexcept {
@@ -1189,7 +1194,9 @@ void compaction_manager::register_metrics() {
                        sm::description("Holds the number of completed compaction tasks.")),
         sm::make_counter("failed_compactions", [this] { return _stats.errors; },
                        sm::description("Holds the number of failed compaction tasks.")),
-        sm::make_gauge("postponed_compactions", [this] { return _postponed.size(); },
+        // O(n) in the number of deferred groups: the queue is intrusive and not
+        // constant-time sized. Only walked when the metric is scraped.
+        sm::make_gauge("postponed_compactions", [this] { return _deferred_groups.size(); },
                        sm::description("Holds the number of tables with postponed compaction.")),
         sm::make_gauge("backlog", [this] { return _last_backlog; },
                        sm::description("Holds the sum of compaction backlog for all tables in the system.")),
@@ -1221,8 +1228,8 @@ void compaction_manager::enable() {
 
     _compaction_submission_timer.cancel();
     _compaction_submission_timer.arm_periodic(periodic_compaction_submission_interval());
-    throwing_assert(!_waiting_reevaluation);
-    _waiting_reevaluation.emplace(postponed_compactions_reevaluation());
+    throwing_assert(!_scheduler_fiber);
+    _scheduler_fiber.emplace(compaction_scheduler_fiber());
     cmlog.info("Enabled");
 }
 
@@ -1231,57 +1238,85 @@ std::function<void()> compaction_manager::compaction_submission_callback() {
         auto now = gc_clock::now();
         for (auto& [table, state] : _compaction_state) {
             if (now - state.last_regular_compaction > periodic_compaction_submission_interval()) {
-                postpone_compaction_for_table(table);
+                enqueue_regular_compaction(state);
             }
         }
-        reevaluate_postponed_compactions();
+        // Unconditionally, as the periodic submission did before the scheduler:
+        // this is the backstop that gets a deferred group moving again when
+        // nothing else does.
+        reevaluate_deferred_compactions();
     };
 }
 
-future<> compaction_manager::postponed_compactions_reevaluation() {
-     while (true) {
-        co_await _postponed_reevaluation.when();
+future<> compaction_manager::compaction_scheduler_fiber() {
+    while (true) {
+        co_await _scheduler_wakeup.when();
         if (is_disabled()) {
-            _postponed.clear();
+            _ready_groups.clear();
+            _deferred_groups.clear();
             co_return;
         }
-        // A task_state being reevaluated can re-insert itself into postponed list, which is the reason
-        // for moving the list to be processed into a local.
-        auto postponed = std::exchange(_postponed, {});
-        try {
-            for (auto it = postponed.begin(); it != postponed.end();) {
-                compaction_group_view* t = *it;
-                it = postponed.erase(it);
-                // skip reevaluation of a compaction_group_view that became invalid post its removal
-                if (!_compaction_state.contains(t)) {
-                    continue;
-                }
-                cmlog.debug("resubmitting postponed compaction for table {} [{}]", *t, fmt::ptr(t));
-                submit(*t);
-                co_await coroutine::maybe_yield();
+        while (!_ready_groups.empty() && _regular_jobs_running < _max_regular_jobs) {
+            auto& cs = _ready_groups.front();
+            _ready_groups.pop_front();
+            try {
+                dispatch_regular_compaction(cs);
+            } catch (...) {
+                // Dispatching allocates a coroutine frame, so it can throw under
+                // memory pressure. Letting that out of the fiber would end
+                // regular compaction on the shard for good, silently.
+                cmlog.error("Failed to dispatch regular compaction for {}: {:t}", cs.view, std::current_exception());
             }
-        } catch (...) {
-            _postponed.insert(postponed.begin(), postponed.end());
+            // Dispatching is synchronous, so yield to keep a long ready queue --
+            // there is one group per tablet -- from stalling the reactor. The
+            // loop rechecks its conditions, and dispatch_regular_compaction()
+            // rechecks the group, after every suspension.
+            co_await coroutine::maybe_yield();
         }
     }
 }
 
-void compaction_manager::reevaluate_postponed_compactions() noexcept {
-    _postponed_reevaluation.signal();
+void compaction_manager::enqueue_regular_compaction(compaction_state& cs) noexcept {
+    if (cs.queue_hook.is_linked()) {
+        if (!cs.regular_compaction_deferred) {
+            // Already queued as ready.
+            _scheduler_wakeup.signal();
+            return;
+        }
+        // Parked for want of a compaction weight. A submit is new information --
+        // there are sstables now that were not there when the job was refused --
+        // so move the group back to the ready queue rather than leaving it to
+        // wait for a weight to be released.
+        cs.queue_hook.unlink();
+    }
+    cs.regular_compaction_deferred = false;
+    _ready_groups.push_back(cs);
+    _scheduler_wakeup.signal();
 }
 
-future<> compaction_manager::stop_postponed_compactions() noexcept {
-    auto waiting_reevaluation = std::exchange(_waiting_reevaluation, std::nullopt);
-    if (!waiting_reevaluation) {
+void compaction_manager::defer_regular_compaction(compaction_state& cs) noexcept {
+    if (!cs.queue_hook.is_linked()) {
+        cs.regular_compaction_deferred = true;
+        _deferred_groups.push_back(cs);
+    }
+}
+
+void compaction_manager::reevaluate_deferred_compactions() noexcept {
+    for (auto& cs : _deferred_groups) {
+        cs.regular_compaction_deferred = false;
+    }
+    _ready_groups.splice(_ready_groups.end(), _deferred_groups);
+    _scheduler_wakeup.signal();
+}
+
+future<> compaction_manager::stop_compaction_scheduler() noexcept {
+    auto scheduler_fiber = std::exchange(_scheduler_fiber, std::nullopt);
+    if (!scheduler_fiber) {
         return make_ready_future();
     }
-    // Trigger a signal to properly exit from postponed_compactions_reevaluation() fiber
-    reevaluate_postponed_compactions();
-    return std::move(*waiting_reevaluation);
-}
-
-void compaction_manager::postpone_compaction_for_table(compaction_group_view* t) {
-    _postponed.insert(t);
+    // Trigger a signal to properly exit from compaction_scheduler_fiber()
+    _scheduler_wakeup.signal();
+    return std::move(*scheduler_fiber);
 }
 
 void compaction_manager::stop_tasks(const std::vector<shared_ptr<compaction_task_executor>>& tasks, sstring reason) noexcept {
@@ -1372,7 +1407,7 @@ future<> compaction_manager::drain() {
     _compaction_submission_timer.cancel();
     // Stop ongoing compactions, if the request has not been sent already and wait for them to stop.
     co_await stop_ongoing_compactions("drain");
-    co_await stop_postponed_compactions();
+    co_await stop_compaction_scheduler();
     cmlog.info("Drained");
 }
 
@@ -1416,7 +1451,7 @@ future<> compaction_manager::really_do_stop() noexcept {
     if (!_tasks.empty()) {
         on_fatal_internal_error(cmlog, format("{} tasks still exist after being stopped", _tasks.size()));
     }
-    co_await stop_postponed_compactions();
+    co_await stop_compaction_scheduler();
     co_await _sys_ks.close();
     _compaction_submission_timer.cancel();
     co_await _compaction_controller.shutdown();
@@ -1573,7 +1608,7 @@ protected:
                 cmlog.debug("Refused compaction job ({} sstable(s)) of weight {} for {}, postponing it...",
                     descriptor.sstables.size(), weight, t);
                 switch_state(state::postponed);
-                _cm.postpone_compaction_for_table(&t);
+                _cm.defer_regular_compaction(_compaction_state);
                 co_return std::nullopt;
             }
             auto compacting = compacting_sstable_registration(_cm, _cm.get_compaction_state(&t), descriptor.sstables);
@@ -1613,13 +1648,13 @@ protected:
                     weight_r.deregister();
                     co_await update_history(*_compacting_table, std::move(res), _compaction_data);
                 }
-                _cm.reevaluate_postponed_compactions();
-                // Perform a single job per task, and let the submitter dispatch
+                _cm.reevaluate_deferred_compactions();
+                // Perform a single job per task, and let the scheduler dispatch
                 // another one while there is more work to do. Selecting the next
                 // job in a fresh task keeps one task_manager task tied to exactly
-                // one compaction job, and gives a scheduler a chance to weigh this
+                // one compaction job, and gives the scheduler a chance to weigh this
                 // compaction group against the others before the next job starts.
-                // Returning the job's stats is what tells the submitter a job was
+                // Returning the job's stats is what tells the scheduler a job was
                 // performed; every other way out of here returns nullopt.
                 co_return std::move(res.stats);
             } catch (...) {
@@ -1636,35 +1671,87 @@ protected:
     }
 };
 
-future<> compaction_manager::perform_regular_compaction(compaction_group_view& t, gate::holder gh) {
-    // Each task performs at most one compaction job, so keep dispatching tasks
-    // as long as jobs are being performed. A task that finds nothing to compact,
-    // is refused a weight, or is stopped, reports no stats and ends the
-    // sequence; in the refused case the group was postponed and will be
-    // resubmitted by postponed_compactions_reevaluation().
-    // gh keeps the group's compaction_state, and hence cs, alive across the loop.
-    auto& cs = get_compaction_state(&t);
+void compaction_manager::dispatch_regular_compaction(compaction_state& cs) {
+    compaction_group_view& t = cs.view;
+    // Runs to completion without suspending, so the scheduler cannot dispatch a
+    // second job for a group that already has one in flight. The job in flight
+    // notices the submission that got us here when it compares the submission
+    // count, and queues the group again.
+    if (cs.regular_compaction_dispatched) {
+        return;
+    }
+    if (!can_perform_regular_compaction(t)) {
+        return;
+    }
+    auto gh = start_compaction(t);
+    if (!gh) {
+        return;
+    }
+    cs.regular_compaction_dispatched = true;
+    ++_regular_jobs_running;
+    // Starting the job allocates, so it can throw. Undo the counter and the flag
+    // if it does: leaking them would cost a slot for the life of the shard and
+    // leave the group looking permanently busy, which also blocks any major
+    // compaction on it while it holds _maintenance_ops_sem.
+    auto undo = defer([this, &cs] () noexcept {
+        cs.regular_compaction_dispatched = false;
+        --_regular_jobs_running;
+        _scheduler_wakeup.signal();
+    });
+
+    // OK to drop future.
+    // waited via compaction_task_executor::compaction_done()
+    (void)perform_regular_compaction_job(cs, std::move(*gh)).handle_exception([] (std::exception_ptr) {});
+    undo.cancel();
+}
+
+future<> compaction_manager::perform_regular_compaction_job(compaction_state& cs, gate::holder gh) {
+    // A task performs at most one compaction job, so queue the group again as
+    // long as a job was performed, or a submit arrived meanwhile. A task that
+    // finds nothing to compact, is refused a weight, or is stopped, reports no
+    // stats; in the refused case the group was parked in
+    // _deferred_groups and comes back once a compaction weight is released.
+    // gh keeps the group's compaction_state, and hence cs, alive across the job.
+    compaction_group_view& t = cs.view;
     const auto stop_generation = cs.stop_generation;
+    // Sampled before the first suspension point, so a submit that arrives while
+    // the job runs is always seen as a change.
+    const auto submissions = cs.regular_compaction_submissions;
     bool performed = false;
-    do {
+    std::exception_ptr ex;
+    try {
         auto stats = co_await perform_compaction<regular_compaction_task_executor>(throw_if_stopping::no, tasks::make_empty_task_info(), t);
         performed = stats.has_value();
-    } while (performed && !cs.gate.is_closed() && cs.stop_generation == stop_generation && can_perform_regular_compaction(t));
+    } catch (...) {
+        ex = std::current_exception();
+    }
+
+    cs.regular_compaction_dispatched = false;
+    --_regular_jobs_running;
+    if ((performed || cs.regular_compaction_submissions != submissions) &&
+            !cs.gate.is_closed() && cs.stop_generation == stop_generation && can_perform_regular_compaction(t)) {
+        enqueue_regular_compaction(cs);
+    } else {
+        // Wake the scheduler anyway: a dispatch slot was just released.
+        _scheduler_wakeup.signal();
+    }
+
+    if (ex) {
+        co_await coroutine::return_exception_ptr(std::move(ex));
+    }
 }
 
 void compaction_manager::submit(compaction_group_view& t) {
     if (t.is_auto_compaction_disabled_by_user()) {
         return;
     }
-
-    auto gh = start_compaction(t);
-    if (!gh) {
+    if (!can_proceed(&t)) {
         return;
     }
 
-    // OK to drop future.
-    // waited via compaction_task_executor::compaction_done()
-    (void)perform_regular_compaction(t, std::move(*gh)).handle_exception([] (std::exception_ptr) {});
+    auto& cs = get_compaction_state(&t);
+    ++cs.regular_compaction_submissions;
+    enqueue_regular_compaction(cs);
 }
 
 bool compaction_manager::can_perform_regular_compaction(compaction_group_view& t) {
@@ -1936,7 +2023,7 @@ protected:
             try {
                 compaction_result res = co_await compact_sstables_and_update_history(std::move(descriptor), _compaction_data, on_replace, _can_purge);
                 finish_compaction();
-                _cm.reevaluate_postponed_compactions();
+                _cm.reevaluate_deferred_compactions();
                 co_return res;  // done with current sstable
             } catch (...) {
                 ex = std::current_exception();
@@ -2333,7 +2420,7 @@ private:
                 co_await utils::get_local_injector().inject("sstable_cleanup_wait", utils::wait_for_message(std::chrono::seconds(60)));
                 co_await compact_sstables_and_update_history(descriptor, _compaction_data, on_replace);
                 finish_compaction();
-                _cm.reevaluate_postponed_compactions();
+                _cm.reevaluate_deferred_compactions();
                 co_return;  // done with current job
             } catch (...) {
                 ex = std::current_exception();
@@ -2635,7 +2722,8 @@ future<compaction_manager::compaction_stats_opt> compaction_manager::perform_sst
 }
 
 compaction::compaction_state::compaction_state(compaction_group_view& t)
-    : gate(format("compaction_state for table {}.{}", t.schema()->ks_name(), t.schema()->cf_name()))
+    : view(t)
+    , gate(format("compaction_state for table {}.{}", t.schema()->ks_name(), t.schema()->cf_name()))
 {
 }
 
@@ -2661,7 +2749,12 @@ future<> compaction_manager::remove(compaction_group_view& t, sstring reason) no
     // We need to guarantee that a task being stopped will not retry to compact
     // a table being removed.
     // The requirement above is provided by stop_ongoing_compactions().
-    _postponed.erase(&t);
+    // The auto_unlink hook would unlink c_state once it is destroyed anyway, but
+    // that happens only after the waits below, and the scheduler must not
+    // dispatch a job for a group being removed in the meantime.
+    if (c_state.queue_hook.is_linked()) {
+        c_state.queue_hook.unlink();
+    }
 
     // Wait for all compaction tasks running under gate to terminate
     // and prevent new tasks from entering the gate.
