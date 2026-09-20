@@ -1317,6 +1317,15 @@ compaction_manager::do_stop_ongoing_compactions(sstring reason, std::function<bo
     auto ongoing_compactions = std::ranges::count_if(_tasks, [&filter] (const compaction_task_executor& task) {
         return filter(task.compacting_table());
     });
+    // Record the stop against every group the filter matches, whether or not it
+    // has a task to stop right now.
+    if (!types_opt || types_opt->contains(compaction_type::Compaction)) {
+        for (auto& [t, cs] : _compaction_state) {
+            if (filter(t)) {
+                ++cs.stop_generation;
+            }
+        }
+    }
     auto tasks = _tasks
             | std::views::filter([&filter, types_opt] (const auto& task) {
                 return filter(task.compacting_table()) && (!types_opt || types_opt->contains(task.compaction_type()));

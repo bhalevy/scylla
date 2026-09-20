@@ -96,6 +96,9 @@ struct compaction_state {
     // Raised by any function running under run_with_compaction_disabled();
     long compaction_disabled_counter = 0;
 
+    // Bumped whenever ongoing regular compactions are stopped for this group.
+    uint64_t stop_generation = 0;
+
     // Signaled whenever a compaction task completes.
     condition_variable compaction_done;
 
