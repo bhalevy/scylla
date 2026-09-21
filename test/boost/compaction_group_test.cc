@@ -419,3 +419,61 @@ SEASTAR_TEST_CASE(compaction_job_slot_abort_test) {
         second.get();
     });
 }
+
+// Verifies that the scheduler dispatches the compaction group with the most
+// backlog, and that a group whose backlog tracker was disabled -- which reports
+// an infinite backlog, meaning unknown -- does not thereby win every dispatch.
+SEASTAR_TEST_CASE(compaction_backlog_ordered_dispatch_test) {
+    return sstables::test_env::do_with_async([] (sstables::test_env& env) {
+        // A schema per table: two table_for_tests sharing one schema_ptr trip the
+        // compaction_group destructor's "was not disabled" check on teardown.
+        auto make_schema = [] (const char* name) {
+            return schema_builder(this_smp_shard_count(), "tests", name)
+                    .with_column("id", utf8_type, column_kind::partition_key)
+                    .with_column("value", int32_type)
+                    .build();
+        };
+        auto behind_schema = make_schema("backlog_behind");
+
+        auto idle = env.make_table_for_tests(make_schema("backlog_idle"));
+        auto stop_idle = deferred_stop(idle);
+        auto behind = env.make_table_for_tests(behind_schema);
+        auto stop_behind = deferred_stop(behind);
+        auto unknown = env.make_table_for_tests(make_schema("backlog_unknown"));
+        auto stop_unknown = deferred_stop(unknown);
+
+        auto& cm = idle->get_compaction_manager();
+        // Stop the scheduler dispatching, so the queue can be inspected.
+        cm.set_max_jobs_for_tests(0, 0);
+
+        // Give one group something to compact, so its backlog exceeds the
+        // others'. The sstables need not be compactable; the tracker only
+        // accounts for their size.
+        auto sst_gen = env.make_sst_factory(behind_schema);
+        auto mt = make_lw_shared<replica::memtable>(behind_schema);
+        for (const auto& key : tests::generate_partition_keys(32, behind_schema)) {
+            mutation m(behind_schema, key);
+            m.set_clustered_cell(clustering_key::make_empty(), bytes("value"), data_value(int32_t(1)), 1);
+            mt->apply(std::move(m));
+        }
+        std::vector<sstables::shared_sstable> ssts;
+        for (int i = 0; i < 4; i++) {
+            ssts.push_back(make_sstable_containing(sst_gen, mt).get());
+        }
+        cm.get_backlog_tracker(behind.as_compaction_group_view()).replace_sstables({}, ssts);
+
+        // And make a third group's backlog unknown, which reads as infinite.
+        cm.get_backlog_tracker(unknown.as_compaction_group_view()).disable();
+
+        cm.submit(idle.as_compaction_group_view());
+        cm.submit(unknown.as_compaction_group_view());
+        cm.submit(behind.as_compaction_group_view());
+
+        // The group that is actually behind is dispatched, not the one whose
+        // backlog is merely unknown, and not the one queued first.
+        BOOST_REQUIRE_EQUAL(&cm.pick_next_ready_group().view, &behind.as_compaction_group_view());
+
+        // The limit stays at zero: the tables are about to be torn down, and
+        // letting the scheduler dispatch onto them as they go would be a race.
+    });
+}

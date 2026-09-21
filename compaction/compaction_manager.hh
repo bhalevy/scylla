@@ -342,6 +342,12 @@ public:
 
 private:
 public:
+    // The ready group whose compaction is most overdue, by backlog. Public for
+    // the same reason should_defer_to_maintenance() is: the scheduler fiber is
+    // the only caller in production, and a test cannot drive it.
+    // Precondition: _ready_groups is not empty.
+    compaction::compaction_state& pick_next_ready_group();
+
     // Whether a maintenance job is waiting for a slot that only the overall
     // limit is keeping it from taking. Regular compaction takes its slot
     // synchronously in the scheduler fiber, while a maintenance job waits for

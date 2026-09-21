@@ -1303,8 +1303,8 @@ future<> compaction_manager::compaction_scheduler_fiber() {
             co_return;
         }
         while (!_ready_groups.empty() && !should_defer_to_maintenance() && can_start_job(job_class::regular)) {
-            auto& cs = _ready_groups.front();
-            _ready_groups.pop_front();
+            auto& cs = pick_next_ready_group();
+            cs.queue_hook.unlink();
             try {
                 dispatch_regular_compaction(cs);
             } catch (...) {
@@ -1388,6 +1388,34 @@ void compaction_manager::release_job_slot(job_class c) noexcept {
     _job_slot_released.broadcast();
     // A freed slot may let the scheduler dispatch a regular compaction.
     _scheduler_wakeup.signal();
+}
+
+compaction_state& compaction_manager::pick_next_ready_group() {
+    // Dispatch the group with the most compaction backlog rather than the one
+    // that has waited longest. The backlog is the strategy's own estimate of how
+    // much work it still has to do, so it is the closest thing to "which group
+    // most needs compacting" that is available here -- and unlike the weight of
+    // a job, it does not require selecting one first, which happens only after
+    // the group has been dispatched.
+    //
+    // A tracker disabled after failing reports an infinite backlog, which means
+    // "unknown", not "infinitely urgent"; letting it win would starve every
+    // other group for as long as it stays disabled. Treat it, and anything else
+    // not finite, as no backlog: such a group is still dispatched once nothing
+    // more pressing is ready.
+    //
+    // Linear in the number of ready groups, once per dispatch. Ties keep arrival
+    // order, so a strategy whose groups report equal backlog dispatches in the
+    // order they were queued, as it did before.
+    auto urgency = [] (compaction_state& cs) noexcept -> double {
+        try {
+            auto backlog = cs.view.get_backlog_tracker().backlog();
+            return std::isfinite(backlog) ? backlog : 0.0;
+        } catch (...) {
+            return 0.0;
+        }
+    };
+    return *std::ranges::max_element(_ready_groups, std::less<double>{}, urgency);
 }
 
 void compaction_manager::enqueue_regular_compaction(compaction_state& cs) noexcept {
