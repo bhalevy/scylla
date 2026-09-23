@@ -86,6 +86,13 @@ struct compaction_state {
     // they ignore sstables that are being repaired.
     seastar::rwlock incremental_repair_lock;
 
+    // Weights of the compaction jobs currently running for this group, used to
+    // keep two similarly-sized jobs from running against it at the same time.
+    // Bucketing is per group, not per shard, because a job's weight is a
+    // function of its input size under the group's compaction strategy, so
+    // weights from groups using different strategies are not comparable.
+    std::unordered_set<int> weight_tracker;
+
     // Raised by any function running under run_with_compaction_disabled();
     long compaction_disabled_counter = 0;
 

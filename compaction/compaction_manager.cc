@@ -120,11 +120,12 @@ compaction_data compaction_manager::create_compaction_data() {
     return cdata;
 }
 
-compaction_weight_registration::compaction_weight_registration(compaction_manager* cm, int weight)
+compaction_weight_registration::compaction_weight_registration(compaction_manager* cm, compaction_group_view& t, int weight)
     : _cm(cm)
+    , _t(&t)
     , _weight(weight)
 {
-    _cm->register_weight(_weight);
+    _cm->register_weight(*_t, _weight);
 }
 
 compaction_weight_registration& compaction_weight_registration::operator=(compaction_weight_registration&& other) noexcept {
@@ -137,20 +138,22 @@ compaction_weight_registration& compaction_weight_registration::operator=(compac
 
 compaction_weight_registration::compaction_weight_registration(compaction_weight_registration&& other) noexcept
     : _cm(other._cm)
+    , _t(other._t)
     , _weight(other._weight)
 {
     other._cm = nullptr;
+    other._t = nullptr;
     other._weight = 0;
 }
 
 compaction_weight_registration::~compaction_weight_registration() {
     if (_cm) {
-        _cm->deregister_weight(_weight);
+        _cm->deregister_weight(*_t, _weight);
     }
 }
 
 void compaction_weight_registration::deregister() {
-    _cm->deregister_weight(_weight);
+    _cm->deregister_weight(*_t, _weight);
     _cm = nullptr;
 }
 
@@ -185,12 +188,15 @@ static inline int calculate_weight(const compaction_descriptor& descriptor) {
 
 static future<std::vector<sstables::shared_sstable>> get_all_sstables(compaction_group_view& t);
 
-unsigned compaction_manager::current_compaction_fan_in_threshold() const {
+unsigned compaction_manager::current_compaction_fan_in_threshold(const compaction_group_view& t) const {
     if (_tasks.empty()) {
         return 0;
     }
-    auto largest_fan_in = std::ranges::max(_tasks | std::views::transform([] (auto& task) {
-        return task.compaction_running() ? task.compaction_data().compaction_fan_in : 0;
+    // Only the group's own jobs are comparable: fan-in is a property of the
+    // compaction strategy, so a TWCS job's fan-in says nothing about whether an
+    // ICS job in another group is efficient.
+    auto largest_fan_in = std::ranges::max(_tasks | std::views::transform([&t] (auto& task) {
+        return task.compacting_table() == &t && task.compaction_running() ? task.compaction_data().compaction_fan_in : 0;
     }));
     // conservatively limit fan-in threshold to 32, such that tons of small sstables won't accumulate if
     // running major on a leveled table, which can even have more than one thousand files.
@@ -209,7 +215,12 @@ bool compaction_manager::can_register_compaction(compaction_group_view& t, int w
     // TODO: Maybe allow only *smaller* compactions to start? That can be done
     // by returning true only if weight is not in the set and is lower than any
     // entry in the set.
-    if (_weight_tracker.contains(weight)) {
+    // Weights are bucketed per compaction group rather than per shard: the
+    // weight of a job is derived from its input size, which is only meaningful
+    // relative to the other jobs of the same compaction strategy. The per-shard
+    // job limit is what bounds the total amount of concurrent compaction.
+    auto it = _compaction_state.find(&t);
+    if (it != _compaction_state.end() && it->second.weight_tracker.contains(weight)) {
         // If reached this point, it means that there is an ongoing compaction
         // with the weight of the compaction job.
         return false;
@@ -218,18 +229,18 @@ bool compaction_manager::can_register_compaction(compaction_group_view& t, int w
     // That's done to prevent a less efficient compaction from "diluting" a more efficient one.
     // Compactions with the same efficiency can run in parallel as long as they aren't similar sized,
     // i.e. an efficient small-sized job can proceed in parallel to an efficient big-sized one.
-    if (fan_in < current_compaction_fan_in_threshold()) {
+    if (fan_in < current_compaction_fan_in_threshold(t)) {
         return false;
     }
     return true;
 }
 
-void compaction_manager::register_weight(int weight) {
-    _weight_tracker.insert(weight);
+void compaction_manager::register_weight(compaction_group_view& t, int weight) {
+    get_compaction_state(&t).weight_tracker.insert(weight);
 }
 
-void compaction_manager::deregister_weight(int weight) {
-    _weight_tracker.erase(weight);
+void compaction_manager::deregister_weight(compaction_group_view& t, int weight) {
+    get_compaction_state(&t).weight_tracker.erase(weight);
     reevaluate_postponed_compactions();
 }
 
@@ -1398,7 +1409,6 @@ future<> compaction_manager::really_do_stop() noexcept {
     }
     co_await stop_postponed_compactions();
     co_await _sys_ks.close();
-    _weight_tracker.clear();
     _compaction_submission_timer.cancel();
     co_await _compaction_controller.shutdown();
     co_await _update_compaction_static_shares_action.join();
@@ -1558,7 +1568,7 @@ protected:
                 co_return std::nullopt;
             }
             auto compacting = compacting_sstable_registration(_cm, _cm.get_compaction_state(&t), descriptor.sstables);
-            auto weight_r = compaction_weight_registration(&_cm, weight);
+            auto weight_r = compaction_weight_registration(&_cm, t, weight);
             auto on_replace = compacting.update_on_sstable_replacement();
             cmlog.debug("Accepted compaction job: task={} ({} sstable(s)) of weight {} for {}",
                 fmt::ptr(this), descriptor.sstables.size(), weight, t);

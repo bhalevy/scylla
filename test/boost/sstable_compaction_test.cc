@@ -4509,9 +4509,10 @@ void max_ongoing_compaction_fn(test_env& env) {
         add_sstables_to_table(i, DEFAULT_MIN_COMPACTION_THRESHOLD);
     }
 
-    // All buckets are expected to have the same weight (>0)
-    // and therefore their compaction is expected to be serialized
-    BOOST_REQUIRE_EQUAL(compact_all_tables(DEFAULT_MIN_COMPACTION_THRESHOLD, 1), 1);
+    // The buckets all have the same weight (>0), but weights are tracked per
+    // compaction group, so the tables are not serialized against each other;
+    // each of them may compact its own bucket concurrently.
+    BOOST_REQUIRE_LE(compact_all_tables(DEFAULT_MIN_COMPACTION_THRESHOLD, 1), num_tables);
 }
 
 SEASTAR_TEST_CASE(max_ongoing_compaction_test) {

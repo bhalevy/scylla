@@ -134,7 +134,6 @@ private:
     std::unordered_set<compaction::compaction_group_view*> _postponed;
     // tracks taken weights of ongoing compactions, only one compaction per weight is allowed.
     // weight is value assigned to a compaction job that is log base N of total size of all input sstables.
-    std::unordered_set<int> _weight_tracker;
 
     std::unordered_map<compaction::compaction_group_view*, compaction_state> _compaction_state;
 
@@ -189,16 +188,16 @@ private:
     void stop_tasks(const std::vector<shared_ptr<compaction::compaction_task_executor>>& tasks, sstring reason) noexcept;
     future<> await_tasks(std::vector<shared_ptr<compaction::compaction_task_executor>>, bool task_stopped) const noexcept;
 
-    // Return the largest fan-in of currently running compactions
-    unsigned current_compaction_fan_in_threshold() const;
+    // Return the largest fan-in of the compactions currently running for t.
+    unsigned current_compaction_fan_in_threshold(const compaction::compaction_group_view& t) const;
 
     // Return true if compaction can be initiated
     bool can_register_compaction(compaction::compaction_group_view& t, int weight, unsigned fan_in) const;
     // Register weight for a table. Do that only if can_register_weight()
     // returned true.
-    void register_weight(int weight);
+    void register_weight(compaction::compaction_group_view& t, int weight);
     // Deregister weight for a table.
-    void deregister_weight(int weight);
+    void deregister_weight(compaction::compaction_group_view& t, int weight);
 
     // Get candidates for compaction strategy, which are all sstables but the ones being compacted.
     future<std::vector<sstables::shared_sstable>> get_candidates(compaction::compaction_group_view& t) const;

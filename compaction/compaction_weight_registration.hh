@@ -12,12 +12,14 @@
 namespace compaction {
 
 class compaction_manager;
+class compaction_group_view;
 
 class compaction_weight_registration {
     compaction_manager* _cm;
+    compaction_group_view* _t;
     int _weight;
 public:
-    compaction_weight_registration(compaction_manager* cm, int weight);
+    compaction_weight_registration(compaction_manager* cm, compaction_group_view& t, int weight);
 
     compaction_weight_registration& operator=(const compaction_weight_registration&) = delete;
     compaction_weight_registration(const compaction_weight_registration&) = delete;
