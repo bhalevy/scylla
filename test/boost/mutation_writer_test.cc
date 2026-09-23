@@ -15,6 +15,7 @@
 #include <seastar/util/closeable.hh>
 
 #include "mutation/mutation_fragment.hh"
+#include "schema/schema_builder.hh"
 #include "mutation/mutation_rebuilder.hh"
 #include "test/lib/mutation_source_test.hh"
 #include "test/lib/reader_concurrency_semaphore.hh"
@@ -496,6 +497,238 @@ SEASTAR_THREAD_TEST_CASE(test_timestamp_based_splitting_mutation_writer_abort) {
         // Tolerated until we properly abort readers
         BOOST_TEST_PASSPOINT();
     }
+}
+
+// The tests below examine how the timestamp-based splitting writer treats a
+// single row whose row_marker, cells and row tombstone carry different write
+// timestamps. Time-window compaction uses this writer to segregate data into
+// time windows, see time_window_compaction_strategy::make_interposer_consumer().
+//
+// This matters for materialized views, whose rows routinely have a marker
+// timestamp that differs from the timestamps of their cells: the view row
+// marker is derived from the base row's marker (or from the timestamp of the
+// base column promoted into the view key), while the view cells keep the
+// timestamps of the base cells they were generated from.
+
+namespace {
+
+// Stands in for a TWCS time window: a window covers 1000 timestamp units.
+constexpr api::timestamp_type ts_window_size = 1000;
+
+int64_t window_of(api::timestamp_type ts) {
+    return ts / ts_window_size;
+}
+
+schema_ptr make_timestamp_split_schema() {
+    return schema_builder(this_smp_shard_count(), "ks", "cf")
+            .with_column("pk", int32_type, column_kind::partition_key)
+            .with_column("ck", int32_type, column_kind::clustering_key)
+            .with_column("v", int32_type)
+            .build();
+}
+
+mutation make_single_row_mutation(schema_ptr s) {
+    return mutation(s, partition_key::from_single_value(*s, int32_type->decompose(0)));
+}
+
+deletable_row& single_row(mutation& m) {
+    auto& s = *m.schema();
+    return m.partition().clustered_row(s, clustering_key::from_single_value(s, int32_type->decompose(0)));
+}
+
+const deletable_row& single_row(const mutation& m) {
+    BOOST_REQUIRE_EQUAL(m.partition().clustered_rows().calculate_size(), 1);
+    return m.partition().clustered_rows().begin()->row();
+}
+
+void set_cell(deletable_row& row, const schema& s, api::timestamp_type ts, int32_t value) {
+    row.cells().apply(*s.get_column_definition("v"), atomic_cell::make_live(*int32_type, ts, int32_type->decompose(value)));
+}
+
+std::optional<api::timestamp_type> cell_timestamp(const deletable_row& row, const schema& s) {
+    auto* cell = row.cells().find_cell(s.get_column_definition("v")->id);
+    if (!cell) {
+        return std::nullopt;
+    }
+    return cell->as_atomic_cell(*s.get_column_definition("v")).timestamp();
+}
+
+// Segregates `m` into windows with window_of() as the classifier and returns
+// the mutation each bucket (i.e. each would-be sstable) received, ordered by
+// window so that the result is deterministic.
+// requires seastar thread.
+utils::chunked_vector<mutation> segregate_into_windows(reader_permit permit, const mutation& m) {
+    auto s = m.schema();
+    utils::chunked_vector<mutation> bucket_mutations;
+    auto consumer = [&] (mutation_reader bucket_reader) -> future<> {
+        auto close = deferred_close(bucket_reader);
+        while (auto bm = co_await read_mutation_from_mutation_reader(bucket_reader)) {
+            bucket_mutations.emplace_back(std::move(*bm));
+        }
+    };
+    segregate_by_timestamp(make_mutation_reader_from_mutations(s, permit, {m}), window_of, std::move(consumer)).get();
+    return bucket_mutations;
+}
+
+// All timestamps a bucket's row carries, so tests can assert that a bucket is
+// timestamp-homogeneous, i.e. that it really does belong to a single window.
+std::set<api::timestamp_type> row_timestamps(const mutation& m) {
+    const auto& row = single_row(m);
+    std::set<api::timestamp_type> timestamps;
+    if (!row.marker().is_missing()) {
+        timestamps.insert(row.marker().timestamp());
+    }
+    if (row.deleted_at().regular()) {
+        timestamps.insert(row.deleted_at().regular().timestamp);
+    }
+    if (row.deleted_at()) {
+        timestamps.insert(row.deleted_at().tomb().timestamp);
+    }
+    if (auto ts = cell_timestamp(row, *m.schema())) {
+        timestamps.insert(*ts);
+    }
+    return timestamps;
+}
+
+// Merges the per-window mutations back and checks that nothing was lost or
+// altered by the split, which is what the read path relies on.
+void verify_recombines_to(const utils::chunked_vector<mutation>& bucket_mutations, const mutation& expected) {
+    auto combined = mutation(expected.schema(), expected.decorated_key());
+    for (const auto& bm : bucket_mutations) {
+        combined.apply(bm);
+    }
+    assert_that(combined).is_equal_to(expected);
+}
+
+} // anonymous namespace
+
+// A row whose marker and cells were written at timestamps belonging to
+// different windows is split: the marker lands in one window and the cells in
+// another, so the row exists in two sstables that TWCS will never compact
+// together.
+SEASTAR_THREAD_TEST_CASE(test_timestamp_splitting_separates_row_marker_from_cells) {
+    tests::reader_concurrency_semaphore_wrapper semaphore;
+    auto s = make_timestamp_split_schema();
+
+    const api::timestamp_type marker_ts = 1000;
+    const api::timestamp_type cell_ts = 2000;
+    BOOST_REQUIRE_NE(window_of(marker_ts), window_of(cell_ts));
+
+    auto m = make_single_row_mutation(s);
+    auto& row = single_row(m);
+    row.apply(row_marker(marker_ts));
+    set_cell(row, *s, cell_ts, 1);
+
+    auto bucket_mutations = segregate_into_windows(semaphore.make_permit(), m);
+
+    // The single row was split in two.
+    BOOST_REQUIRE_EQUAL(bucket_mutations.size(), 2);
+    for (const auto& bm : bucket_mutations) {
+        BOOST_REQUIRE_EQUAL(row_timestamps(bm).size(), 1);
+    }
+
+    const auto marker_bucket = std::ranges::find_if(bucket_mutations, [] (const mutation& bm) {
+        return !single_row(bm).marker().is_missing();
+    });
+    BOOST_REQUIRE(marker_bucket != bucket_mutations.end());
+    BOOST_REQUIRE_EQUAL(single_row(*marker_bucket).marker().timestamp(), marker_ts);
+    // The marker's window carries no cells...
+    BOOST_REQUIRE(!cell_timestamp(single_row(*marker_bucket), *s));
+
+    const auto cell_bucket = std::ranges::find_if(bucket_mutations, [&] (const mutation& bm) {
+        return &bm != &*marker_bucket;
+    });
+    // ... and the cells' window carries no marker, so on its own it looks like
+    // a row that was never inserted.
+    BOOST_REQUIRE(single_row(*cell_bucket).marker().is_missing());
+    BOOST_REQUIRE_EQUAL(cell_timestamp(single_row(*cell_bucket), *s).value(), cell_ts);
+
+    verify_recombines_to(bucket_mutations, m);
+}
+
+// A shadowable tombstone is segregated by its own timestamp, away from the
+// cells it shadows. The window holding those cells therefore has no tombstone
+// covering them, and since TWCS compacts each window on its own, it can never
+// reclaim them.
+SEASTAR_THREAD_TEST_CASE(test_timestamp_splitting_separates_shadowable_tombstone_from_shadowed_cells) {
+    tests::reader_concurrency_semaphore_wrapper semaphore;
+    auto s = make_timestamp_split_schema();
+
+    const api::timestamp_type cell_ts = 1000;
+    const api::timestamp_type deletion_ts = 2000;
+    BOOST_REQUIRE_NE(window_of(cell_ts), window_of(deletion_ts));
+
+    // The state of a view row whose base row was updated such that it no longer
+    // maps to this view key: the old cells are still there and a shadowable
+    // tombstone deletes them.
+    auto m = make_single_row_mutation(s);
+    auto& row = single_row(m);
+    set_cell(row, *s, cell_ts, 1);
+    row.apply(shadowable_tombstone(deletion_ts, gc_clock::now()));
+    BOOST_REQUIRE(bool(row.deleted_at().is_shadowable()));
+
+    auto bucket_mutations = segregate_into_windows(semaphore.make_permit(), m);
+
+    BOOST_REQUIRE_EQUAL(bucket_mutations.size(), 2);
+
+    const auto tomb_bucket = std::ranges::find_if(bucket_mutations, [] (const mutation& bm) {
+        return bool(single_row(bm).deleted_at());
+    });
+    BOOST_REQUIRE(tomb_bucket != bucket_mutations.end());
+    // The tombstone keeps its shadowable flag across the split.
+    BOOST_REQUIRE(bool(single_row(*tomb_bucket).deleted_at().is_shadowable()));
+    BOOST_REQUIRE_EQUAL(single_row(*tomb_bucket).deleted_at().tomb().timestamp, deletion_ts);
+    BOOST_REQUIRE(!cell_timestamp(single_row(*tomb_bucket), *s));
+
+    const auto cell_bucket = std::ranges::find_if(bucket_mutations, [&] (const mutation& bm) {
+        return &bm != &*tomb_bucket;
+    });
+    BOOST_REQUIRE_EQUAL(cell_timestamp(single_row(*cell_bucket), *s).value(), cell_ts);
+    BOOST_REQUIRE(!single_row(*cell_bucket).deleted_at());
+
+    // Compacting the cells' window on its own -- what TWCS does, since it never
+    // mixes windows -- does not drop the shadowed cells, even with everything
+    // gc-able: the tombstone that covers them is in another window.
+    auto cells_only = *cell_bucket;
+    cells_only.partition().compact_for_compaction(*s, always_gc, cells_only.decorated_key(), gc_clock::now(),
+            tombstone_gc_state::for_tests());
+    BOOST_REQUIRE_EQUAL(cell_timestamp(single_row(cells_only), *s).value(), cell_ts);
+
+    // Reads are unaffected: merging the windows back reproduces the row.
+    verify_recombines_to(bucket_mutations, m);
+}
+
+// row_tombstone is classified by row_tombstone::tomb(), which is the greater of
+// the regular and the shadowable tombstone. A regular tombstone paired with a
+// newer shadowable one is therefore filed under the shadowable tombstone's
+// window, not its own.
+SEASTAR_THREAD_TEST_CASE(test_timestamp_splitting_classifies_row_tombstone_by_shadowable_timestamp) {
+    tests::reader_concurrency_semaphore_wrapper semaphore;
+    auto s = make_timestamp_split_schema();
+
+    const api::timestamp_type regular_ts = 1000;
+    const api::timestamp_type shadowable_ts = 2000;
+    BOOST_REQUIRE_NE(window_of(regular_ts), window_of(shadowable_ts));
+
+    auto m = make_single_row_mutation(s);
+    auto& row = single_row(m);
+    row.apply(tombstone(regular_ts, gc_clock::now()));
+    row.apply(shadowable_tombstone(shadowable_ts, gc_clock::now()));
+    BOOST_REQUIRE_EQUAL(row.deleted_at().regular().timestamp, regular_ts);
+    BOOST_REQUIRE_EQUAL(row.deleted_at().shadowable().tomb().timestamp, shadowable_ts);
+
+    auto bucket_mutations = segregate_into_windows(semaphore.make_permit(), m);
+
+    // Both tombstones are written to a single bucket ...
+    BOOST_REQUIRE_EQUAL(bucket_mutations.size(), 1);
+    const auto& tomb = single_row(bucket_mutations.front()).deleted_at();
+    BOOST_REQUIRE_EQUAL(tomb.regular().timestamp, regular_ts);
+    BOOST_REQUIRE_EQUAL(tomb.shadowable().tomb().timestamp, shadowable_ts);
+    // ... the one of the shadowable tombstone, so the regular tombstone ends up
+    // in a window its own timestamp does not belong to.
+    BOOST_REQUIRE_EQUAL(row_timestamps(bucket_mutations.front()).size(), 2);
+
+    verify_recombines_to(bucket_mutations, m);
 }
 
 // Check that the partition_based_splitting_mutation_writer can fix reordered partitions
