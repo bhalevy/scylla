@@ -6381,6 +6381,7 @@ future<locator::load_stats> storage_service::load_stats_for_tablet_based_tables(
             locator::combined_load_stats combined_ls { table->table_load_stats() };
             load_stats.tables.emplace(id, std::move(combined_ls.table_ls));
             tablet_sizes_per_shard[this_shard_id()].size += load_stats.tablet_stats[this_host].add_tablet_sizes(combined_ls.tablet_ls);
+            load_stats.table_workload[id] = uint64_t(table->sample_workload_rate());
 
             co_await coroutine::maybe_yield();
         }
