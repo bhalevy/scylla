@@ -1221,6 +1221,11 @@ load_stats& load_stats::operator+=(const load_stats& s) {
         tablet_stats[host].effective_capacity = tablet_ls.effective_capacity;
         tablet_stats[host].add_tablet_sizes(tablet_ls);
     }
+    // Unlike the per-host maps above, workload is a rate which has to be summed across all
+    // replicas of the table, the same way table sizes are summed in table_load_stats.
+    for (auto& [table, rate] : s.table_workload) {
+        table_workload[table] += rate;
+    }
     return *this;
 }
 

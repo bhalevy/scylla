@@ -607,6 +607,12 @@ struct load_stats {
     // Size-based load balancing data
     tablet_load_stats_map tablet_stats;
 
+    // Workload rate per table, in bytes per second, summed over all replicas of the table.
+    // Used by the load balancer to order tables by workload density when it has to merge
+    // tablets to stay within the per-shard tablet count budget.
+    // See docs/dev/multi-dimensional-tablet-load-balancing.md.
+    std::unordered_map<table_id, uint64_t> table_workload;
+
     // Distinguishes a default-constructed (null) load_stats from one that has
     // been aggregated via operator+=.  A null element contributes nothing when
     // merged, while an aggregated-but-empty stats (e.g. from a node that

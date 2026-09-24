@@ -5051,6 +5051,12 @@ future<topology_coordinator::tablet_load_stats_collect_result> topology_coordina
         // for a single table replica. This allows the load balancer to compute, in turn,
         // the average tablet size by dividing total size by tablet count.
         table_load_stats.size_in_bytes /= table_total_replicas;
+        // Normalize the workload rate the same way. Both are summed over all replicas, so
+        // without this the workload density of a table (rate per byte stored) would not be
+        // comparable between tables replicated with different RF.
+        if (auto i = stats.table_workload.find(table_id); i != stats.table_workload.end()) {
+            i->second /= table_total_replicas;
+        }
     }
 
     if (table_load_stats_invalid) {
