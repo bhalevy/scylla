@@ -27,6 +27,7 @@
 #include "schema/schema_builder.hh"
 #include "service/storage_proxy.hh"
 #include "db/system_keyspace.hh"
+#include "service/topology_mutation.hh"
 #include "tools/utils.hh"
 
 #include "test/perf/perf.hh"
@@ -103,12 +104,6 @@ future<> apply_resize_plan(token_metadata& tm, const migration_plan& plan) {
             return make_ready_future();
         });
     }
-    for (auto table_id : plan.resize_plan().finalize_resize) {
-        auto& old_tmap = tm.tablets().get_tablet_map(table_id);
-        testlog.info("Setting new tablet map of size {}", old_tmap.tablet_count() * 2);
-        tablet_map tmap(old_tmap.tablet_count() * 2);
-        tm.tablets().set_tablet_map(table_id, std::move(tmap));
-    }
 }
 
 // Reflects the plan in a given token metadata as if the migrations were fully executed.
@@ -151,6 +146,89 @@ struct rebalance_stats {
         return *this;
     }
 };
+
+// Persists the token metadata, so that the table layer processes the changes, and
+// returns a new guard so that later changes use a later timestamp.
+static
+group0_guard save_token_metadata(cql_test_env& e, group0_guard guard) {
+    auto tm = e.local_token_metadata_ptr();
+
+    e.get_topology_state_machine().local()._topology.version = tm->get_version();
+
+    save_tablet_metadata(e.local_db(), tm->tablets(), guard.write_timestamp()).get();
+
+    utils::chunked_vector<frozen_mutation> muts;
+    muts.push_back(freeze(topology_mutation_builder(guard.write_timestamp())
+                                  .set_version(tm->get_version())
+                                  .build().to_mutation(db::system_keyspace::topology())));
+    e.local_db().apply(muts, db::no_timeout).get();
+    e.get_storage_service().local().update_tablet_metadata({}).get();
+
+    release_guard(std::move(guard));
+    abort_source as;
+    return e.get_raft_group0_client().start_operation(as).get();
+}
+
+// Acknowledges split decisions on behalf of the replicas, which the load balancer
+// waits for before finalizing a split, and lets the table layer see the decisions
+// before the split is finalized, which it relies on.
+static
+void ack_splits(cql_test_env& e, group0_guard& guard, locator::load_stats& load_stats) {
+    bool changed = false;
+    for (const auto& [table, tmap] : e.local_token_metadata_ptr()->tablets().all_tables_ungrouped()) {
+        const auto& decision = tmap->resize_decision();
+        if (decision.is_split() && load_stats.tables[table].split_ready_seq_number != decision.sequence_number) {
+            load_stats.tables[table].split_ready_seq_number = decision.sequence_number;
+            changed = true;
+        }
+    }
+    if (changed) {
+        guard = save_token_metadata(e, std::move(guard));
+    }
+}
+
+// Finalizes the splits and merges the plan asks for, the way the topology coordinator
+// does, and carries the tablet sizes in load_stats over to the new tablets.
+static
+void finalize_resizes(cql_test_env& e, group0_guard& guard, const migration_plan& plan, locator::load_stats& load_stats) {
+    const auto& tables = plan.resize_plan().finalize_resize;
+    if (tables.empty()) {
+        return;
+    }
+
+    auto& talloc = e.get_tablet_allocator().local();
+    auto& stm = e.shared_token_metadata().local();
+    auto old_tm = stm.get();
+
+    for (auto table : tables) {
+        auto tm = stm.get();
+        const auto& old_tmap = tm->tablets().get_tablet_map(table);
+        auto new_tmap = talloc.resize_tablets(tm, table).get();
+        testlog.debug("Finalizing resize of table {}: {} => {} tablets", table, old_tmap.tablet_count(), new_tmap.tablet_count());
+        auto new_resize_decision = locator::resize_decision{};
+        new_resize_decision.sequence_number = old_tmap.resize_decision().next_sequence_number();
+        new_tmap.set_resize_decision(std::move(new_resize_decision));
+
+        stm.mutate_token_metadata([table, &new_tmap] (token_metadata& tm) {
+            tm.tablets().set_tablet_map(table, std::move(new_tmap));
+            tm.set_version(tm.get_version() + 1);
+            return make_ready_future<>();
+        }).get();
+    }
+
+    // The table layer expects the tablet count to change by a factor of 2 at a time,
+    // so the new maps have to be processed before the next resize.
+    guard = save_token_metadata(e, std::move(guard));
+
+    if (auto reconciled = load_stats.reconcile_tablets_resize(tables, *old_tm, *stm.get())) {
+        load_stats = std::move(*reconciled);
+    } else {
+        testlog.warn("Unable to reconcile tablet sizes in load_stats after resizing {}", tables);
+    }
+
+    old_tm = nullptr;
+    e.get_storage_service().local().local_topology_barrier().get();
+}
 
 static
 rebalance_stats rebalance_tablets(cql_test_env& e, locator::load_stats& load_stats, std::unordered_set<host_id> skiplist = {}) {
@@ -206,6 +284,8 @@ rebalance_stats rebalance_tablets(cql_test_env& e, locator::load_stats& load_sta
         stm.mutate_token_metadata([&] (token_metadata& tm) {
             return apply_plan(tm, plan, load_stats);
         }).get();
+        ack_splits(e, guard, load_stats);
+        finalize_resizes(e, guard, plan, load_stats);
     }
     throw std::runtime_error("rebalance_tablets(): convergence not reached within limit");
 }
