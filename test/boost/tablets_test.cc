@@ -3700,6 +3700,91 @@ SEASTAR_THREAD_TEST_CASE(test_per_shard_tablet_count_floats_within_budget) {
     }
 }
 
+SEASTAR_THREAD_TEST_CASE(test_per_shard_goal_merges_least_dense_table_first) {
+    constexpr size_t goal = 10;
+
+    struct table_setup {
+        std::map<sstring, sstring> tablet_options;
+        std::optional<uint64_t> workload; // Workload rate relative to size, nullopt if not reported.
+    };
+
+    // Returns the tablet counts two tables, each wanting 17 tablets from its size, converge to
+    // on a single-shard node with tablets_per_shard_goal=10. The size keeps the average tablet
+    // size above 2 * target at every count reached below, so that each table keeps wanting 17.
+    auto run_scenario = [&] (table_setup t1, table_setup t2, bool workload_stats_feature = true, double initial_scale = 1) {
+        cql_test_config cfg{};
+        cfg.db_config->tablets_per_shard_goal.set(goal);
+        cfg.db_config->tablets_initial_scale_factor.set(double(initial_scale));
+        if (!workload_stats_feature) {
+            cfg.disabled_features.emplace("TABLET_WORKLOAD_STATS");
+        }
+
+        std::pair<size_t, size_t> result;
+        do_with_cql_env_thread([&] (auto& e) {
+            topology_builder topo(e);
+            topo.add_node(node_state::normal, 1);
+
+            auto& load_stats = topo.get_shared_load_stats();
+            auto ks_name = add_keyspace(e, {{topo.dc(), 1}});
+            const uint64_t size = service::default_target_tablet_size * 17;
+
+            auto add = [&] (const table_setup& setup) {
+                auto table = add_table(e, ks_name, setup.tablet_options).get();
+                load_stats.set_size(table, size);
+                if (setup.workload) {
+                    load_stats.set_workload(table, size * *setup.workload);
+                }
+                return table;
+            };
+            auto table1 = add(t1);
+            auto table2 = add(t2);
+
+            rebalance_tablets(e, &load_stats);
+
+            auto& tmeta = e.local_token_metadata_ptr()->tablets();
+            result = {tmeta.get_tablet_map(table1).tablet_count(), tmeta.get_tablet_map(table2).tablet_count()};
+        }, std::move(cfg)).get();
+        return result;
+    };
+
+    auto require_counts = [] (std::pair<size_t, size_t> actual, size_t expected1, size_t expected2) {
+        BOOST_REQUIRE_EQUAL(actual.first, expected1);
+        BOOST_REQUIRE_EQUAL(actual.second, expected2);
+    };
+    const table_setup cold{.workload = 1};
+    const table_setup hot{.workload = 1024};
+
+    // The cold table is merged all the way down to 1, relieving 16 of the 24 tablets over the goal.
+    // The hot table relieves the remaining 8: 17 * 9/17 = 9, which pow2 alignment rounds up to 16.
+    // Once at 16 its average tablet size is in the band where splitting stops, so it wants 16
+    // and the next round relieves 16 + 7 from the same tables, with the same outcome.
+    // The choice follows the workload, not the order in which tables are considered.
+    require_counts(run_scenario(cold, hot), 1, 16);
+    require_counts(run_scenario(hot, cold), 16, 1);
+
+    // The cold table is not merged below its min_tablet_count, which leaves more to be relieved
+    // by the hot table: 11 of the 24, 17 * 6/17 = 6, aligned to 8.
+    const table_setup cold_with_floor{.tablet_options = {{"min_tablet_count", "4"}}, .workload = 1};
+    require_counts(run_scenario(cold_with_floor, hot), 4, 8);
+
+    // The same holds for an explicit min_per_shard_tablet_count...
+    const table_setup cold_with_per_shard_floor{.tablet_options = {{"min_per_shard_tablet_count", "4"}}, .workload = 1};
+    require_counts(run_scenario(cold_with_per_shard_floor, hot), 4, 8);
+
+    // ...but not for tablets_initial_scale_factor, which is a cluster-wide default rather
+    // than the table's own demand, so the cold table is still merged down to 1.
+    require_counts(run_scenario(cold, hot, true, 4), 1, 16);
+
+    // Without workload stats for every table, all tables are scaled down uniformly by 10/34:
+    // 17 * 10/34 = 5, aligned to 8.
+    const table_setup unknown{};
+    require_counts(run_scenario(cold, unknown), 8, 8);
+    require_counts(run_scenario(unknown, unknown), 8, 8);
+
+    // Until every node reports workload stats, the reported ones are ignored.
+    require_counts(run_scenario(cold, hot, false), 8, 8);
+}
+
 SEASTAR_THREAD_TEST_CASE(test_merge_does_not_overload_racks) {
     cql_test_config cfg{};
     // This test relies on the fact that we use an RF strictly smaller than the number of racks.

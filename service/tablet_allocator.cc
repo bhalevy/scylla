@@ -2248,6 +2248,17 @@ public:
         size_t target_tablet_count; // Tablet count wanted by scheduler.
         sstring target_tablet_count_reason; // Winning rule for target_tablet_count value.
         std::optional<uint64_t> avg_tablet_size; // nullopt when stats not yet available.
+
+        // Lowest tablet count the table may be scaled down to when the per-shard tablet count
+        // budget is exceeded. It is the strongest of the rules which demand a minimum count
+        // (initial, min_tablet_count, min_per_shard_tablet_count, expected_data_size_in_gb),
+        // not counting tablets_initial_scale_factor, which is a default rather than a demand.
+        size_t floor_tablet_count = 1;
+
+        // Bytes per second of read and write activity per byte stored, or nullopt when
+        // workload stats are not available. Tables with a denser workload are merged last,
+        // because a merge halves the number of shards their data is spread over.
+        std::optional<double> workload_density;
         bool pow2_count; // Whether tablet count for the table should be a power of two.
         bool tablet_merges_allowed; // Whether merges are allowed for the table.
 
@@ -2471,6 +2482,36 @@ public:
         return std::clamp(*result, _minimal_tablet_size, _target_tablet_size);
     }
 
+    // Returns bytes per second of read and write activity per byte stored, for a group of
+    // co-located tables. Tables with a denser workload suffer more from losing tablets to a
+    // merge, because a merge halves the number of shards their data is spread over, so the
+    // allocator merges the least dense tables first.
+    //
+    // Returns nullopt when workload or size stats are missing for any table in the group, in
+    // which case the caller falls back to scaling all tables down uniformly. Workload stats
+    // count as missing until every node reports them, because until then the rates only
+    // cover the upgraded nodes and would misrepresent the tables' relative workload.
+    std::optional<double> table_workload_density(const locator::table_group_set& tables) const {
+        if (!_table_load_stats || !_db.features().tablet_workload_stats) {
+            return std::nullopt;
+        }
+        uint64_t rate = 0;
+        uint64_t size = 0;
+        for (auto t : tables) {
+            auto i = _table_load_stats->table_workload.find(t);
+            if (i == _table_load_stats->table_workload.end()) {
+                return std::nullopt;
+            }
+            const auto* table_stats = load_stats_for_table(t);
+            if (!table_stats) {
+                return std::nullopt;
+            }
+            rate += i->second;
+            size += table_stats->size_in_bytes;
+        }
+        return double(rate) / std::max<uint64_t>(size, 1);
+    }
+
     future<sizing_plan> make_sizing_plan(std::vector<new_table_info> new_tables = {}) {
         std::unordered_map<table_id, const tablet_aware_replication_strategy*> rs_by_table;
         sizing_plan plan;
@@ -2513,6 +2554,7 @@ public:
         struct sizing_result {
             tablet_count_and_reason target;
             std::optional<uint64_t> avg_tablet_size;
+            size_t floor_tablet_count = 1;
         };
 
         // Computes the target tablet count for a table from its sizing inputs.
@@ -2534,6 +2576,9 @@ public:
             auto target_tablet_size = effective_target_tablet_size / tables.size();
 
             tablet_count_and_reason target_tablet_count = {1, ""};
+            // Rules which demand a minimum tablet count also bound how far the table may be
+            // scaled down when the per-shard tablet count budget is exceeded.
+            size_t floor_tablet_count = 1;
             auto maybe_apply = [&] (tablet_count_and_reason candidate, bool force = false) {
                 lblogger.debug("Table {} ({}.{}) wants {} tablets due to {}", table, s->ks_name(), s->cf_name(),
                         candidate.tablet_count, candidate.reason);
@@ -2541,15 +2586,19 @@ public:
                     target_tablet_count = candidate;
                 }
             };
+            auto maybe_apply_floor = [&] (tablet_count_and_reason candidate) {
+                floor_tablet_count = std::max(floor_tablet_count, candidate.tablet_count);
+                maybe_apply(std::move(candidate));
+            };
 
-            maybe_apply({rs->get_initial_tablets(), "initial"});
+            maybe_apply_floor({rs->get_initial_tablets(), "initial"});
 
             if (tablet_options.min_tablet_count) {
-                maybe_apply({tablet_options.min_tablet_count.value(), "min_tablet_count"});
+                maybe_apply_floor({tablet_options.min_tablet_count.value(), "min_tablet_count"});
             }
 
             if (tablet_options.expected_data_size_in_gb) {
-                maybe_apply({(tablet_options.expected_data_size_in_gb.value() << 30) / target_tablet_size,
+                maybe_apply_floor({(tablet_options.expected_data_size_in_gb.value() << 30) / target_tablet_size,
                         format("expected_data_size_in_gb={}", tablet_options.expected_data_size_in_gb.value())});
             }
 
@@ -2558,7 +2607,15 @@ public:
                     // compatibility with the deprecated "initial" tablet count.
                     (rs->get_initial_tablets() || tablet_options.min_tablet_count) ? 0 : _initial_scale);
             if (min_per_shard_tablet_count) {
-                maybe_apply(tablet_count_from_min_per_shard_tablet_count(*s, shards_per_dc, shards_per_rack, *rs, min_per_shard_tablet_count));
+                auto candidate = tablet_count_from_min_per_shard_tablet_count(*s, shards_per_dc, shards_per_rack, *rs, min_per_shard_tablet_count);
+                // Only an explicit min_per_shard_tablet_count is the table's own demand.
+                // tablets_initial_scale_factor is a cluster-wide default which the budget
+                // may scale tables below, as it always could.
+                if (tablet_options.min_per_shard_tablet_count) {
+                    maybe_apply_floor(std::move(candidate));
+                } else {
+                    maybe_apply(std::move(candidate));
+                }
             }
 
             auto total_size_opt = get_total_size(tables);
@@ -2609,6 +2666,7 @@ public:
                 if (target_tablet_count.tablet_count > static_cast<size_t>(*tablet_options.max_tablet_count)) {
                     maybe_apply({static_cast<size_t>(*tablet_options.max_tablet_count), "max_tablet_count"}, true);
                 }
+                floor_tablet_count = std::min(floor_tablet_count, static_cast<size_t>(*tablet_options.max_tablet_count));
             }
 
             if (utils::get_local_injector().enter("tablet_force_tablet_count_increase")) {
@@ -2619,6 +2677,7 @@ public:
             }
 
             result.target = target_tablet_count;
+            result.floor_tablet_count = std::max<size_t>(1, floor_tablet_count);
             return result;
         };
 
@@ -2646,14 +2705,16 @@ public:
                 cur_decision = _tm->tablets().get_tablet_map(table).resize_decision();
             }
 
-            auto [target_tablet_count_and_reason, avg_tablet_size] = compute_target_tablet_count(
+            auto result = compute_target_tablet_count(
                     table, tables, s, tablet_options, rs, tablet_count, cur_decision, expected_size_opt);
 
-            table_plan.target_tablet_count = target_tablet_count_and_reason.tablet_count;
-            table_plan.target_tablet_count_reason = target_tablet_count_and_reason.reason;
-            table_plan.target_tablet_count_for_scaling = target_tablet_count_and_reason.tablet_count;
-            if (avg_tablet_size) {
-                table_plan.avg_tablet_size = avg_tablet_size;
+            table_plan.target_tablet_count = result.target.tablet_count;
+            table_plan.target_tablet_count_reason = result.target.reason;
+            table_plan.target_tablet_count_for_scaling = result.target.tablet_count;
+            table_plan.floor_tablet_count = result.floor_tablet_count;
+            table_plan.workload_density = table_workload_density(tables);
+            if (result.avg_tablet_size) {
+                table_plan.avg_tablet_size = result.avg_tablet_size;
             }
 
             lblogger.debug("Table {} ({}.{}) target_tablet_count: {} ({}), pow2_count: {}, opt: {}", table, s->ks_name(), s->cf_name(),
@@ -2706,6 +2767,8 @@ public:
             auto result = compute_target_tablet_count(
                     table, tables, s, tablet_options, rs, target_pow2, locator::resize_decision{}, std::nullopt);
             table_plan.target_tablet_count_for_scaling = result.target.tablet_count;
+            table_plan.floor_tablet_count = result.floor_tablet_count;
+            table_plan.workload_density = table_workload_density(tables);
 
             lblogger.debug("Table {} ({}.{}) current_tablet_count: {}, target_tablet_count: {} ({}), target_tablet_count_for_scaling: {}",
                     table, s->ks_name(), s->cf_name(),
@@ -2745,7 +2808,7 @@ public:
 
         // Below section ensures we respect the _tablets_per_shard_goal.
         //
-        // It will scale down target_tablet_count for all tables so that
+        // It will scale down target_tablet_count for tables so that
         // the average number of tablets per shard in each DC or rack does not exceed _tablets_per_shard_goal.
         //
         // The impact of table's tablet count on average per-shard tablet replica count
@@ -2755,9 +2818,12 @@ public:
         // The algorithm works like this:
         // Compute average tablet replica count per-shard in each rack,
         // determine if the per-shard budget (_tablets_per_shard_budget_factor times the goal)
-        // is exceeded in that rack, and if so compute scale factor by which tablet count should
-        // be multiplied so that the count is brought back to the goal in that rack.
-        // Take the smallest scale factor among all racks, which ensures that no rack is overloaded.
+        // is exceeded in that rack, and if so pick tables to scale down until the count is back
+        // at the goal. Tables are picked in increasing order of workload density, so that the
+        // coldest data loses tablets first, and no table is taken below the tablet count its
+        // own options demand. When workload stats are incomplete this degrades to scaling all
+        // tables down by the same factor.
+        // Take the smallest tablet count wanted among all racks, which ensures that no rack is overloaded.
         //
         // We align tablet counts to the nearest power of 2 post-scaling, which
         // means that scaling may not be effective and in the worst case we may overshoot the goal by
@@ -2774,14 +2840,35 @@ public:
         const double tablets_per_shard_budget = _tablets_per_shard_goal * _tablets_per_shard_budget_factor;
 
         struct scale_info {
-            double factor;
+            size_t tablet_count;
             endpoint_dc_rack source;
         };
         std::unordered_map<table_id, scale_info> table_scaling;
 
+        // Records the tablet count a rack wants for a table. The most restrictive rack wins,
+        // which ensures that no rack ends up over its budget.
+        auto want_tablet_count = [&] (table_id table, size_t tablet_count, const endpoint_dc_rack& rack) {
+            auto [i, inserted] = table_scaling.try_emplace(table, scale_info{tablet_count, rack});
+            if (!inserted && tablet_count < i->second.tablet_count) {
+                i->second = scale_info{tablet_count, rack};
+            }
+        };
+
+        // A table which is a candidate for being scaled down in a given rack.
+        struct scale_candidate {
+            table_id table;
+            size_t target_tablet_count;
+            size_t floor_tablet_count;
+            double contribution;       // Tablet replicas per shard in this rack.
+            double floor_contribution; // The same at floor_tablet_count.
+            int density_rank;          // Quantized workload density, coldest first.
+        };
+
         for (auto&& [rack, shard_count] : shards_per_rack) {
             double cur_avg_tablets_per_shard = 0;
             double new_avg_tablets_per_shard = 0;
+            std::vector<scale_candidate> candidates;
+            bool have_workload = true;
 
             for (auto&& [table, table_plan] : plan.tables) {
                 auto* rs = rs_by_table[table];
@@ -2808,6 +2895,32 @@ public:
                 auto new_tablets_per_shard = get_avg_tablets_per_shard(table_plan.target_tablet_count_for_scaling);
                 new_avg_tablets_per_shard += new_tablets_per_shard;
                 lblogger.debug("new_avg_tablets_per_shard [dc={}, rack={}, table={}]: {:.3f}", rack.dc, rack.rack, table, new_tablets_per_shard);
+
+                // Tables converging to powers of two have a fixed merge trajectory;
+                // scaling them would interfere with it.
+                // A table with no replicas in this rack cannot help this rack, and scaling it
+                // would harm its distribution in the DCs and racks where it does live.
+                if (table_plan.converging_to_pow2() || !new_tablets_per_shard) {
+                    continue;
+                }
+
+                if (!table_plan.workload_density) {
+                    have_workload = false;
+                }
+                candidates.push_back(scale_candidate{
+                    .table = table,
+                    .target_tablet_count = table_plan.target_tablet_count,
+                    .floor_tablet_count = table_plan.floor_tablet_count,
+                    .contribution = new_tablets_per_shard,
+                    .floor_contribution = get_avg_tablets_per_shard(table_plan.floor_tablet_count),
+                    // Quantizing the density to its binary exponent gives the ordering a
+                    // stability band: a table has to differ from its neighbour by a factor of
+                    // two before it can overtake it, so the merge order does not churn between
+                    // planning rounds over small fluctuations in measured workload.
+                    .density_rank = table_plan.workload_density && *table_plan.workload_density > 0
+                            ? int(std::floor(std::log2(*table_plan.workload_density)))
+                            : std::numeric_limits<int>::min(),
+                });
             }
 
             {
@@ -2821,40 +2934,63 @@ public:
                 rack.dc, rack.rack, new_avg_tablets_per_shard, _tablets_per_shard_goal, tablets_per_shard_budget,
                 overloaded ? " (over budget!)" : "");
 
-            if (overloaded) {
-                auto scale = scale_info{_tablets_per_shard_goal / new_avg_tablets_per_shard, rack};
+            if (!overloaded) {
+                continue;
+            }
 
-                for (auto&& [table, table_plan]: plan.tables) {
-                    // Tables converging to powers of two have a fixed merge trajectory;
-                    // scaling them would interfere with it.
-                    if (table_plan.converging_to_pow2()) {
-                        continue;
-                    }
-                    auto* rs = rs_by_table[table];
-                    auto rf = rs->get_replication_factor_data(rack.dc);
-
-                    // If table has no replicas in this rack, scaling it won't help and is harmful to its distribution
-                    // in other DCs or racks.
-                    if (rf && (rf->is_numeric() || std::ranges::contains(rf->get_rack_list(), rack.rack))) {
-                        auto [i, inserted] = table_scaling.try_emplace(table, scale);
-                        if (!inserted) {
-                            if (scale.factor < i->second.factor) {
-                                i->second = std::move(scale);
-                            }
-                        }
-                    }
+            if (!have_workload) {
+                // Without a workload signal there is no basis for preferring one table over
+                // another, so fall back to scaling every table down by the same factor.
+                double factor = _tablets_per_shard_goal / new_avg_tablets_per_shard;
+                lblogger.debug("Scaling all tables in {}.{} by a factor of {:.3f}; workload stats incomplete",
+                               rack.dc, rack.rack, factor);
+                for (auto&& c : candidates) {
+                    want_tablet_count(c.table, std::max<size_t>(1, c.target_tablet_count * factor), rack);
                 }
+                continue;
+            }
+
+            // Merge the least dense tables first: a merge halves the number of shards a
+            // table's data is spread over, which costs a hot table far more than a cold one.
+            std::ranges::sort(candidates, [] (const scale_candidate& a, const scale_candidate& b) {
+                return std::tie(a.density_rank, a.table) < std::tie(b.density_rank, b.table);
+            });
+
+            double excess = new_avg_tablets_per_shard - _tablets_per_shard_goal;
+            for (auto&& c : candidates) {
+                if (excess <= 0) {
+                    break;
+                }
+                double reducible = c.contribution - c.floor_contribution;
+                if (reducible <= 0) {
+                    continue;
+                }
+                double reduction = std::min(excess, reducible);
+                double ratio = (c.contribution - reduction) / c.contribution;
+                auto new_count = std::max(c.floor_tablet_count, size_t(c.target_tablet_count * ratio));
+                lblogger.debug("Scaling down table {} due to {}.{}: {} => {} (density rank {}, relieving {:.3f} of {:.3f} tablets per shard)",
+                               c.table, rack.dc, rack.rack, c.target_tablet_count, new_count, c.density_rank, reduction, excess);
+                want_tablet_count(c.table, new_count, rack);
+                excess -= reduction;
+            }
+
+            if (excess > 0) {
+                lblogger.warn("Cannot bring {}.{} down to {} tablet replicas per shard: {:.3f} over the goal remain "
+                              "after every table reached its minimum tablet count",
+                              rack.dc, rack.rack, _tablets_per_shard_goal, excess);
             }
         }
 
         for (auto&& [table, scale] : table_scaling) {
             auto& table_plan = plan.tables[table];
-            auto new_count = std::max<size_t>(1, table_plan.target_tablet_count * scale.factor);
-            lblogger.debug("Scaling down table {} by a factor of {:.3f} due to {}.{}: {} => {}", table, scale.factor,
-                           scale.source.dc, scale.source.rack, table_plan.target_tablet_count, new_count);
-            table_plan.target_tablet_count = new_count;
-            table_plan.target_tablet_count_reason = format("{} scaled by {:.3f} due to {}.{}", table_plan.target_tablet_count_reason,
-                                                           scale.factor, scale.source.dc, scale.source.rack);
+            if (scale.tablet_count >= table_plan.target_tablet_count) {
+                continue;
+            }
+            lblogger.debug("Scaling down table {} due to {}.{}: {} => {}", table,
+                           scale.source.dc, scale.source.rack, table_plan.target_tablet_count, scale.tablet_count);
+            table_plan.target_tablet_count = scale.tablet_count;
+            table_plan.target_tablet_count_reason = format("{} scaled to {} due to {}.{}", table_plan.target_tablet_count_reason,
+                                                           scale.tablet_count, scale.source.dc, scale.source.rack);
         }
 
         // Generate:

@@ -34,6 +34,10 @@ struct shared_load_stats {
         stats.tables[table].size_in_bytes = size_in_bytes;
     }
 
+    void set_workload(table_id table, uint64_t bytes_per_second) {
+        stats.table_workload[table] = bytes_per_second;
+    }
+
     void set_split_ready_seq_number(table_id table, size_t seq_number) {
         stats.tables[table].split_ready_seq_number = seq_number;
     }
