@@ -3543,6 +3543,163 @@ SEASTAR_THREAD_TEST_CASE(test_per_shard_goal_size_scaling_is_not_order_dependent
     BOOST_REQUIRE_EQUAL(large_first_count, large_last_count);
 }
 
+SEASTAR_THREAD_TEST_CASE(test_capacity_relative_target_tablet_size) {
+    constexpr uint64_t MB = 1024 * 1024;
+    constexpr uint64_t GB = 1024 * MB;
+    constexpr uint64_t table_size = 6 * GB;
+
+    // Returns the tablet count a table of table_size converges to, in a cluster with one
+    // node per rack, given the disk capacity of each node (nullopt when not reported).
+    // Splits stop once the average tablet size drops to 2 * target or below, so the table
+    // converges to the smallest power of two which brings the average into that band.
+    auto run_scenario = [&] (double fraction, std::vector<std::optional<uint64_t>> node_capacities, unsigned shards_per_node = 1) {
+        cql_test_config cfg{};
+        cfg.db_config->tablets_per_shard_goal.set(10000); // Inhibit scaling-down of tablet count.
+        cfg.db_config->tablets_initial_scale_factor.set(1);
+        cfg.db_config->target_tablet_size_in_bytes.set(uint64_t(GB));
+        cfg.db_config->minimal_tablet_size_for_balancing.set(64 * MB);
+        cfg.db_config->tablet_size_fraction_of_shard_capacity.set(double(fraction));
+
+        size_t tablet_count = 0;
+        do_with_cql_env_thread([&] (auto& e) {
+            topology_builder topo(e);
+            auto& load_stats = topo.get_shared_load_stats();
+
+            for (size_t i = 0; i < node_capacities.size(); ++i) {
+                auto rack = i ? topo.start_new_rack() : topo.rack();
+                auto host = topo.add_node(node_state::normal, shards_per_node, rack);
+                if (node_capacities[i]) {
+                    load_stats.set_capacity(host, *node_capacities[i]);
+                } else {
+                    // topology_builder gives every node a default capacity.
+                    load_stats.stats.capacity.erase(host);
+                }
+            }
+
+            auto ks_name = add_keyspace(e, {{topo.dc(), int(node_capacities.size())}});
+            auto table = add_table(e, ks_name).get();
+            load_stats.set_size(table, table_size);
+
+            // rebalance_tablets() bounds its iterations by the initial tablet count, which
+            // is too few for the many splits needed to go from 1 tablet to 64, so run it in
+            // rounds of a few plans each until it converges.
+            bool stopped;
+            do {
+                size_t plans = 0;
+                stopped = false;
+                rebalance_tablets(e, &load_stats, {}, [&] (const migration_plan&) {
+                    return stopped = ++plans > 4;
+                });
+            } while (stopped);
+
+            tablet_count = e.local_token_metadata_ptr()->tablets().get_tablet_map(table).tablet_count();
+        }, std::move(cfg)).get();
+        return tablet_count;
+    };
+
+    constexpr double fraction = 1.0 / 64;
+
+    // Disabled: the static target_tablet_size_in_bytes applies, 6GB / 1GB => 1.5GB tablets.
+    BOOST_REQUIRE_EQUAL(run_scenario(0, {16 * GB}), 4);
+
+    // 16GB per shard / 64 = 256MB target, 6GB / 256MB => 384MB tablets.
+    BOOST_REQUIRE_EQUAL(run_scenario(fraction, {16 * GB}), 16);
+
+    // The capacity is divided among the node's shards: 32GB / 2 shards is again 16GB per shard.
+    BOOST_REQUIRE_EQUAL(run_scenario(fraction, {32 * GB}, 2), 16);
+
+    // 1GB per shard / 64 = 16MB, clamped from below by minimal_tablet_size_for_balancing to 64MB,
+    // 6GB / 64MB => 96MB tablets.
+    BOOST_REQUIRE_EQUAL(run_scenario(fraction, {GB}), 64);
+
+    // 1TB per shard / 64 = 16GB, clamped from above by target_tablet_size_in_bytes to 1GB.
+    BOOST_REQUIRE_EQUAL(run_scenario(fraction, {1024 * GB}), 4);
+
+    // The rack with the smallest per-shard capacity determines the target.
+    BOOST_REQUIRE_EQUAL(run_scenario(fraction, {64 * GB, 16 * GB}), 16);
+
+    // A rack whose capacity is unknown is ignored...
+    BOOST_REQUIRE_EQUAL(run_scenario(fraction, {std::nullopt, 16 * GB}), 16);
+
+    // ...and with no capacity known at all, the static target applies.
+    BOOST_REQUIRE_EQUAL(run_scenario(fraction, {std::nullopt}), 4);
+}
+
+SEASTAR_THREAD_TEST_CASE(test_per_shard_tablet_count_floats_within_budget) {
+    constexpr size_t goal = 10;
+
+    struct outcome {
+        size_t large_table_tablet_count;
+        size_t tablets_per_shard;
+    };
+
+    // Returns the outcome of a large table sharing a single-shard node with 2 empty
+    // tables, for each of the given sizes of the large table, applied in sequence.
+    auto run_scenario = [&] (double budget_factor, std::vector<uint64_t> large_table_sizes) {
+        cql_test_config cfg{};
+        cfg.db_config->tablets_per_shard_goal.set(goal);
+        cfg.db_config->tablets_per_shard_budget_factor.set(double(budget_factor));
+        cfg.db_config->tablets_initial_scale_factor.set(1);
+
+        std::vector<outcome> outcomes;
+        do_with_cql_env_thread([&] (auto& e) {
+            topology_builder topo(e);
+            topo.add_node(node_state::normal, 1);
+
+            auto& load_stats = topo.get_shared_load_stats();
+            auto ks_name = add_keyspace(e, {{topo.dc(), 1}});
+
+            for (int i = 0; i < 2; ++i) {
+                load_stats.set_size(add_table(e, ks_name).get(), 0);
+            }
+            auto large_table = add_table(e, ks_name).get();
+
+            for (auto size : large_table_sizes) {
+                load_stats.set_size(large_table, size);
+                rebalance_tablets(e, &load_stats);
+
+                auto& tmeta = e.local_token_metadata_ptr()->tablets();
+                // All tables live on the only shard, so the total tablet count is the per-shard count.
+                outcomes.push_back(outcome{
+                    .large_table_tablet_count = tmeta.get_tablet_map(large_table).tablet_count(),
+                    .tablets_per_shard = get_tablet_count(tmeta),
+                });
+                testlog.info("budget_factor={} large_table_size={}: large table has {} tablets, {} tablets per shard",
+                             budget_factor, size, outcomes.back().large_table_tablet_count, outcomes.back().tablets_per_shard);
+            }
+        }, std::move(cfg)).get();
+        return outcomes;
+    };
+
+    const auto size_for = [] (size_t tablet_count) { return service::default_target_tablet_size * tablet_count; };
+
+    // The large table wants 17 tablets from its size, 19 per shard in total. The sizes are
+    // chosen so that the average tablet size stays above 2 * target at the resulting count,
+    // which keeps the table wanting div_ceil(size, target) tablets rather than settling.
+    // With the budget pinned to the goal, it is scaled down to 17 * 10/19 = 8.
+    {
+        auto outcomes = run_scenario(1, {size_for(17)});
+        BOOST_REQUIRE_EQUAL(outcomes.size(), 1);
+        BOOST_REQUIRE_EQUAL(outcomes[0].large_table_tablet_count, 8);
+    }
+
+    // With a budget of 2 * goal, 19 fits in the budget and the table gets 16 tablets, which
+    // brings its average tablet size into the band where splitting stops.
+    // When it grows to want 33 and then 65, the total goes over the budget, so the count is
+    // scaled back to the goal (33 * 10/35 = 9, 65 * 10/67 = 9), which pow2 alignment rounds up
+    // to the current 16. The count keeps floating in [goal, 2 * goal] rather than being
+    // pinned to the goal.
+    {
+        auto outcomes = run_scenario(2, {size_for(17), size_for(33), size_for(65)});
+        BOOST_REQUIRE_EQUAL(outcomes.size(), 3);
+        for (auto& o : outcomes) {
+            BOOST_REQUIRE_EQUAL(o.large_table_tablet_count, 16);
+            BOOST_REQUIRE_GE(o.tablets_per_shard, goal);
+            BOOST_REQUIRE_LE(o.tablets_per_shard, 2 * goal);
+        }
+    }
+}
+
 SEASTAR_THREAD_TEST_CASE(test_merge_does_not_overload_racks) {
     cql_test_config cfg{};
     // This test relies on the fact that we use an RF strictly smaller than the number of racks.
