@@ -138,11 +138,15 @@ struct rebalance_stats {
     seconds_double elapsed_time = seconds_double(0);
     seconds_double max_rebalance_time = seconds_double(0);
     uint64_t rebalance_count = 0;
+    uint64_t splits_finalized = 0;
+    uint64_t merges_finalized = 0;
 
     rebalance_stats& operator+=(const rebalance_stats& other) {
         elapsed_time += other.elapsed_time;
         max_rebalance_time = std::max(max_rebalance_time, other.max_rebalance_time);
         rebalance_count += other.rebalance_count;
+        splits_finalized += other.splits_finalized;
+        merges_finalized += other.merges_finalized;
         return *this;
     }
 };
@@ -190,7 +194,8 @@ void ack_splits(cql_test_env& e, group0_guard& guard, locator::load_stats& load_
 // Finalizes the splits and merges the plan asks for, the way the topology coordinator
 // does, and carries the tablet sizes in load_stats over to the new tablets.
 static
-void finalize_resizes(cql_test_env& e, group0_guard& guard, const migration_plan& plan, locator::load_stats& load_stats) {
+void finalize_resizes(cql_test_env& e, group0_guard& guard, const migration_plan& plan,
+                      locator::load_stats& load_stats, rebalance_stats& stats) {
     const auto& tables = plan.resize_plan().finalize_resize;
     if (tables.empty()) {
         return;
@@ -205,6 +210,11 @@ void finalize_resizes(cql_test_env& e, group0_guard& guard, const migration_plan
         const auto& old_tmap = tm->tablets().get_tablet_map(table);
         auto new_tmap = talloc.resize_tablets(tm, table).get();
         testlog.debug("Finalizing resize of table {}: {} => {} tablets", table, old_tmap.tablet_count(), new_tmap.tablet_count());
+        if (new_tmap.tablet_count() > old_tmap.tablet_count()) {
+            stats.splits_finalized++;
+        } else {
+            stats.merges_finalized++;
+        }
         auto new_resize_decision = locator::resize_decision{};
         new_resize_decision.sequence_number = old_tmap.resize_decision().next_sequence_number();
         new_tmap.set_resize_decision(std::move(new_resize_decision));
@@ -285,7 +295,7 @@ rebalance_stats rebalance_tablets(cql_test_env& e, locator::load_stats& load_sta
             return apply_plan(tm, plan, load_stats);
         }).get();
         ack_splits(e, guard, load_stats);
-        finalize_resizes(e, guard, plan, load_stats);
+        finalize_resizes(e, guard, plan, load_stats, stats);
     }
     throw std::runtime_error("rebalance_tablets(): convergence not reached within limit");
 }
@@ -701,6 +711,155 @@ void test_parallel_scaleout(const bpo::variables_map& opts) {
     }, cfg).get();
 }
 
+// Simulates tables growing and then shrinking back to their initial size, to observe how
+// tablet sizing follows: the per-shard tablet count, the average tablet size, and how many
+// splits and merges it takes. Meant for evaluating capacity-relative tablet sizing and the
+// per-shard tablet count budget under different settings of
+// tablet_size_fraction_of_shard_capacity, tablets_per_shard_goal and
+// tablets_per_shard_budget_factor.
+// See docs/dev/multi-dimensional-tablet-load-balancing.md.
+void test_table_growth(const bpo::variables_map& opts) {
+    const shard_id shard_count = opts["shards"].as<int>();
+    const int nr_tables = opts["tables"].as<int>();
+    const int nr_racks = opts["racks"].as<int>();
+    const int nodes_per_rack = opts["nodes-per-rack"].as<int>();
+    const int steps = opts["steps"].as<int>();
+    const double growth = opts["growth"].as<double>();
+    const uint64_t shard_capacity = uint64_t(opts["shard-capacity-gb"].as<int>()) << 30;
+    const uint64_t initial_table_size = uint64_t(opts["initial-table-size-mb"].as<int>()) << 20;
+    const double size_skew = opts["size-skew"].as<double>();
+    const double workload_skew = opts["workload-skew"].as<double>();
+
+    auto cfg = tablet_cql_test_config();
+    cfg.db_config->rf_rack_valid_keyspaces(true);
+    // The sizing options default to db::config's defaults unless given.
+    if (opts.contains("tablets-per-shard-goal")) {
+        cfg.db_config->tablets_per_shard_goal(opts["tablets-per-shard-goal"].as<int>());
+    }
+    if (opts.contains("tablets-per-shard-budget-factor")) {
+        cfg.db_config->tablets_per_shard_budget_factor(opts["tablets-per-shard-budget-factor"].as<double>());
+    }
+    if (opts.contains("tablet-size-fraction-of-shard-capacity")) {
+        cfg.db_config->tablet_size_fraction_of_shard_capacity(opts["tablet-size-fraction-of-shard-capacity"].as<double>());
+    }
+    if (opts.contains("tablets-initial-scale-factor")) {
+        cfg.db_config->tablets_initial_scale_factor(opts["tablets-initial-scale-factor"].as<double>());
+    }
+    if (opts.contains("target-tablet-size-mb")) {
+        cfg.db_config->target_tablet_size_in_bytes(uint64_t(opts["target-tablet-size-mb"].as<int>()) << 20);
+    }
+
+    do_with_cql_env_thread([&] (auto& e) {
+        topology_builder topo(e);
+        locator::load_stats stats;
+        auto& stm = e.shared_token_metadata().local();
+
+        std::vector<endpoint_dc_rack> racks;
+        racks.push_back(topo.rack());
+        for (int i = 1; i < nr_racks; ++i) {
+            racks.push_back(topo.start_new_rack());
+        }
+        for (int i = 0; i < nr_racks * nodes_per_rack; ++i) {
+            auto host = topo.add_node(service::node_state::normal, shard_count, racks[i % racks.size()]);
+            const uint64_t capacity = shard_capacity * shard_count;
+            stats.capacity[host] = capacity;
+            stats.tablet_stats[host].effective_capacity = capacity;
+        }
+        const size_t total_shards = size_t(nr_racks) * nodes_per_rack * shard_count;
+        const size_t rf = nr_racks;
+
+        struct table_info {
+            table_id id;
+            double size_weight; // Size relative to initial_table_size.
+            double density;     // Workload rate per byte stored.
+        };
+        std::vector<table_info> tables;
+        auto ks = add_keyspace(e, {{topo.dc(), nr_racks}});
+        for (int i = 0; i < nr_tables; ++i) {
+            tables.push_back(table_info{
+                .id = add_table(e, ks).get(),
+                .size_weight = std::exp2(tests::random::get_real<double>(0, size_skew, tests::random::gen())),
+                .density = std::exp2(tests::random::get_real<double>(0, workload_skew, tests::random::gen())),
+            });
+            testlog.info("table{}: {} size weight {:.2f}, workload density {:.2f}", i, tables.back().id,
+                         tables.back().size_weight, tables.back().density);
+        }
+
+        // Sets the size and workload of every table for the given growth scale, spreading
+        // the size evenly over the table's current tablets.
+        auto set_sizes = [&] (double scale) {
+            for (auto& t : tables) {
+                const uint64_t size = initial_table_size * t.size_weight * scale;
+                stats.tables[t.id].size_in_bytes = size;
+                stats.table_workload[t.id] = uint64_t(size * t.density);
+                auto& tmap = stm.get()->tablets().get_tablet_map(t.id);
+                for (auto& [host, host_stats] : stats.tablet_stats) {
+                    host_stats.tablet_sizes.erase(t.id);
+                }
+                tmap.for_each_tablet([&] (tablet_id tid, const tablet_info& ti) -> future<> {
+                    for (const auto& replica : ti.replicas) {
+                        stats.tablet_stats[replica.host].tablet_sizes[t.id][tmap.get_token_range(tid)] = size / tmap.tablet_count();
+                    }
+                    return make_ready_future<>();
+                }).get();
+            }
+        };
+
+        // Counts the times a table's tablet count changed direction. Growing and then shrinking
+        // accounts for one per table whose count followed its size; anything beyond that is churn.
+        std::vector<size_t> prev_counts(tables.size());
+        std::vector<int> last_direction(tables.size());
+        size_t reversals = 0;
+        rebalance_stats total;
+
+        auto run_step = [&] (int step, double scale) {
+            set_sizes(scale);
+            auto res = rebalance_tablets(e, stats);
+            total += res;
+
+            auto& tmeta = stm.get()->tablets();
+            uint64_t total_size = 0;
+            size_t total_tablets = 0;
+            min_max_tracker<size_t> count_minmax;
+            for (size_t i = 0; i < tables.size(); ++i) {
+                const auto count = tmeta.get_tablet_map(tables[i].id).tablet_count();
+                total_size += stats.tables[tables[i].id].size_in_bytes;
+                total_tablets += count;
+                count_minmax.update(count);
+                if (prev_counts[i] && count != prev_counts[i]) {
+                    int direction = count > prev_counts[i] ? 1 : -1;
+                    if (last_direction[i] && direction != last_direction[i]) {
+                        reversals++;
+                    }
+                    last_direction[i] = direction;
+                }
+                prev_counts[i] = count;
+            }
+
+            testlog.info("step {:3d} scale {:9.3f}: utilization {:5.1f}%, tablets/shard {:6.1f}, avg tablet size {:8.1f} MB, "
+                         "tablets per table [{}, {}], splits {}, merges {}, rebalance time {:.3f} [s]",
+                         step, scale,
+                         100.0 * total_size * rf / (total_shards * shard_capacity),
+                         double(total_tablets) * rf / total_shards,
+                         double(total_size) / std::max<size_t>(total_tablets, 1) / (1 << 20),
+                         count_minmax.min(), count_minmax.max(),
+                         res.splits_finalized, res.merges_finalized, res.elapsed_time.count());
+        };
+
+        int step = 0;
+        for (int i = 0; i <= steps; ++i) {
+            run_step(step++, std::pow(growth, i));
+        }
+        for (int i = steps - 1; i >= 0; --i) {
+            run_step(step++, std::pow(growth, i));
+        }
+
+        testlog.info("Total: splits {}, merges {}, tablet count direction reversals {}, rebalance time {:.3f} [s] (max {:.3f} [s])",
+                     total.splits_finalized, total.merges_finalized, reversals,
+                     total.elapsed_time.count(), total.max_rebalance_time.count());
+    }, cfg).get();
+}
+
 future<> run_simulation(const params& p, const sstring& name = "") {
     testlog.info("[run {}] params: {}", name, p);
 
@@ -827,6 +986,28 @@ const std::map<operation, operation_func> operations_with_func{
             typed_option<double>("tablet-size-deviation-factor", 0.5, "Deviation factor for the tablet size random generator.")
           }
         }, &test_parallel_scaleout},
+
+        {{"table-growth",
+         "Simulates tables growing and shrinking back, to evaluate how tablet sizing follows",
+         "",
+         {
+            typed_option<int>("tables", 10, "Table count."),
+            typed_option<int>("racks", 3, "Number of racks, which is also the replication factor."),
+            typed_option<int>("nodes-per-rack", 1, "Number of nodes per rack."),
+            typed_option<int>("shards", 8, "Number of shards per node."),
+            typed_option<int>("shard-capacity-gb", 500, "Disk capacity per shard, in GB."),
+            typed_option<int>("initial-table-size-mb", 1024, "Initial size of the smallest table, in MB."),
+            typed_option<double>("size-skew", 4, "Table sizes are spread log-uniformly over [1, 2^size-skew] times the initial size."),
+            typed_option<double>("workload-skew", 10, "Workload densities are spread log-uniformly over [1, 2^workload-skew]."),
+            typed_option<int>("steps", 8, "Number of growth steps, followed by as many shrink steps."),
+            typed_option<double>("growth", 1.5, "Factor by which every table grows in each growth step."),
+            typed_option<int>("tablets-per-shard-goal", "Value of tablets_per_shard_goal."),
+            typed_option<double>("tablets-per-shard-budget-factor", "Value of tablets_per_shard_budget_factor."),
+            typed_option<double>("tablet-size-fraction-of-shard-capacity", "Value of tablet_size_fraction_of_shard_capacity."),
+            typed_option<double>("tablets-initial-scale-factor", "Value of tablets_initial_scale_factor."),
+            typed_option<int>("target-tablet-size-mb", "Value of target_tablet_size_in_bytes, in MB."),
+          }
+        }, &test_table_growth},
     }
 };
 
