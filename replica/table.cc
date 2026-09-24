@@ -761,6 +761,9 @@ public:
     storage_group& storage_group_for_token(dht::token token) const override {
         return *_single_sg;
     }
+    std::optional<size_t> maybe_storage_group_id_of(dht::token) const override {
+        return 0;
+    }
 
     locator::combined_load_stats table_load_stats() const override {
         return locator::combined_load_stats{
@@ -957,6 +960,15 @@ public:
 
     storage_group& storage_group_for_token(dht::token token) const override {
         return storage_group_for_id(storage_group_of(token));
+    }
+    std::optional<size_t> maybe_storage_group_id_of(dht::token token) const override {
+        auto idx = tablet_id_for_token(token);
+        // A reader can be created for a tablet which has no replica on this shard, e.g. right
+        // after the tablet is truncated or migrated away, so this must not throw.
+        if (idx >= tablet_count() || !maybe_storage_group_for_id(schema(), idx)) {
+            return std::nullopt;
+        }
+        return idx;
     }
 
     locator::combined_load_stats table_load_stats() const override;
@@ -3668,6 +3680,29 @@ locator::combined_load_stats table::table_load_stats() const {
     return _sg_manager->table_load_stats();
 }
 
+double table::sample_workload_rate() const {
+    return _sg_manager->sample_workload_rate();
+}
+
+void table::record_read_workload(const dht::partition_range& range, uint64_t bytes) const {
+    // A range without a lower bound comes from a full scan (repair, streaming) rather than
+    // from a user request, and cannot be attributed to a single tablet.
+    if (!range.start()) {
+        return;
+    }
+    // The storage group can be missing when the tablet has just been migrated away or
+    // truncated, in which case there is nothing left to attribute the read to.
+    if (auto group_id = _sg_manager->maybe_storage_group_id_of(range.start()->value().token())) {
+        _sg_manager->record_workload(*group_id, bytes);
+    }
+}
+
+void table::record_read_workload(const dht::partition_range_vector& ranges, uint64_t bytes) const {
+    if (!ranges.empty()) {
+        record_read_workload(ranges.front(), bytes);
+    }
+}
+
 void tablet_storage_group_manager::handle_tablet_split_completion(const locator::tablet_map& old_tmap, const locator::tablet_map& new_tmap) {
     auto table_id = schema()->id();
     size_t old_tablet_count = old_tmap.tablet_count();
@@ -5032,6 +5067,7 @@ future<> table::apply(const mutation& m, db::rp_handle&& h, db::timeout_clock::t
     }
 
     auto& cg = compaction_group_for_token(m.token());
+    _sg_manager->record_workload(cg.group_id(), m.memory_usage(*m.schema()));
     auto holder = cg.async_gate().hold();
 
     if (_logstor) [[unlikely]] {
@@ -5053,6 +5089,7 @@ future<> table::apply(const frozen_mutation& m, schema_ptr m_schema, db::rp_hand
     }
 
     auto& cg = compaction_group_for_key(m.key(), m_schema);
+    _sg_manager->record_workload(cg.group_id(), m.representation().size());
     auto holder = cg.async_gate().hold();
 
     if (_logstor) [[unlikely]] {
@@ -5178,7 +5215,9 @@ table::query(schema_ptr query_schema,
         *saved_querier = std::move(querier_opt);
     }
 
-    co_return make_lw_shared<query::result>(qs.builder.build(std::move(last_pos)));
+    auto result = make_lw_shared<query::result>(qs.builder.build(std::move(last_pos)));
+    record_read_workload(partition_ranges, result->buf().size());
+    co_return result;
 }
 
 future<reconcilable_result>
@@ -5222,6 +5261,7 @@ table::mutation_query(schema_ptr query_schema,
         *saved_querier = std::move(querier_opt);
     }
 
+    record_read_workload(range, r.memory_usage());
     co_return r;
   } catch (...) {
     ex = std::current_exception();

@@ -18,6 +18,7 @@
 #include "compaction/compaction_manager.hh"
 #include "locator/tablets.hh"
 #include "replica/logstor/compaction.hh"
+#include "replica/tablet_workload.hh"
 #include "replica/logstor/segment_manager.hh"
 #include "sstables/sstable_set.hh"
 #include "utils/chunked_vector.hh"
@@ -475,10 +476,37 @@ using storage_group_map = absl::flat_hash_map<size_t, storage_group_ptr, absl::H
 class storage_group_manager {
 protected:
     storage_group_map _storage_groups;
+    // Per-tablet workload rate, keyed by storage group id. Fed by the data path through
+    // record_workload() and consumed by the periodic tablet load stats collection, which
+    // ships it to the topology coordinator for the load balancer.
+    // Mutable because the decay is applied lazily, from the const table_load_stats() path.
+    mutable tablet_workload_tracker _workload;
 protected:
     virtual future<> stop() = 0;
 public:
     virtual ~storage_group_manager();
+
+    /// Records `bytes` of read or write work done on behalf of storage group `id`.
+    /// Called from the data path, where the storage group is already resolved.
+    void record_workload(size_t id, uint64_t bytes) noexcept {
+        _workload.record(id, bytes);
+    }
+
+    const tablet_workload_tracker& workload() const noexcept {
+        return _workload;
+    }
+
+    /// Folds the workload recorded since the previous call into the moving average and
+    /// returns the resulting rate for the whole table on this shard, in bytes per second.
+    /// Called once per tablet load stats collection round.
+    double sample_workload_rate() const {
+        _workload.decay();
+        return _workload.total_rate();
+    }
+
+    /// Returns the id of the storage group owning `t`, or nullopt if no storage for it is
+    /// allocated on this shard. For tablet tables the id is the tablet id.
+    virtual std::optional<size_t> maybe_storage_group_id_of(dht::token t) const = 0;
 
     //    How concurrent loop and updates on the group map works without a lock:
     //

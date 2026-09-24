@@ -1262,6 +1262,18 @@ public:
 
     locator::combined_load_stats table_load_stats() const;
 
+    // Folds the workload recorded since the previous call into the moving average and returns
+    // the resulting rate for this table on this shard, in bytes per second. Consumed by the
+    // periodic tablet load stats collection.
+    // See docs/dev/multi-dimensional-tablet-load-balancing.md.
+    double sample_workload_rate() const;
+
+    // Attributes the bytes produced by a read to the storage group (tablet) which owns the
+    // range the read was issued for. In tablet mode the coordinator issues a separate read
+    // per tablet, so attributing to the first range is exact for practically all reads.
+    void record_read_workload(const dht::partition_range& range, uint64_t bytes) const;
+    void record_read_workload(const dht::partition_range_vector& ranges, uint64_t bytes) const;
+
     const db::view::stats& get_view_stats() const {
         return _view_stats;
     }

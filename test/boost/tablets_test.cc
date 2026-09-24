@@ -37,6 +37,7 @@
 #include "replica/compaction_group.hh"
 #include "test/boost/sstable_test.hh"
 #include "replica/tablets.hh"
+#include "replica/tablet_workload.hh"
 #include "compaction/compaction_manager.hh"
 #include "replica/tablet_mutation_builder.hh"
 #include "locator/tablets.hh"
@@ -8867,6 +8868,46 @@ SEASTAR_TEST_CASE(test_load_stats_split_ready_invalidation) {
 
         BOOST_REQUIRE_EQUAL(agg.tables[table1].split_ready_seq_number, 4);
     }
+
+    return make_ready_future<>();
+}
+
+SEASTAR_TEST_CASE(test_tablet_workload_tracker) {
+    using namespace std::chrono_literals;
+    // A time constant much shorter than the sampling interval makes the moving average
+    // follow the latest sample almost exactly: alpha = exp(-10s / 1s) ~= 4.5e-5.
+    replica::tablet_workload_tracker tracker(1s);
+    auto now = lowres_clock::now();
+
+    tracker.record(0, 1000);
+    tracker.record(0, 1000);
+    tracker.record(1, 500);
+
+    // Nothing is reported until the first decay.
+    BOOST_REQUIRE_EQUAL(tracker.rate(0), 0);
+    BOOST_REQUIRE_EQUAL(tracker.total_rate(), 0);
+
+    now += 10s;
+    tracker.decay(now);
+    BOOST_REQUIRE_CLOSE(tracker.rate(0), 200, 1);
+    BOOST_REQUIRE_CLOSE(tracker.rate(1), 50, 1);
+    BOOST_REQUIRE_CLOSE(tracker.total_rate(), 250, 1);
+    BOOST_REQUIRE_EQUAL(tracker.rate(2), 0);
+
+    // A sample taken less than a second after the previous one is not folded in,
+    // so the bytes keep accumulating and the reported rates do not change.
+    tracker.record(0, 1000);
+    tracker.decay(now + 100ms);
+    BOOST_REQUIRE_CLOSE(tracker.rate(0), 200, 1);
+
+    // An idle group decays towards zero, and the bytes held back above are folded in now.
+    now += 10s;
+    tracker.decay(now);
+    BOOST_REQUIRE_CLOSE(tracker.rate(0), 100, 1);
+    BOOST_REQUIRE_LT(tracker.rate(1), 0.01);
+
+    tracker.remove(0);
+    BOOST_REQUIRE_EQUAL(tracker.rate(0), 0);
 
     return make_ready_future<>();
 }
