@@ -838,6 +838,18 @@ class load_balancer {
 
     const unsigned _tablets_per_shard_goal;
 
+    // Target tablet size as a fraction of the disk capacity managed by a single shard.
+    // When non-zero, it replaces the statically configured _target_tablet_size (which then
+    // only serves as an upper clamp), making the per-shard tablet count, rather than a fixed
+    // tablet size, the quantity the allocator regulates.
+    // See docs/dev/multi-dimensional-tablet-load-balancing.md.
+    const double _tablet_size_fraction_of_shard_capacity;
+
+    // Multiple of _tablets_per_shard_goal at which tablet counts are scaled down. Scaling
+    // always targets the goal itself, so the factor is the hysteresis which lets the per-shard
+    // tablet count float in [goal, factor * goal] instead of being pinned to the goal.
+    const double _tablets_per_shard_budget_factor;
+
     uint64_t target_max_tablet_size(uint64_t target_tablet_size) const noexcept {
         return target_tablet_size * 2;
     }
@@ -1074,6 +1086,8 @@ public:
             std::unordered_set<host_id> skiplist)
         : _target_tablet_size(target_tablet_size)
         , _tablets_per_shard_goal(tablets_per_shard_goal)
+        , _tablet_size_fraction_of_shard_capacity(db.get_config().tablet_size_fraction_of_shard_capacity())
+        , _tablets_per_shard_budget_factor(std::max(1.0, db.get_config().tablets_per_shard_budget_factor()))
         , _db(db)
         , _tm(std::move(tm))
         , _topology(topology)
@@ -2389,6 +2403,74 @@ public:
         };
     }
 
+    // Returns the gross disk capacity a node reported for data file storage, or nullopt if
+    // the node has not reported it yet.
+    //
+    // Tablet sizing deliberately uses the gross capacity rather than the effective capacity
+    // (tablet data plus free space) which size-based balancing uses. Effective capacity also
+    // shrinks with disk usage which is not tablet data, like snapshots and commitlog, and has
+    // been seen to vary by 25% between the nodes of a rack. Deriving the target tablet size
+    // from it would tie tablet sizing to that operational noise.
+    std::optional<uint64_t> node_capacity(host_id host) const {
+        if (!_table_load_stats) {
+            return std::nullopt;
+        }
+        auto i = _table_load_stats->capacity.find(host);
+        if (i == _table_load_stats->capacity.end() || !i->second) {
+            return std::nullopt;
+        }
+        return i->second;
+    }
+
+    // Derives the target tablet size from the disk capacity managed by a single shard, so
+    // that a shard filled to capacity holds about 1/_tablet_size_fraction_of_shard_capacity
+    // tablets. Below the per-shard tablet count budget, the per-shard tablet count then
+    // tracks disk utilization; once the budget binds, the count is held and the average
+    // tablet size tracks utilization instead.
+    //
+    // The smallest per-shard capacity among racks wins, so that no rack ends up with tablets
+    // which are coarse relative to its shards. The result is clamped from below by
+    // _minimal_tablet_size, which keeps an under-utilized cluster from being fragmented into
+    // a large number of tiny tablets, and from above by the statically configured
+    // _target_tablet_size, which bounds the migration unit on very large shards.
+    //
+    // Returns nullopt when capacity-relative sizing is disabled or when no rack has both a
+    // known capacity and a known shard count, in which case the caller falls back to the
+    // statically configured target.
+    //
+    // See docs/dev/multi-dimensional-tablet-load-balancing.md.
+    std::optional<uint64_t> capacity_relative_target_tablet_size(
+            const std::unordered_map<endpoint_dc_rack, unsigned>& shards_per_rack,
+            const std::unordered_map<endpoint_dc_rack, uint64_t>& capacity_per_rack,
+            const std::unordered_set<endpoint_dc_rack>& racks_with_unknown_capacity) const {
+        if (_tablet_size_fraction_of_shard_capacity <= 0) {
+            return std::nullopt;
+        }
+
+        std::optional<uint64_t> result;
+        for (auto&& [rack, capacity] : capacity_per_rack) {
+            if (racks_with_unknown_capacity.contains(rack)) {
+                continue;
+            }
+            auto i = shards_per_rack.find(rack);
+            if (i == shards_per_rack.end() || !i->second) {
+                continue;
+            }
+            auto shard_capacity = double(capacity) / i->second;
+            auto size = uint64_t(shard_capacity * _tablet_size_fraction_of_shard_capacity);
+            lblogger.debug("Capacity-relative target tablet size in {}.{}: {} ({} shards, {} capacity)",
+                           rack.dc, rack.rack, size, i->second, capacity);
+            if (!result || size < *result) {
+                result = size;
+            }
+        }
+
+        if (!result) {
+            return std::nullopt;
+        }
+        return std::clamp(*result, _minimal_tablet_size, _target_tablet_size);
+    }
+
     future<sizing_plan> make_sizing_plan(std::vector<new_table_info> new_tables = {}) {
         std::unordered_map<table_id, const tablet_aware_replication_strategy*> rs_by_table;
         sizing_plan plan;
@@ -2396,13 +2478,25 @@ public:
         std::unordered_map<sstring, unsigned> shards_per_dc;
         std::unordered_map<endpoint_dc_rack, unsigned> shards_per_rack;
         std::unordered_map<sstring, std::unordered_set<sstring>> racks_per_dc;
+        std::unordered_map<endpoint_dc_rack, uint64_t> capacity_per_rack;
+        // Racks for which at least one node did not report its capacity. Capacity-relative
+        // sizing ignores them rather than deriving a target from a partial sum.
+        std::unordered_set<endpoint_dc_rack> racks_with_unknown_capacity;
         _tm->for_each_token_owner([&] (const node& n) {
             if (n.is_normal() && !n.is_draining()) {
                 shards_per_dc[n.dc_rack().dc] += n.get_shard_count();
                 shards_per_rack[n.dc_rack()] += n.get_shard_count();
                 racks_per_dc[n.dc_rack().dc].insert(n.dc_rack().rack);
+                if (auto capacity = node_capacity(n.host_id())) {
+                    capacity_per_rack[n.dc_rack()] += *capacity;
+                } else {
+                    racks_with_unknown_capacity.insert(n.dc_rack());
+                }
             }
         });
+
+        const uint64_t effective_target_tablet_size = capacity_relative_target_tablet_size(
+                shards_per_rack, capacity_per_rack, racks_with_unknown_capacity).value_or(_target_tablet_size);
 
         auto get_total_size = [&] (const locator::table_group_set& tables) -> std::optional<size_t> {
             size_t total_size = 0;
@@ -2437,7 +2531,7 @@ public:
             // for a group of co-located tablets of size g with average tablet size t, the migration unit
             // size is g*t. in order to keep the migration unit size reasonable, we set a lower target tablet size
             // as the group size increases.
-            auto target_tablet_size = _target_tablet_size / tables.size();
+            auto target_tablet_size = effective_target_tablet_size / tables.size();
 
             tablet_count_and_reason target_tablet_count = {1, ""};
             auto maybe_apply = [&] (tablet_count_and_reason candidate, bool force = false) {
@@ -2660,9 +2754,9 @@ public:
         //
         // The algorithm works like this:
         // Compute average tablet replica count per-shard in each rack,
-        // determine if per-shard goal is exceeded in that rack,
-        // compute scale factor by which tablet count should be multiplied so that the goal
-        // is not exceeded in that rack.
+        // determine if the per-shard budget (_tablets_per_shard_budget_factor times the goal)
+        // is exceeded in that rack, and if so compute scale factor by which tablet count should
+        // be multiplied so that the count is brought back to the goal in that rack.
         // Take the smallest scale factor among all racks, which ensures that no rack is overloaded.
         //
         // We align tablet counts to the nearest power of 2 post-scaling, which
@@ -2672,6 +2766,12 @@ public:
         // by a factor of 2 in the worst case. If we choose a subset of tables to scale down by a factor of 2 then
         // we have a problem of making sure that the choice is stable across scheduler invocations to avoid
         // oscillations of decisions.
+
+        // The count is scaled down only once it exceeds the budget, and it is then scaled all
+        // the way back to the goal. The gap between the two is the hysteresis which keeps the
+        // allocator from merging again as soon as the tables grow a little, and which lets the
+        // per-shard tablet count float in [goal, budget].
+        const double tablets_per_shard_budget = _tablets_per_shard_goal * _tablets_per_shard_budget_factor;
 
         struct scale_info {
             double factor;
@@ -2711,14 +2811,15 @@ public:
             }
 
             {
-                bool overloaded = cur_avg_tablets_per_shard > _tablets_per_shard_goal;
+                bool overloaded = cur_avg_tablets_per_shard > tablets_per_shard_budget;
                 lblogger.debug("cur_avg_tablets_per_shard[dc={},rack={}]: {:.3f}{}", rack.dc, rack.rack, cur_avg_tablets_per_shard,
-                    overloaded ? " (overloaded!)" : "");
+                    overloaded ? " (over budget!)" : "");
             }
 
-            bool overloaded = new_avg_tablets_per_shard > _tablets_per_shard_goal;
-            lblogger.debug("new_avg_tablets_per_shard[dc={},rack={}]: {:.3f}{}", rack.dc, rack.rack, new_avg_tablets_per_shard,
-                overloaded ? " (overloaded!)" : "");
+            bool overloaded = new_avg_tablets_per_shard > tablets_per_shard_budget;
+            lblogger.debug("new_avg_tablets_per_shard[dc={},rack={}]: {:.3f} (goal {}, budget {:.3f}){}",
+                rack.dc, rack.rack, new_avg_tablets_per_shard, _tablets_per_shard_goal, tablets_per_shard_budget,
+                overloaded ? " (over budget!)" : "");
 
             if (overloaded) {
                 auto scale = scale_info{_tablets_per_shard_goal / new_avg_tablets_per_shard, rack};

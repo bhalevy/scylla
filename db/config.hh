@@ -605,6 +605,8 @@ public:
     named_value<double> tablets_initial_scale_factor;
     named_value<unsigned> tablets_per_shard_goal;
     named_value<uint64_t> target_tablet_size_in_bytes;
+    named_value<double> tablet_size_fraction_of_shard_capacity;
+    named_value<double> tablets_per_shard_budget_factor;
     named_value<unsigned> tablet_streaming_read_concurrency_per_shard;
     named_value<unsigned> tablet_streaming_write_concurrency_per_shard;
 

@@ -1761,6 +1761,21 @@ db::config::config(std::shared_ptr<db::extensions> exts)
          "Allows target tablet size to be configured. Defaults to 5G (in bytes). Maintaining tablets at reasonable sizes is important to be able to " \
          "redistribute load. A higher value means tablet migration throughput can be reduced. A lower value may cause number of tablets to increase significantly, " \
          "potentially resulting in performance drawbacks.")
+    , tablet_size_fraction_of_shard_capacity(this, "tablet_size_fraction_of_shard_capacity", liveness::LiveUpdate, value_status::Used, 0.0,
+         "Target tablet size expressed as a fraction of the gross disk capacity managed by a single shard, which makes the "
+         "per-shard tablet count, rather than a statically configured tablet size, the quantity the system regulates. "
+         "The intended value is 1/tablets_per_shard_goal (0.01 with the default goal of 100), so that a shard filled "
+         "to capacity holds tablets_per_shard_goal tablets. "
+         "The derived target is clamped between minimal_tablet_size_for_balancing and target_tablet_size_in_bytes. "
+         "When set to 0 (the default), target_tablet_size_in_bytes is used directly. "
+         "See docs/dev/multi-dimensional-tablet-load-balancing.md.")
+    , tablets_per_shard_budget_factor(this, "tablets_per_shard_budget_factor", liveness::LiveUpdate, value_status::Used, 1.0,
+         "Multiple of tablets_per_shard_goal at which the tablet allocator starts merging tablets to bring the "
+         "per-shard tablet replica count back down to the goal. With the default of 1.0 the count is kept at the goal. "
+         "With 2.0 the count is allowed to float in [goal, 2*goal], which leaves the average tablet size free to track "
+         "disk utilization and makes it usable as a signal for scaling the cluster out or in. "
+         "Tables whose tablet count is aligned to a power of two already overshoot the goal by up to a factor of 2, "
+         "so raising the factor for them lets the count reach up to factor * 2 * goal.")
     , tablet_streaming_read_concurrency_per_shard(this, "tablet_streaming_read_concurrency_per_shard", liveness::LiveUpdate, value_status::Used, 2,
          "Maximum number of tablets which may be leaving a shard at the same time. Effecting only on topology coordinator. Set to the same value on all nodes.")
     , tablet_streaming_write_concurrency_per_shard(this, "tablet_streaming_write_concurrency_per_shard", liveness::LiveUpdate, value_status::Used, 2,
