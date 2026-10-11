@@ -1565,3 +1565,110 @@ async def test_hint_retransmission_keeps_column_mappings(manager: ScyllaClusterM
     rows = await cql.run_async(SimpleStatement(f"SELECT pk, v FROM {table}",
                                                 consistency_level=ConsistencyLevel.ONE))
     assert sorted((row.pk, row.v) for row in rows) == [(i, i + 1) for i in range(row_count)]
+
+
+async def write_hints_with_replay_paused(manager: ScyllaClusterManager, table: str, node1: ServerInfo, node2: ServerInfo,
+                                         row_count: int) -> str:
+    """
+    Write `row_count` rows through node1 while node2 is down, so that node1 stores
+    a hint for node2 for each row, then bring node2 back with hint replay paused
+    on node1, so the hints stay pending.
+
+    Returns a sync point on node1 covering the hints.
+    """
+    await manager.api.enable_injection(node1.ip_addr, "hinted_handoff_pause_hint_replay", one_shot=False)
+
+    await manager.server_stop_gracefully(node2.server_id)
+    await manager.server_not_sees_other_server(node1.ip_addr, node2.ip_addr)
+
+    cql = await manager.get_cql_exclusive(node1)
+    insert = cql.prepare(f"INSERT INTO {table} (pk, v) VALUES (?, ?)")
+    insert.consistency_level = ConsistencyLevel.ONE
+    await gather_safely(*[cql.run_async(insert, (i, i)) for i in range(row_count)])
+
+    await wait_until_hint_writing_settled(manager, [node1])
+    written = await get_hint_metrics(manager.metrics, node1.ip_addr, "written")
+    assert written >= row_count, f"Expected at least {row_count} hints to be written, got {written}"
+    sync_point = await create_sync_point(manager.api.client, node1.ip_addr)
+
+    await manager.server_start(node2.server_id)
+    await manager.server_sees_other_server(node1.ip_addr, node2.ip_addr)
+    return sync_point
+
+
+async def replay_hints_and_check_no_rows(manager: ScyllaClusterManager, table: str, node1: ServerInfo, sync_point: str) -> None:
+    """
+    Resume hint replay on node1, wait until the hints covered by `sync_point`
+    are replayed, and check that the table has no rows.
+    """
+    await manager.api.disable_injection(node1.ip_addr, "hinted_handoff_pause_hint_replay")
+    assert await await_sync_point(manager.api.client, node1.ip_addr, sync_point, 60)
+
+    cql = await manager.get_cql_exclusive(node1)
+    rows = await cql.run_async(SimpleStatement(f"SELECT pk FROM {table}", consistency_level=ConsistencyLevel.ALL))
+    resurrected = sorted(row.pk for row in rows)
+    assert not resurrected, f"{len(resurrected)} rows were resurrected by hint replay: {resurrected}"
+
+
+@pytest.mark.xfail(reason="SCYLLADB-5251")
+@pytest.mark.skip_mode(mode='release', reason="error injections aren't enabled in release mode")
+async def test_hints_not_replayed_after_truncate(manager: ScyllaClusterManager):
+    """
+    Hints written before a TRUNCATE must not resurrect the truncated data when
+    they are replayed after it.
+
+    The hint sender never consults the table's truncation time, so hints that
+    are pending when the table is truncated are delivered afterwards and the
+    data they carry survives the TRUNCATE.
+
+    Reproduces SCYLLADB-5251.
+    """
+    node1, node2 = await manager.servers_add(2, auto_rack_dc="dc1")
+    row_count = 100
+
+    cql = manager.get_cql()
+    async with new_test_keyspace(manager, "WITH replication = {'class': 'NetworkTopologyStrategy', 'replication_factor': 2}") as ks:
+        table = f"{ks}.test"
+        await cql.run_async(f"CREATE TABLE {table} (pk int PRIMARY KEY, v int)")
+
+        sync_point = await write_hints_with_replay_paused(manager, table, node1, node2, row_count)
+
+        # TRUNCATE requires all the table's replicas to be alive, so it runs
+        # after node2 is back, while the hints for it are still pending.
+        await cql.run_async(f"TRUNCATE {table}")
+
+        await replay_hints_and_check_no_rows(manager, table, node1, sync_point)
+
+
+@pytest.mark.xfail(reason="SCYLLADB-5251")
+@pytest.mark.skip_mode(mode='release', reason="error injections aren't enabled in release mode")
+async def test_hints_not_replayed_into_recreated_table(manager: ScyllaClusterManager):
+    """
+    Hints written for a dropped table must not be delivered to a table
+    recreated with the same id (CREATE TABLE ... WITH ID = <id of the dropped table>),
+    as done e.g. when restoring a schema from DESCRIBE ... WITH INTERNALS.
+
+    DROP TABLE does not remove the dropped table's pending hints, and the hint
+    sender discards a hint only if its table does not exist when the hint is
+    sent. Once a table with the same id exists again, the hints are delivered
+    to it and the dropped data reappears.
+
+    Reproduces SCYLLADB-5251.
+    """
+    node1, node2 = await manager.servers_add(2, auto_rack_dc="dc1")
+    row_count = 100
+
+    cql = manager.get_cql()
+    async with new_test_keyspace(manager, "WITH replication = {'class': 'NetworkTopologyStrategy', 'replication_factor': 2}") as ks:
+        table = f"{ks}.test"
+        schema = "pk int PRIMARY KEY, v int"
+        await cql.run_async(f"CREATE TABLE {table} ({schema})")
+        rows = await cql.run_async(f"SELECT id FROM system_schema.tables WHERE keyspace_name = '{ks}' AND table_name = 'test'")
+        table_id = rows[0].id
+
+        sync_point = await write_hints_with_replay_paused(manager, table, node1, node2, row_count)
+
+        await cql.run_async(f"DROP TABLE {table}")
+        await cql.run_async(f"CREATE TABLE {table} ({schema}) WITH ID = {table_id}")
+
+        await replay_hints_and_check_no_rows(manager, table, node1, sync_point)
