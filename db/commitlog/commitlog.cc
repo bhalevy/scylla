@@ -4129,6 +4129,6 @@ db::rp_handle::~rp_handle() {
     }
 }
 
-db::replay_position db::rp_handle::release() {
+db::replay_position db::rp_handle::release() noexcept {
     return std::exchange(_rp, {});
 }

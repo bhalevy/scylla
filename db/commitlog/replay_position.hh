@@ -75,7 +75,7 @@ public:
     rp_handle& operator=(rp_handle&&) noexcept;
     ~rp_handle();
 
-    replay_position release();
+    replay_position release() noexcept;
 
     operator bool() const {
         return _h && _rp != replay_position();

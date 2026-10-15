@@ -29,10 +29,26 @@ public:
 
     rp_set& operator=(rp_set&&) = default;
 
+    // Makes sure the segment of rp has an entry in the set,
+    // so that a subsequent put() of a replay position in the
+    // same segment does not need to allocate memory.
+    void reserve(const replay_position& rp) {
+        _usage.try_emplace(rp.id, 0);
+    }
+    void reserve(const rp_handle& h) {
+        if (h) {
+            reserve(h.rp());
+        }
+    }
     void put(const replay_position& rp) {
         _usage[rp.id]++;
     }
-    void put(rp_handle && h) {
+    // Takes over the handle's reference on its commitlog segment.
+    // The handle must not be dropped: that would release the segment
+    // while the data it covers is still unflushed.  Hence, failing to
+    // allocate the segment entry terminates the process.
+    // Call reserve() beforehand to make sure this never happens.
+    void put(rp_handle && h) noexcept {
         if (h) {
             put(h.rp());
         }
