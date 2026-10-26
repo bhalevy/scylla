@@ -272,13 +272,16 @@ filter_for_each_quorum(const locator::effective_replication_map& erm,
                        host_id_vector_replica_set live_endpoints,
                        const host_id_vector_replica_set& preferred_endpoints,
                        read_repair_decision read_repair,
-                       std::optional<locator::host_id>* extra) {
+                       std::optional<locator::host_id>* extra,
+                       const locator::token_replication_factor& rf) {
     const auto& topo = erm.get_topology();
     const sstring& local_dc = topo.get_datacenter();
 
-    // How many replicas are still wanted from each datacenter. Only the
-    // datacenters with a live replica matter here: a datacenter the keyspace
-    // replicates to but with no live replica has nothing to select from, and
+    // How many replicas are still wanted from each datacenter: the quorum of
+    // the token's read replicas there, so a datacenter the tablet is only
+    // moving into (RF change in progress) asks for nothing yet. Only the
+    // datacenters with a live replica matter here: a datacenter that holds
+    // replicas but has none live has nothing to select from, and
     // assure_sufficient_live_nodes(), which the caller runs on the result,
     // enumerates the keyspace's datacenters and reports it as unavailable.
     // With a DC_LOCAL read repair decision the local datacenter takes all
@@ -288,7 +291,7 @@ filter_for_each_quorum(const locator::effective_replication_map& erm,
     for (const auto& ep : live_endpoints) {
         const sstring& dc = topo.get_datacenter(ep);
         if (!wanted.contains(dc)) {
-            wanted.emplace(dc, local_quorum_for(erm, dc));
+            wanted.emplace(dc, each_quorum_block_for_dc(erm, rf, dc));
         }
     }
     if (read_repair == read_repair_decision::DC_LOCAL) {
@@ -359,7 +362,7 @@ filter_for_query(consistency_level cl,
     // block_for() degrades to a plain quorum.
     if (cl == consistency_level::EACH_QUORUM
             && erm.get_replication_strategy().get_type() == locator::replication_strategy_type::network_topology) {
-        return filter_for_each_quorum(erm, std::move(live_endpoints), preferred_endpoints, read_repair, extra);
+        return filter_for_each_quorum(erm, std::move(live_endpoints), preferred_endpoints, read_repair, extra, rf);
     }
 
     if (read_repair == read_repair_decision::DC_LOCAL || is_datacenter_local(cl)) {

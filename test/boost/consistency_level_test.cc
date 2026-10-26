@@ -46,6 +46,9 @@ struct each_quorum_fixture {
     semaphore sem{1};
     shared_token_metadata stm;
     static_effective_replication_map_ptr erm;
+    // The replication factor the consistency levels are sized from. With
+    // vnodes it is the schema's, the same for every token.
+    token_replication_factor rf;
 
     each_quorum_fixture()
         : stm([this] () noexcept { return get_units(sem, 1); }, make_config())
@@ -71,6 +74,7 @@ struct each_quorum_fixture {
         replication_strategy_params params(options, std::nullopt, std::nullopt);
         auto rs = abstract_replication_strategy::create_replication_strategy("NetworkTopologyStrategy", params, stm.get()->get_topology());
         erm = calculate_vnode_effective_replication_map(std::move(rs), stm.get()).get();
+        rf = erm->get_read_replicas_with_rf(dht::token(tests::d2t(0.5)), with_datacenters::yes).rf;
     }
 
     ~each_quorum_fixture() {
@@ -92,7 +96,7 @@ struct each_quorum_fixture {
             const host_id_vector_replica_set& preferred = {},
             db::read_repair_decision read_repair = db::read_repair_decision::NONE,
             std::optional<host_id>* extra = nullptr) const {
-        return db::filter_for_each_quorum(*erm, std::move(live), preferred, read_repair, extra);
+        return db::filter_for_each_quorum(*erm, std::move(live), preferred, read_repair, extra, rf);
     }
 
     // The gossiper is only consulted for cache-hit-rate load balancing, which
@@ -121,7 +125,7 @@ SEASTAR_THREAD_TEST_CASE(test_each_quorum_picks_a_quorum_per_datacenter) {
     // speculative retry comes from the local datacenter.
     BOOST_REQUIRE_EQUAL(selected, (host_id_vector_replica_set{f.n1, f.n2, f.m1, f.m2, f.k1}));
     BOOST_REQUIRE(extra == f.n3);
-    BOOST_REQUIRE(db::is_sufficient_live_nodes(db::consistency_level::EACH_QUORUM, *f.erm, selected));
+    BOOST_REQUIRE(db::is_sufficient_live_nodes(db::consistency_level::EACH_QUORUM, *f.erm, selected, f.rf));
 }
 
 SEASTAR_THREAD_TEST_CASE(test_each_quorum_extra_falls_back_to_remote_datacenter) {
@@ -155,8 +159,8 @@ SEASTAR_THREAD_TEST_CASE(test_each_quorum_short_datacenter_returns_what_it_has) 
     auto selected = f.filter({f.n1, f.m1, f.m2, f.m3, f.k1});
 
     BOOST_REQUIRE_EQUAL(selected, (host_id_vector_replica_set{f.n1, f.m1, f.m2, f.k1}));
-    BOOST_REQUIRE(!db::is_sufficient_live_nodes(db::consistency_level::EACH_QUORUM, *f.erm, selected));
-    BOOST_REQUIRE_THROW(db::assure_sufficient_live_nodes(db::consistency_level::EACH_QUORUM, *f.erm, selected), exceptions::unavailable_exception);
+    BOOST_REQUIRE(!db::is_sufficient_live_nodes(db::consistency_level::EACH_QUORUM, *f.erm, selected, f.rf));
+    BOOST_REQUIRE_THROW(db::assure_sufficient_live_nodes(db::consistency_level::EACH_QUORUM, *f.erm, selected, f.rf), exceptions::unavailable_exception);
 }
 
 SEASTAR_THREAD_TEST_CASE(test_each_quorum_datacenter_with_no_live_replica_is_unavailable) {
@@ -171,9 +175,9 @@ SEASTAR_THREAD_TEST_CASE(test_each_quorum_datacenter_with_no_live_replica_is_una
 
     BOOST_REQUIRE_EQUAL(selected, (host_id_vector_replica_set{f.n1, f.n2, f.k1}));
     BOOST_REQUIRE(extra == f.n3);
-    BOOST_REQUIRE(!db::is_sufficient_live_nodes(db::consistency_level::EACH_QUORUM, *f.erm, selected));
+    BOOST_REQUIRE(!db::is_sufficient_live_nodes(db::consistency_level::EACH_QUORUM, *f.erm, selected, f.rf));
     try {
-        db::assure_sufficient_live_nodes(db::consistency_level::EACH_QUORUM, *f.erm, selected);
+        db::assure_sufficient_live_nodes(db::consistency_level::EACH_QUORUM, *f.erm, selected, f.rf);
         BOOST_FAIL("expected unavailable_exception");
     } catch (const exceptions::unavailable_exception& e) {
         BOOST_REQUIRE_EQUAL(e.required, 2);

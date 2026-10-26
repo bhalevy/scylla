@@ -52,7 +52,9 @@ size_t block_for(const locator::effective_replication_map& erm, consistency_leve
 bool is_datacenter_local(consistency_level l);
 
 /// Picks the replicas to contact for an EACH_QUORUM read: a quorum of the
-/// live replicas in each datacenter.
+/// live replicas in each datacenter, each quorum sized by
+/// each_quorum_block_for_dc() from `rf`, the replication factor of the
+/// token's read replica set.
 ///
 /// `live_endpoints` is expected to be sorted by proximity to the coordinator
 /// (see storage_proxy::get_endpoints_for_reading()); the relative order of
@@ -72,7 +74,8 @@ filter_for_each_quorum(const locator::effective_replication_map& erm,
                        host_id_vector_replica_set live_endpoints,
                        const host_id_vector_replica_set& preferred_endpoints,
                        read_repair_decision read_repair,
-                       std::optional<locator::host_id>* extra);
+                       std::optional<locator::host_id>* extra,
+                       const locator::token_replication_factor& rf);
 
 host_id_vector_replica_set
 filter_for_query(consistency_level cl,
