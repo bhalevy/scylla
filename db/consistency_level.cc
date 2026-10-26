@@ -509,8 +509,6 @@ void validate_for_read(consistency_level cl) {
     switch (cl) {
         case consistency_level::ANY:
             throw exceptions::invalid_request_exception("ANY ConsistencyLevel is only supported for writes");
-        case consistency_level::EACH_QUORUM:
-            throw exceptions::invalid_request_exception("EACH_QUORUM ConsistencyLevel is only supported for writes");
         default:
             break;
     }
