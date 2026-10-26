@@ -51,6 +51,29 @@ size_t block_for(const locator::effective_replication_map& erm, consistency_leve
 
 bool is_datacenter_local(consistency_level l);
 
+/// Picks the replicas to contact for an EACH_QUORUM read: a quorum of the
+/// live replicas in each datacenter.
+///
+/// `live_endpoints` is expected to be sorted by proximity to the coordinator
+/// (see storage_proxy::get_endpoints_for_reading()); the relative order of
+/// the endpoints in each datacenter is preserved, so the closest ones are
+/// picked. `preferred_endpoints` (the replicas the previous page was read
+/// from) are taken first in their datacenter.
+///
+/// A datacenter with fewer live replicas than its quorum contributes what
+/// it has; the caller is expected to run assure_sufficient_live_nodes() on
+/// the result, which raises the per-datacenter unavailable_exception.
+///
+/// If `extra` is given, it is set to the closest unselected live replica,
+/// preferring the local datacenter, for speculative retry; it is left
+/// untouched when every live replica was selected.
+host_id_vector_replica_set
+filter_for_each_quorum(const locator::effective_replication_map& erm,
+                       host_id_vector_replica_set live_endpoints,
+                       const host_id_vector_replica_set& preferred_endpoints,
+                       read_repair_decision read_repair,
+                       std::optional<locator::host_id>* extra);
+
 host_id_vector_replica_set
 filter_for_query(consistency_level cl,
                  const locator::effective_replication_map& erm,

@@ -361,6 +361,7 @@ add_scylla_test(combined_tests
     commitlog_cleanup_test.cc
     commitlog_raft_replay_test.cc
     commitlog_test.cc
+    consistency_level_test.cc
     cql_auth_query_test.cc
     cql_functions_test.cc
     cql_query_group_test.cc

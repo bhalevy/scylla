@@ -268,6 +268,76 @@ void assure_sufficient_live_nodes(
 }
 
 host_id_vector_replica_set
+filter_for_each_quorum(const locator::effective_replication_map& erm,
+                       host_id_vector_replica_set live_endpoints,
+                       const host_id_vector_replica_set& preferred_endpoints,
+                       read_repair_decision read_repair,
+                       std::optional<locator::host_id>* extra) {
+    const auto& topo = erm.get_topology();
+    const sstring& local_dc = topo.get_datacenter();
+
+    // How many replicas are still wanted from each datacenter. Only the
+    // datacenters with a live replica matter here: a datacenter the keyspace
+    // replicates to but with no live replica has nothing to select from, and
+    // assure_sufficient_live_nodes(), which the caller runs on the result,
+    // enumerates the keyspace's datacenters and reports it as unavailable.
+    // With a DC_LOCAL read repair decision the local datacenter takes all
+    // of its live replicas, like the bf = max(bf, local_count) rule in
+    // filter_for_query().
+    std::unordered_map<sstring, size_t> wanted;
+    for (const auto& ep : live_endpoints) {
+        const sstring& dc = topo.get_datacenter(ep);
+        if (!wanted.contains(dc)) {
+            wanted.emplace(dc, local_quorum_for(erm, dc));
+        }
+    }
+    if (read_repair == read_repair_decision::DC_LOCAL) {
+        if (auto it = wanted.find(local_dc); it != wanted.end()) {
+            it->second = std::max(it->second, topo.count_local_endpoints(live_endpoints));
+        }
+    }
+
+    // Preselect endpoints based on client preference, as filter_for_query()
+    // does: the preferred ones are considered first in their datacenter.
+    if (!preferred_endpoints.empty()) {
+        std::ranges::stable_partition(live_endpoints, [&preferred_endpoints] (const locator::host_id& ep) {
+            return std::ranges::contains(preferred_endpoints, ep);
+        });
+    }
+
+    host_id_vector_replica_set selected_endpoints;
+    selected_endpoints.reserve(live_endpoints.size());
+    std::optional<locator::host_id> local_extra;
+    std::optional<locator::host_id> remote_extra;
+
+    for (const auto& ep : live_endpoints) {
+        const sstring& dc = topo.get_datacenter(ep);
+        if (auto& n = wanted[dc]; n > 0) {
+            --n;
+            selected_endpoints.push_back(ep);
+        } else if (dc == local_dc) {
+            if (!local_extra) {
+                local_extra = ep;
+            }
+        } else if (!remote_extra) {
+            remote_extra = ep;
+        }
+    }
+
+    if (extra) {
+        // An extra replica can only help the datacenter it lives in; the
+        // local one is where speculation is most useful and cheapest.
+        if (local_extra) {
+            *extra = local_extra;
+        } else if (remote_extra) {
+            *extra = remote_extra;
+        }
+    }
+
+    return selected_endpoints;
+}
+
+host_id_vector_replica_set
 filter_for_query(consistency_level cl,
                  const locator::effective_replication_map& erm,
                  host_id_vector_replica_set live_endpoints,
@@ -281,6 +351,15 @@ filter_for_query(consistency_level cl,
 
     if (read_repair == read_repair_decision::GLOBAL) { // take RRD.GLOBAL out of the way
         return live_endpoints;
+    }
+
+    // EACH_QUORUM needs a quorum in every datacenter, not the closest
+    // block_for() replicas overall. Like the write side, this only applies
+    // to NetworkTopologyStrategy; other strategies fall through, where
+    // block_for() degrades to a plain quorum.
+    if (cl == consistency_level::EACH_QUORUM
+            && erm.get_replication_strategy().get_type() == locator::replication_strategy_type::network_topology) {
+        return filter_for_each_quorum(erm, std::move(live_endpoints), preferred_endpoints, read_repair, extra);
     }
 
     if (read_repair == read_repair_decision::DC_LOCAL || is_datacenter_local(cl)) {
