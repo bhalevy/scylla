@@ -106,7 +106,7 @@ struct each_quorum_fixture {
             const host_id_vector_replica_set& preferred = {},
             db::read_repair_decision read_repair = db::read_repair_decision::NONE,
             std::optional<host_id>* extra = nullptr) const {
-        return db::filter_for_query(cl, *erm, std::move(live), preferred, read_repair, g, extra, nullptr);
+        return db::filter_for_query(cl, *erm, std::move(live), preferred, read_repair, g, extra, nullptr, rf);
     }
 
     host_id_vector_replica_set all_live() const {
@@ -262,8 +262,8 @@ SEASTAR_TEST_CASE(test_local_levels_use_only_the_local_datacenter) {
         auto selected = f.filter_for_query(cl::LOCAL_QUORUM, g, {f.n1, f.m1, f.m2, f.m3, f.k1}, {}, db::read_repair_decision::NONE, &extra);
         BOOST_REQUIRE_EQUAL(selected, (host_id_vector_replica_set{f.n1}));
         BOOST_REQUIRE(!extra);
-        BOOST_REQUIRE(!db::is_sufficient_live_nodes(cl::LOCAL_QUORUM, *f.erm, selected));
-        BOOST_REQUIRE_THROW(db::assure_sufficient_live_nodes(cl::LOCAL_QUORUM, *f.erm, selected), exceptions::unavailable_exception);
+        BOOST_REQUIRE(!db::is_sufficient_live_nodes(cl::LOCAL_QUORUM, *f.erm, selected, f.rf));
+        BOOST_REQUIRE_THROW(db::assure_sufficient_live_nodes(cl::LOCAL_QUORUM, *f.erm, selected, f.rf), exceptions::unavailable_exception);
     });
 }
 
@@ -334,11 +334,11 @@ SEASTAR_THREAD_TEST_CASE(test_sufficient_live_nodes_per_level) {
     using cl = db::consistency_level;
 
     auto sufficient = [&] (cl level, host_id_vector_replica_set live) {
-        bool result = db::is_sufficient_live_nodes(level, *f.erm, live);
+        bool result = db::is_sufficient_live_nodes(level, *f.erm, live, f.rf);
         if (result) {
-            BOOST_REQUIRE_NO_THROW(db::assure_sufficient_live_nodes(level, *f.erm, live));
+            BOOST_REQUIRE_NO_THROW(db::assure_sufficient_live_nodes(level, *f.erm, live, f.rf));
         } else {
-            BOOST_REQUIRE_THROW(db::assure_sufficient_live_nodes(level, *f.erm, live), exceptions::unavailable_exception);
+            BOOST_REQUIRE_THROW(db::assure_sufficient_live_nodes(level, *f.erm, live, f.rf), exceptions::unavailable_exception);
         }
         return result;
     };
@@ -356,7 +356,7 @@ SEASTAR_THREAD_TEST_CASE(test_sufficient_live_nodes_per_level) {
 
     // The exception carries the level's own required/alive counts.
     try {
-        db::assure_sufficient_live_nodes(cl::QUORUM, *f.erm, {f.n1, f.n2, f.n3});
+        db::assure_sufficient_live_nodes(cl::QUORUM, *f.erm, {f.n1, f.n2, f.n3}, f.rf);
         BOOST_FAIL("expected unavailable_exception");
     } catch (const exceptions::unavailable_exception& e) {
         BOOST_REQUIRE_EQUAL(e.required, 4);
