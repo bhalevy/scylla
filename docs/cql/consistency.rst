@@ -76,10 +76,10 @@ The following table describes the different levels you can set.
      - *All* replicas in the cluster
      - Highest
      - Lowest (may cause performance issues)
-   * - EACH_QUORUM (Write Only)
-     - A simple majority in each datacenter.
+   * - EACH_QUORUM
+     - A simple majority in each datacenter. A read at this level sees every write made at EACH_QUORUM, ALL, QUORUM, or LOCAL_QUORUM in any datacenter, and tolerates a minority of the replicas in each datacenter being down.
      - Same across the datacenters.
-     - 
+     -
    * - LOCAL_ONE
      - Same as ONE, but confined to the local datacenter.
      - 
