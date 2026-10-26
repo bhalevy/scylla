@@ -5014,6 +5014,15 @@ class digest_read_resolver : public abstract_read_resolver {
             : digest(std::move(digest)), last_pos(std::move(last_pos))
         { }
     };
+    // Per-datacenter accounting for EACH_QUORUM reads, which need a
+    // quorum of responses from every datacenter rather than block_for
+    // responses overall. Mirrors datacenter_sync_write_response_handler.
+    struct dc_info {
+        size_t need = 0;      // responses required from this datacenter
+        size_t responses = 0;
+        size_t failed = 0;
+        size_t targets = 0;
+    };
 private:
     shared_ptr<storage_proxy> _proxy;
     locator::effective_replication_map_ptr _effective_replication_map_ptr;
@@ -5025,6 +5034,8 @@ private:
     utils::small_vector<digest_and_last_pos, 3> _digest_results;
     api::timestamp_type _last_modified = api::missing_timestamp;
     size_t _target_count_for_cl; // _target_count_for_cl < _targets_count if CL=LOCAL and RRD.GLOBAL
+    // Empty unless CL=EACH_QUORUM on NetworkTopologyStrategy.
+    std::unordered_map<sstring, dc_info> _dc_responses;
     noncopyable_function<void()> _on_disconnect;
 
     void on_timeout() override {
@@ -5040,15 +5051,33 @@ private:
         _on_disconnect = {};
     }
 public:
+    // `targets` are all the replicas the executor may contact, including the
+    // one it may add for speculative retry, like target_count_for_cl counts
+    // them; they are only used for the per-datacenter accounting.
     digest_read_resolver(shared_ptr<storage_proxy> proxy,
             locator::effective_replication_map_ptr ermp,
-            schema_ptr schema, db::consistency_level cl, size_t block_for, size_t target_count_for_cl, storage_proxy::clock_type::time_point timeout)
+            schema_ptr schema, db::consistency_level cl, size_t block_for, size_t target_count_for_cl,
+            const host_id_vector_replica_set& targets, storage_proxy::clock_type::time_point timeout)
         : abstract_read_resolver(std::move(schema), cl, 0, timeout)
         , _proxy(std::move(proxy))
         , _effective_replication_map_ptr(std::move(ermp))
         , _block_for(block_for)
         , _target_count_for_cl(target_count_for_cl)
-    {}
+    {
+        if (cl == db::consistency_level::EACH_QUORUM
+                && _effective_replication_map_ptr->get_replication_strategy().get_type() == locator::replication_strategy_type::network_topology) {
+            const auto& topo = _effective_replication_map_ptr->get_topology();
+            for (const auto& ep : targets) {
+                ++_dc_responses[topo.get_datacenter(ep)].targets;
+            }
+            for (auto& [dc, info] : _dc_responses) {
+                // An executor that waits for every target (block_for ==
+                // targets) needs every target in each datacenter too;
+                // otherwise a quorum of the datacenter is enough.
+                info.need = block_for == targets.size() ? info.targets : db::local_quorum_for(*_effective_replication_map_ptr, dc);
+            }
+        }
+    }
     virtual size_t response_count() const override {
         return _digest_results.size();
     }
@@ -5096,12 +5125,37 @@ private:
         const auto& topo = _effective_replication_map_ptr->get_topology();
         return db::is_datacenter_local(_cl) ? topo.is_me(ep) || (topo.get_datacenter(ep) == topo.get_datacenter()) : true;
     }
+    dc_info* dc_info_for(locator::host_id ep) {
+        if (_dc_responses.empty()) {
+            return nullptr;
+        }
+        auto it = _dc_responses.find(_effective_replication_map_ptr->get_topology().get_datacenter(ep));
+        return it == _dc_responses.end() ? nullptr : &it->second;
+    }
+    bool cl_reached() const {
+        if (_dc_responses.empty()) {
+            return _cl_responses >= _block_for;
+        }
+        return std::ranges::all_of(_dc_responses | std::views::values, [] (const dc_info& dc) { return dc.responses >= dc.need; });
+    }
+    // Every remaining target is needed to reach the CL, so there is nobody
+    // to speculate with when `ep` fails.
+    bool no_spare_targets(const dc_info* dc) const {
+        return dc ? dc->need == dc->targets : _block_for == _target_count_for_cl;
+    }
+    // Too many targets failed for the CL to be reachable.
+    bool cl_unreachable(const dc_info* dc) const {
+        return dc ? dc->need + dc->failed > dc->targets : _block_for + _failed > _target_count_for_cl;
+    }
     void got_response(locator::host_id ep) {
         if (!_cl_reported) {
             if (waiting_for(ep)) {
                 _cl_responses++;
+                if (auto* dc = dc_info_for(ep)) {
+                    dc->responses++;
+                }
             }
-            if (_cl_responses >= _block_for && _data_result) {
+            if (cl_reached() && _data_result) {
                 _cl_reported = true;
                 _cl_promise.set_value(digest_read_result{std::move(_data_result), digests_match()});
             }
@@ -5113,13 +5167,17 @@ private:
         }
     }
     void on_error(locator::host_id ep, error_kind kind) override {
+        auto* dc = dc_info_for(ep);
         if (waiting_for(ep)) {
             _failed++;
+            if (dc) {
+                dc->failed++;
+            }
         }
         if (kind == error_kind::DISCONNECT && _on_disconnect) {
             _on_disconnect();
         }
-        if (kind == error_kind::DISCONNECT && _block_for == _target_count_for_cl) {
+        if (kind == error_kind::DISCONNECT && no_spare_targets(dc)) {
             // if the error is because of a connection disconnect and there are
             // no extra targets in _targets to speculate with, wait for timeout
             // in hope that the client will issue a retry.
@@ -5128,7 +5186,7 @@ private:
             fail_request(read_failure_exception_with_timeout(_schema->ks_name(), _schema->cf_name(), _cl, _cl_responses, _failed, _block_for, _data_result, _timeout.get_timeout()));
             return;
         }
-        if (_block_for + _failed > _target_count_for_cl) {
+        if (cl_unreachable(dc)) {
             switch (kind) {
             case error_kind::RATE_LIMIT:
                 fail_request(exceptions::rate_limit_exception(_schema->ks_name(), _schema->cf_name(), db::operation_type::read, false));
@@ -6017,7 +6075,7 @@ public:
             return make_ready_future<result<foreign_ptr<lw_shared_ptr<query::result>>>>(make_foreign(make_lw_shared(query::result())));
         }
         digest_resolver_ptr digest_resolver = ::make_shared<digest_read_resolver>(_proxy, _effective_replication_map_ptr, _schema, _cl, _block_for,
-                db::is_datacenter_local(_cl) ? _effective_replication_map_ptr->get_topology().count_local_endpoints(_targets): _targets.size(), timeout);
+                db::is_datacenter_local(_cl) ? _effective_replication_map_ptr->get_topology().count_local_endpoints(_targets): _targets.size(), _targets, timeout);
         auto exec = shared_from_this();
 
         make_requests(digest_resolver, timeout);
