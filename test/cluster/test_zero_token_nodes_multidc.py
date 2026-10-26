@@ -94,9 +94,6 @@ async def test_zero_token_nodes_multidc_basic(manager: ScyllaClusterManager, zer
             await dc1_cql.run_async(insert_queries[0])
             await dc2_cql.run_async(insert_queries[1])
 
-            if cl == ConsistencyLevel.EACH_QUORUM:
-                continue  # EACH_QUORUM is supported only for writes
-
             select_queries = [
                 SimpleStatement(
                     f'SELECT * FROM {ks_names[rf]}.tbl WHERE cl = {cl} AND zero_token = {zero_token_coordinator}',

@@ -2744,6 +2744,17 @@ def test_list_parameter_marker(cql, test_keyspace):
         execute_prepared_serial(cql, query, [[100, 200, 300], 1, [20, 21, 22]], [(True, [10, 20, 30])])
 
 
+# EACH_QUORUM used to be a write-only consistency level. A single node is
+# enough to check that reads accept it; what it guarantees in a multi-DC
+# cluster is tested in test/cluster/test_each_quorum_reads.py.
+def test_select_each_quorum_consistency(cql, test_keyspace):
+    with new_test_table(cql, test_keyspace, "a int PRIMARY KEY, b int") as table:
+        cql.execute(SimpleStatement(f"INSERT INTO {table} (a, b) VALUES (1, 2)", consistency_level=ConsistencyLevel.EACH_QUORUM))
+        select = SimpleStatement(f"SELECT b FROM {table} WHERE a = 1", consistency_level=ConsistencyLevel.EACH_QUORUM)
+        assert list(cql.execute(select)) == [(2,)]
+        scan = SimpleStatement(f"SELECT b FROM {table}", consistency_level=ConsistencyLevel.EACH_QUORUM)
+        assert list(cql.execute(scan)) == [(2,)]
+
 def test_select_serial_consistency(cql, test_keyspace):
     with new_test_table(cql, test_keyspace, "a int, b int, primary key (a,b)") as table:
         cql.execute(f"INSERT INTO {table} (a, b) VALUES (1, 1)")
