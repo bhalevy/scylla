@@ -27,6 +27,11 @@ from test.cluster.util import create_new_test_keyspace, new_test_keyspace
 logger = logging.getLogger(__name__)
 
 CONFIG = {'endpoint_snitch': 'GossipingPropertyFileSnitch', 'hinted_handoff_enabled': False}
+# Numeric replication factors (the test framework turns rf_rack_valid_keyspaces on, which
+# stores them as rack lists), so that an RF change takes the default flow: the schema is
+# updated first and the tablets migrate afterwards.
+TABLETS_CONFIG = CONFIG | {'tablets_mode_for_new_keyspaces': 'enabled', 'rf_rack_valid_keyspaces': False}
+MIGRATION_PAUSE = 'migration_streaming_wait'
 
 
 def connect_to(manager: ScyllaClusterManager, server: ServerInfo):
@@ -97,6 +102,7 @@ async def test_each_quorum_read_needs_a_quorum_in_every_dc(manager: ScyllaCluste
         assert [r.v for r in await dc2_cql.run_async(select(1, ConsistencyLevel.QUORUM))] == [10]
 
 
+@pytest.mark.skip_mode(mode='release', reason='error injections are not supported in release mode')
 async def test_each_quorum_read_waits_for_every_dc_quorum(manager: ScyllaClusterManager):
     """
     dc1 at RF=3 and dc2 at RF=2 (block_for = 2 + 2 = 4) and speculative
@@ -189,3 +195,85 @@ async def test_each_quorum_read_on_simple_strategy_is_a_quorum(manager: ScyllaCl
         await cql.run_async(select)
     err = unavailable_error(exc_info.value)
     assert (err.required_replicas, err.alive_replicas) == (2, 1), err
+
+
+async def paused_rf_change(manager: ScyllaClusterManager, cql, servers: list[ServerInfo], alter: str):
+    """Run `alter` with the tablet migrations it starts held in the streaming stage, where
+    reads use the old replica set and writes go to the old and the pending one. Returns the
+    ALTER's future, to be awaited after release_rf_change(): the rack-list 0->N flow blocks the
+    statement until the migrations finish."""
+    for s in servers:
+        await manager.api.enable_injection(s.ip_addr, MIGRATION_PAUSE, one_shot=False)
+    alter_future = cql.run_async(alter, timeout=600)
+
+    async def entered(server: ServerInfo) -> ServerInfo:
+        await manager.api.wait_for_injection_enter(server.ip_addr, MIGRATION_PAUSE)
+        return server
+    tasks = [asyncio.create_task(entered(s)) for s in servers]
+    done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+    for t in pending:
+        t.cancel()
+    logger.info(f"tablet migration held in the streaming stage on {done.pop().result().ip_addr}")
+    return alter_future
+
+
+async def release_rf_change(manager: ScyllaClusterManager, servers: list[ServerInfo], alter_future) -> None:
+    for s in servers:
+        await manager.api.message_injection(s.ip_addr, MIGRATION_PAUSE)
+        await manager.api.disable_injection(s.ip_addr, MIGRATION_PAUSE)
+    await alter_future
+
+
+@pytest.mark.skip_mode(mode='release', reason='error injections are not supported in release mode')
+async def test_each_quorum_read_ignores_a_dc_being_added(manager: ScyllaClusterManager):
+    """
+    Adding dc2 to a tablets keyspace (RF 0 -> 1) commits the new schema at
+    once and migrates the tablets afterwards; until write_both_read_new the
+    tablet has no read replica in dc2, and the data is only on the old set.
+    An EACH_QUORUM read while the migration is held in the streaming stage
+    must not wait for dc2 and returns the data from the old replica set.
+    Sized from the schema RF, dc2 would need a replica it does not have yet,
+    and the read would be Unavailable for the whole migration.
+    """
+    dc1 = await manager.servers_add(1, config=TABLETS_CONFIG, auto_rack_dc='dc1')
+    dc2 = await manager.servers_add(1, config=TABLETS_CONFIG, auto_rack_dc='dc2')
+    cql = connect_to(manager, dc1[0])
+    ks = await create_new_test_keyspace(cql, "WITH replication = {'class': 'NetworkTopologyStrategy', 'dc1': 1} AND tablets = {'initial': 1}")
+    await cql.run_async(f"CREATE TABLE {ks}.tbl (pk int PRIMARY KEY, v int) WITH speculative_retry = 'NONE'")
+    await cql.run_async(SimpleStatement(f"INSERT INTO {ks}.tbl (pk, v) VALUES (1, 10)", consistency_level=ConsistencyLevel.ALL))
+    select = SimpleStatement(f"SELECT v FROM {ks}.tbl WHERE pk = 1", consistency_level=ConsistencyLevel.EACH_QUORUM)
+
+    alter = await paused_rf_change(manager, cql, dc1 + dc2,
+                                   f"ALTER KEYSPACE {ks} WITH replication = {{'class': 'NetworkTopologyStrategy', 'dc1': 1, 'dc2': 1}}")
+    assert [r.v for r in await cql.run_async(select)] == [10]
+
+    logger.info("With the migration complete, dc2 takes part in the read")
+    await release_rf_change(manager, dc1 + dc2, alter)
+    assert [r.v for r in await cql.run_async(select)] == [10]
+
+
+@pytest.mark.skip_mode(mode='release', reason='error injections are not supported in release mode')
+async def test_each_quorum_read_during_rf_increase(manager: ScyllaClusterManager):
+    """
+    dc1 goes from RF 1 to 2 while dc2 stays at RF 1. The schema says 2 for
+    dc1 as soon as the ALTER is applied, but until write_both_read_new the
+    tablet is read from its one old dc1 replica. An EACH_QUORUM read
+    coordinated in dc2 must ask dc1 for a quorum of that one replica and
+    succeed; sized from the schema RF it would need 2 of 1 and be
+    Unavailable, as LOCAL_QUORUM and QUORUM were (SCYLLADB-1228).
+    """
+    dc1 = await manager.servers_add(2, config=TABLETS_CONFIG, auto_rack_dc='dc1')
+    dc2 = await manager.servers_add(1, config=TABLETS_CONFIG, auto_rack_dc='dc2')
+    cql = connect_to(manager, dc2[0])
+    ks = await create_new_test_keyspace(cql, "WITH replication = {'class': 'NetworkTopologyStrategy', 'dc1': 1, 'dc2': 1} AND tablets = {'initial': 1}")
+    await cql.run_async(f"CREATE TABLE {ks}.tbl (pk int PRIMARY KEY, v int) WITH speculative_retry = 'NONE'")
+    await cql.run_async(SimpleStatement(f"INSERT INTO {ks}.tbl (pk, v) VALUES (1, 10)", consistency_level=ConsistencyLevel.ALL))
+    select = SimpleStatement(f"SELECT v FROM {ks}.tbl WHERE pk = 1", consistency_level=ConsistencyLevel.EACH_QUORUM)
+
+    alter = await paused_rf_change(manager, cql, dc1 + dc2,
+                                   f"ALTER KEYSPACE {ks} WITH replication = {{'class': 'NetworkTopologyStrategy', 'dc1': 2, 'dc2': 1}}")
+    assert [r.v for r in await cql.run_async(select)] == [10]
+
+    logger.info("With the migration complete, dc1 is read at a quorum of two")
+    await release_rf_change(manager, dc1 + dc2, alter)
+    assert [r.v for r in await cql.run_async(select)] == [10]
