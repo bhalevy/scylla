@@ -34,6 +34,7 @@ accounting:
 | Function | Per-DC today? | Notes |
 |---|---|---|
 | `db::block_for()` | sum over DCs | `block_for_each_quorum()` returns the sum of per-DC quorums; falls back to `quorum_for()` for non-NTS. |
+| `db::each_quorum_block_for_dc()` | yes | One DC's quorum, from the token's replica set (see [Replication factor changes](#replication-factor-changes-tablets)). |
 | `db::assure_sufficient_live_nodes()` | yes | Throws `unavailable_exception(cl, dc_block_for, dc_live)` for the first DC that lacks a quorum. |
 | `db::is_sufficient_live_nodes()` | yes | Used by the range-scan merger. |
 | `db::filter_for_query()` | **no** | Takes the first `block_for` live endpoints by proximity. |
@@ -74,12 +75,13 @@ other strategies keep falling through to the scalar path, where
 first if it is a replica. The new branch:
 
 1. Groups the live endpoints by DC, preserving their relative order.
-2. Takes `local_quorum_for(erm, dc)` endpoints from each DC. If a DC
-   has fewer live replicas than that, it takes what is there and does
-   **not** throw: the caller's `assure_sufficient_live_nodes()` is the
-   single place that raises `Unavailable`, with the per-DC
-   `required`/`alive` numbers the drivers' downgrading retry policies
-   expect.
+2. Takes `each_quorum_block_for_dc(erm, rf, dc)` endpoints from each
+   DC, where `rf` is the `token_replication_factor` of the token's
+   read replica set (see below). If a DC has fewer live replicas than
+   that, it takes what is there and does **not** throw: the caller's
+   `assure_sufficient_live_nodes()` is the single place that raises
+   `Unavailable`, with the per-DC `required`/`alive` numbers the
+   drivers' downgrading retry policies expect.
 3. Applies `preferred_endpoints` (the replicas the previous page was
    served from) per DC, so paging stays sticky in each DC as it does
    for the other CLs.
@@ -101,23 +103,76 @@ all of its live replicas instead of a quorum, matching the
 non-`NONE` decision any more (it is only carried in old paging
 states), so this is for compatibility, not a feature.
 
-RF=0 DCs (including DCs of zero-token nodes) have `local_quorum_for()`
-= 0 and select nothing. A DC with RF>0 and no live replicas selects
-nothing and makes `assure_sufficient_live_nodes()` throw — the same
-rule writes follow.
+RF=0 DCs (including DCs of zero-token nodes) have a quota of 0 and
+select nothing, and so does a DC the token has no read replica in yet
+(see below). A DC that holds replicas but has none live selects nothing
+and makes `assure_sufficient_live_nodes()` throw — the same rule writes
+follow.
+
+### Replication factor changes (tablets)
+
+With tablets, a replication factor change migrates the tablets one by
+one (`rebuild` transitions, one replica per DC per `ALTER`). In the
+default flow (`topology_coordinator::keyspace_rf_change`,
+`default_rf_change`) the new strategy options are committed in the
+same group0 batch that creates the transitions, so the *schema* RF is
+the new one from the first instant, while reads use the old replica
+set until the `write_both_read_new` stage and writes go to the old set
+plus the pending replica. Sizing a consistency level from the schema
+RF is therefore wrong during the change — for every per-DC level, not
+just `EACH_QUORUM`: with RF 1→2 in a DC, `LOCAL_QUORUM`, `QUORUM`,
+`EACH_QUORUM` and `ALL` reads and writes are all `Unavailable` until
+the migration completes (verified by pausing a migration in the
+`streaming` stage with the `migration_streaming_wait` injection;
+tracked as SCYLLADB-1228 / scylladb/scylladb#20625, with the write-side
+double count of the pending replica as SCYLLADB-4856).
+
+scylladb/scylladb#31903 fixes this generally and this series builds on
+it: `effective_replication_map::get_read_replicas_with_rf()` returns the
+read replica set together with a `locator::token_replication_factor`
+counted from that set (per DC for the levels that need it; the schema
+RF for vnodes), and `db::block_for()`, `filter_for_query()`,
+`is_sufficient_live_nodes()` and `assure_sufficient_live_nodes()` take
+it. `each_quorum_block_for_dc(erm, rf, dc)` is the quorum of the
+token's read replicas in `dc`, and 0 for a DC the schema does not list
+or lists at RF 0. For `EACH_QUORUM` reads this gives exactly the
+behaviour an RF change needs without any special casing:
+
+* a DC being added (RF 0→N) has no read replica until
+  `write_both_read_new`, so its quota is 0 and the read ignores it —
+  the data is still only on the old replica set, which is where it is
+  read from, while writes already go to both;
+* a DC going k→k+1 asks for a quorum of its k read replicas while
+  reads are on the old set, and of k+1 once they move to the new one;
+* a DC removed from the schema whose tablets still hold a replica gets
+  no quota; that replica is never selected (it may serve as the
+  speculative extra).
+
+The rack-list-only `multi_rf_change` flow (0→N changes between
+rack-list strategies) keeps the old strategy options, with the new
+ones in `next_strategy_options`, until the migrations finish, and its
+`ALTER KEYSPACE` blocks until then; there the schema RF is the old one
+throughout and both sizings agree.
+
+Vnodes have no transitional replica sets: an RF change takes effect
+immediately and the operator repairs afterwards, so `rf` is the
+schema RF and the selection reduces to the per-DC configured quorum.
 
 ### Response accounting: `digest_read_resolver`
 
 Mirror `datacenter_sync_write_response_handler`. Today the resolver is
 constructed from counts only (`block_for`, `target_count_for_cl`); it
 needs the executor's `_targets` vector as well, so that it can group
-them by DC. That vector is passed **as it is at construction time, the
-speculative extra included** — the same convention as today's
-`_target_count_for_cl`, which is `_targets.size()` before the
-speculating executor has sent to its last target, so the failure
-predicate already treats the extra as available. Counting only
-already-sent targets would make `need + failed > targets` fire too
-early in the DC that holds the extra.
+them by DC, and the token's `token_replication_factor`, which the
+executor keeps as `_rf` (`get_read_executor()` and the range-scan path
+get it from `get_endpoints_for_reading()`). The targets are passed **as
+they are at construction time, the speculative extra included** — the
+same convention as today's `_target_count_for_cl`, which is
+`_targets.size()` before the speculating executor has sent to its last
+target, so the failure predicate already treats the extra as
+available. Counting only already-sent targets would make
+`need + failed > targets` fire too early in the DC that holds the
+extra.
 
 For `EACH_QUORUM` on NTS the resolver keeps a per-DC record:
 
@@ -131,12 +186,13 @@ struct dc_info {
 std::unordered_map<sstring, dc_info> _dc_responses;
 ```
 
-* `need` is `local_quorum_for(erm, dc)`, except when the executor has
-  raised `_block_for` to `_targets.size()` (`never_speculating_read_executor`
-  does this: every target is required). Then `need = targets`, so that
-  executor keeps its current "wait for everyone" semantics. The
-  resolver detects this from `block_for == targets.size()` on its own
-  arguments; no new flag is added to the executor interface.
+* `need` is `each_quorum_block_for_dc(erm, rf, dc)`, except when the
+  executor has raised `_block_for` to `_targets.size()`
+  (`never_speculating_read_executor` does this: every target is
+  required). Then `need = targets`, so that executor keeps its current
+  "wait for everyone" semantics. The resolver detects this from
+  `block_for == targets.size()` on its own arguments; no new flag is
+  added to the executor interface.
 * `waiting_for(ep)` is `true` for every target (it is `false` only for
   remote replicas under `LOCAL_*` with a global read-repair decision).
 * CL is reached when every DC has `responses >= need` and a data
@@ -268,6 +324,13 @@ needs to distinguish per-DC from scalar logic it uses RF=3 in each DC
     preserved, short DC returns what it has, preferred endpoints and
     `extra` honored per DC). It lands with patch 1 so that patch
     carries its own test.
+11. **RF change in progress** (tablets). Pause a migration in the
+    `streaming` stage (`migration_streaming_wait`) and read at
+    `EACH_QUORUM`: adding a DC (RF 0→1) must not involve the new DC —
+    the read succeeds and returns the data from the old replica set;
+    raising a DC from `['rack1']` to `['rack1', 'rack2']` must ask that
+    DC for a quorum of its one old replica, so the read succeeds while
+    the schema RF already says 2.
 
 `test/cqlpy/strong_consistency/test_strong_consistency.py` keeps
 `EACH_QUORUM` in its refused list; see above.
@@ -288,6 +351,9 @@ needs to distinguish per-DC from scalar logic it uses RF=3 in each DC
   levels.
 
 ## Patch series
+
+The series is based on scylladb/scylladb#31903 (consistency levels
+sized from the token's replica set) and must not be merged before it.
 
 Each patch builds and passes tests on its own. Patches 1 and 2 are
 unreachable until patch 3 removes the rejection, so no `xfail` is
