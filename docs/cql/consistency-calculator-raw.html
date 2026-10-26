@@ -17,10 +17,13 @@
     <div class="calculator">
         <form class="form-inline" action="">
             <div class="input">
-                <label for="nodes">Nodes</label><input style="width: 8ch;" type="number" min="1" value="3" name="nodes" id="nodes">
+                <label for="datacenters">Datacenters</label><input style="width: 8ch;" type="number" min="1" value="1" name="datacenters" id="datacenters">
             </div>
             <div class="input">
-                <label for="replication-factor">Replication factor</label><input style="width: 8ch;" min="1" value="3" type="number" name="replication-factor" id="replication-factor">
+                <label for="nodes">Nodes per datacenter</label><input style="width: 8ch;" type="number" min="1" value="3" name="nodes" id="nodes">
+            </div>
+            <div class="input">
+                <label for="replication-factor">Replication factor per datacenter</label><input style="width: 8ch;" min="1" value="3" type="number" name="replication-factor" id="replication-factor">
             </div>
             <div class="input">
                 <label for="read-consistency">Read consistency level</label><select name="read-consistency" id="read-consistency">
@@ -29,6 +32,9 @@
                     <option value="THREE">THREE</option>
                     <option value="QUORUM">QUORUM</option>
                     <option value="ALL">ALL</option>
+                    <option value="LOCAL_ONE">LOCAL_ONE</option>
+                    <option value="LOCAL_QUORUM">LOCAL_QUORUM</option>
+                    <option value="EACH_QUORUM">EACH_QUORUM</option>
                 </select>
             </div>
             <div class="input">
@@ -38,6 +44,9 @@
                     <option value="THREE">THREE</option>
                     <option value="QUORUM">QUORUM</option>
                     <option value="ALL">ALL</option>
+                    <option value="LOCAL_ONE">LOCAL_ONE</option>
+                    <option value="LOCAL_QUORUM">LOCAL_QUORUM</option>
+                    <option value="EACH_QUORUM">EACH_QUORUM</option>
                 </select>
             </div>
         </form>
@@ -47,53 +56,108 @@
     <br/>
 
     <script>
-        function consistency(c, rf) {
+        function quorum(rf) {
+            return Math.floor(rf / 2) + 1;
+        }
+
+        // Describes which replicas a consistency level needs:
+        //  - "global": `count` replicas anywhere in the cluster
+        //  - "local":  `count` replicas in the coordinator's datacenter
+        //  - "each":   `count` replicas in every datacenter
+        function consistency(c, datacenters, rf) {
             switch(c) {
                 case "ONE":
-                    return 1;
+                    return { scope: "global", count: 1 };
                 case "TWO":
-                    return 2;
+                    return { scope: "global", count: 2 };
                 case "THREE":
-                    return 3;
+                    return { scope: "global", count: 3 };
                 case "QUORUM":
-                    return Math.floor(rf / 2) + 1;
+                    return { scope: "global", count: quorum(datacenters * rf) };
                 case "ALL":
-                    return rf;
+                    return { scope: "global", count: datacenters * rf };
+                case "LOCAL_ONE":
+                    return { scope: "local", count: 1 };
+                case "LOCAL_QUORUM":
+                    return { scope: "local", count: quorum(rf) };
+                case "EACH_QUORUM":
+                    return { scope: "each", count: quorum(rf) };
+            }
+        }
+
+        // The largest number of replicas a level can be satisfied by,
+        // used to reject levels that need more replicas than exist.
+        function maxReplicas(level, datacenters, rf) {
+            return level.scope === "global" ? datacenters * rf : rf;
+        }
+
+        // A read is consistent when every set of replicas that can satisfy the
+        // write level intersects every set that can satisfy the read level, so
+        // the read is guaranteed to reach a replica that has the write.
+        function overlaps(a, b, datacenters, rf) {
+            const total = datacenters * rf;
+            // Order the two so that `a` has the wider scope: global > each > local.
+            const rank = { global: 2, each: 1, local: 0 };
+            if (rank[a.scope] < rank[b.scope]) {
+                [a, b] = [b, a];
+            }
+            if (a.scope === "global") {
+                // `b` occupies b.count replicas (or b.count in every datacenter);
+                // the global set can avoid them only if enough others are left.
+                const occupied = b.scope === "each" ? b.count * datacenters : b.count;
+                return a.count + occupied > total;
+            }
+            if (a.scope === "each") {
+                // Both are confined to a datacenter: `each` is present in b's.
+                return a.count + b.count > rf;
+            }
+            // Both local: with more than one datacenter they may be in
+            // different datacenters and never meet.
+            return datacenters === 1 && a.count + b.count > rf;
+        }
+
+        function tolerated(level, datacenters, rf) {
+            switch(level.scope) {
+                case "global":
+                    return `${datacenters * rf - level.count} nodes in the cluster`;
+                case "local":
+                    return `${rf - level.count} nodes in the coordinator's datacenter, and any number in the others`;
+                case "each":
+                    return `${rf - level.count} nodes in each datacenter`;
             }
         }
 
         function calculate() {
+            const datacenters = Number.parseInt(document.querySelector("#datacenters").value);
             const nodes = Number.parseInt(document.querySelector("#nodes").value);
-            const readConsistency = document.querySelector("#read-consistency").value;
-            const writeConsistency = document.querySelector("#write-consistency").value;
             const replicationFactor = Number.parseInt(document.querySelector("#replication-factor").value);
-            const writeConsistencyN = consistency(writeConsistency, replicationFactor);
-            const readConsistencyN = consistency(readConsistency, replicationFactor);
+            const readConsistency = consistency(document.querySelector("#read-consistency").value, datacenters, replicationFactor);
+            const writeConsistency = consistency(document.querySelector("#write-consistency").value, datacenters, replicationFactor);
 
-            
             const resultsDiv = document.querySelector(".results");
-            
+
             if (nodes < replicationFactor) {
-                resultsDiv.textContent = "Replication factor must be smaller or equal to the number of nodes";
+                resultsDiv.textContent = "Replication factor must be smaller or equal to the number of nodes in a datacenter";
                 resultsDiv.classList.add("warning", "admonition");
-            } else if (writeConsistencyN > replicationFactor || readConsistencyN > replicationFactor) {
+            } else if (writeConsistency.count > maxReplicas(writeConsistency, datacenters, replicationFactor)
+                    || readConsistency.count > maxReplicas(readConsistency, datacenters, replicationFactor)) {
                 resultsDiv.textContent = "Consistency level must be lower than replication factor";
                 resultsDiv.classList.add("warning", "admonition");
             } else {
                 const msg = [];
                 msg.push("<ul>")
-                if (writeConsistencyN + readConsistencyN > replicationFactor) {
+                if (overlaps(writeConsistency, readConsistency, datacenters, replicationFactor)) {
                     msg.push("<li>Your reads are <b>consistent</b></li>");
                 } else {
                     msg.push("<li>Your reads are <b>eventually consistent</b></li>");
                 }
-                msg.push(`<li>You can lose ${replicationFactor - readConsistencyN} nodes without failing reads</li>`);
-                msg.push(`<li>You can lose ${writeConsistencyN - 1} nodes without data loss</li>`);
+                msg.push(`<li>You can lose ${tolerated(readConsistency, datacenters, replicationFactor)} without failing reads</li>`);
+                msg.push(`<li>You can lose ${tolerated(writeConsistency, datacenters, replicationFactor)} without failing writes</li>`);
                 msg.push(`<li>Each node holds ~ ${Math.round(replicationFactor / nodes * 100)}% of your data</li>`);
                 msg.push("</ul>")
-                
+
                 resultsDiv.classList.remove("warning", "admonition");
-                resultsDiv.innerHTML = msg.join("<br/>"); 
+                resultsDiv.innerHTML = msg.join("<br/>");
             }
         }
 
