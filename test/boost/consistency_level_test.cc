@@ -11,6 +11,7 @@
 #include "db/consistency_level.hh"
 #include "db/read_repair_decision.hh"
 #include "dht/token.hh"
+#include "gms/gossiper.hh"
 #include "inet_address_vectors.hh"
 #include "locator/abstract_replication_strategy.hh"
 #include "locator/host_id.hh"
@@ -18,10 +19,12 @@
 #include "locator/token_metadata.hh"
 #include "locator/types.hh"
 #undef SEASTAR_TESTING_MAIN
+#include <seastar/testing/test_case.hh>
 #include <seastar/testing/thread_test_case.hh>
 #include <seastar/core/coroutine.hh>
 #include <seastar/core/semaphore.hh>
 #include <seastar/util/defer.hh>
+#include "test/lib/cql_test_env.hh"
 #include "test/lib/key_utils.hh"
 
 using namespace locator;
@@ -90,6 +93,20 @@ struct each_quorum_fixture {
             db::read_repair_decision read_repair = db::read_repair_decision::NONE,
             std::optional<host_id>* extra = nullptr) const {
         return db::filter_for_each_quorum(*erm, std::move(live), preferred, read_repair, extra);
+    }
+
+    // The gossiper is only consulted for cache-hit-rate load balancing, which
+    // needs a table; none is passed here, so any gossiper will do.
+    host_id_vector_replica_set filter_for_query(db::consistency_level cl, const gms::gossiper& g,
+            host_id_vector_replica_set live,
+            const host_id_vector_replica_set& preferred = {},
+            db::read_repair_decision read_repair = db::read_repair_decision::NONE,
+            std::optional<host_id>* extra = nullptr) const {
+        return db::filter_for_query(cl, *erm, std::move(live), preferred, read_repair, g, extra, nullptr);
+    }
+
+    host_id_vector_replica_set all_live() const {
+        return {n1, n2, n3, m1, m2, m3, k1};
     }
 };
 
@@ -187,6 +204,160 @@ SEASTAR_THREAD_TEST_CASE(test_each_quorum_dc_local_read_repair_takes_all_local_r
 
     BOOST_REQUIRE_EQUAL(selected, (host_id_vector_replica_set{f.n1, f.n2, f.n3, f.m1, f.m2, f.k1}));
     BOOST_REQUIRE(extra == f.m3);
+}
+
+// The cases below pin the selection of the pre-existing consistency levels.
+// The total replication factor is 7, so QUORUM needs 4; the local
+// datacenter's is 3, so LOCAL_QUORUM needs 2.
+
+SEASTAR_TEST_CASE(test_cluster_wide_levels_take_the_closest_replicas) {
+    return do_with_cql_env_thread([] (cql_test_env& env) {
+        each_quorum_fixture f;
+        const auto& g = env.gossiper().local();
+        using cl = db::consistency_level;
+
+        auto check = [&] (cl level, host_id_vector_replica_set expected, std::optional<host_id> expected_extra) {
+            std::optional<host_id> extra;
+            BOOST_REQUIRE_EQUAL(f.filter_for_query(level, g, f.all_live(), {}, db::read_repair_decision::NONE, &extra), expected);
+            BOOST_REQUIRE(extra == expected_extra);
+        };
+
+        // block_for() replicas by proximity; the next one is the extra for speculative retry.
+        check(cl::ONE, {f.n1}, f.n2);
+        check(cl::TWO, {f.n1, f.n2}, f.n3);
+        check(cl::THREE, {f.n1, f.n2, f.n3}, f.m1);
+        check(cl::QUORUM, {f.n1, f.n2, f.n3, f.m1}, f.m2);
+        // Every replica is needed: nothing is left over to speculate with.
+        check(cl::ALL, f.all_live(), std::nullopt);
+
+        // The same when exactly block_for() replicas are alive.
+        std::optional<host_id> extra;
+        BOOST_REQUIRE_EQUAL(f.filter_for_query(cl::QUORUM, g, {f.n1, f.n2, f.m1, f.k1}, {}, db::read_repair_decision::NONE, &extra),
+                (host_id_vector_replica_set{f.n1, f.n2, f.m1, f.k1}));
+        BOOST_REQUIRE(!extra);
+    });
+}
+
+SEASTAR_TEST_CASE(test_local_levels_use_only_the_local_datacenter) {
+    return do_with_cql_env_thread([] (cql_test_env& env) {
+        each_quorum_fixture f;
+        const auto& g = env.gossiper().local();
+        using cl = db::consistency_level;
+        std::optional<host_id> extra;
+
+        BOOST_REQUIRE_EQUAL(f.filter_for_query(cl::LOCAL_ONE, g, f.all_live(), {}, db::read_repair_decision::NONE, &extra), (host_id_vector_replica_set{f.n1}));
+        BOOST_REQUIRE(extra == f.n2);
+
+        extra.reset();
+        BOOST_REQUIRE_EQUAL(f.filter_for_query(cl::LOCAL_QUORUM, g, f.all_live(), {}, db::read_repair_decision::NONE, &extra), (host_id_vector_replica_set{f.n1, f.n2}));
+        BOOST_REQUIRE(extra == f.n3);
+
+        // Remote replicas are never used, even when the local datacenter
+        // falls short; that is reported by assure_sufficient_live_nodes().
+        extra.reset();
+        auto selected = f.filter_for_query(cl::LOCAL_QUORUM, g, {f.n1, f.m1, f.m2, f.m3, f.k1}, {}, db::read_repair_decision::NONE, &extra);
+        BOOST_REQUIRE_EQUAL(selected, (host_id_vector_replica_set{f.n1}));
+        BOOST_REQUIRE(!extra);
+        BOOST_REQUIRE(!db::is_sufficient_live_nodes(cl::LOCAL_QUORUM, *f.erm, selected));
+        BOOST_REQUIRE_THROW(db::assure_sufficient_live_nodes(cl::LOCAL_QUORUM, *f.erm, selected), exceptions::unavailable_exception);
+    });
+}
+
+SEASTAR_TEST_CASE(test_preferred_endpoints_are_taken_first) {
+    return do_with_cql_env_thread([] (cql_test_env& env) {
+        each_quorum_fixture f;
+        const auto& g = env.gossiper().local();
+        using cl = db::consistency_level;
+        std::optional<host_id> extra;
+
+        // Fewer preferred replicas than needed: they come first, the rest is
+        // filled by proximity and the extra is the next closest.
+        BOOST_REQUIRE_EQUAL(f.filter_for_query(cl::QUORUM, g, f.all_live(), {f.m3, f.k1}, db::read_repair_decision::NONE, &extra),
+                (host_id_vector_replica_set{f.m3, f.k1, f.n1, f.n2}));
+        BOOST_REQUIRE(extra == f.n3);
+
+        // More preferred replicas than needed: the first block_for() of them,
+        // and the next preferred one is the extra.
+        extra.reset();
+        BOOST_REQUIRE_EQUAL(f.filter_for_query(cl::QUORUM, g, f.all_live(), {f.n2, f.n3, f.m1, f.m2, f.k1}, db::read_repair_decision::NONE, &extra),
+                (host_id_vector_replica_set{f.n2, f.n3, f.m1, f.m2}));
+        BOOST_REQUIRE(extra == f.k1);
+
+        // Exactly as many as needed: the extra is the closest non-preferred one.
+        extra.reset();
+        BOOST_REQUIRE_EQUAL(f.filter_for_query(cl::QUORUM, g, f.all_live(), {f.n2, f.n3, f.m1, f.m2}, db::read_repair_decision::NONE, &extra),
+                (host_id_vector_replica_set{f.n2, f.n3, f.m1, f.m2}));
+        BOOST_REQUIRE(extra == f.n1);
+
+        // A preferred remote replica is ignored by a local level.
+        extra.reset();
+        BOOST_REQUIRE_EQUAL(f.filter_for_query(cl::LOCAL_QUORUM, g, f.all_live(), {f.n3, f.m3}, db::read_repair_decision::NONE, &extra),
+                (host_id_vector_replica_set{f.n3, f.n1}));
+        BOOST_REQUIRE(extra == f.n2);
+    });
+}
+
+SEASTAR_TEST_CASE(test_read_repair_decision_widens_the_selection) {
+    return do_with_cql_env_thread([] (cql_test_env& env) {
+        each_quorum_fixture f;
+        const auto& g = env.gossiper().local();
+        using cl = db::consistency_level;
+        std::optional<host_id> extra;
+
+        // GLOBAL: every live replica, whatever the level.
+        BOOST_REQUIRE_EQUAL(f.filter_for_query(cl::ONE, g, f.all_live(), {}, db::read_repair_decision::GLOBAL, &extra), f.all_live());
+        BOOST_REQUIRE(!extra);
+
+        // DC_LOCAL: at least every live replica of the local datacenter.
+        BOOST_REQUIRE_EQUAL(f.filter_for_query(cl::ONE, g, f.all_live(), {}, db::read_repair_decision::DC_LOCAL, &extra),
+                (host_id_vector_replica_set{f.n1, f.n2, f.n3}));
+        BOOST_REQUIRE(extra == f.m1);
+
+        extra.reset();
+        BOOST_REQUIRE_EQUAL(f.filter_for_query(cl::QUORUM, g, f.all_live(), {}, db::read_repair_decision::DC_LOCAL, &extra),
+                (host_id_vector_replica_set{f.n1, f.n2, f.n3, f.m1}));
+        BOOST_REQUIRE(extra == f.m2);
+
+        extra.reset();
+        BOOST_REQUIRE_EQUAL(f.filter_for_query(cl::LOCAL_QUORUM, g, f.all_live(), {}, db::read_repair_decision::DC_LOCAL, &extra),
+                (host_id_vector_replica_set{f.n1, f.n2, f.n3}));
+        BOOST_REQUIRE(!extra);
+    });
+}
+
+SEASTAR_THREAD_TEST_CASE(test_sufficient_live_nodes_per_level) {
+    each_quorum_fixture f;
+    using cl = db::consistency_level;
+
+    auto sufficient = [&] (cl level, host_id_vector_replica_set live) {
+        bool result = db::is_sufficient_live_nodes(level, *f.erm, live);
+        if (result) {
+            BOOST_REQUIRE_NO_THROW(db::assure_sufficient_live_nodes(level, *f.erm, live));
+        } else {
+            BOOST_REQUIRE_THROW(db::assure_sufficient_live_nodes(level, *f.erm, live), exceptions::unavailable_exception);
+        }
+        return result;
+    };
+
+    BOOST_REQUIRE(sufficient(cl::ONE, {f.k1}));
+    BOOST_REQUIRE(!sufficient(cl::ONE, {}));
+    BOOST_REQUIRE(sufficient(cl::LOCAL_ONE, {f.n3}));
+    BOOST_REQUIRE(!sufficient(cl::LOCAL_ONE, {f.k1}));
+    BOOST_REQUIRE(sufficient(cl::QUORUM, {f.n1, f.m1, f.m2, f.k1}));
+    BOOST_REQUIRE(!sufficient(cl::QUORUM, {f.n1, f.n2, f.n3}));
+    BOOST_REQUIRE(sufficient(cl::LOCAL_QUORUM, {f.n1, f.n2}));
+    BOOST_REQUIRE(!sufficient(cl::LOCAL_QUORUM, {f.n1, f.m1, f.m2, f.m3, f.k1}));
+    BOOST_REQUIRE(sufficient(cl::ALL, f.all_live()));
+    BOOST_REQUIRE(!sufficient(cl::ALL, {f.n1, f.n2, f.n3, f.m1, f.m2, f.m3}));
+
+    // The exception carries the level's own required/alive counts.
+    try {
+        db::assure_sufficient_live_nodes(cl::QUORUM, *f.erm, {f.n1, f.n2, f.n3});
+        BOOST_FAIL("expected unavailable_exception");
+    } catch (const exceptions::unavailable_exception& e) {
+        BOOST_REQUIRE_EQUAL(e.required, 4);
+        BOOST_REQUIRE_EQUAL(e.alive, 3);
+    }
 }
 
 BOOST_AUTO_TEST_SUITE_END()
