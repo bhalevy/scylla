@@ -97,6 +97,10 @@ the 1.16 requests per read PR #32563 measured uncached, so treat it as an upper 
 The envelope across all three scenarios is therefore +87% to −13%, set almost entirely by the
 read path.
 
+Setting the spreadsheet's read rate, working set and both hit rates to zero reproduces the
+write-only row there too, at 4 nodes and $50,552, so the two stay verified against each other
+for this case as well.
+
 ## Does the file-based design earn its place?
 
 At this scenario, no, and two errors of mine are why it once looked necessary. Assuming
