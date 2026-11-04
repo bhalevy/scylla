@@ -268,6 +268,7 @@ class Result:
     cost_per_logical_gb: float
 
     baseline_nodes: int
+    baseline_binding: str
     baseline_cost: float
     savings: float
     savings_fraction: float
@@ -370,7 +371,7 @@ def size_cluster(p: Params) -> Result:
     cost_get = gets_per_year / 1e6 * p.usd_per_m_get
     cost_total = cost_instances + cost_capacity + cost_put + cost_get
 
-    baseline_nodes, baseline_cost = _size_baseline(p, total_tb, replica_ops)
+    baseline_nodes, baseline_binding, baseline_cost = _size_baseline(p, total_tb, replica_ops)
 
     return Result(
         nodes=nodes,
@@ -381,7 +382,7 @@ def size_cluster(p: Params) -> Result:
         cache_live_tb=cache_live_tb,
         cache_from_writes_tb=cache_from_writes_tb,
         cache_footprint_tb=cache_footprint_tb,
-        space_amplification=cache_footprint_tb / cache_live_tb,
+        space_amplification=cache_footprint_tb / cache_live_tb if cache_live_tb else 0.0,
         index_footprint_tb=index_footprint_tb,
         misses_per_s=misses_per_s,
         compaction_gets_per_s=compaction_gets_per_s,
@@ -401,29 +402,35 @@ def size_cluster(p: Params) -> Result:
         cost_total=cost_total,
         cost_per_logical_gb=cost_total / (p.logical_tb * 1000),
         baseline_nodes=baseline_nodes,
+        baseline_binding=baseline_binding,
         baseline_cost=baseline_cost,
         savings=baseline_cost - cost_total,
         savings_fraction=(baseline_cost - cost_total) / baseline_cost,
     )
 
 
-def _size_baseline(p: Params, total_tb: float, replica_ops: float) -> tuple[int, float]:
+def _size_baseline(p: Params, total_tb: float, replica_ops: float) -> tuple[int, str, float]:
     """
     Size the same workload held entirely on local NVMe.
 
     Having no tiering, the baseline applies the working-set RAM ratio to the whole dataset,
     which is what makes storage-dense instance types RAM-limited rather than disk-limited.
+
+    Returns:
+        Node count, the constraint that binds it, and the annual instance bill.
     """
     inst = INSTANCES[p.baseline_instance or p.instance]
     data_tb = total_tb * p.baseline_compaction_overhead
     usable_nvme_gb = inst.nvme_gb * p.disk_utilization - inst.ram_gib * GIB
-    nodes = max(
-        math.ceil(data_tb * 1000 / usable_nvme_gb),
-        math.ceil(total_tb * 1000 / p.working_set_ram_ratio / (inst.ram_gib * GIB)),
-        math.ceil(replica_ops / (inst.vcpus * p.ops_per_vcpu * p.cpu_utilization)),
-        p.rf,
-    )
-    return nodes, nodes * inst.usd_per_hour * p.price_multiplier * p.hours_per_year
+    by = {
+        "NVMe": math.ceil(data_tb * 1000 / usable_nvme_gb),
+        "RAM": math.ceil(total_tb * 1000 / p.working_set_ram_ratio / (inst.ram_gib * GIB)),
+        "throughput": math.ceil(replica_ops / (inst.vcpus * p.ops_per_vcpu * p.cpu_utilization)),
+        "RF": p.rf,
+    }
+    nodes = max(by.values())
+    binding = next(k for k, v in by.items() if v == nodes)
+    return nodes, binding, nodes * inst.usd_per_hour * p.price_multiplier * p.hours_per_year
 
 
 def main() -> None:

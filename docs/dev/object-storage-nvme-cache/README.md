@@ -28,6 +28,7 @@ unlinks the file, so amplification falls to about 1.09.
 python3 model.py              # the default scenario under both designs
 python3 sweep.py              # every sensitivity sweep
 python3 sweep.py hit_rate replicas
+python3 edge_cases.py         # the two degenerate bounding cases
 ```
 
 No dependencies beyond the standard library. `model.Params` is a frozen dataclass; override
@@ -52,6 +53,49 @@ Break-even is close on every axis: 91% hit rate against an assumed 90%, 130K rea
 an actual 150K, and 63 TB of cold data against an actual 50 TB. Any single read-path change
 closes the gap: one replica per read instead of two gives +37.9%, a 95% hit rate gives
 +34.6%, and both together give +80.8%.
+
+## The bounding cases
+
+Two degenerate scenarios, neither of them considered a typical workload, bracket what the
+design can be worth. `edge_cases.py` costs each under three setups: all-NVMe, object storage
+with no cache at all (expressed as hit rates of zero, so every range read is a GET), and
+object storage behind the page cache.
+
+**Write only.** 50 TB logical, 20,000 writes/s, no reads.
+
+| | nodes | binding | annual cost | vs all-NVMe |
+|---|---|---|---|---|
+| all-NVMe | 60 | NVMe | $396,828 | |
+| S3 only, no cache | 4 | RAM | $50,552 | +87.3% |
+| S3 + page cache | 4 | RAM | $50,552 | +87.3% |
+
+With no reads the cache is never populated, since only user reads fill it, so the last two
+rows are identical to the dollar: the cache costs nothing and buys nothing. The saving is
+entirely in not owning NVMe for 75 TB. What sizes the cluster is RAM for per-sstable metadata
+over about 82,000 cold sstables, which makes this case sensitive to `sstable_metadata_mb`
+rather than to anything about caching: 3 nodes at 2 MB, 13 nodes and +72.3% at 10 MB.
+
+**Perfect fit.** 20 TB logical, a 2 TB working set, 100,000 reads/s at a 100% hit rate, no
+writes. "Raw" is read as logical, uncompressed, single copy, the same convention as the
+customer scenario.
+
+| | nodes | binding | annual cost | vs all-NVMe |
+|---|---|---|---|---|
+| all-NVMe | 24 | NVMe | $158,731 | |
+| S3 only, no cache | 4 | throughput | $5,081,323 | −3101% |
+| S3 + page cache | 4 | throughput | $35,563 | +77.6% |
+
+The cache is what stands between those two figures: without it the workload pays 400,000
+GETs/s. With it, object storage is billed for capacity alone. Both cache designs cost the
+same; v1 needs 4 nodes for NVMe and v2 needs 3, but throughput binds at 4 either way.
+
+The caveat is that "perfect" does all the work. At a 99% hit rate this case is +61.7%, and at
+95% it is −1.9%, already break-even. Five percent of 100,000 reads/s is 10,000 misses/s, and
+misses are the entire bill. The no-cache row charges two ranges per read per replica against
+the 1.16 requests per read PR #32563 measured uncached, so treat it as an upper bound.
+
+The envelope across all three scenarios is therefore +87% to −13%, set almost entirely by the
+read path.
 
 ## Does the file-based design earn its place?
 
