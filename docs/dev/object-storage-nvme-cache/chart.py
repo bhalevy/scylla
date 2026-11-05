@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from model import Params, size_cluster
+from model import Params, cache_amplification, hit_rate_for, size_cluster, usable_nvme_gb
 from scaleout import NODE_RANGE, TAILS, curve
 
 INK = "#101225"
@@ -131,3 +131,69 @@ def write(directory: str, p: Params) -> None:
     path = pathlib.Path(directory) / "scaleout.svg"
     path.write_text(svg)
     print(f"wrote {path} ({len(svg):,} bytes)")
+
+
+CURVE_W, CURVE_H = 1664, 372
+CURVE_X0, CURVE_X1 = 190, 1360
+CURVE_Y0, CURVE_Y1 = 44, 286
+
+
+def build_curve(p: Params) -> str:
+    """
+    Return the SVG explaining what the tail exponent is, as the shape of the curve itself.
+
+    Plots the hit rate against the share of the cold tail held in cache, starting from the
+    point where the working set is fully cached. That is where the three assumptions differ
+    and the only place they differ, so it is the whole of what has to be explained.
+    """
+    total_tb = p.logical_tb * p.rf / p.compression
+    ws_tb = p.logical_ws_tb * p.rf / p.compression
+    lo, hi = p.ws_read_share, 1.0
+
+    def px(share: float) -> float:
+        return CURVE_X0 + share * (CURVE_X1 - CURVE_X0)
+
+    def py(h: float) -> float:
+        return CURVE_Y1 - (h - lo) / (hi - lo) * (CURVE_Y1 - CURVE_Y0)
+
+    out = [f'<svg viewBox="0 0 {CURVE_W} {CURVE_H}" aria-label="Three curves of hit rate against the share '
+           f'of the cold tail held in cache, all starting at 90 percent. The uniform tail is a straight '
+           f'line, the midpoint bends upward, and the exponent implied by PR 32563 rises steeply at once">']
+
+    for i in range(5):
+        h = lo + (hi - lo) * i / 4
+        y = py(h)
+        out.append(f'<line x1="{CURVE_X0}" y1="{y:.1f}" x2="{CURVE_X1}" y2="{y:.1f}" stroke="{GRID}" stroke-width="1"/>')
+        out.append(_text(CURVE_X0 - 16, y + 8, f"{h * 100:g}%", 24, MUTED, anchor="end"))
+
+    # Labels are spread along x so three curves that converge at the right stay legible, and
+    # sit below their own curve except for the topmost one, which has room above it.
+    label_shares = (0.82, 0.60, 0.36)
+    label_offsets = (30, 30, -14)
+    for (tail, label), colour, at, dy in zip(TAILS, SERIES, label_shares, label_offsets):
+        pts = []
+        for i in range(201):
+            share = i / 200
+            h = hit_rate_for(replace(p, tail_exponent=tail), ws_tb + share * (total_tb - ws_tb), ws_tb, total_tb)
+            pts.append((px(share), py(h)))
+        out.append(f'<polyline points="{_poly(pts)}" fill="none" stroke="{colour}" stroke-width="3"/>')
+        h = hit_rate_for(replace(p, tail_exponent=tail), ws_tb + at * (total_tb - ws_tb), ws_tb, total_tb)
+        out.append(_text(px(at), py(h) + dy, label, 24, MUTED, anchor="middle"))
+
+    # Where this cluster can actually sit, between the smallest and largest cluster charted.
+    for nodes, caption in ((7, "7 nodes"), (60, "60 nodes")):
+        live = min(total_tb, nodes * usable_nvme_gb(p) / 1000 / cache_amplification(p))
+        share = max(0.0, (live - ws_tb) / (total_tb - ws_tb))
+        x = px(share)
+        out.append(f'<line x1="{x:.1f}" y1="{CURVE_Y0}" x2="{x:.1f}" y2="{CURVE_Y1}" stroke="{MUTED}" '
+                   f'stroke-width="2" stroke-dasharray="6 6"/>')
+        out.append(_text(x, CURVE_Y0 - 12, caption, 24, INK, anchor="middle"))
+
+    out.append(f'<line x1="{CURVE_X0}" y1="{CURVE_Y1}" x2="{CURVE_X1}" y2="{CURVE_Y1}" stroke="{MUTED}" stroke-width="2"/>')
+    for share, caption in ((0.0, "working set only"), (0.5, "half the tail"), (1.0, "everything cached")):
+        anchor = "start" if share == 0 else ("end" if share == 1 else "middle")
+        out.append(_text(px(share), CURVE_Y1 + 34, caption, 24, MUTED, anchor=anchor))
+    out.append(_text((CURVE_X0 + CURVE_X1) / 2, CURVE_Y1 + 70, "Share of the cold tail held in cache",
+                     24, MUTED, anchor="middle"))
+    out.append("</svg>")
+    return "".join(out)

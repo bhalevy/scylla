@@ -122,7 +122,12 @@ the cluster at n nodes, give the cache all their NVMe, and read the hit rate off
 instance bill, so there is a cost optimum rather than a constraint.
 
 The answer turns almost entirely on `tail_exponent`, the concavity of the hit-rate curve once
-the working set is cached, and nobody has measured it. So the output is a band, not a number.
+the working set is cached. Read it as: every byte of cache beyond the working set has to come
+out of the cold 72 TB, and the exponent says whether that cold data has hot spots of its own.
+At 1.0 it does not, so caching a tenth of the tail buys a tenth of what is left and the curve
+is a straight line; below 1.0 most of the benefit arrives in the first few percent.
+`chart.build_curve` draws the three shapes side by side. Nobody has measured where real
+workloads sit on that curve. So the output is a band, not a number.
 Figures are for the implemented v1 design on i7i.2xlarge. They differ from the v2 figures
 quoted elsewhere in this document, which coincide with v1 only at the cap; see "Does the
 file-based design earn its place?" below.
