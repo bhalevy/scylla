@@ -112,7 +112,9 @@ for this case as well.
 Everything above sizes forwards: pick a hit rate, size the cache to meet it, count the nodes.
 That understates the architecture, because at this scenario the binding constraint is
 throughput, not disk. Seven nodes carry 10.7 TB of usable NVMe and a cache sized for a 90%
-target uses 4.2 TB of it, so two thirds of the disk sits idle.
+target uses 4.2 TB of it under the implemented v1 design, so three fifths of the disk sits
+idle. (Under v2 it is 3.1 TB and seven tenths idle; everything below is v1, since that is
+what ships.)
 
 `scaleout.py` runs it the other way round, which is what the implementation does anyway: pin
 the cluster at n nodes, give the cache all their NVMe, and read the hit rate off
@@ -120,8 +122,10 @@ the cluster at n nodes, give the cache all their NVMe, and read the hit rate off
 instance bill, so there is a cost optimum rather than a constraint.
 
 The answer turns almost entirely on `tail_exponent`, the concavity of the hit-rate curve once
-the working set is cached, and nobody has measured it. So the output is a band, not a number
-(implemented v1 design, i7i.2xlarge):
+the working set is cached, and nobody has measured it. So the output is a band, not a number.
+Figures are for the implemented v1 design on i7i.2xlarge. They differ from the v2 figures
+quoted elsewhere in this document, which coincide with v1 only at the cap; see "Does the
+file-based design earn its place?" below.
 
 | tail exponent | at 7 nodes | optimum | vs all-NVMe |
 |---|---|---|---|
@@ -137,7 +141,12 @@ hit rate at a cache one fifth of the data, and `ln 0.707 / ln 0.2` is 0.215 unde
 
 Two caveats. The curve itself is the least grounded thing in the model: it assumes a share
 `ws_read_share` of reads falls inside the working set and is served once that is cached, with
-the rest landing in a tail whose concavity is the swept parameter. And the implementation
+the rest landing in a tail whose concavity is the swept parameter. Note that `ws_read_share`
+and the forward model's `data_hit_rate` are not the same quantity even though both default to
+0.90: the forward model means "cache this fraction of the working set", the curve means "this
+fraction of reads is for the working set". They are built to agree where it matters, since at
+a cache exactly the size of the working set the curve returns 0.90, so the two modes meet at
+the 7-node, 90% point to within the tenth of the working set the forward model shaves off. And the implementation
 configures a cache size rather than inheriting the disk: `object_storage_page_cache_size_in_mb`
 defaults to 10 GiB per node, so this graph assumes the cache is configured to use the NVMe the
 cluster already owns.
