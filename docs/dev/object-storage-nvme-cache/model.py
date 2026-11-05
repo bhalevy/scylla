@@ -99,6 +99,39 @@ class Params:
     data under Zipf point reads, and 1.16 with no cache; these defaults imply 0.10 requests
     per read per replica at a cache sized for a 90% hit rate.
     """
+    cache_live_tb: float | None = None
+    """
+    Live cache size, when the cache is sized by the hardware rather than by a target.
+
+    Left unset, the model works forwards: `data_hit_rate` is the target and the cache is
+    sized to meet it. Set, the model works backwards instead, which is what the
+    implementation does: the cache is whatever the NVMe holds and the hit rate is whatever
+    follows, read off `hit_rate_for`. `scaleout.py` drives this.
+    """
+    ws_read_share: float = 0.90
+    """
+    Share of reads that land inside the working set, the rest falling in the cold tail.
+
+    Only used when the cache size is given. It is the hit rate the curve returns once the
+    working set is entirely cached, which is why the default matches the `data_hit_rate`
+    target: both say that 90% of reads are for working-set data.
+    """
+    tail_exponent: float = 0.5
+    """
+    ASSUMPTION, and the one that decides the scale-out answer. Sweep it, do not trust it.
+
+    Concavity of the hit-rate curve over the cold tail, once the working set is cached.
+    1.0 is a uniformly accessed tail, the pessimistic bound. 0.215 is what PR #32563's
+    benchmark implies: 0.34 requests per read against 1.16 uncached is a 0.707 hit rate at a
+    cache one fifth of the data, and `ln 0.707 / ln 0.2` is 0.215 under a pure power law.
+    0.5 is the midpoint and is no more than that.
+    """
+    ws_exponent: float = 1.0
+    """
+    Concavity within the working set. 1.0 treats it as uniformly accessed, which is close to
+    what "working set" means. It does not matter on the scale-out curve, where even the
+    smallest cluster already holds more than the working set.
+    """
     index_hit_rate: float = 1.00
     """
     Probability that a read's index-component range is served entirely from NVMe.
@@ -195,6 +228,8 @@ class Params:
     """ICS default target. Drives both component PUT counts and the cold sstable count."""
 
     # --- throughput ---------------------------------------------------------------
+    nodes_floor: int = 0
+    """Minimum cluster size, as a fifth constraint. `scaleout.py` pins the cluster with it."""
     ops_per_vcpu: int = 10_000
     """ASSUMPTION, not a measurement. Calibrate from benchmarks; it is currently binding."""
     cpu_utilization: float = 0.70
@@ -241,6 +276,7 @@ class Result:
     nodes_by_ram: int
     nodes_by_throughput: int
 
+    data_hit_rate: float
     cache_live_tb: float
     cache_from_writes_tb: float
     cache_footprint_tb: float
@@ -274,6 +310,49 @@ class Result:
     savings_fraction: float
 
 
+def usable_nvme_gb(p: Params) -> float:
+    """GB of NVMe a node can give the cache, after disk utilisation and the commitlog."""
+    inst = INSTANCES[p.instance]
+    return inst.nvme_gb * p.disk_utilization - inst.ram_gib * GIB
+
+
+def cache_amplification(p: Params) -> float:
+    """Disk the cache occupies per byte of live cached data, under `p.design`."""
+    if p.design == "tablet":
+        return p.cache_space_amplification
+    return p.payload_fs_overhead + p.cache_index_row_b / (p.page_kib * 1024) * p.cache_space_amplification
+
+
+def hit_rate_for(p: Params, data_live_tb: float, ws_tb: float, total_tb: float) -> float:
+    """
+    Hit rate a cache of `data_live_tb` of data pages achieves, as the inverse of sizing.
+
+    The curve has two parts. Reads landing in the working set, a share `ws_read_share` of
+    them, are served once it is cached, concavely in `ws_exponent`. The rest land in the cold
+    tail, and caching the tail pays off concavely in `tail_exponent`: 1.0 for a uniformly
+    accessed tail, below that for a tail with its own hot spots. Caching everything gives 1.
+
+    This curve is the least grounded thing in the model. It is the reason `scaleout.py`
+    reports a band over `tail_exponent` rather than a number.
+
+    Args:
+        p: The scenario, for the two exponents and the working-set read share.
+        data_live_tb: Live data pages held on NVMe, excluding the cached sstable index.
+        ws_tb: Working set, stored bytes.
+        total_tb: Whole dataset, stored bytes.
+
+    Returns:
+        The data-range hit rate, between 0 and 1.
+    """
+    if ws_tb <= 0:
+        return 0.0 if total_tb <= 0 else min(1.0, (data_live_tb / total_tb) ** p.tail_exponent)
+    within = min(1.0, data_live_tb / ws_tb) ** p.ws_exponent
+    tail_capacity = total_tb - ws_tb
+    surplus = max(0.0, data_live_tb - ws_tb)
+    tail = min(1.0, surplus / tail_capacity) ** p.tail_exponent if tail_capacity > 0 else 1.0
+    return min(1.0, p.ws_read_share * within + (1 - p.ws_read_share) * tail)
+
+
 def size_cluster(p: Params) -> Result:
     """
     Size a cluster for `p` and cost it against the all-NVMe baseline.
@@ -296,14 +375,21 @@ def size_cluster(p: Params) -> Result:
     # still be hot.
     ingest_gb_s = p.write_ops * p.write_size_b * p.rf / 1e9
     cache_from_writes_tb = ingest_gb_s * p.write_allocate_fraction * p.hot_hours_after_write * SECONDS_PER_HOUR / 1000
-    cache_live_tb = ws_tb * (p.data_hit_rate + p.index_hit_rate * p.sstable_index_share) + cache_from_writes_tb
-    cached_fraction = cache_live_tb / total_tb
+    index_live_on_nvme_tb = ws_tb * p.index_hit_rate * p.sstable_index_share
+    if p.cache_live_tb is None:
+        cache_live_tb = ws_tb * p.data_hit_rate + index_live_on_nvme_tb + cache_from_writes_tb
+        data_hit_rate = p.data_hit_rate
+    else:
+        # Sized by the hardware: the cache is what the disks hold and the hit rate follows.
+        cache_live_tb = p.cache_live_tb
+        data_hit_rate = hit_rate_for(p, max(0.0, cache_live_tb - index_live_on_nvme_tb), ws_tb, total_tb)
+    cached_fraction = min(1.0, cache_live_tb / total_tb)
 
     # Each page class misses at its own rate. Charging index lookups the data miss rate
     # roughly doubles the request bill, which is the single largest error this model has
     # made so far.
     reads_per_replica = p.read_ops * p.replicas_per_read
-    data_misses_per_s = reads_per_replica * (1 - p.data_hit_rate)
+    data_misses_per_s = reads_per_replica * (1 - data_hit_rate)
     index_misses_per_s = reads_per_replica * (1 - p.index_hit_rate)
     misses_per_s = data_misses_per_s + index_misses_per_s
     miss_fill_gb_s = (data_misses_per_s * p.data_pages_per_read + index_misses_per_s * p.index_pages_per_read) * page_b / 1e9
@@ -351,8 +437,10 @@ def size_cluster(p: Params) -> Result:
     replica_ops = p.read_ops * p.replicas_per_read + p.write_ops * p.rf
     nodes_by_throughput = math.ceil(replica_ops / (inst.vcpus * p.ops_per_vcpu * p.cpu_utilization))
 
-    nodes = max(nodes_by_nvme, nodes_by_ram, nodes_by_throughput, p.rf)
-    if nodes == nodes_by_nvme:
+    nodes = max(nodes_by_nvme, nodes_by_ram, nodes_by_throughput, p.rf, p.nodes_floor)
+    if nodes == p.nodes_floor and nodes > max(nodes_by_nvme, nodes_by_ram, nodes_by_throughput, p.rf):
+        binding = "pinned"
+    elif nodes == nodes_by_nvme:
         binding = "NVMe"
     elif nodes == nodes_by_ram:
         binding = "RAM"
@@ -379,6 +467,7 @@ def size_cluster(p: Params) -> Result:
         nodes_by_nvme=nodes_by_nvme,
         nodes_by_ram=nodes_by_ram,
         nodes_by_throughput=nodes_by_throughput,
+        data_hit_rate=data_hit_rate,
         cache_live_tb=cache_live_tb,
         cache_from_writes_tb=cache_from_writes_tb,
         cache_footprint_tb=cache_footprint_tb,

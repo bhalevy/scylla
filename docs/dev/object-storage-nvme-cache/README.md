@@ -29,6 +29,8 @@ python3 model.py              # the default scenario under both designs
 python3 sweep.py              # every sensitivity sweep
 python3 sweep.py hit_rate replicas
 python3 edge_cases.py         # the two degenerate bounding cases
+python3 scaleout.py           # hit rate and cost against cluster size
+python3 scaleout.py --svg DIR # and the chart the deck carries
 ```
 
 No dependencies beyond the standard library. `model.Params` is a frozen dataclass; override
@@ -48,6 +50,10 @@ i7i.2xlarge):
 Both cache designs give that same figure. The capacity case is settled: sixty nodes become
 seven, disk falls to 27% utilisation, and what binds instead is an assumed 10,000 operations
 per vCPU. The cost case is entirely object-storage requests, which are $378,699 of the total.
+
+That −13.1% is the figure for a cache sized to stop at the 90% target. It is not the best the
+same seven nodes can do, because they are bought for throughput and most of their disk is
+idle; see "Scaling out" below.
 
 Break-even is close on every axis: 91% hit rate against an assumed 90%, 130K reads/s against
 an actual 150K, and 63 TB of cold data against an actual 50 TB. Any single read-path change
@@ -101,6 +107,41 @@ Setting the spreadsheet's read rate, working set and both hit rates to zero repr
 write-only row there too, at 4 nodes and $50,552, so the two stay verified against each other
 for this case as well.
 
+## Scaling out: the cache the cluster already has
+
+Everything above sizes forwards: pick a hit rate, size the cache to meet it, count the nodes.
+That understates the architecture, because at this scenario the binding constraint is
+throughput, not disk. Seven nodes carry 10.7 TB of usable NVMe and a cache sized for a 90%
+target uses 4.2 TB of it, so two thirds of the disk sits idle.
+
+`scaleout.py` runs it the other way round, which is what the implementation does anyway: pin
+the cluster at n nodes, give the cache all their NVMe, and read the hit rate off
+`model.hit_rate_for`. More nodes buy more cache and a higher hit rate against a higher
+instance bill, so there is a cost optimum rather than a constraint.
+
+The answer turns almost entirely on `tail_exponent`, the concavity of the hit-rate curve once
+the working set is cached, and nobody has measured it. So the output is a band, not a number
+(implemented v1 design, i7i.2xlarge):
+
+| tail exponent | at 7 nodes | optimum | vs all-NVMe |
+|---|---|---|---|
+| 1.0, uniform tail | 90.6%, $427,791 | none; the curve only rises | −7.8% |
+| 0.5, midpoint | 92.4%, $359,637 | 15 nodes, $346,348 | +12.7% |
+| 0.215, PR 32563's Zipf | 95.4%, $245,549 | 11 nodes, $238,884 | +39.8% |
+
+Against $448,814 and −13.1% with the cache capped at the 90% target. The three exponents each
+have a provenance: 1.0 is a uniformly accessed tail and the pessimistic bound; 0.215 is what
+PR #32563's benchmark implies, since 0.34 requests per read against 1.16 uncached is a 0.707
+hit rate at a cache one fifth of the data, and `ln 0.707 / ln 0.2` is 0.215 under a power law;
+0.5 is the midpoint and nothing more. Quote the band, not a row of it.
+
+Two caveats. The curve itself is the least grounded thing in the model: it assumes a share
+`ws_read_share` of reads falls inside the working set and is served once that is cached, with
+the rest landing in a tail whose concavity is the swept parameter. And the implementation
+configures a cache size rather than inheriting the disk: `object_storage_page_cache_size_in_mb`
+defaults to 10 GiB per node, so this graph assumes the cache is configured to use the NVMe the
+cluster already owns.
+
 ## Does the file-based design earn its place?
 
 At this scenario, no, and two errors of mine are why it once looked necessary. Assuming
@@ -116,8 +157,13 @@ of 7x and more. The implementation caches 4 KiB pages and compaction targets 1.5
 
 The designs are indistinguishable until the working set is large enough for NVMe to bind
 again, around 10 TB. The argument that survives is not node count but capacity per disk:
-1.09x fits about 38% more live cache than 1.5x on the same hardware, which matters wherever
-the cache is disk-limited and is worth having because hit rate is the dominant cost lever.
+1.09x fits about 38% more live cache than 1.5x on the same hardware.
+
+That argument is no longer hypothetical. Once the cache fills the disk rather than stopping
+at a target, the cache is disk-limited by construction, and the extra capacity turns straight
+into hit rate. At seven nodes the file design holds 9.8 TB live against the tablet design's
+7.1, and costs $14K to $26K a year less depending on the tail exponent. Whether that is worth
+the implementation is a different question, but it is no longer zero.
 
 ## What decides the answer
 
@@ -135,19 +181,22 @@ the cache is disk-limited and is worth having because hit rate is the dominant c
 
 Parked for whoever picks this up, roughly in order of value.
 
-1. **Requests per read on a real path.** PR #32563 measured 0.34 per read with a cache one
+1. **The shape of the cold tail**, `tail_exponent`, which now decides the scale-out answer
+   and swings it from −8% to +40%. The same measurement answers the next question, since
+   both are about how concentrated reads are.
+2. **Requests per read on a real path.** PR #32563 measured 0.34 per read with a cache one
    fifth the size of the data under Zipf point reads, and 1.16 with no cache. This model
    assumes 0.10 per read per replica at a cache sized for 90%. Those are not directly
    comparable, and reconciling them is the single most valuable thing left to do.
-2. **Whether a read must consult two replicas**, or whether one suffices. This alone moves
+3. **Whether a read must consult two replicas**, or whether one suffices. This alone moves
    −13% to +38%.
-3. **Sustainable operations per vCPU** for this workload, which now sets the cluster size.
-4. **Resident metadata per cold sstable**, against what TOC, Statistics, CompressionInfo and
+4. **Sustainable operations per vCPU** for this workload, which now sets the cluster size.
+5. **Resident metadata per cold sstable**, against what TOC, Statistics, CompressionInfo and
    the bloom filter actually occupy. The 3 MB default is built from a bloom filter at the
    0.01 default false-positive rate (about 10 bits per partition, roughly 1.2 MB at 1 KB
    partitions), a compression offset table at the 4 KiB default chunk size (about 262,000
    bit-packed entries, roughly 1.2 MB), and about 0.2 MB of index summary.
-5. **Whether the working-set sstable index genuinely stays resident.** The model assumes it
+6. **Whether the working-set sstable index genuinely stays resident.** The model assumes it
    does, which holds only if hot rows cluster in key space. At a 95% index hit rate the
    design is −61% rather than −13%.
 
@@ -159,9 +208,6 @@ Behaviours described in PR #32563 that the model does not represent:
   are evicted, so reads of compacted data miss until they repopulate. The model has an
   invalidation term but no cold period following it.
 - **No scan resistance.** A full scan without `BYPASS CACHE` evicts pages other reads need.
-- **Cache sizing is inverted.** The implementation takes a configured size
-  (`object_storage_page_cache_size_in_mb`, default 10 GiB per node) and gets whatever hit
-  rate follows; the model takes a target hit rate and derives the size.
 - **Only Data and index components are cached.** The small components are fetched whole when
   an sstable is opened and held in memory, which is what the per-sstable metadata parameter
   counts.
