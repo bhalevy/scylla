@@ -1043,8 +1043,15 @@ static future<> reshape_compaction_group(compaction::compaction_group_view& t, s
 
         try {
             co_await table.get_compaction_manager().run_custom_job(t, compaction_type::Reshape, "Reshape compaction", [&dir, sstlist = std::move(sstlist), desc = std::move(desc), &sstables_in_cg, &t] (compaction_data& info, compaction_progress_monitor& progress_monitor) mutable -> future<> {
-                co_await utils::get_local_injector().inject("reshape_compaction_group_before_compact",
-                    utils::wait_for_message(std::chrono::minutes{5}));
+                co_await utils::get_local_injector().inject("reshape_compaction_group_before_compact", [&info] (auto& handler) -> future<> {
+                    try {
+                        co_await handler.wait_for_message(std::chrono::steady_clock::now() + std::chrono::minutes(5), &info.abort);
+                    } catch (const abort_requested_exception&) {
+                        // The job was stopped. Let the compaction notice it at the first
+                        // fragment and throw compaction_stopped_exception, as it does without
+                        // the injection.
+                    }
+                });
                 compaction_result result = co_await compact_sstables(std::move(desc), info, t, progress_monitor);
                 // update the sstables_in_cg set with new sstables and remove the reshaped ones
                 for (auto& sst : sstlist) {
