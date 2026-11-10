@@ -21,6 +21,8 @@
 #include <seastar/util/defer.hh>
 #include <seastar/core/smp.hh>
 #include <seastar/core/sharded.hh>
+#include <seastar/core/shared_future.hh>
+#include <seastar/core/sleep.hh>
 
 #include "db/cluster_config_manager.hh"
 #include "db/cluster_config_registry.hh"
@@ -1350,6 +1352,66 @@ SEASTAR_TEST_CASE(test_registration_stop_resolves_when_callback_fails) {
         cb.release.set_exception(std::runtime_error("injected callback failure"));
         stopped.get();
         BOOST_REQUIRE(!cb.returned);
+    });
+}
+
+namespace {
+
+// Models a consumer like the listeners callback in #31360: the callback captures the
+// consumer by reference, suspends in the middle of applying a change and touches the
+// consumer after it resumes. `release` and `returned` live outside the consumer so the
+// test can resume the callback after the consumer is torn down.
+struct suspending_consumer {
+    promise<> entered;
+    unsigned applied = 0;
+    db::cluster_config_manager::config_callback_registration registration;
+
+    suspending_consumer(db::cluster_config_manager& mgr, sstring ks, shared_promise<>& release, bool& returned)
+        : registration(mgr.register_config_callback("auto_repair_enabled",
+                [this, ks = std::move(ks), &release, &returned] (const db::cluster_config_manager::lookup_context& ctx, std::optional<sstring>) -> future<> {
+            if (ctx.keyspace_name != ks || ctx.table_name != "t1") {
+                co_return;
+            }
+            entered.set_value();
+            co_await release.get_shared_future();
+            // A use-after-free if the consumer was destroyed while this was suspended.
+            ++applied;
+            returned = true;
+        })) {
+    }
+};
+
+}
+
+// SCYLLADB-6139: a consumer whose callback suspends must await stop() before it is
+// destroyed. The teardown below is the shutdown defer such a consumer needs. Without the
+// stop() in it the destructor only unregisters, the callback resumes into the freed
+// consumer, and this test fails under ASan (debug mode) with a heap-use-after-free.
+SEASTAR_TEST_CASE(test_stop_in_defer_protects_suspended_callback_captures) {
+    return do_with_cql_env_thread([] (cql_test_env& e) {
+        e.execute_cql("CREATE KEYSPACE ks_stop_defer WITH replication = {'class': 'NetworkTopologyStrategy', 'replication_factor': 1}").get();
+        e.execute_cql("CREATE TABLE ks_stop_defer.t1 (pk int PRIMARY KEY)").get();
+        e.execute_cql("ALTER TABLE ks_stop_defer.t1 WITH auto_repair_enabled = true").get();
+
+        auto& mgr = e.cluster_config_manager();
+        mgr.local().refresh().get();
+
+        shared_promise<> release;
+        bool returned = false;
+        {
+            auto consumer = std::make_unique<suspending_consumer>(mgr.local(), "ks_stop_defer", release, returned);
+            auto stop_consumer = defer([&] noexcept {
+                consumer->registration.stop().get();
+            });
+            consumer->entered.get_future().get();
+            // Resume the callback after the teardown has started, as the awaited work
+            // completing on its own would.
+            (void)seastar::sleep(std::chrono::milliseconds(100)).then([&release] {
+                release.set_value();
+            });
+        }
+        // The consumer is gone; the callback must have returned before that.
+        BOOST_REQUIRE(returned);
     });
 }
 
