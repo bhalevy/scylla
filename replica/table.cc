@@ -2752,51 +2752,16 @@ compaction_group::merge_logstor_segments_from(compaction_group& group) {
 future<>
 compaction_group::set_run_identifier(std::vector<sstables::shared_sstable> sstables, sstables::run_id run_identifier) {
     // Everything which replaces the main set, like memtable flushes and compaction, holds the
-    // permit. So the new main set, built from the current one, can't miss an sstable.
+    // permit. So the new main set, copied from the current one, can't miss an sstable.
     auto permit = co_await _t.get_sstable_list_permit();
-    auto main_sstables = _main_sstables->all();
-    for (auto& sst : sstables) {
-        if (!main_sstables->contains(sst)) {
-            on_internal_error(tlogger, fmt::format("Cannot set the run identifier of {}, which isn't in the main set of group {} of {}.{}",
-                    sst->get_filename(), group_id(), schema()->ks_name(), schema()->cf_name()));
-        }
-    }
-    // Otherwise, an sstable of that run which overlaps the given ones could be given a run
-    // identifier of its own below, while it's in the current main set.
-    if (std::ranges::contains(_main_sstables->all_sstable_runs(), run_identifier, std::mem_fn(&sstables::sstable_run::run_identifier))) {
-        on_internal_error(tlogger, fmt::format("Cannot move sstables into run {}, which is in use in group {} of {}.{}",
-                run_identifier, group_id(), schema()->ks_name(), schema()->cf_name()));
-    }
-    // Sstable sets index runs by run identifier, so an sstable's run identifier mustn't change
-    // while it's in a set which is going to be modified. The current main set is never modified,
-    // only replaced, and the permit keeps it from being replaced until the new one, which
-    // indexes the sstables by their new run identifier, is in place. Older versions of the
-    // main set, still held e.g. by reads, keep indexing the sstables by their old run
+    // Sstable sets index runs by run identifier, so the sstables are moved into the new run in a
+    // copy of the main set, which replaces it right away, without yielding. Older versions of
+    // the main set, still held e.g. by reads, keep indexing the sstables by their old run
     // identifier. That's fine, as they're only read.
-    std::vector<sstables::run_id> old_run_identifiers;
-    old_run_identifiers.reserve(sstables.size());
-    for (auto& sst : sstables) {
-        old_run_identifiers.push_back(sst->run_identifier());
-        sst->set_run_identifier(run_identifier);
-    }
-    // The current main set stays in place on failure, so it needs the old run identifiers back.
-    auto restore_run_identifiers = defer([&] () noexcept {
-        for (size_t i = 0; i < sstables.size(); ++i) {
-            sstables[i]->set_run_identifier(old_run_identifiers[i]);
-        }
-    });
-    auto new_main_sstables = make_lw_shared<sstables::sstable_set>(make_main_sstable_set());
-    co_await _main_sstables->for_each_sstable_gently([&new_main_sstables] (const sstables::shared_sstable& sst) {
-        new_main_sstables->insert(sst);
-    });
-    // An sstable which overlaps its run is given a run identifier of its own by the set.
-    for (auto& sst : sstables) {
-        if (sst->run_identifier() != run_identifier) {
-            on_internal_error(tlogger, fmt::format("Cannot move {} into run {} in group {} of {}.{}, since it overlaps another sstable moved into it",
-                    sst->get_filename(), run_identifier, group_id(), schema()->ks_name(), schema()->cf_name()));
-        }
-    }
-    restore_run_identifiers.cancel();
+    auto new_main_sstables = make_lw_shared<sstables::sstable_set>(*_main_sstables);
+    // Fails, without changing anything, if an sstable isn't in the main set, if the run
+    // identifier is in use, or if the sstables overlap one another.
+    new_main_sstables->set_run_identifier(sstables, run_identifier);
     // Nothing below can be undone, so it mustn't fail halfway. Like in merge_sstables_from().
     std::invoke([&] noexcept {
         set_main_sstables(std::move(new_main_sstables));

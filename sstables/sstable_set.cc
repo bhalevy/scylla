@@ -10,6 +10,7 @@
 
 #include "utils/assert.hh"
 #include <seastar/util/defer.hh>
+#include <seastar/core/on_internal_error.hh>
 
 #include "sstables.hh"
 
@@ -185,6 +186,11 @@ sstable_set::insert(shared_sstable sst) {
 bool
 sstable_set::erase(shared_sstable sst) {
     return _impl->erase(sst);
+}
+
+void
+sstable_set::set_run_identifier(const std::vector<shared_sstable>& sstables, run_id run_identifier) {
+    _impl->set_run_identifier(sstables, run_identifier);
 }
 
 size_t
@@ -407,6 +413,55 @@ bool partitioned_sstable_set::erase(shared_sstable sst) {
     auto interval = make_interval(*sst);
     _sstables.erase(interval.start, interval.end, sst);
     return ret;
+}
+
+// Builds the run which the sstables, all of which have to be in `all`, form once they are
+// given the run identifier.
+static shared_sstable_run make_run_of(const sstable_list& all, const std::vector<shared_sstable>& sstables, run_id run_identifier) {
+    auto run = make_lw_shared<sstable_run>();
+    for (auto& sst : sstables) {
+        if (!all.contains(sst)) {
+            on_internal_error(sstlog, fmt::format("Cannot move SSTable {} into run {}, since it isn't in the set",
+                    sst->get_filename(), run_identifier));
+        }
+        if (!run->insert(sst)) {
+            on_internal_error(sstlog, fmt::format("Cannot move SSTable {} into run {}, since it overlaps another sstable moved into it",
+                    sst->get_filename(), run_identifier));
+        }
+    }
+    return run;
+}
+
+// For sets which don't index their sstables by run identifier.
+void sstable_set_impl::set_run_identifier(const std::vector<shared_sstable>& sstables, run_id run_identifier) {
+    auto all_sstables = all();
+    if (std::ranges::contains(*all_sstables, run_identifier, std::mem_fn(&sstable::run_identifier))) {
+        on_internal_error(sstlog, fmt::format("Cannot move sstables into run {}, which is in use", run_identifier));
+    }
+    make_run_of(*all_sstables, sstables, run_identifier);
+    for (auto& sst : sstables) {
+        sst->set_run_identifier(run_identifier);
+    }
+}
+
+void partitioned_sstable_set::set_run_identifier(const std::vector<shared_sstable>& sstables, run_id run_identifier) {
+    if (_all_runs.contains(run_identifier)) {
+        on_internal_error(sstlog, fmt::format("Cannot move sstables into run {}, which is in use", run_identifier));
+    }
+    if (sstables.empty()) {
+        return;
+    }
+    // Everything which can fail is done before anything is changed.
+    _all_runs.emplace(run_identifier, make_run_of(*_all, sstables, run_identifier));
+    for (auto& sst : sstables) {
+        if (auto it = _all_runs.find(sst->run_identifier()); it != _all_runs.end()) {
+            it->second->erase(sst);
+            if (it->second->empty()) {
+                _all_runs.erase(it);
+            }
+        }
+        sst->set_run_identifier(run_identifier);
+    }
 }
 
 size_t
@@ -1140,6 +1195,9 @@ bool compound_sstable_set::insert(shared_sstable sst) {
     throw_with_backtrace<std::bad_function_call>();
 }
 bool compound_sstable_set::erase(shared_sstable sst) {
+    throw_with_backtrace<std::bad_function_call>();
+}
+void compound_sstable_set::set_run_identifier(const std::vector<shared_sstable>& sstables, run_id run_identifier) {
     throw_with_backtrace<std::bad_function_call>();
 }
 

@@ -67,6 +67,7 @@ public:
     virtual future<stop_iteration> for_each_sstable_gently_until(std::function<future<stop_iteration>(const shared_sstable&)> func) const override;
     virtual bool insert(shared_sstable sst) override;
     virtual bool erase(shared_sstable sst) override;
+    virtual void set_run_identifier(const std::vector<shared_sstable>& sstables, run_id run_identifier) override;
     virtual size_t size() const noexcept override;
     virtual sstable_set_impl::selector_and_schema_t make_incremental_selector() const override;
     class incremental_selector;
@@ -137,6 +138,7 @@ public:
     virtual future<stop_iteration> for_each_sstable_gently_until(std::function<future<stop_iteration>(const shared_sstable&)> func) const override;
     virtual bool insert(shared_sstable sst) override;
     virtual bool erase(shared_sstable sst) override;
+    virtual void set_run_identifier(const std::vector<shared_sstable>& sstables, run_id run_identifier) override;
     virtual size_t size() const noexcept override;
     virtual utils::file_size_stats get_file_size_stats() const noexcept override;
     virtual sstable_set_impl::selector_and_schema_t make_incremental_selector() const override;

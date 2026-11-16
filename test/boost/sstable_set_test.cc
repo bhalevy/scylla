@@ -9,6 +9,7 @@
 
 #undef SEASTAR_TESTING_MAIN
 #include <seastar/testing/test_case.hh>
+#include <seastar/testing/on_internal_error.hh>
 #include <seastar/core/abort_source.hh>
 #include <seastar/core/loop.hh>
 
@@ -178,6 +179,69 @@ SEASTAR_TEST_CASE(test_partitioned_sstable_set_bytes_on_disk) {
         std::vector<lw_shared_ptr<sstable_set>> sets = {ss1, ss2};
         auto sst_set = make_lw_shared<sstable_set>(std::make_unique<compound_sstable_set>(s, std::move(sets)));
         BOOST_REQUIRE_EQUAL(sst_set->bytes_on_disk(), ss1->bytes_on_disk() + ss2->bytes_on_disk());
+    });
+}
+
+// Moving sstables into a new run changes the copy of the set it's done on, and leaves the
+// set which the copy was made from as it was.
+SEASTAR_TEST_CASE(test_partitioned_sstable_set_set_run_identifier) {
+    return test_env::do_with_async([] (test_env& env) {
+        simple_schema ss;
+        auto s = ss.schema();
+        auto keys = tests::generate_partition_keys(2, s);
+        sstable_writer_config cfg = env.manager().configure_writer("");
+        auto make_sst = [&] (const dht::decorated_key& key) {
+            auto mut = mutation(s, key);
+            ss.add_row(mut, ss.make_ckey(0), "val");
+            // Each sstable starts as a run of its own.
+            cfg.run_identifier = run_id::create_random_id();
+            return make_sstable_easy(env, make_mutation_reader_from_mutations(s, env.make_reader_permit(), mut), cfg);
+        };
+        auto sst1 = make_sst(keys[0]);
+        auto sst2 = make_sst(keys[1]);
+        auto overlapping = make_sst(keys[0]);
+        auto outsider = make_sst(keys[1]);
+        auto old_run_id1 = sst1->run_identifier();
+        auto old_run_id2 = sst2->run_identifier();
+
+        auto ss1 = make_lw_shared<sstable_set>(make_sstable_set(s, make_lw_shared<sstable_list>({sst1, sst2, overlapping})));
+        BOOST_REQUIRE_EQUAL(ss1->all_sstable_runs().size(), 3);
+
+        auto ss2 = make_lw_shared<sstable_set>(*ss1);
+        {
+            seastar::testing::scoped_no_abort_on_internal_error abort_guard;
+            // Overlapping sstables can't form a run.
+            BOOST_REQUIRE_THROW(ss2->set_run_identifier({sst1, overlapping}, run_id::create_random_id()), std::runtime_error);
+            // The sstables have to be in the set.
+            BOOST_REQUIRE_THROW(ss2->set_run_identifier({sst1, outsider}, run_id::create_random_id()), std::runtime_error);
+            // The run has to be a new one.
+            BOOST_REQUIRE_THROW(ss2->set_run_identifier({sst1, sst2}, overlapping->run_identifier()), std::runtime_error);
+        }
+        BOOST_REQUIRE_EQUAL(sst1->run_identifier(), old_run_id1);
+        BOOST_REQUIRE_EQUAL(sst2->run_identifier(), old_run_id2);
+        BOOST_REQUIRE_EQUAL(ss2->all_sstable_runs().size(), 3);
+
+        auto new_run_id = run_id::create_random_id();
+        ss2->set_run_identifier({sst1, sst2}, new_run_id);
+        BOOST_REQUIRE_EQUAL(sst1->run_identifier(), new_run_id);
+        BOOST_REQUIRE_EQUAL(sst2->run_identifier(), new_run_id);
+        auto runs = ss2->all_sstable_runs();
+        BOOST_REQUIRE_EQUAL(runs.size(), 2);
+        auto new_run = std::ranges::find(runs, new_run_id, std::mem_fn(&sstable_run::run_identifier));
+        BOOST_REQUIRE(new_run != runs.end());
+        BOOST_REQUIRE_EQUAL((*new_run)->all().size(), 2);
+        // The set which the copy was made from still holds its three runs.
+        BOOST_REQUIRE_EQUAL(ss1->all_sstable_runs().size(), 3);
+
+        // The copy indexes the sstables by their new run identifier, so it can be modified.
+        BOOST_REQUIRE(ss2->erase(sst1));
+        runs = ss2->all_sstable_runs();
+        BOOST_REQUIRE_EQUAL(runs.size(), 2);
+        new_run = std::ranges::find(runs, new_run_id, std::mem_fn(&sstable_run::run_identifier));
+        BOOST_REQUIRE(new_run != runs.end());
+        BOOST_REQUIRE_EQUAL((*new_run)->all().size(), 1);
+        BOOST_REQUIRE(ss2->erase(sst2));
+        BOOST_REQUIRE_EQUAL(ss2->all_sstable_runs().size(), 1);
     });
 }
 

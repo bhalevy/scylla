@@ -102,6 +102,7 @@ public:
     virtual bool insert(shared_sstable sst) = 0;
     // Return true iff sst was erased
     virtual bool erase(shared_sstable sst) = 0;
+    virtual void set_run_identifier(const std::vector<shared_sstable>& sstables, run_id run_identifier);
     virtual size_t size() const noexcept = 0;
     uint64_t bytes_on_disk() const noexcept {
         return get_file_size_stats().on_disk;
@@ -172,6 +173,14 @@ public:
     bool insert(shared_sstable sst);
     // Return true iff sst was erase
     bool erase(shared_sstable sst);
+    // Moves the sstables, which have to be in the set, into a new run, by giving them the run
+    // identifier, in memory only. No sstable of the set may have the run identifier already,
+    // and the sstables must not overlap one another. If this fails, nothing is changed.
+    //
+    // Other sets holding these sstables, like the one this set was copied from, keep indexing
+    // them by their old run identifier. So nothing may be inserted into or erased from those
+    // sets afterwards.
+    void set_run_identifier(const std::vector<shared_sstable>& sstables, run_id run_identifier);
     size_t size() const noexcept;
     uint64_t bytes_on_disk() const noexcept;
     utils::file_size_stats get_file_size_stats() const noexcept;
