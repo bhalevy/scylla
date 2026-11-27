@@ -1090,3 +1090,410 @@ SEASTAR_TEST_CASE(unused_gc_sstable_is_deleted_when_final_replacement_fails_test
                         leaked().size(), fmt::join(leaked(), ", ")));
     });
 }
+
+// Tests for the age_tiering option of ICS, which keeps runs holding only old data out of the
+// buckets of runs holding newer data, so that data flows from small and new runs to large and
+// old ones, and the old data that would otherwise hold back the purging of tombstones in the
+// large runs ends up compacted together with them.
+
+static constexpr uint64_t MiB = 1024 * 1024;
+
+static schema_ptr make_age_tiering_test_schema() {
+    return schema_builder(this_smp_shard_count(), "tests", "ics_age_tiering_test")
+            .with_column("pk", utf8_type, column_kind::partition_key)
+            .with_column("data", utf8_type)
+            .with_tombstone_gc_options(tombstone_gc_options{tombstone_gc_mode::immediate})
+            .build();
+}
+
+// An sstable that stands for a run of the given data size, holding data written with timestamps
+// in [min_ts, max_ts]. It was written long enough ago for no age threshold of ICS to hold it back.
+static shared_sstable make_aged_sstable(test_env& env, const schema_ptr& s, uint64_t size, api::timestamp_type min_ts, api::timestamp_type max_ts,
+        db_clock::time_point write_time = db_clock::now() - std::chrono::hours(2)) {
+    auto sst = env.make_sstable(s, "/nowhere/in/particular", env.new_generation(), sstable_version_types::md, big);
+    auto keys = tests::generate_partition_keys(2, s, local_shard_only::yes);
+    stats_metadata stats{};
+    stats.min_timestamp = min_ts;
+    stats.max_timestamp = max_ts;
+    sstables::test(sst).set_values(keys[0].key(), keys[1].key(), std::move(stats), size);
+    sstables::test(sst).set_data_file_write_time(write_time);
+    return sst;
+}
+
+static compaction::incremental_compaction_strategy make_age_tiering_ics(bool age_tiering) {
+    return compaction::incremental_compaction_strategy(std::map<sstring, sstring>{
+        {compaction::incremental_compaction_strategy_options::AGE_TIERING_KEY, age_tiering ? "true" : "false"},
+    });
+}
+
+static std::unordered_set<shared_sstable> as_set(const std::vector<shared_sstable>& ssts) {
+    return std::unordered_set<shared_sstable>(ssts.begin(), ssts.end());
+}
+
+static std::unordered_set<const sstable_run*> as_set(const std::vector<frozen_sstable_run>& runs) {
+    std::unordered_set<const sstable_run*> ret;
+    for (const auto& run : runs) {
+        ret.insert(run.get());
+    }
+    return ret;
+}
+
+// Picks a job for the table, as the compaction manager would.
+static std::unordered_set<shared_sstable> pick_job(table_for_tests& cf, compaction::incremental_compaction_strategy& ics) {
+    auto control = make_strategy_control_for_test(false);
+    return as_set(ics.get_sstables_for_compaction(cf.as_compaction_group_view(), *control).get().sstables);
+}
+
+SEASTAR_TEST_CASE(ics_age_tiering_buckets_test) {
+    return test_env::do_with_async([] (test_env& env) {
+        auto s = make_age_tiering_test_schema();
+        auto run = [&] (uint64_t size, api::timestamp_type min_ts, api::timestamp_type max_ts) {
+            return make_lw_shared<const sstable_run>(make_aged_sstable(env, s, size, min_ts, max_ts));
+        };
+
+        // Three tiers, each smaller one holding newer data than the larger ones.
+        std::vector<frozen_sstable_run> large = { run(1000 * MiB, 0, 1000), run(1000 * MiB, 0, 1000) };
+        std::vector<frozen_sstable_run> medium = { run(300 * MiB, 1000, 1500), run(300 * MiB, 1000, 1500) };
+        std::vector<frozen_sstable_run> small;
+        for (int i = 0; i < 4; i++) {
+            small.push_back(run(100 * MiB, 2000 + i * 100, 2100 + i * 100));
+        }
+        // Small runs holding only data as old as that of the larger tiers, e.g. the output of
+        // a compaction in those tiers that dropped most of its input.
+        auto old_as_large = run(100 * MiB, 100, 200);
+        auto old_as_medium = run(100 * MiB, 1100, 1200);
+        // Small runs holding new data, along with old data: one that already mixed the two, and
+        // one written recently, with a few writes carrying old client timestamps. Neither is
+        // old data, which would have a place in a larger tier.
+        auto mixed = run(100 * MiB, 100, 2500);
+        auto backdated = run(100 * MiB, 5, 3000);
+
+        std::vector<frozen_sstable_run> all;
+        for (const auto& runs : {large, medium, small, {old_as_large, old_as_medium, mixed, backdated}}) {
+            std::ranges::copy(runs, std::back_inserter(all));
+        }
+        auto small_bucket_without_old = small;
+        small_bucket_without_old.push_back(mixed);
+        small_bucket_without_old.push_back(backdated);
+        auto small_bucket = small_bucket_without_old;
+        small_bucket.push_back(old_as_large);
+        small_bucket.push_back(old_as_medium);
+
+        {
+            compaction::incremental_compaction_strategy_options options(std::map<sstring, sstring>{{"age_tiering", "false"}});
+            auto buckets = compaction::incremental_compaction_strategy::get_age_tiered_buckets(all, options);
+            BOOST_REQUIRE_EQUAL(buckets.size_buckets.size(), 3);
+            BOOST_REQUIRE(as_set(buckets.size_buckets[0]) == as_set(small_bucket));
+            BOOST_REQUIRE(as_set(buckets.size_buckets[1]) == as_set(medium));
+            BOOST_REQUIRE(as_set(buckets.size_buckets[2]) == as_set(large));
+            BOOST_REQUIRE(buckets.age_buckets.empty());
+        }
+        {
+            compaction::incremental_compaction_strategy_options options(std::map<sstring, sstring>{{"age_tiering", "true"}});
+            auto buckets = compaction::incremental_compaction_strategy::get_age_tiered_buckets(all, options);
+            BOOST_REQUIRE_EQUAL(buckets.size_buckets.size(), 3);
+            BOOST_REQUIRE(as_set(buckets.size_buckets[0]) == as_set(small_bucket_without_old));
+            BOOST_REQUIRE(as_set(buckets.size_buckets[1]) == as_set(medium));
+            BOOST_REQUIRE(as_set(buckets.size_buckets[2]) == as_set(large));
+            // Each old run is grouped with the others of its age, apart from the others.
+            BOOST_REQUIRE_EQUAL(buckets.age_buckets.size(), 2);
+            BOOST_REQUIRE(as_set(buckets.age_buckets[0]) == as_set(std::vector{old_as_medium}));
+            BOOST_REQUIRE(as_set(buckets.age_buckets[1]) == as_set(std::vector{old_as_large}));
+        }
+    });
+}
+
+// A small run holding old data is not compacted together with small runs holding new data.
+SEASTAR_TEST_CASE(ics_age_tiering_keeps_old_data_out_of_new_tier_test) {
+    return test_env::do_with_async([] (test_env& env) {
+        auto s = make_age_tiering_test_schema();
+        table_for_tests cf = env.make_table_for_tests(s);
+        auto close_cf = deferred_stop(cf);
+        auto add = [&] (uint64_t size, api::timestamp_type min_ts, api::timestamp_type max_ts) {
+            auto sst = make_aged_sstable(env, s, size, min_ts, max_ts);
+            column_family_test(cf).add_sstable(sst).get();
+            return sst;
+        };
+
+        add(1000 * MiB, 0, 1000);
+        add(1000 * MiB, 0, 1000);
+        std::vector<shared_sstable> new_runs;
+        for (int i = 0; i < 4; i++) {
+            new_runs.push_back(add(100 * MiB, 2000 + i * 100, 2100 + i * 100));
+        }
+        auto old_run = add(100 * MiB, 100, 900);
+
+        auto ics = make_age_tiering_ics(false);
+        auto with_old_run = new_runs;
+        with_old_run.push_back(old_run);
+        BOOST_REQUIRE(pick_job(cf, ics) == as_set(with_old_run));
+
+        ics = make_age_tiering_ics(true);
+        BOOST_REQUIRE(pick_job(cf, ics) == as_set(new_runs));
+    });
+}
+
+// Small runs holding old data of the same age are compacted together, once there are enough of
+// them, and they do not count towards compacting the larger tier holding data of their age.
+SEASTAR_TEST_CASE(ics_age_tiering_compacts_old_runs_together_test) {
+    return test_env::do_with_async([] (test_env& env) {
+        auto s = make_age_tiering_test_schema();
+        table_for_tests cf = env.make_table_for_tests(s);
+        auto close_cf = deferred_stop(cf);
+        auto add = [&] (uint64_t size, api::timestamp_type min_ts, api::timestamp_type max_ts) {
+            auto sst = make_aged_sstable(env, s, size, min_ts, max_ts);
+            column_family_test(cf).add_sstable(sst).get();
+            return sst;
+        };
+
+        // One short of min_threshold.
+        for (int i = 0; i < 3; i++) {
+            add(1000 * MiB, 0, 1000);
+        }
+        std::vector<shared_sstable> old_runs;
+        for (int i = 0; i < 4; i++) {
+            old_runs.push_back(add(100 * MiB, 100 + i * 10, 900));
+        }
+        auto new_run = add(100 * MiB, 2000, 2100);
+
+        auto ics = make_age_tiering_ics(false);
+        auto with_new_run = old_runs;
+        with_new_run.push_back(new_run);
+        BOOST_REQUIRE(pick_job(cf, ics) == as_set(with_new_run));
+
+        ics = make_age_tiering_ics(true);
+        BOOST_REQUIRE(pick_job(cf, ics) == as_set(old_runs));
+    });
+}
+
+// A job takes in smaller runs whose age fits its own, and only those.
+SEASTAR_TEST_CASE(ics_age_tiering_adds_runs_of_fitting_age_test) {
+    return test_env::do_with_async([] (test_env& env) {
+        auto s = make_age_tiering_test_schema();
+        table_for_tests cf = env.make_table_for_tests(s);
+        auto close_cf = deferred_stop(cf);
+        auto add = [&] (uint64_t size, api::timestamp_type min_ts, api::timestamp_type max_ts) {
+            auto sst = make_aged_sstable(env, s, size, min_ts, max_ts);
+            column_family_test(cf).add_sstable(sst).get();
+            return sst;
+        };
+
+        add(1000 * MiB, 0, 1000);
+        add(1000 * MiB, 0, 1000);
+        std::vector<shared_sstable> medium;
+        for (int i = 0; i < 4; i++) {
+            medium.push_back(add(300 * MiB, 1000, 2000));
+        }
+        add(100 * MiB, 2500, 2600);
+        auto fits = add(20 * MiB, 1200, 1800);
+        // Holds data older than the medium tier, of the age of the large one.
+        add(20 * MiB, 500, 1800);
+        // Holds data newer than the medium tier.
+        add(20 * MiB, 1200, 2500);
+
+        auto ics = make_age_tiering_ics(false);
+        BOOST_REQUIRE(pick_job(cf, ics) == as_set(medium));
+
+        ics = make_age_tiering_ics(true);
+        auto with_fitting = medium;
+        with_fitting.push_back(fits);
+        BOOST_REQUIRE(pick_job(cf, ics) == as_set(with_fitting));
+    });
+}
+
+// The runs a job takes in for their age are limited to a tenth of the job's size, those
+// written first being taken first.
+SEASTAR_TEST_CASE(ics_age_tiering_adds_runs_of_fitting_age_up_to_limit_test) {
+    return test_env::do_with_async([] (test_env& env) {
+        auto s = make_age_tiering_test_schema();
+        table_for_tests cf = env.make_table_for_tests(s);
+        auto close_cf = deferred_stop(cf);
+        auto add = [&] (uint64_t size, api::timestamp_type min_ts, api::timestamp_type max_ts, db_clock::time_point write_time) {
+            auto sst = make_aged_sstable(env, s, size, min_ts, max_ts, write_time);
+            column_family_test(cf).add_sstable(sst).get();
+            return sst;
+        };
+        auto now = db_clock::now();
+
+        add(1000 * MiB, 0, 1000, now - 5h);
+        add(1000 * MiB, 0, 1000, now - 5h);
+        std::vector<shared_sstable> medium;
+        for (int i = 0; i < 4; i++) {
+            medium.push_back(add(300 * MiB, 1000, 2000, now - 4h));
+        }
+        // 3 * 50MiB fit, over the 120MiB limit; the two written first are taken.
+        auto first = add(50 * MiB, 1200, 1800, now - 3h);
+        add(50 * MiB, 1200, 1800, now - 2h);
+        auto second = add(50 * MiB, 1200, 1800, now - 150min);
+
+        auto ics = make_age_tiering_ics(true);
+        auto expected = medium;
+        expected.push_back(first);
+        expected.push_back(second);
+        BOOST_REQUIRE(pick_job(cf, ics) == as_set(expected));
+    });
+}
+
+// The motivating case: a small run holding old live data shadowed by tombstones in a large run
+// holds back their purging, unless it is compacted along with them.
+SEASTAR_TEST_CASE(ics_age_tiering_garbage_collection_test) {
+    return test_env::do_with_async([] (test_env& env) {
+        auto s = make_age_tiering_test_schema();
+        auto& cdef = *s->get_column_definition("data");
+        auto dks = tests::generate_partition_keys(250, s, local_shard_only::yes);
+        // Keys [200, 210) are deleted.
+        auto is_deleted = [&] (const dht::decorated_key& dk) {
+            auto it = std::ranges::find_if(dks, [&] (const dht::decorated_key& k) { return k.equal(*s, dk); });
+            auto idx = std::distance(dks.begin(), it);
+            return idx >= 200 && idx < 210;
+        };
+
+        struct result {
+            bool old_run_compacted;
+            size_t deleted_keys_left;
+            int64_t purge_failures;
+        };
+        auto run_scenario = [&] (bool age_tiering) {
+            table_for_tests cf = env.make_table_for_tests(s);
+            auto close_cf = deferred_stop(cf);
+            // Adds an sstable holding live data of keys [first, last).
+            auto add = [&] (int first, int last, api::timestamp_type ts) {
+                utils::chunked_vector<mutation> muts;
+                for (int i = first; i < last; i++) {
+                    mutation m(s, dks[i]);
+                    m.set_clustered_cell(clustering_key::make_empty(), cdef, atomic_cell::make_live(*cdef.type, ts, serialized("value")));
+                    muts.push_back(std::move(m));
+                }
+                auto sst = make_sstable_containing(env.make_sst_factory(s), std::move(muts)).get();
+                sstables::test(sst).set_data_file_write_time(db_clock::now() - 2h);
+                column_family_test(cf).add_sstable(sst).get();
+                return sst;
+            };
+
+            // The large, old tier: live data, and tombstones deleting keys [200, 210).
+            utils::chunked_vector<mutation> large_muts;
+            for (int i = 0; i < 210; i++) {
+                mutation m(s, dks[i]);
+                if (i < 200) {
+                    m.set_clustered_cell(clustering_key::make_empty(), cdef, atomic_cell::make_live(*cdef.type, 1000, serialized("value")));
+                } else {
+                    m.partition().apply(tombstone(500, gc_clock::now() - 1h));
+                }
+                large_muts.push_back(std::move(m));
+            }
+            auto large = make_sstable_containing(env.make_sst_factory(s), std::move(large_muts)).get();
+            sstables::test(large).set_data_file_write_time(db_clock::now() - 2h);
+            column_family_test(cf).add_sstable(large).get();
+            // A medium, newer tier.
+            add(210, 250, 2000);
+            // A small run holding older data of the deleted keys, which the tombstones shadow.
+            auto old_run = add(200, 210, 100);
+
+            auto ics = compaction::incremental_compaction_strategy(std::map<sstring, sstring>{
+                {"age_tiering", age_tiering ? "true" : "false"},
+                // Bucket by size alone, these sstables all being small.
+                {"min_sstable_size", "0"},
+                {"tombstone_compaction_interval", "1"},
+                {"unchecked_tombstone_compaction", "true"},
+            });
+            auto control = make_strategy_control_for_test(false);
+            auto desc = ics.get_sstables_for_compaction(cf.as_compaction_group_view(), *control).get();
+            BOOST_REQUIRE(as_set(desc.sstables).contains(large));
+            bool old_run_compacted = as_set(desc.sstables).contains(old_run);
+
+            desc.enable_garbage_collection(cf->get_sstable_set());
+            auto res = compact_sstables(env, std::move(desc), cf, env.make_sst_factory(s)).get();
+            size_t deleted_keys_left = 0;
+            for (const auto& sst : res.new_sstables) {
+                auto rd = sstable_reader(env.make_reader_permit(), sst, s);
+                auto close_rd = deferred_close(rd);
+                while (auto mut = read_mutation_from_mutation_reader(rd).get()) {
+                    deleted_keys_left += is_deleted(mut->decorated_key());
+                }
+            }
+            return result{
+                .old_run_compacted = old_run_compacted,
+                .deleted_keys_left = deleted_keys_left,
+                .purge_failures = res.stats.tombstone_purge_stats.failures_due_to_overlapping_with_uncompacting_sstable,
+            };
+        };
+
+        auto without = run_scenario(false);
+        BOOST_REQUIRE(!without.old_run_compacted);
+        BOOST_REQUIRE_EQUAL(without.deleted_keys_left, 10);
+        BOOST_REQUIRE_GT(without.purge_failures, 0);
+
+        auto with = run_scenario(true);
+        BOOST_REQUIRE(with.old_run_compacted);
+        BOOST_REQUIRE_EQUAL(with.deleted_keys_left, 0);
+        BOOST_REQUIRE_EQUAL(with.purge_failures, 0);
+    });
+}
+
+// The pending compactions estimate, like the backlog, follows what age tiering would compact.
+SEASTAR_TEST_CASE(ics_age_tiering_estimated_pending_compactions_test) {
+    return test_env::do_with_async([] (test_env& env) {
+        auto s = make_age_tiering_test_schema();
+        auto run = [&] (uint64_t size, api::timestamp_type min_ts, api::timestamp_type max_ts) {
+            return make_lw_shared<const sstable_run>(make_aged_sstable(env, s, size, min_ts, max_ts));
+        };
+        std::vector<frozen_sstable_run> runs = { run(1000 * MiB, 0, 1000), run(1000 * MiB, 0, 1000) };
+        for (int i = 0; i < 3; i++) {
+            runs.push_back(run(100 * MiB, 2000 + i * 100, 2100 + i * 100));
+        }
+        // With it, the small runs make min_threshold, by size alone.
+        runs.push_back(run(100 * MiB, 100, 900));
+
+        auto estimate = [&] (sstring age_tiering) {
+            compaction::incremental_compaction_strategy_options options(std::map<sstring, sstring>{{"age_tiering", age_tiering}});
+            return compaction::incremental_compaction_strategy::estimated_pending_compactions(runs, 4, 32, options);
+        };
+        BOOST_REQUIRE_EQUAL(estimate("false"), 1);
+        BOOST_REQUIRE_EQUAL(estimate("true"), 0);
+    });
+}
+
+// A small run holding old data is kept apart from the new ones also while the large runs holding
+// data of its age are being compacted, and so are not candidates for compaction.
+SEASTAR_TEST_CASE(ics_age_tiering_accounts_for_compacting_runs_test) {
+    return test_env::do_with_async([] (test_env& env) {
+        auto s = make_age_tiering_test_schema();
+        table_for_tests cf = env.make_table_for_tests(s);
+        auto close_cf = deferred_stop(cf);
+        auto add = [&] (uint64_t size, api::timestamp_type min_ts, api::timestamp_type max_ts) {
+            auto sst = make_aged_sstable(env, s, size, min_ts, max_ts);
+            column_family_test(cf).add_sstable(sst).get();
+            return sst;
+        };
+
+        std::unordered_set<shared_sstable> compacting = { add(1000 * MiB, 0, 1000), add(1000 * MiB, 0, 1000) };
+        std::vector<shared_sstable> new_runs;
+        for (int i = 0; i < 4; i++) {
+            new_runs.push_back(add(100 * MiB, 2000 + i * 100, 2100 + i * 100));
+        }
+        add(100 * MiB, 100, 900);
+
+        struct control : public compaction::strategy_control {
+            const std::unordered_set<shared_sstable>& compacting;
+            explicit control(const std::unordered_set<shared_sstable>& compacting) : compacting(compacting) {}
+            bool has_ongoing_compaction(compaction::compaction_group_view&) const noexcept override {
+                return true;
+            }
+            future<std::vector<sstables::shared_sstable>> candidates(compaction::compaction_group_view& t) const override {
+                auto main_set = co_await t.main_sstable_set();
+                co_return *main_set->all() | std::views::filter([this] (const shared_sstable& sst) { return !compacting.contains(sst); }) | std::ranges::to<std::vector>();
+            }
+            future<std::vector<sstables::frozen_sstable_run>> candidates_as_runs(compaction::compaction_group_view& t) const override {
+                auto main_set = co_await t.main_sstable_set();
+                co_return main_set->all_sstable_runs() | std::views::filter([this] (const frozen_sstable_run& run) {
+                    return !compacting.contains(*run->all().begin());
+                }) | std::ranges::to<std::vector>();
+            }
+        };
+
+        auto ics = make_age_tiering_ics(true);
+        control ctl(compacting);
+        auto job = ics.get_sstables_for_compaction(cf.as_compaction_group_view(), ctl).get().sstables;
+        BOOST_REQUIRE(as_set(job) == as_set(new_runs));
+    });
+}

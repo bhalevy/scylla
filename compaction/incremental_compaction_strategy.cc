@@ -127,11 +127,30 @@ static std::optional<double> validate_space_amplification_goal(const std::map<ss
     return space_amplification_goal;
 }
 
+static bool validate_age_tiering(const std::map<sstring, sstring>& options) {
+    auto tmp_value = compaction_strategy_impl::get_value(options, incremental_compaction_strategy_options::AGE_TIERING_KEY);
+    if (!tmp_value) {
+        return false;
+    }
+    if (*tmp_value != "true" && *tmp_value != "false") {
+        throw exceptions::configuration_exception(fmt::format("{} value ({}) must be \"true\" or \"false\"",
+            incremental_compaction_strategy_options::AGE_TIERING_KEY, *tmp_value));
+    }
+    return *tmp_value == "true";
+}
+
+static bool validate_age_tiering(const std::map<sstring, sstring>& options, std::map<sstring, sstring>& unchecked_options) {
+    auto age_tiering = validate_age_tiering(options);
+    unchecked_options.erase(incremental_compaction_strategy_options::AGE_TIERING_KEY);
+    return age_tiering;
+}
+
 incremental_compaction_strategy_options::incremental_compaction_strategy_options(const std::map<sstring, sstring>& options) {
     min_sstable_size = validate_min_sstable_size(options);
     min_sstable_age = validate_min_sstable_age(options);
     bucket_low = validate_bucket_low(options);
     bucket_high = validate_bucket_high(options);
+    age_tiering = validate_age_tiering(options);
 }
 
 // options is a map of compaction strategy options and their values.
@@ -241,6 +260,168 @@ incremental_compaction_strategy::get_buckets(const std::vector<sstables::frozen_
     return bucket_list;
 }
 
+static api::timestamp_type run_min_timestamp(const sstables::sstable_run& run) {
+    return std::ranges::min(run.all() | std::views::transform([] (const sstables::shared_sstable& sst) {
+        return sst->get_stats_metadata().min_timestamp;
+    }));
+}
+
+// Identifies a run across the different run objects built for it, e.g. by separate calls to
+// sstable_set::all_sstable_runs().
+static const sstables::sstable* run_key(const sstables::sstable_run& run) {
+    return run.all().begin()->get();
+}
+
+void incremental_compaction_strategy::age_tiered_buckets::retain(const std::vector<sstables::frozen_sstable_run>& runs) {
+    std::unordered_set<const sstables::sstable*> keys;
+    for (const auto& run : runs) {
+        keys.insert(run_key(*run));
+    }
+    for (auto* buckets : {&size_buckets, &age_buckets, &tiers}) {
+        for (auto& bucket : *buckets) {
+            std::erase_if(bucket, [&] (const sstables::frozen_sstable_run& run) { return !keys.contains(run_key(*run)); });
+        }
+        std::erase_if(*buckets, [] (const sstable_run_bucket& bucket) { return bucket.empty(); });
+    }
+}
+
+std::vector<sstable_run_bucket> incremental_compaction_strategy::age_tiered_buckets::all() && {
+    auto ret = std::move(size_buckets);
+    std::ranges::move(age_buckets, std::back_inserter(ret));
+    return ret;
+}
+
+incremental_compaction_strategy::age_tiered_buckets
+incremental_compaction_strategy::get_age_tiered_buckets(const std::vector<sstables::frozen_sstable_run>& runs, const incremental_compaction_strategy_options& options) {
+    age_tiered_buckets ret{ .size_buckets = get_buckets(runs, options) };
+    if (!options.age_tiering) {
+        return ret;
+    }
+    if (ret.size_buckets.size() < 2) {
+        ret.tiers = ret.size_buckets;
+        return ret;
+    }
+    auto& buckets = ret.size_buckets;
+    const auto n = buckets.size();
+
+    // newest[k] is the newest data in bucket k or in any larger one. Larger buckets are expected
+    // to hold older data, so a larger bucket holding newer data than a smaller one, e.g. right after
+    // a major compaction, bounds the smaller one too. This keeps newest[] non-increasing.
+    std::vector<api::timestamp_type> newest(n);
+    for (size_t k = n; k-- > 0;) {
+        auto bucket_newest = std::ranges::max(buckets[k] | std::views::transform(std::mem_fn(&sstables::sstable_run::max_timestamp)));
+        newest[k] = k + 1 < n ? std::max(bucket_newest, newest[k + 1]) : bucket_newest;
+    }
+
+    // A run all of whose data is older than the newest data of a larger bucket is out of place in
+    // its size bucket: compacting it there would mix it with newer data. Move it to the age band
+    // of the largest bucket that still holds newer data than it, i.e. the oldest one it could
+    // have been compacted with had the data flowed from small and new to large and old.
+    //
+    // The run's newest data, rather than its oldest, decides, so that a recently written run that
+    // holds a few writes with old (client-provided) timestamps is not mistaken for old data.
+    std::vector<sstable_run_bucket> bands(n);
+    for (size_t i = 0; i + 1 < n; ++i) {
+        std::erase_if(buckets[i], [&] (const sstables::frozen_sstable_run& run) {
+            auto run_newest = run->max_timestamp();
+            if (run_newest >= newest[i + 1]) {
+                return false;
+            }
+            // newest[] is non-increasing, so the buckets holding newer data than the run make a prefix.
+            auto band = std::distance(newest.begin(), std::ranges::partition_point(newest, [run_newest] (api::timestamp_type ts) {
+                return ts > run_newest;
+            })) - 1;
+            bands[band].push_back(run);
+            return true;
+        });
+    }
+    for (size_t k = 0; k < n; ++k) {
+        auto tier = buckets[k];
+        std::ranges::copy(bands[k], std::back_inserter(tier));
+        if (!tier.empty()) {
+            ret.tiers.push_back(std::move(tier));
+        }
+    }
+    std::erase_if(buckets, [] (const sstable_run_bucket& bucket) { return bucket.empty(); });
+    for (auto& band : bands) {
+        if (!band.empty()) {
+            std::ranges::move(get_buckets(band, options), std::back_inserter(ret.age_buckets));
+        }
+    }
+    return ret;
+}
+
+// With age tiering, a run moved out of its size bucket waits for others of its age and size, which may
+// take long. Instead, let a job take, in addition to its own runs, smaller runs whose age fits it:
+// - they hold no data newer than the job's newest data, which would mix new data into old;
+// - they hold no data older than the job's oldest data, unless no larger run outside the job holds
+//   data newer than that, as then the output would hold back the purging of tombstones in those runs,
+//   which compacting the job alone would not.
+// The added runs, those written earliest, i.e. waiting longest, first, are capped at a
+// tenth of the job's size, to keep their write amplification cost low, and at max_threshold runs.
+//
+// all_runs holds every run of the table, including those being compacted, which are not candidates
+// but do tell how old the data held by the larger runs is.
+static std::vector<sstables::frozen_sstable_run> add_runs_within_age_range(std::vector<sstables::frozen_sstable_run> job,
+        const std::vector<sstables::frozen_sstable_run>& candidates, const std::vector<sstables::frozen_sstable_run>& all_runs, size_t max_threshold) {
+    if (job.empty() || job.size() >= max_threshold) {
+        return job;
+    }
+    std::unordered_set<const sstables::sstable*> in_job;
+    api::timestamp_type job_oldest = api::max_timestamp;
+    api::timestamp_type job_newest = api::min_timestamp;
+    uint64_t job_size = 0;
+    uint64_t smallest = std::numeric_limits<uint64_t>::max();
+    uint64_t largest = 0;
+    for (const auto& run : job) {
+        in_job.insert(run_key(*run));
+        job_oldest = std::min(job_oldest, run_min_timestamp(*run));
+        job_newest = std::max(job_newest, run->max_timestamp());
+        auto size = run->data_size();
+        job_size += size;
+        smallest = std::min(smallest, size);
+        largest = std::max(largest, size);
+    }
+    // The newest data held by larger runs outside the job.
+    auto larger_newest = api::min_timestamp;
+    for (const auto& run : all_runs) {
+        if (!in_job.contains(run_key(*run)) && run->data_size() > largest) {
+            larger_newest = std::max(larger_newest, run->max_timestamp());
+        }
+    }
+    const auto oldest_allowed = std::min(job_oldest, larger_newest);
+
+    std::vector<sstables::frozen_sstable_run> eligible;
+    for (const auto& run : candidates) {
+        if (!in_job.contains(run_key(*run)) && run->data_size() <= smallest
+                && run->max_timestamp() <= job_newest && run_min_timestamp(*run) >= oldest_allowed) {
+            eligible.push_back(run);
+        }
+    }
+    std::ranges::sort(eligible, std::less{}, std::mem_fn(&sstables::sstable_run::data_file_write_time));
+
+    uint64_t added_size = 0;
+    for (auto& run : eligible) {
+        if (job.size() >= max_threshold) {
+            break;
+        }
+        if (added_size + run->data_size() > job_size / 10) {
+            continue;
+        }
+        added_size += run->data_size();
+        clogger.debug("ICS: adding run {} of size {} to a job of {} runs of size {}, its age fits", run->run_identifier(), run->data_size(), job.size(), job_size);
+        job.push_back(std::move(run));
+    }
+    return job;
+}
+
+compaction_descriptor incremental_compaction_strategy::make_job(std::vector<sstables::frozen_sstable_run> job, const job_context& ctx) const {
+    if (_options.age_tiering) {
+        job = add_runs_within_age_range(std::move(job), ctx.candidates, ctx.all_runs, ctx.max_threshold);
+    }
+    return compaction_descriptor(runs_to_sstables(std::move(job)), 0, _fragment_size);
+}
+
 std::vector<sstables::frozen_sstable_run>
 incremental_compaction_strategy::most_interesting_bucket(std::vector<std::vector<sstables::frozen_sstable_run>> buckets,
         size_t min_threshold, size_t max_threshold)
@@ -268,7 +449,8 @@ incremental_compaction_strategy::most_interesting_bucket(std::vector<std::vector
 }
 
 compaction_descriptor
-incremental_compaction_strategy::find_garbage_collection_job(const compaction::compaction_group_view& t, std::vector<size_bucket_t>& buckets) {
+incremental_compaction_strategy::find_garbage_collection_job(const compaction::compaction_group_view& t, std::vector<size_bucket_t>& buckets,
+        const job_context& ctx) {
     // min_memtable_timestamp() scans all memtables; hoist it out of the per-run loop below.
     auto worth_dropping_tombstones = [this, &t, now = db_clock::now(), min_memtable_ts = t.min_memtable_timestamp()] (const sstables::sstable_run& run, gc_clock::time_point compaction_time) {
         if (run.all().empty()) {
@@ -340,7 +522,7 @@ incremental_compaction_strategy::find_garbage_collection_job(const compaction::c
     }
     clogger.debug("ICS: starting garbage collection on {} runs for {}.{}", input.size(), t.schema()->ks_name(), t.schema()->cf_name());
 
-    return compaction_descriptor(runs_to_sstables(std::move(input)), 0, _fragment_size);
+    return make_job(std::move(input), ctx);
 }
 
 future<compaction_descriptor>
@@ -351,16 +533,33 @@ incremental_compaction_strategy::get_sstables_for_compaction(compaction_group_vi
     size_t min_threshold = t.min_compaction_threshold();
     size_t max_threshold = t.schema()->max_compaction_threshold();
 
-    auto buckets = get_buckets(candidates);
+    // With age tiering, the age of a run is judged against all runs, including the ones being
+    // compacted, which are not candidates. Otherwise, while a large and old tier is compacted, the
+    // small runs holding data as old as its own would pass for holding new data.
+    std::vector<sstables::frozen_sstable_run> all_runs;
+    if (_options.age_tiering) {
+        all_runs = (co_await t.main_sstable_set())->all_sstable_runs();
+    }
+    const job_context ctx{ .candidates = candidates, .all_runs = _options.age_tiering ? all_runs : candidates, .max_threshold = max_threshold };
+    auto age_tiered = get_age_tiered_buckets(ctx.all_runs, _options);
+    if (_options.age_tiering) {
+        age_tiered.retain(candidates);
+    }
+    // The size buckets are needed below for the cross-tier jobs, which compact whole tiers.
+    auto buckets = age_tiered.size_buckets;
+    // Garbage collection looks at each tier along with the smaller runs holding data of its age:
+    // these hold tombstones to drop like any other, and old data shadowed by the tier's tombstones.
+    auto gc_buckets = _options.age_tiering ? std::move(age_tiered.tiers) : std::vector<size_bucket_t>();
+    auto all_buckets = std::move(age_tiered).all();
 
-    if (is_any_bucket_interesting(buckets, min_threshold)) {
-        std::vector<sstables::frozen_sstable_run> most_interesting = most_interesting_bucket(std::move(buckets), min_threshold, max_threshold);
-        co_return compaction_descriptor(runs_to_sstables(std::move(most_interesting)), 0, _fragment_size);
+    if (is_any_bucket_interesting(all_buckets, min_threshold)) {
+        std::vector<sstables::frozen_sstable_run> most_interesting = most_interesting_bucket(std::move(all_buckets), min_threshold, max_threshold);
+        co_return make_job(std::move(most_interesting), ctx);
     }
     // If we are not enforcing min_threshold explicitly, try any pair of sstable runs in the same tier.
-    if (!t.compaction_enforce_min_threshold() && is_any_bucket_interesting(buckets, 2)) {
-        std::vector<sstables::frozen_sstable_run> most_interesting = most_interesting_bucket(std::move(buckets), 2, max_threshold);
-        co_return compaction_descriptor(runs_to_sstables(std::move(most_interesting)), 0, _fragment_size);
+    if (!t.compaction_enforce_min_threshold() && is_any_bucket_interesting(all_buckets, 2)) {
+        std::vector<sstables::frozen_sstable_run> most_interesting = most_interesting_bucket(std::move(all_buckets), 2, max_threshold);
+        co_return make_job(std::move(most_interesting), ctx);
     }
 
     // The cross-tier behavior is only triggered once we're done with all the pending same-tier compaction to
@@ -369,7 +568,7 @@ incremental_compaction_strategy::get_sstables_for_compaction(compaction_group_vi
         co_return compaction_descriptor();
     }
 
-    auto desc = find_garbage_collection_job(t, buckets);
+    auto desc = find_garbage_collection_job(t, _options.age_tiering ? gc_buckets : buckets, ctx);
     if (!desc.sstables.empty()) {
         co_return desc;
     }
@@ -414,8 +613,7 @@ incremental_compaction_strategy::get_sstables_for_compaction(compaction_group_vi
             cross_tier_input.reserve(cross_tier_input.size() + s1.size());
             std::move(s1.begin(), s1.end(), std::back_inserter(cross_tier_input));
 
-            co_return compaction_descriptor(runs_to_sstables(std::move(cross_tier_input)),
-                                                   0, _fragment_size);
+            co_return make_job(std::move(cross_tier_input), ctx);
         }
     }
 
@@ -441,7 +639,7 @@ future<int64_t> incremental_compaction_strategy::estimated_pending_compactions(c
 int64_t incremental_compaction_strategy::estimated_pending_compactions(const std::vector<sstables::frozen_sstable_run>& runs,
         size_t min_threshold, size_t max_threshold, const incremental_compaction_strategy_options& options) {
     int64_t n = 0;
-    for (auto& bucket : get_buckets(runs, options)) {
+    for (auto& bucket : get_age_tiered_buckets(runs, options).all()) {
         if (bucket.size() >= min_threshold) {
             n += (bucket.size() + max_threshold - 1) / max_threshold;
         }
@@ -597,6 +795,7 @@ void incremental_compaction_strategy::validate_options(const std::map<sstring, s
     incremental_compaction_strategy_options::validate(options, unchecked_options);
     validate_fragment_size_option(options, unchecked_options);
     validate_space_amplification_goal(options, unchecked_options);
+    validate_age_tiering(options, unchecked_options);
 }
 
 }

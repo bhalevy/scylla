@@ -25,11 +25,14 @@ public:
     static constexpr auto MIN_SSTABLE_AGE_KEY = "min_sstable_age";
     static constexpr auto BUCKET_LOW_KEY = "bucket_low";
     static constexpr auto BUCKET_HIGH_KEY = "bucket_high";
+    // Only ICS accepts it, see incremental_compaction_strategy::validate_options().
+    static constexpr auto AGE_TIERING_KEY = "age_tiering";
 private:
     uint64_t min_sstable_size = DEFAULT_MIN_SSTABLE_SIZE;
     std::chrono::seconds min_sstable_age = DEFAULT_MIN_SSTABLE_AGE;
     double bucket_low = DEFAULT_BUCKET_LOW;
     double bucket_high = DEFAULT_BUCKET_HIGH;
+    bool age_tiering = false;
 public:
     incremental_compaction_strategy_options(const std::map<sstring, sstring>& options);
 
@@ -46,6 +49,7 @@ public:
 };
 
 using sstable_run_and_length = std::pair<sstables::frozen_sstable_run, uint64_t>;
+using sstable_run_bucket = std::vector<sstables::frozen_sstable_run>;
 using sstable_run_bucket_and_length = std::pair<std::vector<sstables::frozen_sstable_run>, uint64_t>;
 
 class incremental_compaction_strategy : public compaction_strategy_impl {
@@ -71,10 +75,46 @@ private:
 
     bool is_any_bucket_interesting(const std::vector<std::vector<sstables::frozen_sstable_run>>& buckets, size_t min_threshold) const;
 
-    compaction_descriptor find_garbage_collection_job(const compaction_group_view& t, std::vector<size_bucket_t>& buckets);
+    // What a job is picked from.
+    struct job_context {
+        // The runs that may be compacted.
+        const std::vector<sstables::frozen_sstable_run>& candidates;
+        // All runs of the table, including the ones being compacted.
+        const std::vector<sstables::frozen_sstable_run>& all_runs;
+        size_t max_threshold;
+    };
+
+    compaction_descriptor find_garbage_collection_job(const compaction_group_view& t, std::vector<size_bucket_t>& buckets, const job_context& ctx);
 
     static void sort_run_bucket_by_first_key(size_bucket_t& bucket, size_t max_elements, const schema_ptr& schema);
+
+    // With age tiering, add to the job runs of the given candidates that it can take
+    // without mixing data of different ages, see add_runs_within_age_range() in the .cc.
+    compaction_descriptor make_job(std::vector<sstables::frozen_sstable_run> job, const job_context& ctx) const;
 public:
+    // The result of bucketing runs by size and, with the age_tiering option, by age.
+    struct age_tiered_buckets {
+        // Runs of similar size, in ascending size order. With age tiering, a run that holds
+        // only data older than the newest data of a larger bucket is moved out of here,
+        // and buckets left empty are dropped.
+        std::vector<sstable_run_bucket> size_buckets;
+        // The runs moved out of size_buckets, grouped by the larger bucket whose age they
+        // match (their age band), and within each band by size, so that a compaction of
+        // one of these merges old data only with data of a similar age and size.
+        std::vector<sstable_run_bucket> age_buckets;
+        // With age tiering, each size bucket along with the runs moved out of smaller buckets
+        // for holding data of its age, in ascending size order: what a cross-tier compaction
+        // of the bucket should take, so that tombstones meet the old data they shadow
+        // wherever it is. Empty without age tiering.
+        std::vector<sstable_run_bucket> tiers;
+
+        // Keep only the given runs.
+        void retain(const std::vector<sstables::frozen_sstable_run>& runs);
+
+        // All buckets a compaction may be picked from.
+        std::vector<sstable_run_bucket> all() &&;
+    };
+
     incremental_compaction_strategy() = default;
 
     incremental_compaction_strategy(const std::map<sstring, sstring>& options);
@@ -93,6 +133,12 @@ public:
 
     // Group runs of similar size into buckets.
     static std::vector<std::vector<sstables::frozen_sstable_run>> get_buckets(const std::vector<sstables::frozen_sstable_run>& runs, const incremental_compaction_strategy_options& options);
+
+    // Group runs by size, as get_buckets(), and, when options.age_tiering is set, keep runs
+    // whose data is older than that of a larger bucket out of the size buckets. This keeps
+    // old data from being compacted together with recently written data, which would make
+    // the output hold back the purging of tombstones in larger, older, runs.
+    static age_tiered_buckets get_age_tiered_buckets(const std::vector<sstables::frozen_sstable_run>& runs, const incremental_compaction_strategy_options& options);
 
     // Of the given buckets, return the one with the most runs among those holding at least
     // min_threshold of them, trimmed to max_threshold runs. Empty if none qualifies.
