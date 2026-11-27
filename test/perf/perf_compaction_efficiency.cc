@@ -59,6 +59,11 @@ struct test_config {
     std::map<sstring, sstring> compaction_options;
     sstring output_format = "text";
     bool verbose = false;
+    // Tombstones newer than the oldest write the commitlog still holds for the table are
+    // not purged, so that replaying the commitlog cannot resurrect data they deleted. A
+    // commitlog segment lives until it fills up and all tables flush past it, which a short
+    // run on a small data set may never reach, leaving no tombstone purgeable throughout.
+    bool commitlog_holds_back_tombstone_gc = false;
 
     // Concurrent mode: writer fibers run against a periodic flush, so compaction runs
     // alongside the write load and has to compete for CPU. The serial mode (flush, then
@@ -165,6 +170,24 @@ struct metrics {
     uint64_t total_compaction_input_bytes = 0;
     uint64_t total_compaction_output_bytes = 0;
 
+    // Age inversions: runs holding only data older than the newest data of a run at least
+    // twice their size, sampled after every flush. Such a run sits among the small, recently
+    // written ones, and compacting it with them mixes old data into new.
+    std::vector<uint64_t> age_inversion_samples;
+
+    // Data and tombstones on disk, sampled after every flush, once compaction settled.
+    // Their averages over the run compare two runs of the same workload better than the
+    // state the run happens to end in.
+    std::vector<uint64_t> disk_bytes_samples;
+    std::vector<uint64_t> tombstone_samples;
+
+    // Tombstone purging, as accounted by the compactions of the measured phase: how many
+    // tombstones compaction tried to purge, and how many of these it had to keep because
+    // an sstable outside the compaction, or a memtable, may hold data they shadow.
+    uint64_t tombstone_purge_attempts = 0;
+    uint64_t tombstone_purge_failures_due_to_memtable = 0;
+    uint64_t tombstone_purge_failures_due_to_sstables = 0;
+
     std::chrono::steady_clock::time_point start_time;
     std::chrono::steady_clock::time_point end_time;
 
@@ -258,6 +281,34 @@ struct metrics {
                        percentile_double(sorted_ce, 99),
                        sorted_ce.back());
         }
+
+        if (!age_inversion_samples.empty()) {
+            auto sorted_ai = age_inversion_samples;
+            std::sort(sorted_ai.begin(), sorted_ai.end());
+            fmt::print("\nAge inversions (avg runs per sample): {:.2f}\n",
+                       std::accumulate(sorted_ai.begin(), sorted_ai.end(), 0.0) / sorted_ai.size());
+            fmt::print("Age inversions (p50/p95/p99/max): {}/{}/{}/{}\n",
+                       percentile(sorted_ai, 50),
+                       percentile(sorted_ai, 95),
+                       percentile(sorted_ai, 99),
+                       sorted_ai.back());
+        }
+
+        auto average = [] (const std::vector<uint64_t>& samples) {
+            return samples.empty() ? 0.0 : std::accumulate(samples.begin(), samples.end(), 0.0) / samples.size();
+        };
+        fmt::print("\nAverage data on disk: {:.2f} MB\n", average(disk_bytes_samples) / 1048576.0);
+        fmt::print("Average tombstones on disk: {:.0f}\n", average(tombstone_samples));
+
+        // Only partition and range tombstones are accounted for; compaction purges row
+        // and cell tombstones without counting them.
+        fmt::print("\nTombstone purge attempts: {}\n", tombstone_purge_attempts);
+        fmt::print("Tombstone purge failures (overlapping sstables/memtable): {}/{}\n",
+                   tombstone_purge_failures_due_to_sstables, tombstone_purge_failures_due_to_memtable);
+        if (tombstone_purge_attempts) {
+            fmt::print("Tombstone purge failure ratio due to overlapping sstables: {:.4f}\n",
+                       double(tombstone_purge_failures_due_to_sstables) / tombstone_purge_attempts);
+        }
     }
 
     void write_json(const test_config& cfg, uint64_t final_sstable_count,
@@ -317,6 +368,25 @@ struct metrics {
             root["compaction_efficiency_p99"] = fmt::format("{:.4f}", percentile_double(sorted_ce, 99));
             root["compaction_efficiency_max"] = fmt::format("{:.4f}", sorted_ce.back());
         }
+
+        if (!age_inversion_samples.empty()) {
+            auto sorted_ai = age_inversion_samples;
+            std::sort(sorted_ai.begin(), sorted_ai.end());
+            root["age_inversions_avg"] = fmt::format("{:.2f}",
+                    std::accumulate(sorted_ai.begin(), sorted_ai.end(), 0.0) / sorted_ai.size());
+            root["age_inversions_p50"] = Json::Value::UInt64(percentile(sorted_ai, 50));
+            root["age_inversions_p95"] = Json::Value::UInt64(percentile(sorted_ai, 95));
+            root["age_inversions_p99"] = Json::Value::UInt64(percentile(sorted_ai, 99));
+            root["age_inversions_max"] = Json::Value::UInt64(sorted_ai.back());
+        }
+        auto average = [] (const std::vector<uint64_t>& samples) {
+            return samples.empty() ? 0.0 : std::accumulate(samples.begin(), samples.end(), 0.0) / samples.size();
+        };
+        root["disk_bytes_avg"] = fmt::format("{:.0f}", average(disk_bytes_samples));
+        root["tombstones_avg"] = fmt::format("{:.0f}", average(tombstone_samples));
+        root["tombstone_purge_attempts"] = Json::Value::UInt64(tombstone_purge_attempts);
+        root["tombstone_purge_failures_due_to_sstables"] = Json::Value::UInt64(tombstone_purge_failures_due_to_sstables);
+        root["tombstone_purge_failures_due_to_memtable"] = Json::Value::UInt64(tombstone_purge_failures_due_to_memtable);
 
         if (extra) {
             for (const auto& key : extra->getMemberNames()) {
@@ -473,6 +543,74 @@ uint64_t probe_bloom_filters(sharded<replica::database>& db, const schema_ptr& s
     }).get();
 }
 
+// Number of runs holding only data older than the newest data of a run at least twice
+// their size, in the same compaction group.
+uint64_t count_age_inversions(sharded<replica::database>& db, const schema_ptr& s) {
+    return db.map_reduce0([id = s->id()] (replica::database& db) {
+        auto& cf = db.find_column_family(id);
+        return do_with(uint64_t(0), [&cf] (uint64_t& inversions) {
+            return cf.parallel_foreach_compaction_group_view([&inversions] (compaction::compaction_group_view& v) {
+                return v.main_sstable_set().then([&inversions] (auto main_set) {
+                    auto runs = main_set->all_sstable_runs();
+                    for (const auto& run : runs) {
+                        inversions += std::ranges::any_of(runs, [&run] (const sstables::frozen_sstable_run& other) {
+                            return other->data_size() >= 2 * run->data_size() && other->max_timestamp() > run->max_timestamp();
+                        });
+                    }
+                });
+            }).then([&inversions] {
+                return inversions;
+            });
+        });
+    }, uint64_t(0), std::plus<uint64_t>()).get();
+}
+
+// Number of tombstones held by the table's sstables, as estimated by their statistics.
+uint64_t get_tombstone_count(sharded<replica::database>& db, const schema_ptr& s) {
+    return db.map_reduce0([id = s->id()] (replica::database& db) -> uint64_t {
+        uint64_t tombstones = 0;
+        for (const auto& sst : *db.find_column_family(id).get_sstables()) {
+            for (const auto& [drop_time, count] : sst->get_stats_metadata().estimated_tombstone_drop_time.bin) {
+                tombstones += count;
+            }
+        }
+        return tombstones;
+    }, uint64_t(0), std::plus<uint64_t>()).get();
+}
+
+// Tombstone purge counters summed over the compactions of the given table, as recorded
+// in system.compaction_history.
+struct tombstone_purge_totals {
+    uint64_t attempts = 0;
+    uint64_t failures_due_to_memtable = 0;
+    uint64_t failures_due_to_sstables = 0;
+};
+
+tombstone_purge_totals get_tombstone_purge_totals(cql_test_env& env, const sstring& cf_name) {
+    tombstone_purge_totals totals;
+    auto msg = env.execute_cql(
+        "SELECT columnfamily_name, total_tombstone_purge_attempt, "
+        "total_tombstone_purge_failure_due_to_overlapping_with_memtable, "
+        "total_tombstone_purge_failure_due_to_overlapping_with_uncompacting_sstable "
+        "FROM system.compaction_history").get();
+    auto res = dynamic_pointer_cast<cql_transport::messages::result_message::rows>(msg);
+    if (!res) {
+        return totals;
+    }
+    auto get = [] (const auto& cell) -> uint64_t {
+        return cell ? value_cast<int64_t>(long_type->deserialize(*cell)) : 0;
+    };
+    for (const auto& row : res->rs().result_set().rows()) {
+        if (!row[0] || value_cast<sstring>(utf8_type->deserialize(*row[0])) != cf_name) {
+            continue;
+        }
+        totals.attempts += get(row[1]);
+        totals.failures_due_to_memtable += get(row[2]);
+        totals.failures_due_to_sstables += get(row[3]);
+    }
+    return totals;
+}
+
 // Print per-shard SSTable state for the given table.
 void log_sstable_state(sharded<replica::database>& db, const schema_ptr& s, sstring label) {
     db.invoke_on_all([id = s->id(), label = std::move(label)] (replica::database& db) {
@@ -487,7 +625,13 @@ void log_sstable_state(sharded<replica::database>& db, const schema_ptr& s, sstr
         });
         fmt::print("[shard {}] {} - {} sstables:\n", this_shard_id(), label, sorted.size());
         for (auto& sst : sorted) {
-            fmt::print("  gen={} size={}\n", sst->generation(), sst->bytes_on_disk());
+            const auto& stats = sst->get_stats_metadata();
+            uint64_t tombstones = 0;
+            for (const auto& [drop_time, count] : stats.estimated_tombstone_drop_time.bin) {
+                tombstones += count;
+            }
+            fmt::print("  gen={} size={} min_ts={} max_ts={} tombstones={} origin={}\n", sst->generation(), sst->bytes_on_disk(),
+                    stats.min_timestamp, stats.max_timestamp, tombstones, sst->get_origin());
         }
         std::fflush(stdout);
     }).get();
@@ -681,6 +825,10 @@ void do_compaction_efficiency_test(cql_test_env& env, test_config& cfg) {
                         }
                     }
 
+                    m.age_inversion_samples.push_back(count_age_inversions(env.db(), s));
+                    m.disk_bytes_samples.push_back(get_total_bytes_on_disk(env.db(), s));
+                    m.tombstone_samples.push_back(get_tombstone_count(env.db(), s));
+
                     // Probe bloom filters after flush+compaction when all data is on disk
                     if (cfg.read_frequency > 0
                         && m.total_flushes % cfg.read_frequency == 0
@@ -712,6 +860,7 @@ void do_compaction_efficiency_test(cql_test_env& env, test_config& cfg) {
     }
 
     // Measured phase
+    auto purge_totals_before = get_tombstone_purge_totals(env, "perf_compaction");
     m.start_time = clk::now();
     run_phase(cfg.operations, cfg.duration_in_seconds, false);
     m.end_time = clk::now();
@@ -729,6 +878,11 @@ void do_compaction_efficiency_test(cql_test_env& env, test_config& cfg) {
     // Final metrics
     auto final_sstable_count = get_sstable_count(env.db(), s);
     auto total_bytes_on_disk = get_total_bytes_on_disk(env.db(), s);
+    // Taken before the major compaction below, which purges everything it can.
+    auto purge_totals = get_tombstone_purge_totals(env, "perf_compaction");
+    m.tombstone_purge_attempts = purge_totals.attempts - purge_totals_before.attempts;
+    m.tombstone_purge_failures_due_to_memtable = purge_totals.failures_due_to_memtable - purge_totals_before.failures_due_to_memtable;
+    m.tombstone_purge_failures_due_to_sstables = purge_totals.failures_due_to_sstables - purge_totals_before.failures_due_to_sstables;
 
     // Major compaction to measure fully compacted size
     env.db().invoke_on_all([id = s->id()] (replica::database& db) {
@@ -1427,6 +1581,10 @@ int scylla_compaction_efficiency_main(int argc, char** argv) {
             "output format: text, json")
         ("verbose", bpo::bool_switch()->default_value(false),
             "print per-shard sstable state after each flush and compaction")
+        ("commitlog-holds-back-tombstone-gc", bpo::bool_switch()->default_value(false),
+            "keep tombstones newer than the oldest write still held by the commitlog from being "
+            "purged, as a node does. Off by default: in a short run the commitlog never drops its "
+            "first segment, so no tombstone would be purged at all")
         ("concurrent-mode", bpo::bool_switch()->default_value(false),
             "run writer fibers against a periodic flush, so compaction runs concurrently "
             "with the write load and competes for CPU. The serial mode never lets that "
@@ -1531,6 +1689,7 @@ int scylla_compaction_efficiency_main(int argc, char** argv) {
                 }
                 cfg.output_format = app.configuration()["output-format"].as<std::string>();
                 cfg.verbose = app.configuration()["verbose"].as<bool>();
+                cfg.commitlog_holds_back_tombstone_gc = app.configuration()["commitlog-holds-back-tombstone-gc"].as<bool>();
                 cfg.concurrent_mode = app.configuration()["concurrent-mode"].as<bool>();
                 cfg.concurrent_writers = app.configuration()["concurrent-writers"].as<unsigned>();
                 cfg.stats_interval_ms = app.configuration()["stats-interval-ms"].as<unsigned>();
@@ -1614,6 +1773,13 @@ int scylla_compaction_efficiency_main(int argc, char** argv) {
                                        cfg.compaction_static_shares);
                         }
                     }
+                }
+
+                if (!cfg.commitlog_holds_back_tombstone_gc) {
+                    env.db().invoke_on_all([] (replica::database& db) {
+                        db.get_compaction_manager().get_shared_tombstone_gc_state().set_gc_time_min_source(
+                                [] (const table_id&, const db::replay_position&) { return gc_clock::time_point::max(); });
+                    }).get();
                 }
 
                 if (cfg.concurrent_mode) {
