@@ -67,9 +67,7 @@ async def dump_r(manager, cql, ks, servers, hosts, scylla_path, label, pk):
     return live
 
 
-@pytest.mark.parametrize("read_during_repair", [
-    pytest.param(True, marks=pytest.mark.xfail(reason="SCYLLADB-6092: read-repair sends shadowed data to tombstone holders")),
-    False], ids=["read_during_repair", "no_read"])
+@pytest.mark.parametrize("read_during_repair", [True, False], ids=["read_during_repair", "no_read"])
 @pytest.mark.asyncio
 async def test_read_repair_during_incremental_repair_resurrects(manager: ScyllaClusterManager, read_during_repair):
     """

@@ -77,6 +77,8 @@
 #include "locator/abstract_replication_strategy.hh"
 #include "service/paxos/cas_request.hh"
 #include "mutation/mutation_partition_view.hh"
+#include "compaction/compaction_garbage_collector.hh"
+#include "tombstone_gc.hh"
 #include "service/paxos/paxos_state.hh"
 #include "gms/feature_service.hh"
 #include "db/virtual_table.hh"
@@ -5658,10 +5660,23 @@ public:
         // Сalculate differences: iterate over the versions from all the nodes and calculate the difference with the reconciled result.
         for (auto z : std::views::zip(versions, reconciled_partitions)) {
             const mutation& m = std::get<1>(z).mut;
+            // The reconciled mutation is not compacted, so it may contain data
+            // shadowed by a tombstone from another replica.  difference() is
+            // structural and would send that shadowed data, with its original
+            // timestamp, to a replica that already holds the tombstone, without
+            // the tombstone itself.  In tombstone_gc=repair mode that copy can
+            // land in the unrepaired set, while the tombstone is purged from the
+            // repaired set, resurrecting the data (SCYLLADB-6092).
+            // Compute the diffs against a copy compacted with no tombstone GC
+            // and no TTL expiration, so only shadowed data is dropped.
+            // The reconciled mutation itself is left intact, since the
+            // short-read detection below relies on its last row.
+            auto compacted = mutation_partition(schema, m.partition());
+            compacted.compact_for_compaction(schema, never_gc, m.decorated_key(), gc_clock::time_point::min(), tombstone_gc_state::no_gc());
             for (const version& v : std::get<0>(z)) {
                 auto diff = v.par
-                          ? m.partition().difference(schema, (co_await unfreeze_gently(v.par->mut(), _schema)).partition())
-                          : mutation_partition(schema, m.partition());
+                          ? compacted.difference(schema, (co_await unfreeze_gently(v.par->mut(), _schema)).partition())
+                          : mutation_partition(schema, compacted);
                 std::optional<mutation> mdiff;
                 if (!diff.empty()) {
                     has_diff = true;
